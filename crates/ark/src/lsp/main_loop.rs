@@ -6,6 +6,7 @@
 //
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -15,12 +16,17 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
+use aether_url::UrlId;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
+use oak_scan::ScanCompleted;
+use oak_scan::ScanRequest;
+use oak_scan::ScanScheduler;
 use oak_semantic::library::Library;
+use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -88,6 +94,7 @@ type TaskList<T> = futures::stream::FuturesUnordered<Pin<Box<dyn AnyhowJoinHandl
 pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
+    OakScanCompleted(ScanCompleted),
 }
 
 #[derive(Debug)]
@@ -151,8 +158,9 @@ pub(crate) struct GlobalState {
     events_rx: TokioUnboundedReceiver<Event>,
 }
 
-/// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
-/// exclusive handlers.
+/// Non-cloneable, per-session state mutated only by exclusive handlers.
+/// Sits alongside [`WorldState`] (which is cloneable for snapshot
+/// handlers); state that can't be cloned lives here instead.
 pub(crate) struct LspState {
     /// The set of tree-sitter document parsers managed by the `GlobalState`.
     pub(crate) parsers: HashMap<Url, tree_sitter::Parser>,
@@ -162,6 +170,11 @@ pub(crate) struct LspState {
 
     /// Channel for sending notifications to Console (e.g., document changes for DAP)
     pub(crate) console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
+
+    /// Coordinator for asynchronous workspace scans. Mutated only from
+    /// main-loop handlers. Must be out of [`WorldState`] because the scheduler
+    /// is not clonable.
+    pub(crate) oak_scheduler: ScanScheduler,
 }
 
 /// State for the auxiliary loop
@@ -199,6 +212,7 @@ impl GlobalState {
             parsers: HashMap::new(),
             capabilities: Capabilities::default(),
             console_notification_tx,
+            oak_scheduler: ScanScheduler::new(),
         };
 
         // FIXME: We shouldn't call R code in the kernel to figure this out
@@ -299,13 +313,15 @@ impl GlobalState {
                             handlers::handle_initialized(&self.client, &self.lsp_state).await?;
                         },
                         LspNotification::DidChangeWorkspaceFolders(params) => {
-                            state_handlers::did_change_workspace_folders(params, &mut self.world)?;
+                            let pending = state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state)?;
+                            dispatch_scan_requests(&self.events_tx, pending);
                         },
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
                         },
                         LspNotification::DidChangeWatchedFiles(params) => {
-                            state_handlers::did_change_watched_files(params, &mut self.world)?;
+                            let pending = state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state)?;
+                            dispatch_scan_requests(&self.events_tx, pending);
                         },
                         LspNotification::DidOpenTextDocument(params) => {
                             state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
@@ -336,7 +352,8 @@ impl GlobalState {
 
                     match request {
                         LspRequest::Initialize(params) => {
-                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
+                            let pending = respond_with(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
+                            dispatch_scan_requests(&self.events_tx, pending);
                         },
                         LspRequest::WorkspaceSymbol(params) => {
                             respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
@@ -420,6 +437,25 @@ impl GlobalState {
                     }
                 }
             },
+
+            Event::OakScanCompleted(scan) => {
+                // Recompute editor-owned files at apply time, not at spawn
+                // time: a buffer may have opened or closed since the scan
+                // kicked off. The buffer-drain inside `apply_scan_completed` uses
+                // this set as its watcher-event `skip` argument.
+                let editor_owned: HashSet<UrlId> = self.world
+                    .documents
+                    .keys()
+                    .map(|url| UrlId::from_url(url.clone()))
+                    .collect();
+
+                let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
+                    &mut self.world.db,
+                    scan,
+                    &editor_owned,
+                );
+                dispatch_scan_requests(&self.events_tx, followups);
+            },
         }
 
         // TODO Make this threshold configurable by the client
@@ -452,6 +488,24 @@ impl GlobalState {
     }
 }
 
+/// Spawn each [`ScanRequest`] on a blocking task. Each task runs the
+/// pure-I/O [`ScanRequest::run`] and ships the [`ScanCompleted`] back
+/// to the main loop as [`Event::OakScanCompleted`], where the scheduler
+/// then applies it.
+pub(super) fn dispatch_scan_requests(
+    events_tx: &TokioUnboundedSender<Event>,
+    requests: Vec<ScanRequest>,
+) {
+    for req in requests {
+        let tx = events_tx.clone();
+        spawn_blocking(move || {
+            let scan = req.run();
+            tx.send(Event::OakScanCompleted(scan)).log_err();
+            Ok(None)
+        });
+    }
+}
+
 /// Respond to a request from the LSP
 ///
 /// We receive requests from the LSP client with a response channel. Once we
@@ -475,11 +529,28 @@ fn respond<T>(
     response: impl FnOnce() -> LspResult<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
-    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
-        Ok(response) => {
-            let response = response.map(into_lsp_response);
-            RequestResponse::Result(response)
-        },
+    respond_with(
+        response_tx,
+        || response().map(|t| (t, ())),
+        into_lsp_response,
+    )
+}
+
+/// Variant of [`respond`] for handlers that produce a side output alongside
+/// their LSP response. The `S` value is returned to the caller on success;
+/// on handler error or panic the side output is `S::default()` (the caller
+/// gets the "do nothing" value, while the error response still flows to
+/// the client through `response_tx`). Used by `Initialize` to ship the
+/// scheduler's pending `ScanRequest`s back to the main loop without an
+/// out-parameter.
+fn respond_with<T, S: Default>(
+    response_tx: TokioUnboundedSender<RequestResponse>,
+    response: impl FnOnce() -> LspResult<(T, S)>,
+    into_lsp_response: impl FnOnce(T) -> LspResponse,
+) -> anyhow::Result<S> {
+    let (response, side) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
+        Ok(Ok((t, s))) => (RequestResponse::Result(Ok(into_lsp_response(t))), s),
+        Ok(Err(e)) => (RequestResponse::Result(Err(e)), S::default()),
         Err(err) => {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
@@ -495,19 +566,22 @@ fn respond<T>(
             // This creates an uninformative backtrace that is reported in the
             // LSP logs. Note that the relevant backtrace is the one created by
             // our panic hook and reported via the _kernel_ logs.
-            RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}"))
+            (
+                RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}")),
+                S::default(),
+            )
         },
     };
 
     let out = match response {
-        RequestResponse::Result(Ok(_)) => Ok(()),
+        RequestResponse::Result(Ok(_)) => Ok(side),
         RequestResponse::Result(Err(ref error)) => {
             // The error has already been sent to the client on `response_tx`
             // as a jsonrpc error, so the user sees the popup. Log here at
             // info level (with `{:?}` for the full debug format including a
             // backtrace) so server logs keep diagnostic context.
             lsp::log_info!("Error while handling request:\n{error:?}");
-            Ok(())
+            Ok(side)
         },
         RequestResponse::Crashed(ref error) => {
             Err(anyhow!("Crashed while handling request:\n{error:?}"))

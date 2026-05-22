@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -8,7 +9,18 @@ use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
 use oak_db::RootKind;
-use oak_scan::DbScan;
+
+use crate::scheduler::drain_scheduler;
+use crate::DbScan;
+use crate::ScanScheduler;
+
+/// Sync helper: scan to quiescence on the current thread. Production
+/// drivers spawn each request on a task pool.
+fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
+    let mut scheduler = ScanScheduler::new();
+    let reqs = scheduler.set_workspace_paths(db, paths, editor_owned);
+    drain_scheduler(db, &mut scheduler, reqs, editor_owned);
+}
 
 fn basenames(db: &OakDatabase, files: &[File]) -> Vec<String> {
     files
@@ -42,10 +54,7 @@ fn test_scan_empty_workspace_registers_empty_root() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let roots = db.workspace_roots().roots(&db).clone();
     assert_eq!(roots.len(), 1);
@@ -61,10 +70,7 @@ fn test_scan_workspace_discovers_package_at_root() {
     write_package(tmp.path(), "myproj", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
     assert_eq!(packages.len(), 1);
@@ -78,10 +84,7 @@ fn test_scan_workspace_discovers_multiple_nested_packages() {
     write_package(&tmp.path().join("pkg2"), "pkg2", &[("b.R", "y <- 2\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
     assert_eq!(packages.len(), 2);
@@ -97,10 +100,7 @@ fn test_scan_workspace_collects_top_level_scripts() {
     fs::write(tmp.path().join("helpers.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     assert_eq!(scripts.len(), 2);
@@ -127,10 +127,7 @@ fn test_scan_workspace_excludes_package_r_files_from_scripts() {
     fs::write(tmp.path().join("outside.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     let scripts = root.scripts(&db).clone();
@@ -155,10 +152,7 @@ fn test_scan_workspace_routes_package_subdir_r_files_to_pkg_scripts() {
     fs::write(tmp.path().join("pkg/inst/helper.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
@@ -193,10 +187,7 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
     )
     .unwrap();
     let mut db = OakDatabase::new();
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let url = UrlId::from_file_path(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
     let file = db.file_by_url(&url).expect("script must be findable");
@@ -222,10 +213,7 @@ fn test_scan_workspace_honors_gitignore() {
     fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     let basenames: Vec<String> = scripts
@@ -282,10 +270,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     let url = UrlId::from_file_path(&r_path).unwrap();
     db.upsert_editor(url.clone(), "edited_version <- 2\n".to_string());
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let file = db
         .file_by_url(&url)
@@ -308,10 +293,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let url = UrlId::from_file_path(&r_path).unwrap();
     db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let file = db.file_by_url(&url).expect("package file findable");
     assert_eq!(file.contents(&db), "edited <- 2\n");
@@ -326,7 +308,7 @@ fn test_scan_multiple_workspace_paths_preserve_order() {
     let mut db = OakDatabase::new();
 
     let paths: Vec<PathBuf> = vec![tmp1.path().to_path_buf(), tmp2.path().to_path_buf()];
-    db.set_workspace_paths(&paths, &std::collections::HashSet::new());
+    set_workspace_paths(&mut db, &paths, &HashSet::new());
 
     let roots = db.workspace_roots().roots(&db).clone();
     assert_eq!(roots.len(), 2);
@@ -349,10 +331,7 @@ fn test_scan_workspace_tolerates_non_package_description() {
     .unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.packages(&db).is_empty());
@@ -373,10 +352,7 @@ fn test_scan_workspace_dedup_keys_on_description_name_not_folder_name() {
     )]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
     assert_eq!(packages.len(), 2);
@@ -404,10 +380,7 @@ fn test_scan_workspace_drops_duplicate_package_names() {
     )]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     let packages = root.packages(&db).clone();
@@ -448,10 +421,7 @@ fn test_scan_workspace_excludes_renv_library() {
     fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
-        &[tmp.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
     assert_eq!(packages.len(), 1);
@@ -471,7 +441,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert!(file.package(&db).is_some());
@@ -482,7 +452,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     let editor_owned: HashSet<UrlId> = [url.clone()].into_iter().collect();
 
     // Workspace folder removed. File routes to orphan, package goes to stale.
-    db.set_workspace_paths(&[], &editor_owned);
+    set_workspace_paths(&mut db, &[], &editor_owned);
     let after_remove = db.file_by_url(&url).unwrap();
     assert_eq!(file, after_remove);
     assert_eq!(after_remove.package(&db), None);
@@ -492,7 +462,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     // Workspace folder re-added. File snaps back into pkg.files, same
     // entity, editor content preserved (the scan's disk snapshot
     // doesn't overwrite).
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &editor_owned);
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &editor_owned);
     let after_readd = db.file_by_url(&url).unwrap();
     assert_eq!(file, after_readd);
     assert!(after_readd.package(&db).is_some());
@@ -512,15 +482,15 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
 
-    db.set_workspace_paths(&[], &HashSet::new());
+    set_workspace_paths(&mut db, &[], &HashSet::new());
     assert!(db.file_by_url(&url).is_none());
     assert!(db.stale_root().files(&db).contains(&file));
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let resurrected = db.file_by_url(&url).unwrap();
     assert_eq!(file, resurrected);
 }
@@ -539,12 +509,12 @@ fn test_set_workspace_paths_unchanged_path_preserves_root_and_package_identity()
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let root_id_before = db.workspace_roots().roots(&db)[0].as_id();
     let pkg_id_before = db.workspace_roots().roots(&db)[0].packages(&db)[0].as_id();
     let file_id_before = db.workspace_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let root_id_after = db.workspace_roots().roots(&db)[0].as_id();
     let pkg_id_after = db.workspace_roots().roots(&db)[0].packages(&db)[0].as_id();
     let file_id_after = db.workspace_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
