@@ -18,6 +18,11 @@ use crate::inputs::FileEntry;
 /// plus the R files under `R/`.
 #[derive(Debug)]
 pub(crate) struct PackageDescriptor {
+    /// URL of the `DESCRIPTION` file. Stable identity for the `Package`
+    /// entity across rescans (see `Package::description_url`). The `name`
+    /// is *not* stable identity because two packages can declare the
+    /// same `Package:` field, and dedup picks one of them per root.
+    pub description_url: UrlId,
     pub name: String,
     pub version: Option<String>,
     pub namespace: Namespace,
@@ -28,8 +33,10 @@ pub(crate) struct PackageDescriptor {
 /// Read a candidate package directory. Returns `None` if `DESCRIPTION`
 /// is missing or malformed.
 pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
-    let description_text = fs::read_to_string(dir.join("DESCRIPTION")).ok()?;
+    let description_path = dir.join("DESCRIPTION");
+    let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
+    let description_url = UrlId::from_file_path(&description_path).ok()?;
 
     let namespace = fs::read_to_string(dir.join("NAMESPACE"))
         .ok()
@@ -40,6 +47,7 @@ pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
     let collation = description.collate();
 
     Some(PackageDescriptor {
+        description_url,
         name: description.name,
         version: Some(description.version),
         namespace,

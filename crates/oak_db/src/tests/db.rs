@@ -32,6 +32,7 @@ fn test_file_by_url_finds_workspace_package_file() {
     let pkg = Package::new(
         &db,
         root,
+        file_url("proj/DESCRIPTION"),
         "mypkg".to_string(),
         None,
         Namespace::default(),
@@ -53,6 +54,7 @@ fn test_file_by_url_finds_library_package_file() {
     let pkg = Package::new(
         &db,
         lib,
+        file_url("libs/foo/DESCRIPTION"),
         "foo".to_string(),
         Some("1.0.0".to_string()),
         Namespace::default(),

@@ -50,6 +50,7 @@ fn test_root_dispatches_through_library_package_when_set() {
     let pkg = Package::new(
         &db,
         pkg_root,
+        file_url("libs/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
         Some("1.0.0".to_string()),
         Namespace::default(),
@@ -79,6 +80,7 @@ fn test_root_dispatches_through_workspace_package_when_set() {
     let pkg = Package::new(
         &db,
         pkg_root,
+        file_url("proj/DESCRIPTION"),
         "mypkg".to_string(),
         None,
         Namespace::default(),

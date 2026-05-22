@@ -13,6 +13,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
+pub use db::stale_file_by_url;
 pub use db::Db;
 pub use db::DbInputs;
 pub use definition::Definition;
@@ -25,6 +26,7 @@ pub use inputs::OrphanRoot;
 pub use inputs::Package;
 pub use inputs::Root;
 pub use inputs::RootKind;
+pub use inputs::StaleRoot;
 pub use inputs::WorkspaceRoots;
 pub use name::Name;
 pub use storage::OakDatabase;

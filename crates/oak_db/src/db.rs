@@ -6,6 +6,7 @@ use crate::LibraryRoots;
 use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
+use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete-input surface of the salsa database. Each impl
@@ -26,6 +27,10 @@ pub trait DbInputs: salsa::Database {
 
     /// Files not yet anchored to any workspace or library root.
     fn orphan_root(&self) -> OrphanRoot;
+
+    /// Files and packages from roots that have been removed. Holding
+    /// pen for entity reuse on re-add (see [`StaleRoot`]).
+    fn stale_root(&self) -> StaleRoot;
 }
 
 /// Salsa database trait used throughout `oak_db`. Tracked queries take `&dyn
@@ -53,6 +58,16 @@ pub trait Db: DbInputs {
     /// - Installed packages in an earlier root shadow later ones
     ///   (mirroring `.libPaths()`).
     fn package_by_name(&self, name: &str) -> Option<Package>;
+
+    /// Look up a `Package` by its `DESCRIPTION` URL.
+    ///
+    /// Walks workspace packages, then library packages, then falls back
+    /// to [`StaleRoot`]. Stale matches are intentional: scanner upserts
+    /// use this to find a `Package` entity whose live container was
+    /// dropped on a previous `set_*_paths` call, so the entity gets
+    /// reused on re-add. Analysis paths should not call this — they use
+    /// [`Db::package_by_name`] which is stale-blind.
+    fn package_by_url(&self, url: &UrlId) -> Option<Package>;
 }
 
 /// Implementation of [`Db::file_by_url`]. Walks the per-root indices.
@@ -91,6 +106,22 @@ pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
     None
 }
 
+/// Implementation of [`Db::package_by_url`]. Walks live roots' packages
+/// by `description_url`, then falls back to the stale bucket.
+pub fn package_by_url_query(db: &dyn Db, url: &UrlId) -> Option<Package> {
+    for root in db.workspace_roots().roots(db) {
+        if let Some(&pkg) = root_package_url_index(db, *root).get(url) {
+            return Some(pkg);
+        }
+    }
+    for root in db.library_roots().roots(db) {
+        if let Some(&pkg) = root_package_url_index(db, *root).get(url) {
+            return Some(pkg);
+        }
+    }
+    stale_package_url_index(db).get(url).copied()
+}
+
 /// Per-root URL -> File index. Salsa caches one map per `Root`;
 /// reads only `root.scripts`, `root.packages`, and each
 /// `pkg.files` reachable from this root. Adding or removing a file
@@ -126,6 +157,48 @@ fn root_package_index(db: &dyn Db, root: Root) -> FxHashMap<String, Package> {
     let mut map = FxHashMap::default();
     for &pkg in root.packages(db) {
         map.insert(pkg.name(db).clone(), pkg);
+    }
+    map
+}
+
+/// Per-root DESCRIPTION URL -> Package index. Used by
+/// [`package_by_url_query`] for entity-reuse lookups across rescans;
+/// salsa cache invalidates only when this root's packages change.
+#[salsa::tracked(returns(ref))]
+fn root_package_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, Package> {
+    let mut map = FxHashMap::default();
+    for &pkg in root.packages(db) {
+        map.insert(pkg.description_url(db).clone(), pkg);
+    }
+    map
+}
+
+/// Stale file URL -> File index. Reads only `stale_root().files`. Not
+/// consulted by [`file_by_url_query`] — analysis is stale-blind by
+/// design. Scanner upserts use [`stale_file_by_url`] when re-adding a
+/// path.
+#[salsa::tracked(returns(ref))]
+fn stale_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
+    let mut map = FxHashMap::default();
+    for &file in db.stale_root().files(db) {
+        map.insert(file.url(db).clone(), file);
+    }
+    map
+}
+
+/// Look up a stale `File` by URL. Public so scanner upsert helpers in
+/// `oak_scan` can fall back to stale after [`Db::file_by_url`] misses.
+pub fn stale_file_by_url(db: &dyn Db, url: &UrlId) -> Option<File> {
+    stale_url_index(db).get(url).copied()
+}
+
+/// Stale DESCRIPTION URL -> Package index. Same role as
+/// [`stale_url_index`] for packages.
+#[salsa::tracked(returns(ref))]
+fn stale_package_url_index(db: &dyn Db) -> FxHashMap<UrlId, Package> {
+    let mut map = FxHashMap::default();
+    for &pkg in db.stale_root().packages(db) {
+        map.insert(pkg.description_url(db).clone(), pkg);
     }
     map
 }
