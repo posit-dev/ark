@@ -381,6 +381,30 @@ fn test_apply_watcher_events_description_outside_any_workspace_is_noop() {
 }
 
 #[test]
+fn test_apply_watcher_events_ignores_non_r_files() {
+    // The LSP registration filters to `*.{R,r}` and `DESCRIPTION`, so the
+    // dispatcher shouldn't see other paths in practice. Defensive check that
+    // `add_watched_file`'s classifier drops them silently rather than
+    // landing them in the orphan bucket or some root container.
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
+
+    let path = tmp.path().join("notes.txt");
+    fs::write(&path, "not R\n").unwrap();
+    let url = UrlId::from_file_path(&path).unwrap();
+    db.apply_watcher_events(
+        vec![file_event(&path, FileEventKind::Created)],
+        &HashSet::new(),
+    );
+
+    assert!(db.file_by_url(&url).is_none());
+    let root = db.workspace_roots().roots(&db)[0];
+    assert!(root.scripts(&db).is_empty());
+    assert!(db.orphan_root().files(&db).is_empty());
+}
+
+#[test]
 fn test_apply_watcher_events_tolerates_non_package_description() {
     // The dispatcher triggers a rescan on any file named `DESCRIPTION`
     // without inspecting its contents. If the file isn't actually an R

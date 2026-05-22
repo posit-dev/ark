@@ -171,3 +171,114 @@ fn test_r_file_deleted_routes_through_remove_file() {
     assert_eq!(root.scripts(&state.oak).len(), 1);
     assert!(state.oak.file_by_url(&url_id).is_none());
 }
+
+#[test]
+fn test_r_file_changed_for_unopened_file_updates_contents() {
+    // No editor buffer, so the watcher's disk content is authoritative
+    // and should land in `file.contents()`. Complements the open-file
+    // skip test above.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("a.R");
+    fs::write(&path, "v1\n").unwrap();
+    let mut state = workspace_state(tmp.path());
+
+    let url_id = UrlId::from_file_path(&path).unwrap();
+    assert_eq!(
+        state.oak.file_by_url(&url_id).unwrap().contents(&state.oak),
+        "v1\n"
+    );
+
+    fs::write(&path, "v2\n").unwrap();
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![event(&path, FileChangeType::CHANGED)],
+    };
+    did_change_watched_files(params, &mut state).unwrap();
+
+    assert_eq!(
+        state.oak.file_by_url(&url_id).unwrap().contents(&state.oak),
+        "v2\n"
+    );
+}
+
+#[test]
+#[ignore = "blocked by UrlId canonicalization gap for missing paths"]
+fn test_r_file_deleted_for_editor_open_file_is_skipped() {
+    // Mirror of `test_r_file_changed_for_editor_open_file_is_skipped`
+    // for the Deleted kind. The skip check in `apply_watcher_events`
+    // sits before the kind match, so editor-owned URLs should be
+    // protected from deletion too: the buffer stays visible to the
+    // user and queries keep resolving against the editor's
+    // last-pushed content.
+    //
+    // The assertion passes today, but only incidentally: the same
+    // canonicalization gap that blocks the DESCRIPTION test below also
+    // breaks the skip lookup here. The event URL canonicalizes to the
+    // raw `/var/...` path (the file is gone, canonicalize fails),
+    // so the skip set (built from open documents while the file
+    // existed, i.e. `/private/var/...`) does not contain it. The event
+    // therefore reaches `remove_watched_file`, which also fails to find
+    // the file by URL and bails out. Net: file survives, but the skip
+    // mechanism is never actually exercised. Marked ignore until the
+    // canonicalization gap is fixed.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("a.R");
+    fs::write(&path, "disk_v1\n").unwrap();
+    let mut state = workspace_state(tmp.path());
+
+    let url = Url::from_file_path(&path).unwrap();
+    state
+        .documents
+        .insert(url.clone(), Document::new("editor_v2\n", None));
+    let url_id = UrlId::from_url(url.clone());
+    state
+        .oak
+        .set_editor_contents(url_id.clone(), "editor_v2\n".to_string());
+
+    fs::remove_file(&path).unwrap();
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![event(&path, FileChangeType::DELETED)],
+    };
+    did_change_watched_files(params, &mut state).unwrap();
+
+    let file = state.oak.file_by_url(&url_id).unwrap();
+    assert_eq!(file.contents(&state.oak), "editor_v2\n");
+}
+
+#[test]
+#[ignore = "blocked by UrlId canonicalization gap for missing paths; see dev-notes/notes/oak/2026-05-22-0846-watcher-test-gaps.md"]
+fn test_description_deleted_demotes_package_to_scripts() {
+    // Inverse of `test_description_created_triggers_root_rescan`: a
+    // DESCRIPTION removed mid-session triggers a root rescan and the
+    // former package's R/ files surface as workspace scripts.
+    //
+    // Currently fails because `UrlId::from_url` canonicalizes via
+    // `std::fs::canonicalize`, which fails for paths that no longer
+    // exist and falls back to the raw path. On macOS this means the
+    // Deleted event's URL keeps the `/var/...` prefix while the
+    // workspace root URL uses `/private/var/...`, and the routing in
+    // `apply_watcher_events` misses.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut state = workspace_state(tmp.path());
+
+    let root = state.oak.workspace_roots().roots(&state.oak)[0];
+    assert_eq!(root.packages(&state.oak).len(), 1);
+    assert!(root.scripts(&state.oak).is_empty());
+
+    fs::remove_file(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![event(
+            &tmp.path().join("pkg/DESCRIPTION"),
+            FileChangeType::DELETED,
+        )],
+    };
+    did_change_watched_files(params, &mut state).unwrap();
+
+    let root = state.oak.workspace_roots().roots(&state.oak)[0];
+    assert!(root.packages(&state.oak).is_empty());
+    assert_eq!(root.scripts(&state.oak).len(), 1);
+
+    let a_url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let file = state.oak.file_by_url(&a_url).unwrap();
+    assert_eq!(file.package(&state.oak), None);
+}

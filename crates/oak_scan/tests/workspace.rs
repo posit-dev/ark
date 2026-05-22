@@ -301,3 +301,37 @@ fn test_scan_workspace_drops_duplicate_package_names() {
         .path()
         .ends_with("aaa-clone/R/a.R"));
 }
+
+#[test]
+fn test_scan_workspace_excludes_renv_library() {
+    // `renv/library/` snapshots vendored R packages, each with its own
+    // DESCRIPTION and R/. The workspace scanner walks through
+    // `ignore::WalkBuilder` so these don't surface as workspace packages
+    // alongside the user's own code. The mechanism is `.gitignore`; the
+    // scenario worth pinning is the renv-shaped layout.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("mypkg"), "mypkg", &[("a.R", "x <- 1\n")]);
+    write_package(
+        &tmp.path().join("renv/library/R-4.3/dplyr"),
+        "dplyr",
+        &[("dplyr.R", "vendored <- 1\n")],
+    );
+    write_package(
+        &tmp.path().join("renv/library/R-4.3/tibble"),
+        "tibble",
+        &[("tibble.R", "vendored <- 1\n")],
+    );
+    fs::write(tmp.path().join(".gitignore"), "renv/library/\n").unwrap();
+    // The `ignore` crate's `.gitignore` filter activates only when a
+    // `.git` marker is present in the walk (see the comment on
+    // `test_scan_workspace_honors_gitignore`). Real renv projects always
+    // have one.
+    fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    let mut db = OakDatabase::new();
+
+    db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
+
+    let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(&db), "mypkg");
+}
