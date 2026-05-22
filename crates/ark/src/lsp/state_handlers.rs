@@ -94,47 +94,46 @@ pub(crate) fn initialize(
     lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> LspResult<InitializeResult> {
+    let workspace_uris = effective_workspace_uris(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();
     let mut workspace_paths: Vec<PathBuf> = Vec::new();
 
-    if let Some(workspace_folders) = params.workspace_folders {
-        for folder in workspace_folders.iter() {
-            state.workspace.folders.push(folder.uri.clone());
-            if let Ok(path) = folder.uri.to_file_path() {
-                workspace_paths.push(path.clone());
-                // Try to load package from this workspace folder and set as
-                // root if found. This means we're dealing with a package
-                // source.
-                if state.root.is_none() {
-                    match Package::load_from_folder(&path) {
-                        Ok(Some(pkg)) => {
-                            log::info!(
-                                "Root: Loaded package `{pkg}` from {path} as project root",
-                                pkg = pkg.description().name,
-                                path = path.display()
-                            );
-                            state.root = Some(SourceRoot::Package(pkg));
-                        },
-                        Ok(None) => {
-                            log::info!(
-                                "Root: No package found at {path}, treating as folder of scripts",
-                                path = path.display()
-                            );
-                        },
-                        Err(err) => {
-                            log::warn!(
-                                "Root: Error loading package at {path}: {err}",
-                                path = path.display()
-                            );
-                        },
-                    }
+    for uri in workspace_uris {
+        state.workspace.folders.push(uri.clone());
+        if let Ok(path) = uri.to_file_path() {
+            workspace_paths.push(path.clone());
+            // Try to load package from this workspace folder and set as
+            // root if found. This means we're dealing with a package
+            // source.
+            if state.root.is_none() {
+                match Package::load_from_folder(&path) {
+                    Ok(Some(pkg)) => {
+                        log::info!(
+                            "Root: Loaded package `{pkg}` from {path} as project root",
+                            pkg = pkg.description().name,
+                            path = path.display()
+                        );
+                        state.root = Some(SourceRoot::Package(pkg));
+                    },
+                    Ok(None) => {
+                        log::info!(
+                            "Root: No package found at {path}, treating as folder of scripts",
+                            path = path.display()
+                        );
+                    },
+                    Err(err) => {
+                        log::warn!(
+                            "Root: Error loading package at {path}: {err}",
+                            path = path.display()
+                        );
+                    },
                 }
-                if let Some(path_str) = path.to_str() {
-                    folders.push(path_str.to_string());
-                }
+            }
+            if let Some(path_str) = path.to_str() {
+                folders.push(path_str.to_string());
             }
         }
     }
@@ -226,6 +225,21 @@ pub(crate) fn initialize(
             ..ServerCapabilities::default()
         },
     })
+}
+
+/// Resolve the effective workspace folders from `InitializeParams`.
+///
+/// `workspaceFolders` takes precedence when present and non-empty.
+/// Falls back to the legacy `rootUri` for clients that don't send
+/// multi-root workspaces. The returned vector is empty when neither
+/// produces a folder, i.e. the server is running in single-file mode.
+pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
+    if let Some(folders) = params.workspace_folders.as_ref() {
+        if !folders.is_empty() {
+            return folders.iter().map(|f| f.uri.clone()).collect();
+        }
+    }
+    params.root_uri.iter().cloned().collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]

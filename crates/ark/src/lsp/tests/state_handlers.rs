@@ -14,11 +14,14 @@ use oak_scan::DbExt;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
 use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FileEvent;
+use tower_lsp::lsp_types::InitializeParams;
+use tower_lsp::lsp_types::WorkspaceFolder;
 use url::Url;
 
 use crate::lsp::document::Document;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_watched_files;
+use crate::lsp::state_handlers::effective_workspace_uris;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     fs::create_dir_all(dir.join("R")).unwrap();
@@ -281,4 +284,61 @@ fn test_description_deleted_demotes_package_to_scripts() {
     let a_url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = state.oak.file_by_url(&a_url).unwrap();
     assert_eq!(file.package(&state.oak), None);
+}
+
+fn folder(uri: &str) -> WorkspaceFolder {
+    WorkspaceFolder {
+        uri: Url::parse(uri).unwrap(),
+        name: String::new(),
+    }
+}
+
+#[test]
+fn test_effective_workspace_uris_prefers_workspace_folders() {
+    let params = InitializeParams {
+        workspace_folders: Some(vec![folder("file:///a"), folder("file:///b")]),
+        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        ..Default::default()
+    };
+    let uris = effective_workspace_uris(&params);
+    assert_eq!(uris.len(), 2);
+    assert_eq!(uris[0].as_str(), "file:///a");
+    assert_eq!(uris[1].as_str(), "file:///b");
+}
+
+#[test]
+fn test_effective_workspace_uris_falls_back_to_root_uri() {
+    let params = InitializeParams {
+        workspace_folders: None,
+        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        ..Default::default()
+    };
+    let uris = effective_workspace_uris(&params);
+    assert_eq!(uris.len(), 1);
+    assert_eq!(uris[0].as_str(), "file:///legacy");
+}
+
+#[test]
+fn test_effective_workspace_uris_falls_back_when_workspace_folders_empty() {
+    // Some clients send an empty `workspace_folders` list alongside a
+    // legacy `root_uri`. Treat the empty list as "no folders" and use
+    // the legacy field, rather than init-ing with zero workspaces.
+    let params = InitializeParams {
+        workspace_folders: Some(vec![]),
+        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        ..Default::default()
+    };
+    let uris = effective_workspace_uris(&params);
+    assert_eq!(uris.len(), 1);
+    assert_eq!(uris[0].as_str(), "file:///legacy");
+}
+
+#[test]
+fn test_effective_workspace_uris_single_file_mode() {
+    let params = InitializeParams {
+        workspace_folders: None,
+        root_uri: None,
+        ..Default::default()
+    };
+    assert!(effective_workspace_uris(&params).is_empty());
 }
