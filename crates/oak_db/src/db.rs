@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 
 use crate::File;
 use crate::LibraryRoots;
+use crate::LiveRoot;
 use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
@@ -68,6 +69,47 @@ pub trait Db: DbInputs {
     /// reused on re-add. Analysis paths should not call this — they use
     /// [`Db::package_by_name`] which is stale-blind.
     fn package_by_url(&self, url: &UrlId) -> Option<Package>;
+
+    /// Resolve the live `Root` that contains `pkg`, if any.
+    ///
+    /// Returns `None` when the package is only in [`StaleRoot`] (its live
+    /// container was previously evicted).
+    ///
+    /// **Nested roots.** Two roots can claim the same package when one is
+    /// nested inside the other, e.g. the frontend opens both `/proj` and
+    /// `/proj/sub-pkg` as workspace folders and both scans walk into
+    /// `sub-pkg/DESCRIPTION`. Both scans hand the same `Package` entity to
+    /// their respective root's `packages` vec; the longest-path root wins
+    /// the ownership query here. The shorter root's vec still transiently
+    /// lists the package, but it self-heals on its next scan since
+    /// `set_packages` replaces the vec wholesale.
+    fn root_by_package(&self, pkg: Package) -> Option<Root>;
+
+    /// All live roots in lookup-precedence order: workspace folders first, then
+    /// library paths (mirroring R's `.libPaths()`), then the orphan bucket.
+    /// Stale roots are not included. Salsa-cached and invalidates when one of
+    /// `workspace_roots` / `library_roots` / `orphan_root` changes.
+    fn live_roots(&self) -> &[LiveRoot];
+}
+
+#[salsa::tracked(returns(ref))]
+pub fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
+    let mut roots: Vec<LiveRoot> = db
+        .workspace_roots()
+        .roots(db)
+        .iter()
+        .map(|&r| LiveRoot::Workspace(r))
+        .collect();
+
+    roots.extend(
+        db.library_roots()
+            .roots(db)
+            .iter()
+            .map(|&r| LiveRoot::Library(r)),
+    );
+
+    roots.push(LiveRoot::Orphan(db.orphan_root()));
+    roots
 }
 
 /// Implementation of [`Db::file_by_url`]. Walks the per-root indices.
@@ -77,30 +119,29 @@ pub trait Db: DbInputs {
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
 pub fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
-    for root in db.workspace_roots().roots(db) {
-        if let Some(&file) = root_url_index(db, *root).get(url) {
-            return Some(file);
+    for &root in db.live_roots() {
+        let hit = match root {
+            LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
+                root_url_index(db, r).get(url).copied()
+            },
+            LiveRoot::Orphan(_) => orphan_url_index(db).get(url).copied(),
+        };
+        if hit.is_some() {
+            return hit;
         }
     }
-    for root in db.library_roots().roots(db) {
-        if let Some(&file) = root_url_index(db, *root).get(url) {
-            return Some(file);
-        }
-    }
-    orphan_url_index(db).get(url).copied()
+    None
 }
 
 /// Implementation of [`Db::package_by_name`]. Same shape as
-/// [`file_by_url_query`].
+/// [`file_by_url_query`]; orphan has no packages, so it contributes
+/// nothing to the walk.
 pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
-    for root in db.workspace_roots().roots(db) {
-        if let Some(&pkg) = root_package_index(db, *root).get(name) {
-            return Some(pkg);
-        }
-    }
-    for root in db.library_roots().roots(db) {
-        if let Some(&pkg) = root_package_index(db, *root).get(name) {
-            return Some(pkg);
+    for &root in db.live_roots() {
+        if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
+            if let Some(&pkg) = root_package_index(db, r).get(name) {
+                return Some(pkg);
+            }
         }
     }
     None
@@ -109,17 +150,41 @@ pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
 /// Implementation of [`Db::package_by_url`]. Walks live roots' packages
 /// by `description_url`, then falls back to the stale bucket.
 pub fn package_by_url_query(db: &dyn Db, url: &UrlId) -> Option<Package> {
-    for root in db.workspace_roots().roots(db) {
-        if let Some(&pkg) = root_package_url_index(db, *root).get(url) {
-            return Some(pkg);
-        }
-    }
-    for root in db.library_roots().roots(db) {
-        if let Some(&pkg) = root_package_url_index(db, *root).get(url) {
-            return Some(pkg);
+    for &root in db.live_roots() {
+        if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
+            if let Some(&pkg) = root_package_url_index(db, r).get(url) {
+                return Some(pkg);
+            }
         }
     }
     stale_package_url_index(db).get(url).copied()
+}
+
+/// Implementation of [`Db::root_by_package`]. Walks all live roots looking for
+/// `pkg` in their `packages` vec, picking the longest-path root on ties.
+pub fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
+    let mut best: Option<(Root, usize)> = None;
+    for &root in db.live_roots() {
+        let (LiveRoot::Workspace(r) | LiveRoot::Library(r)) = root else {
+            continue;
+        };
+        if r.packages(db).contains(&pkg) {
+            let depth = root_depth(db, r);
+            if best.is_none_or(|(_, d)| depth > d) {
+                best = Some((r, depth));
+            }
+        }
+    }
+    best.map(|(root, _)| root)
+}
+
+/// Number of path components in a root's URL. Used as the tiebreaker by
+/// [`root_by_package_query`] when nested roots both claim the same package.
+fn root_depth(db: &dyn Db, root: Root) -> usize {
+    root.path(db)
+        .to_file_path()
+        .map(|p| p.components().count())
+        .unwrap_or(0)
 }
 
 /// Per-root URL -> File index. Salsa caches one map per `Root`;

@@ -15,7 +15,6 @@ fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
     let pkg = Package::new(
         db,
-        root,
         file_url(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
@@ -31,7 +30,6 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
     let pkg = Package::new(
         db,
-        root,
         file_url(&format!("libs/{name}/DESCRIPTION")),
         name.to_string(),
         Some("1.0.0".to_string()),

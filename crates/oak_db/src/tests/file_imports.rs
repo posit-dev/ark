@@ -19,7 +19,6 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
     let pkg = Package::new(
         db,
-        root,
         file_url(&format!("libs/{name}/DESCRIPTION")),
         name.to_string(),
         Some("1.0.0".to_string()),
@@ -126,7 +125,6 @@ fn test_package_file_emits_namespace_and_collation_layers() {
     let workspace = workspace_root(&db, "w");
     let pkg = Package::new(
         &db,
-        workspace,
         file_url("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,

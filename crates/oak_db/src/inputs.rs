@@ -45,6 +45,31 @@ pub enum RootKind {
     Library,
 }
 
+/// A live root container that participates in analysis lookups.
+///
+/// Bundles the three salsa inputs that hold files / packages the user is
+/// actively working with: workspace [`Root`]s, library [`Root`]s, and the
+/// [`OrphanRoot`] that catches unanchored buffers. Stale entities in
+/// [`StaleRoot`] aren't included -- they have separate access patterns
+/// (scanner upsert only, never analysis), so they stay as their own input.
+///
+/// `Db::live_roots()` yields these in lookup precedence (workspace first, then
+/// library, then orphan).
+///
+/// TODO(salsa): this enum carries the workspace-vs-library distinction in its
+/// variant tag, which makes the `Root.kind` field redundant. Drop the field
+/// once callers route through `LiveRoot` everywhere instead of reading
+/// `root.kind(db)` directly. Further out, splitting `Root` into separate
+/// `WorkspaceRoot` and `LibraryRoot` salsa inputs (each with the fields that
+/// actually apply to its kind: scripts only on workspace, etc.) frees up
+/// the name `Root` to be this enum.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LiveRoot {
+    Workspace(Root),
+    Library(Root),
+    Orphan(OrphanRoot),
+}
+
 /// The set of workspace folders the user has open.
 ///
 /// Populated by the LSP layer from `initialize.workspaceFolders` and
@@ -94,7 +119,7 @@ impl LibraryRoots {
 /// Singleton: there is one `OrphanRoot` per concrete database, lazily
 /// initialised by the implementation. The `files` field is what
 /// [`crate::Db::file_by_url`] consults to find unanchored files.
-#[salsa::input]
+#[salsa::input(debug)]
 pub struct OrphanRoot {
     /// **Placement invariant.** Files here must have `package(db) ==
     /// None`. Call this setter only through `oak_scan`'s helpers,
@@ -150,22 +175,16 @@ impl StaleRoot {
 
 #[salsa::input(debug)]
 pub struct Package {
-    /// The `Root` this package belongs to. Workspace packages live under
-    /// a [`RootKind::Workspace`] root, installed packages live under a
-    /// [`RootKind::Library`] root. Read `root.kind(db)` to distinguish.
-    ///
-    /// TODO(scan): redundant with `description_url` + the live-graph
-    /// containment (which `Root.packages` holds this `Package`).
-    /// Consider removing alongside workspace eviction. `File::root`
-    /// would dispatch via URL-prefix matching across workspace and
-    /// library roots instead of through this backpointer, and the
-    /// stale-backpointer-after-eviction case goes away.
-    pub root: Root,
     /// URL of the package's `DESCRIPTION` file. Stable identity across
     /// rescans and workspace / library churn: scanners look up an
     /// existing `Package` by this URL before creating a new one (see
-    /// `Db::package_by_url()`). Two packages with the same `Package:`
+    /// [`Db::package_by_url`]). Two packages with the same `Package:`
     /// name can coexist on disk and the URL distinguishes them.
+    ///
+    /// The package's owning [`Root`] is not stored as a field. It is
+    /// derived from live-graph containment via [`Db::root_by_package`]: a
+    /// package belongs to whichever `Root.packages` currently holds it.
+    /// Workspace-vs-library is then `root.kind(db)`.
     #[returns(ref)]
     pub description_url: UrlId,
     // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
