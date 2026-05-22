@@ -139,8 +139,17 @@ pub(crate) fn initialize(
         }
     }
 
-    // Start first round of indexing
-    state.oak.scan_workspace_paths(&workspace_paths);
+    // Start first round of indexing. `state.documents` is empty at init since
+    // no `didOpen` has fired yet, but build the set through the same shape we
+    // use elsewhere so the call site reads consistently.
+    let editor_owned: HashSet<UrlId> = state
+        .documents
+        .keys()
+        .map(|url| UrlId::from_url(url.clone()))
+        .collect();
+    state
+        .oak
+        .set_workspace_paths(&workspace_paths, &editor_owned);
     lsp::main_loop::index_start(folders, state.clone());
 
     Ok(InitializeResult {
@@ -438,8 +447,19 @@ pub(crate) fn did_change_workspace_folders(
         .iter()
         .filter_map(|uri| uri.to_file_path().ok())
         .collect();
-    state.oak.scan_workspace_paths(&workspace_paths);
 
+    // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
+    // open buffers keep getting analysed even when their workspace
+    // folder goes away.
+    let editor_owned: HashSet<UrlId> = state
+        .documents
+        .keys()
+        .map(|url| UrlId::from_url(url.clone()))
+        .collect();
+
+    state
+        .oak
+        .set_workspace_paths(&workspace_paths, &editor_owned);
     Ok(())
 }
 

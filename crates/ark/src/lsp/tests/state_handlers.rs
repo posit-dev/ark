@@ -4,6 +4,7 @@
 //! regression in either the translation step or the state.documents → skip set
 //! conversion.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -51,7 +52,9 @@ fn workspace_state(workspace: &Path) -> WorldState {
         .workspace
         .folders
         .push(Url::from_file_path(workspace).unwrap());
-    state.oak.scan_workspace_paths(&[workspace.to_path_buf()]);
+    state
+        .oak
+        .set_workspace_paths(&[workspace.to_path_buf()], &HashSet::new());
     state
 }
 
@@ -396,12 +399,18 @@ fn test_did_change_workspace_folders_removes_folder() {
     write_package(&second.path().join("pkg2"), "pkg2", &[]);
 
     let mut state = WorldState::default();
-    state.workspace.folders.push(Url::from_file_path(first.path()).unwrap());
-    state.workspace.folders.push(Url::from_file_path(second.path()).unwrap());
-    state.oak.scan_workspace_paths(&[
-        first.path().to_path_buf(),
-        second.path().to_path_buf(),
-    ]);
+    state
+        .workspace
+        .folders
+        .push(Url::from_file_path(first.path()).unwrap());
+    state
+        .workspace
+        .folders
+        .push(Url::from_file_path(second.path()).unwrap());
+    state.oak.set_workspace_paths(
+        &[first.path().to_path_buf(), second.path().to_path_buf()],
+        &HashSet::new(),
+    );
     assert_eq!(state.oak.workspace_roots().roots(&state.oak).len(), 2);
 
     let params = folders_change(vec![], vec![folder_for(first.path())]);
@@ -439,14 +448,71 @@ fn test_did_change_workspace_folders_handles_add_and_remove_in_one_event() {
     write_package(&second.path().join("pkg2"), "pkg2", &[]);
     let mut state = workspace_state(first.path());
 
-    let params = folders_change(
-        vec![folder_for(second.path())],
-        vec![folder_for(first.path())],
-    );
+    let params = folders_change(vec![folder_for(second.path())], vec![folder_for(
+        first.path(),
+    )]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
     assert_eq!(state.workspace.folders.len(), 1);
     let roots = state.oak.workspace_roots().roots(&state.oak).clone();
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].packages(&state.oak)[0].name(&state.oak), "pkg2");
+}
+
+#[test]
+fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
+    // End-to-end check that `did_change_workspace_folders` threads
+    // `state.documents` URLs through as `editor_owned` so an open buffer
+    // survives its workspace folder being removed and re-added: same
+    // `File` entity, editor contents preserved, file findable through
+    // both phases.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut state = workspace_state(tmp.path());
+
+    // Simulate `didOpen` on the package file with editor-side content.
+    let r_path = tmp.path().join("pkg/R/a.R");
+    let url = Url::from_file_path(&r_path).unwrap();
+    let url_id = UrlId::from_url(url.clone());
+    state
+        .documents
+        .insert(url.clone(), Document::new("editor <- 2\n", None));
+    state
+        .oak
+        .set_editor_contents(url_id.clone(), "editor <- 2\n".to_string());
+
+    let file_before = state.oak.file_by_url(&url_id).unwrap();
+
+    // Remove the workspace folder. The handler builds the editor_owned set
+    // from state.documents.keys() and passes it to oak; the buffer's file
+    // routes to OrphanRoot rather than StaleRoot.
+    let params = folders_change(vec![], vec![folder_for(tmp.path())]);
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    let after_remove = state.oak.file_by_url(&url_id).unwrap();
+    assert_eq!(file_before, after_remove);
+    assert_eq!(after_remove.package(&state.oak), None);
+    assert!(state
+        .oak
+        .orphan_root()
+        .files(&state.oak)
+        .contains(&after_remove));
+    assert_eq!(after_remove.contents(&state.oak), "editor <- 2\n");
+
+    // Re-add the same folder. The file snaps back into pkg.files with
+    // the same entity and the editor content carries over (the scan's
+    // disk snapshot doesn't overwrite).
+    let params = folders_change(vec![folder_for(tmp.path())], vec![]);
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    let after_readd = state.oak.file_by_url(&url_id).unwrap();
+    assert_eq!(file_before, after_readd);
+    assert!(after_readd.package(&state.oak).is_some());
+    assert_eq!(after_readd.contents(&state.oak), "editor <- 2\n");
+    // `upsert_root_file` cleaned the orphan reference.
+    assert!(!state
+        .oak
+        .orphan_root()
+        .files(&state.oak)
+        .contains(&after_readd));
 }

@@ -60,7 +60,9 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// - Paths already present as a `Root`: untouched. No fs walk, no
     ///   salsa churn.
+    ///
     /// - New paths: scanned and added.
+    ///
     /// - Removed paths: their `Root` is dropped and the contained `File`
     ///   and `Package` entities move to [`oak_db::StaleRoot`] so that
     ///   a later call that brings the same path back reuses the same
@@ -70,15 +72,19 @@ pub trait DbScan: Db + DbInputs {
     /// `.libPaths()` precedence.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
 
-    /// Scan each workspace path and register the result under `WorkspaceRoots`.
-    /// Each path becomes a `Workspace` root with its discovered packages
-    /// (`DESCRIPTION` files at any depth, honouring `.gitignore`) and top-level
-    /// R scripts. Existing `Root` entities at each path are reused.
+    /// Reconcile `WorkspaceRoots` to exactly `paths`.
     ///
-    /// TODO(scan): rename to `set_workspace_paths` and adopt the diff-based
-    /// reconciliation pattern that `set_library_paths` uses (untouched /
-    /// scanned / evicted-to-stale).
-    fn scan_workspace_paths(&mut self, paths: &[PathBuf]);
+    /// - Paths already present as a `Root`: untouched. No fs walk, no salsa
+    ///   churn. The file watcher handles in-folder changes.
+    ///
+    /// - New paths: scanned (`DESCRIPTION` files at any depth, honouring
+    ///   `.gitignore`, plus top-level R scripts) and added.
+    ///
+    /// - Removed paths: their `Root` is evicted. Files whose URLs are in
+    ///   `editor_owned` move to [`oak_db::OrphanRoot`] (analysis-visible: the
+    ///   buffer is still open). Everything else moves to [`oak_db::StaleRoot`]
+    ///   for entity reuse if the path comes back.
+    fn set_workspace_paths(&mut self, paths: &[PathBuf], editor_owned: &HashSet<UrlId>);
 
     /// Rescan one workspace root. Used as the coarse fallback when
     /// `DESCRIPTION` events change the package classification of a directory.
@@ -122,8 +128,8 @@ impl<DB: Db + DbInputs> DbScan for DB {
         crate::library::set_library_paths(self, paths);
     }
 
-    fn scan_workspace_paths(&mut self, paths: &[PathBuf]) {
-        crate::workspace::scan_workspace_paths(self, paths);
+    fn set_workspace_paths(&mut self, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
+        crate::workspace::set_workspace_paths(self, paths, editor_owned);
     }
 
     fn rescan_workspace_root(&mut self, root: Root) {

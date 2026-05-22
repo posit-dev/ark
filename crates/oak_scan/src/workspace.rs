@@ -1,13 +1,15 @@
-//! Workspace scanner. Drives `WorkspaceRoots` from the editor's open
-//! folders.
+//! Workspace scanner. Drives `WorkspaceRoots` from the editor's open folders.
 //!
-//! For each workspace path, walks the directory tree (honouring `.gitignore`),
-//! discovers packages via `DESCRIPTION` files at any depth, and registers them
-//! under a `Workspace` root. R files outside any package directory land in
-//! `root.scripts`. Existing `Root`, `Package`, and `File` entities are reused
-//! where possible (see [`crate::inputs`]).
+//! [`set_workspace_paths`] is declarative: it reconciles the live set of
+//! workspace roots to exactly the paths it's given. Unchanged paths are left
+//! alone (the watcher handles in-folder changes via
+//! [`rescan_workspace_root`]). Removed paths are evicted; their files route
+//! to `OrphanRoot` if editor-owned, otherwise to `StaleRoot` for entity reuse
+//! on re-add. New paths are scanned: `DESCRIPTION` files at any depth
+//! (honouring `.gitignore`), plus top-level R scripts.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -22,39 +24,58 @@ use salsa::Setter;
 use crate::inputs::RootExt;
 use crate::packages::scan_workspace;
 
-/// Scan each workspace path and register the result under
-/// `WorkspaceRoots`. Called through
-/// [`crate::DbExt::scan_workspace_paths`].
-pub(crate) fn scan_workspace_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf]) {
-    let existing: HashMap<UrlId, Root> = db
+/// Reconcile `WorkspaceRoots` to exactly `paths`. Called through
+/// [`crate::DbExt::set_workspace_paths`].
+pub(crate) fn set_workspace_paths<DB: Db + DbInputs>(
+    db: &mut DB,
+    paths: &[PathBuf],
+    editor_owned: &HashSet<UrlId>,
+) {
+    let new: Vec<(PathBuf, UrlId)> = paths
+        .iter()
+        .filter_map(|p| {
+            let url = UrlId::from_file_path(p).ok()?;
+            Some((p.clone(), url))
+        })
+        .collect();
+    let new_urls: HashSet<UrlId> = new.iter().map(|(_, u)| u.clone()).collect();
+
+    let old: HashMap<UrlId, Root> = db
         .workspace_roots()
         .roots(db)
         .iter()
         .map(|r| (r.path(db).clone(), *r))
         .collect();
 
-    let mut roots = Vec::with_capacity(paths.len());
-    for path in paths {
-        match scan_workspace_path(db, path, &existing) {
-            Some(root) => roots.push(root),
-            None => log::warn!("Skipped workspace path: {}", path.display()),
+    // Evict roots not in the new set. Editor-owned files survive in
+    // `OrphanRoot` so their buffers stay analysable. Everything else goes
+    // to `StaleRoot` for entity reuse on re-add.
+    for (old_url, &old_root) in &old {
+        if !new_urls.contains(old_url) {
+            old_root.set_stale(db, Some(editor_owned));
         }
     }
-    db.workspace_roots().set_roots(db).to(roots);
+
+    // Build the new roots list: reuse the existing `Root` for unchanged paths
+    // (no rescan, the watcher is the path for in-folder changes), scan the
+    // rest.
+    let mut new_roots = Vec::with_capacity(new.len());
+    for (path, url) in new {
+        let root = match old.get(&url) {
+            Some(&r) => r,
+            None => scan_new_workspace_path(db, &path, url),
+        };
+        new_roots.push(root);
+    }
+    db.workspace_roots().set_roots(db).to(new_roots);
 }
 
-fn scan_workspace_path<DB: Db + DbInputs>(
-    db: &mut DB,
-    path: &Path,
-    existing: &HashMap<UrlId, Root>,
-) -> Option<Root> {
-    let url = UrlId::from_file_path(path).ok()?;
-    let root = match existing.get(&url) {
-        Some(&r) => r,
-        None => Root::new(db, url, RootKind::Workspace, Vec::new(), Vec::new()),
-    };
+/// Initial scan of a path that wasn't previously a workspace root. Walks the
+/// directory tree, calls `set_package` per discovered package, sets scripts.
+fn scan_new_workspace_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId) -> Root {
+    let root = Root::new(db, url, RootKind::Workspace, Vec::new(), Vec::new());
     rescan_into(db, root, path);
-    Some(root)
+    root
 }
 
 /// Re-run the workspace scan against an existing root. Used as the
