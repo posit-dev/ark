@@ -23,6 +23,7 @@ use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
+use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
@@ -414,6 +415,31 @@ pub(crate) fn did_change_watched_files(
         .collect();
 
     state.oak.apply_watcher_events(events, &editor_owned);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_workspace_folders(
+    params: DidChangeWorkspaceFoldersParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let removed: HashSet<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+    state.workspace.folders.retain(|uri| !removed.contains(uri));
+
+    for folder in params.event.added {
+        if !state.workspace.folders.contains(&folder.uri) {
+            state.workspace.folders.push(folder.uri);
+        }
+    }
+
+    let workspace_paths: Vec<PathBuf> = state
+        .workspace
+        .folders
+        .iter()
+        .filter_map(|uri| uri.to_file_path().ok())
+        .collect();
+    state.oak.scan_workspace_paths(&workspace_paths);
+
     Ok(())
 }
 

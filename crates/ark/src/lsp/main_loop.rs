@@ -298,8 +298,8 @@ impl GlobalState {
                         LspNotification::Initialized(_params) => {
                             handlers::handle_initialized(&self.client, &self.lsp_state).await?;
                         },
-                        LspNotification::DidChangeWorkspaceFolders(_params) => {
-                            // TODO: Restart indexer with new folders.
+                        LspNotification::DidChangeWorkspaceFolders(params) => {
+                            state_handlers::did_change_workspace_folders(params, &mut self.world)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;

@@ -12,15 +12,18 @@ use oak_db::Db;
 use oak_db::DbInputs;
 use oak_scan::DbExt;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
+use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FileEvent;
 use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::WorkspaceFolder;
+use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use crate::lsp::document::Document;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_watched_files;
+use crate::lsp::state_handlers::did_change_workspace_folders;
 use crate::lsp::state_handlers::effective_workspace_uris;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
@@ -44,6 +47,10 @@ fn event(path: &Path, typ: FileChangeType) -> FileEvent {
 
 fn workspace_state(workspace: &Path) -> WorldState {
     let mut state = WorldState::default();
+    state
+        .workspace
+        .folders
+        .push(Url::from_file_path(workspace).unwrap());
     state.oak.scan_workspace_paths(&[workspace.to_path_buf()]);
     state
 }
@@ -341,4 +348,105 @@ fn test_effective_workspace_uris_single_file_mode() {
         ..Default::default()
     };
     assert!(effective_workspace_uris(&params).is_empty());
+}
+
+fn folders_change(
+    added: Vec<WorkspaceFolder>,
+    removed: Vec<WorkspaceFolder>,
+) -> DidChangeWorkspaceFoldersParams {
+    DidChangeWorkspaceFoldersParams {
+        event: WorkspaceFoldersChangeEvent { added, removed },
+    }
+}
+
+fn folder_for(path: &Path) -> WorkspaceFolder {
+    WorkspaceFolder {
+        uri: Url::from_file_path(path).unwrap(),
+        name: String::new(),
+    }
+}
+
+#[test]
+fn test_did_change_workspace_folders_adds_new_folder() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    write_package(&first.path().join("pkg1"), "pkg1", &[]);
+    write_package(&second.path().join("pkg2"), "pkg2", &[]);
+
+    let mut state = workspace_state(first.path());
+    assert_eq!(state.workspace.folders.len(), 1);
+    assert_eq!(state.oak.workspace_roots().roots(&state.oak).len(), 1);
+
+    let params = folders_change(vec![folder_for(second.path())], vec![]);
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    assert_eq!(state.workspace.folders.len(), 2);
+    let roots = state.oak.workspace_roots().roots(&state.oak).clone();
+    assert_eq!(roots.len(), 2);
+    // Existing root stays first, new one appended.
+    assert_eq!(roots[0].packages(&state.oak)[0].name(&state.oak), "pkg1");
+    assert_eq!(roots[1].packages(&state.oak)[0].name(&state.oak), "pkg2");
+}
+
+#[test]
+fn test_did_change_workspace_folders_removes_folder() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    write_package(&first.path().join("pkg1"), "pkg1", &[]);
+    write_package(&second.path().join("pkg2"), "pkg2", &[]);
+
+    let mut state = WorldState::default();
+    state.workspace.folders.push(Url::from_file_path(first.path()).unwrap());
+    state.workspace.folders.push(Url::from_file_path(second.path()).unwrap());
+    state.oak.scan_workspace_paths(&[
+        first.path().to_path_buf(),
+        second.path().to_path_buf(),
+    ]);
+    assert_eq!(state.oak.workspace_roots().roots(&state.oak).len(), 2);
+
+    let params = folders_change(vec![], vec![folder_for(first.path())]);
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    assert_eq!(state.workspace.folders.len(), 1);
+    let roots = state.oak.workspace_roots().roots(&state.oak).clone();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].packages(&state.oak)[0].name(&state.oak), "pkg2");
+}
+
+#[test]
+fn test_did_change_workspace_folders_ignores_duplicate_add() {
+    // A client that re-announces a folder that's already tracked
+    // shouldn't end up with two copies in `state.workspace.folders`
+    // or two `Root` entries in oak.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[]);
+    let mut state = workspace_state(tmp.path());
+
+    let params = folders_change(vec![folder_for(tmp.path())], vec![]);
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    assert_eq!(state.workspace.folders.len(), 1);
+    assert_eq!(state.oak.workspace_roots().roots(&state.oak).len(), 1);
+}
+
+#[test]
+fn test_did_change_workspace_folders_handles_add_and_remove_in_one_event() {
+    // The LSP sends both `added` and `removed` in a single event when the
+    // user swaps one folder for another.
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    write_package(&first.path().join("pkg1"), "pkg1", &[]);
+    write_package(&second.path().join("pkg2"), "pkg2", &[]);
+    let mut state = workspace_state(first.path());
+
+    let params = folders_change(
+        vec![folder_for(second.path())],
+        vec![folder_for(first.path())],
+    );
+    did_change_workspace_folders(params, &mut state).unwrap();
+
+    assert_eq!(state.workspace.folders.len(), 1);
+    let roots = state.oak.workspace_roots().roots(&state.oak).clone();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].packages(&state.oak)[0].name(&state.oak), "pkg2");
 }
