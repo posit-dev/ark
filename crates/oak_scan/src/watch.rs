@@ -33,6 +33,7 @@ use oak_db::Package;
 use oak_db::Root;
 use salsa::Setter;
 
+use crate::inputs::remove_from_pkg_files;
 use crate::inputs::upsert_root_file;
 use crate::inputs::FileEntry;
 use crate::packages::is_r_file;
@@ -121,11 +122,10 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
 /// React to a Created or Changed event on an R file. Idempotent: if a `File`
 /// already exists at this URL, its contents are updated and its placement is
 /// left alone. If not, the URL is classified against the current workspace
-/// roots and the new file lands in the right container (package files, root
-/// scripts, or skipped if it falls outside every workspace).
-///
-/// R files inside a package's non-`R/` subdirectories (tests/, inst/,
-/// vignettes/, ...) are skipped, matching the workspace scanner.
+/// roots and the new file lands in the right container: `pkg.files` for
+/// `<pkg>/R/*.R`, `pkg.scripts` for other R files under a package
+/// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
+/// every package. Mirrors the placement the bulk scanner would pick.
 pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId, contents: String) {
     if let Some(existing) = db.file_by_url(&url) {
         existing.set_contents(db).to(contents);
@@ -167,6 +167,13 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
                 pkg.set_files(db).to(files);
             }
         },
+        Placement::PackageScript(pkg) => {
+            let mut scripts = pkg.scripts(db).clone();
+            if !scripts.contains(&file) {
+                scripts.push(file);
+                pkg.set_scripts(db).to(scripts);
+            }
+        },
     }
 }
 
@@ -181,11 +188,7 @@ pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId) {
     };
 
     if let Some(pkg) = file.package(db) {
-        let mut files = pkg.files(db).clone();
-        if files.contains(&file) {
-            files.retain(|f| *f != file);
-            pkg.set_files(db).to(files);
-        }
+        remove_from_pkg_files(db, pkg, file);
         return;
     }
 
@@ -210,22 +213,23 @@ pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId) {
 enum Placement {
     Script(Root),
     PackageFile(Package),
+    PackageScript(Package),
 }
 
 impl Placement {
     fn package_backpointer(self) -> Option<Package> {
         match self {
             Placement::Script(_) => None,
-            Placement::PackageFile(pkg) => Some(pkg),
+            Placement::PackageFile(pkg) | Placement::PackageScript(pkg) => Some(pkg),
         }
     }
 }
 
 /// Classify a file path against the current workspace tree.
 ///
-/// Returns the placement (script container vs package container), or
-/// `None` if the file falls outside every workspace or sits in a
-/// package subdir we don't track.
+/// Returns the placement, or `None` if the file falls outside every
+/// workspace or sits in a package subdir we don't track (e.g.
+/// `<pkg>/R/subdir/` nested below the flat namespace).
 fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
     if !is_r_file(path) {
         return None;
@@ -247,19 +251,24 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
         return Some(Placement::Script(root));
     };
 
-    // Inside a package: only files directly under `<pkg>/R/` count as
-    // package source. Everything else (tests/, inst/, ...) is skipped.
-    if path.parent() != Some(&pkg_dir.join("R")) {
-        return None;
-    }
-
     let pkg_name = read_description_name(pkg_dir)?;
     let pkg = root
         .packages(db)
         .iter()
         .find(|p| p.name(db) == &pkg_name)
         .copied()?;
-    Some(Placement::PackageFile(pkg))
+
+    let r_dir = pkg_dir.join("R");
+    if path.parent() == Some(&r_dir) {
+        return Some(Placement::PackageFile(pkg));
+    }
+    if path.starts_with(&r_dir) {
+        // Nested below `<pkg>/R/`. The bulk scanner's `scan_r_files`
+        // reads only direct children of `R/`, and `scan_package_scripts`
+        // excludes anything under `R/`. The watcher matches that.
+        return None;
+    }
+    Some(Placement::PackageScript(pkg))
 }
 
 fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Root> {

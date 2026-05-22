@@ -17,7 +17,8 @@ use stdext::result::ResultExt;
 use crate::inputs::FileEntry;
 
 /// One package discovered on disk: its `DESCRIPTION`-derived metadata
-/// plus the R files under `R/`.
+/// plus the R files under `R/`, plus any package-internal R files in
+/// `tests/`, `inst/`, etc. (populated only by the workspace scanner).
 #[derive(Debug)]
 pub(crate) struct PackageDescriptor {
     /// URL of the `DESCRIPTION` file. This is the identity key for the
@@ -31,12 +32,19 @@ pub(crate) struct PackageDescriptor {
     pub name: String,
     pub version: Option<String>,
     pub namespace: Namespace,
+    /// `R/*.R` files: the package's loadable namespace.
     pub files: Vec<FileEntry>,
+    /// R files inside the package directory but outside `R/`: tests/,
+    /// inst/, vignettes/, data-raw/. They get LSP analysis but aren't
+    /// loaded with the package. Empty for library packages (the library
+    /// scanner doesn't recurse into pkg_dir for these).
+    pub scripts: Vec<FileEntry>,
     pub collation: Option<Vec<String>>,
 }
 
 /// Read a candidate package directory. Returns `None` if `DESCRIPTION`
-/// is missing or malformed.
+/// is missing or malformed. Populates `files` (R/*.R) only; `scripts`
+/// is filled by [`scan_workspace`] for workspace packages.
 pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
     let description_path = dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
@@ -57,6 +65,7 @@ pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
         version: Some(description.version),
         namespace,
         files,
+        scripts: Vec::new(),
         collation,
     })
 }
@@ -123,35 +132,60 @@ pub(crate) fn read_description_name(dir: &Path) -> Option<String> {
 /// Walk a workspace root, returning every discovered package and every
 /// top-level R script that isn't inside a package directory.
 ///
-/// A package's R/ files are scoped to `{pkg_dir}/R/*.R`. R files that fall
-/// inside any discovered package directory but outside its `R/` (e.g. tests/,
-/// vignettes/, inst/) are excluded from `scripts`. Everything else with an `.R`
-/// extension becomes a top-level script on the workspace root.
+/// For each package:
+/// - `pkg.files` is `{pkg_dir}/R/*.R` (the loadable namespace).
+/// - `pkg.scripts` is every other `.R` file under `pkg_dir/` (tests/,
+///   inst/, vignettes/, data-raw/, etc.).
 ///
-/// TODO(scan): Package-internal R files outside `R/` (tests/, vignettes/,
-/// inst/, data-raw/) are currently dropped on the floor. Plan: add
-/// `Package.scripts: Vec<File>` to oak_db so they get LSP analysis. Placement
-/// invariant becomes "file.package = Some(pkg) -> file in pkg.files OR
-/// pkg.scripts"; `file_by_url` walks both. Later refinement: a `Script::kind`
-/// enum (testthat / vignette / ...) so analyses don't path-match.
+/// Everything else with an `.R` extension becomes a top-level script on
+/// the workspace root.
 ///
 /// If two `DESCRIPTION` files in the workspace declare the same `Package:`
 /// name, the one whose directory sorts first wins and the rest are dropped with
-/// a warn log. See [`dedup_packages_by_name`] for the rationale and the
-/// long-term plan.
+/// a warn log. See [`dedup_packages_by_name`] for the rationale.
 pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageDescriptor>, Vec<FileEntry>) {
     let mut description_dirs = collect_description_dirs(root);
     description_dirs.sort();
 
     let pairs: Vec<(PathBuf, PackageDescriptor)> = description_dirs
         .iter()
-        .filter_map(|dir| read_package(dir).map(|pkg| (dir.clone(), pkg)))
+        .filter_map(|dir| {
+            read_package(dir).map(|mut pkg| {
+                pkg.scripts = scan_package_scripts(dir);
+                (dir.clone(), pkg)
+            })
+        })
         .collect();
 
     let packages = dedup_packages_by_name(pairs);
     let scripts = collect_scripts(root, &description_dirs);
 
     (packages, scripts)
+}
+
+/// Walk a package directory, returning every `.R` file inside it that's
+/// not in `pkg_dir/R/`. R/ files are owned by [`PackageDescriptor::files`];
+/// everything else (tests/, inst/, vignettes/, data-raw/) lands here.
+fn scan_package_scripts(pkg_dir: &Path) -> Vec<FileEntry> {
+    let mut scripts = Vec::new();
+    let r_dir = pkg_dir.join("R");
+    for entry in workspace_walker(pkg_dir).flatten() {
+        let path = entry.path();
+        if !is_r_file(path) {
+            continue;
+        }
+        if path.starts_with(&r_dir) {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(url) = UrlId::from_file_path(path) else {
+            continue;
+        };
+        scripts.push(FileEntry { url, contents });
+    }
+    scripts
 }
 
 /// Keep the first occurrence of each `Package:` name, dropping duplicates with

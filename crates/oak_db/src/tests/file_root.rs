@@ -54,6 +54,7 @@ fn test_root_dispatches_through_library_package_when_set() {
         Some("1.0.0".to_string()),
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     pkg_root.set_packages(&mut db).to(vec![pkg]);
@@ -84,6 +85,7 @@ fn test_root_dispatches_through_workspace_package_when_set() {
         "mypkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

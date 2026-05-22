@@ -240,6 +240,7 @@ pub trait RootExt {
         version: Option<String>,
         namespace: Namespace,
         files: Vec<FileEntry>,
+        scripts: Vec<FileEntry>,
         collation: Option<Vec<String>>,
     ) -> Package;
 
@@ -272,6 +273,7 @@ impl RootExt for Root {
         version: Option<String>,
         namespace: Namespace,
         files: Vec<FileEntry>,
+        scripts: Vec<FileEntry>,
         collation: Option<Vec<String>>,
     ) -> Package {
         // `package_by_url()` finds the existing entity whether it's already
@@ -294,6 +296,7 @@ impl RootExt for Root {
                 version,
                 namespace,
                 Vec::new(),
+                Vec::new(),
                 collation,
             ),
         };
@@ -302,8 +305,13 @@ impl RootExt for Root {
             .into_iter()
             .map(|entry| upsert_root_file(db, Some(pkg), entry))
             .collect();
+        let script_entities: Vec<File> = scripts
+            .into_iter()
+            .map(|entry| upsert_root_file(db, Some(pkg), entry))
+            .collect();
 
         pkg.set_files(db).to(file_entities);
+        pkg.set_scripts(db).to(script_entities);
         pkg
     }
 
@@ -376,13 +384,24 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     File::new(db, entry.url, entry.contents, package)
 }
 
-fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
-    if !pkg.files(db).contains(&file) {
+/// Remove `file` from whichever of `pkg.files` / `pkg.scripts` holds it.
+/// Used during cross-package moves: if a file's owning package changed,
+/// the old package's containers still reference it until we drop the
+/// entry. Also used by [`watch::remove_watched_file`] when a file
+/// disappears from disk.
+pub(crate) fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
+    if pkg.files(db).contains(&file) {
+        let mut files = pkg.files(db).clone();
+        files.retain(|f| *f != file);
+        pkg.set_files(db).to(files);
         return;
     }
-    let mut files = pkg.files(db).clone();
-    files.retain(|f| *f != file);
-    pkg.set_files(db).to(files);
+
+    if pkg.scripts(db).contains(&file) {
+        let mut scripts = pkg.scripts(db).clone();
+        scripts.retain(|f| *f != file);
+        pkg.set_scripts(db).to(scripts);
+    }
 }
 
 fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {

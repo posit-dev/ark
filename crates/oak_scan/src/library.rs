@@ -92,6 +92,7 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId
             pkg.version,
             pkg.namespace,
             pkg.files,
+            pkg.scripts,
             pkg.collation,
         ));
     }

@@ -286,6 +286,7 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
         None,
         oak_package_metadata::namespace::Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
 
@@ -324,6 +325,7 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
         "pkg".to_string(),
         None,
         oak_package_metadata::namespace::Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

@@ -45,6 +45,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     root.set_packages(db).to(vec![pkg]);

@@ -400,6 +400,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, short, p1);
@@ -411,6 +412,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );
@@ -435,6 +437,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, long, p1);
@@ -446,6 +449,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );
@@ -487,6 +491,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
             url: r_url.clone(),
             contents: "disk content".to_string(),
         }],
+        Vec::new(),
         None,
     );
 
@@ -520,6 +525,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, old, p1);
@@ -537,6 +543,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

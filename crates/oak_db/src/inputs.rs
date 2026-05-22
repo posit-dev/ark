@@ -205,11 +205,23 @@ pub struct Package {
     /// package's files.
     ///
     /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`. Call this setter only through
-    /// `oak_scan`'s helpers, which keep the back-pointer and the
-    /// container in sync.
+    /// `package(db) == Some(self)`, and a file with
+    /// `package == Some(self)` must live here or in [`Self::scripts`].
+    /// Call this setter only through `oak_scan`'s helpers, which keep
+    /// the back-pointer and the container in sync.
     #[returns(ref)]
     pub files: Vec<File>,
+    /// Other R files inside the package directory that aren't part of
+    /// the loadable namespace: `tests/`, `inst/`, `vignettes/`,
+    /// `data-raw/`, etc. These get LSP analysis (parse, semantic index)
+    /// but aren't loaded with the package, so name resolution treats
+    /// them as standalone scripts that just happen to live next to the
+    /// package's code.
+    ///
+    /// **Placement invariant.** Same as [`Self::files`]: backpointer
+    /// stays `Some(self)`, file lives in one of the two containers.
+    #[returns(ref)]
+    pub scripts: Vec<File>,
     /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
     /// present. `None` when the field is absent (R defaults to
     /// alphabetical load order). Changes only when `DESCRIPTION`

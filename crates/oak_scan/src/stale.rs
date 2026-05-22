@@ -56,6 +56,7 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     let mut all_files: Vec<File> = root.scripts(db).to_vec();
     for &pkg in &packages {
         all_files.extend(pkg.files(db).iter().copied());
+        all_files.extend(pkg.scripts(db).iter().copied());
     }
 
     // Clear `file.package` first: by the time these files land in their new
@@ -105,13 +106,14 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         stale.set_packages(db).to(stale_packages);
     }
 
-    // Clear the dropped root's containers and each package's files vec.
-    // The packages themselves now live in `stale_root.packages`; keeping
+    // Clear the dropped root's containers and each package's files / scripts
+    // vec. The packages themselves now live in `stale_root.packages`. Keeping
     // their `files` populated would leave stale references that
     // `package_by_url` can resurrect with inconsistent contents.
     root.set_scripts(db).to(Vec::new());
     for &pkg in &packages {
         pkg.set_files(db).to(Vec::new());
+        pkg.set_scripts(db).to(Vec::new());
     }
     root.set_packages(db).to(Vec::new());
 }

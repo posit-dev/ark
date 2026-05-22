@@ -102,6 +102,7 @@ fn rescan_into<DB: Db + DbInputs>(db: &mut DB, root: Root, path: &Path) {
                 pkg.version,
                 pkg.namespace,
                 pkg.files,
+                pkg.scripts,
                 pkg.collation,
             )
         })

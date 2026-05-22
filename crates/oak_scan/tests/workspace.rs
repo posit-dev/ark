@@ -127,13 +127,16 @@ fn test_scan_workspace_excludes_package_r_files_from_scripts() {
 }
 
 #[test]
-fn test_scan_workspace_excludes_files_in_package_subdirs() {
-    // R files in tests/, inst/, etc. are package-internal and shouldn't
-    // surface as workspace scripts.
+fn test_scan_workspace_routes_package_subdir_r_files_to_pkg_scripts() {
+    // R files in tests/, inst/, etc. are package-internal: they don't load
+    // with the package but should still be indexed. They land in
+    // `pkg.scripts` (not `root.scripts`, not `pkg.files`).
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "test code\n").unwrap();
+    fs::create_dir_all(tmp.path().join("pkg/inst")).unwrap();
+    fs::write(tmp.path().join("pkg/inst/helper.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();
 
     db.set_workspace_paths(
@@ -141,8 +144,50 @@ fn test_scan_workspace_excludes_files_in_package_subdirs() {
         &std::collections::HashSet::new(),
     );
 
-    let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
-    assert!(scripts.is_empty());
+    let root = db.workspace_roots().roots(&db)[0];
+    assert!(root.scripts(&db).is_empty());
+    let pkg = root.packages(&db)[0];
+    // R/*.R goes to pkg.files; tests/ and inst/ go to pkg.scripts.
+    assert_eq!(pkg.files(&db).len(), 1);
+    let mut script_basenames: Vec<String> = pkg
+        .scripts(&db)
+        .iter()
+        .map(|f| {
+            f.url(&db)
+                .as_url()
+                .path()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    script_basenames.sort();
+    assert_eq!(script_basenames, vec!["helper.R", "test-foo.R"]);
+}
+
+#[test]
+fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    fs::create_dir_all(tmp.path().join("pkg/tests/testthat")).unwrap();
+    fs::write(
+        tmp.path().join("pkg/tests/testthat/test-x.R"),
+        "expect_true(TRUE)\n",
+    )
+    .unwrap();
+    let mut db = OakDatabase::new();
+    db.set_workspace_paths(
+        &[tmp.path().to_path_buf()],
+        &std::collections::HashSet::new(),
+    );
+
+    let url = UrlId::from_file_path(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
+    let file = db.file_by_url(&url).expect("script must be findable");
+    assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
+    // Package backpointer is set to the containing package.
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(file.package(&db), Some(pkg));
 }
 
 #[test]

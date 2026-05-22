@@ -68,6 +68,7 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
         None,
         Namespace::default(),
         vec![],
+        Vec::new(),
         None,
     );
     let file = File::new(&db, file_url("/proj/R/a.R"), "x".to_string(), Some(pkg));
@@ -81,6 +82,75 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
 
     assert!(db.orphan_root().files(&db).contains(&file));
     assert_eq!(file.package(&db), None);
+    assert!(db.stale_root().packages(&db).contains(&pkg));
+}
+
+#[test]
+fn test_set_stale_routes_pkg_scripts_to_stale() {
+    // A non-editor-owned file in `pkg.scripts` (e.g. tests/test-foo.R)
+    // should go to stale on root eviction, alongside the package itself.
+    let mut db = OakDatabase::new();
+    let root = Root::new(&db, file_url("/proj"), RootKind::Workspace, vec![], vec![]);
+    let pkg = Package::new(
+        &db,
+        file_url("/proj/DESCRIPTION"),
+        "p".to_string(),
+        None,
+        Namespace::default(),
+        vec![],
+        Vec::new(),
+        None,
+    );
+    let test_file = File::new(
+        &db,
+        file_url("/proj/tests/test-foo.R"),
+        "t\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_scripts(&mut db).to(vec![test_file]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    root.set_stale(&mut db, None);
+
+    assert!(db.stale_root().files(&db).contains(&test_file));
+    assert!(!db.orphan_root().files(&db).contains(&test_file));
+    assert!(db.stale_root().packages(&db).contains(&pkg));
+}
+
+#[test]
+fn test_set_stale_routes_editor_owned_pkg_scripts_to_orphan() {
+    // An open `pkg/tests/test-foo.R` buffer should survive root eviction
+    // in orphan, with its package backpointer cleared so analysis treats
+    // it as a standalone script while the workspace is gone.
+    let mut db = OakDatabase::new();
+    let root = Root::new(&db, file_url("/proj"), RootKind::Workspace, vec![], vec![]);
+    let pkg = Package::new(
+        &db,
+        file_url("/proj/DESCRIPTION"),
+        "p".to_string(),
+        None,
+        Namespace::default(),
+        vec![],
+        Vec::new(),
+        None,
+    );
+    let test_file = File::new(
+        &db,
+        file_url("/proj/tests/test-foo.R"),
+        "t\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_scripts(&mut db).to(vec![test_file]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let mut owned = HashSet::new();
+    owned.insert(file_url("/proj/tests/test-foo.R"));
+    root.set_stale(&mut db, Some(&owned));
+
+    assert!(db.orphan_root().files(&db).contains(&test_file));
+    assert_eq!(test_file.package(&db), None);
     assert!(db.stale_root().packages(&db).contains(&pkg));
 }
 
