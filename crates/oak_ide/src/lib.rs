@@ -1,12 +1,16 @@
 mod find_references;
 mod goto_definition;
 mod identifier;
+mod rename;
 
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 pub use find_references::find_references;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
+pub use rename::prepare_rename;
+pub use rename::rename;
+pub use rename::RenameTargets;
 use url::Url;
 
 /// A cursor location in the workspace: a file and a byte offset into it.

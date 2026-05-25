@@ -2544,6 +2544,7 @@ version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
+ "anyhow",
  "assert_matches",
  "biome_rowan",
 ]
@@ -2583,6 +2584,7 @@ version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
+ "anyhow",
  "biome_rowan",
  "oak_core",
  "oak_semantic",

@@ -371,6 +371,12 @@ impl GlobalState {
                         LspRequest::References(params) => {
                             respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?;
                         },
+                        LspRequest::PrepareRename(params) => {
+                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?;
+                        },
+                        LspRequest::Rename(params) => {
+                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?;
+                        },
                         LspRequest::StatementRange(params) => {
                             respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?;
                         },

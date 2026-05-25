@@ -154,6 +154,8 @@ pub(crate) enum LspRequest {
     GotoImplementation(GotoImplementationParams),
     SelectionRange(SelectionRangeParams),
     References(ReferenceParams),
+    PrepareRename(TextDocumentPositionParams),
+    Rename(RenameParams),
     StatementRange(StatementRangeParams),
     HelpTopic(HelpTopicParams),
     OnTypeFormatting(DocumentOnTypeFormattingParams),
@@ -178,6 +180,8 @@ pub(crate) enum LspResponse {
     GotoImplementation(Option<GotoImplementationResponse>),
     SelectionRange(Option<Vec<SelectionRange>>),
     References(Option<Vec<Location>>),
+    PrepareRename(Option<PrepareRenameResponse>),
+    Rename(Option<WorkspaceEdit>),
     StatementRange(Option<StatementRangeResponse>),
     HelpTopic(Option<HelpTopicResponse>),
     OnTypeFormatting(Option<Vec<TextEdit>>),
@@ -429,6 +433,25 @@ impl LanguageServer for Backend {
             self,
             self.request(LspRequest::References(params)).await,
             LspResponse::References
+        )
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::PrepareRename(params)).await,
+            LspResponse::PrepareRename
+        )
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::Rename(params)).await,
+            LspResponse::Rename
         )
     }
 
