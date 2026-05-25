@@ -247,6 +247,41 @@ impl SemanticIndex {
         None
     }
 
+    /// All definitions reaching the use at `(scope, use_id)`, both the
+    /// local use-def map's bindings and (when the symbol may be unbound
+    /// locally) the enclosing-scope snapshot's bindings.
+    ///
+    /// `may_be_unbound = false` (use fully covered by local defs) means the
+    /// enclosing scope can't reach this use, so its bindings are deliberately
+    /// excluded. Returning only local defs in that case is what stops shadowed
+    /// uses from falsely binding to outer-scope defs of the same name.
+    pub fn reaching_definitions(
+        &self,
+        scope: ScopeId,
+        use_id: UseId,
+    ) -> impl Iterator<Item = (ScopeId, DefinitionId)> + '_ {
+        let bindings = self.use_def_map(scope).bindings_at_use(use_id);
+        let local = bindings.definitions().iter().map(move |&d| (scope, d));
+
+        let enclosing = if bindings.may_be_unbound() {
+            let symbol = self.uses(scope)[use_id].symbol();
+            self.enclosing_bindings(scope, symbol)
+        } else {
+            None
+        };
+        let enclosing_iter =
+            enclosing
+                .into_iter()
+                .flat_map(|(enclosing_scope, enclosing_bindings)| {
+                    enclosing_bindings
+                        .definitions()
+                        .iter()
+                        .map(move |&def| (enclosing_scope, def))
+                });
+
+        local.chain(enclosing_iter)
+    }
+
     /// Resolve a free variable's bindings from the enclosing scope.
     ///
     /// When a use in `scope` may be unbound (`may_be_unbound: true`), some

@@ -1,7 +1,5 @@
 use aether_syntax::RSyntaxNode;
 use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::semantic_index::Use;
-use oak_semantic::DefinitionId;
 use oak_semantic::ScopeId;
 use oak_semantic::UseId;
 use url::Url;
@@ -36,10 +34,7 @@ pub fn goto_definition(
                 focus_range: def.range(),
             }]
         },
-        Identifier::Use { scope_id, use_id } => {
-            let use_site = &index.uses(scope_id)[use_id];
-            resolve_use(index, &pos.file, scope_id, use_id, use_site)
-        },
+        Identifier::Use { scope_id, use_id } => resolve_use(index, &pos.file, scope_id, use_id),
         Identifier::NamespaceAccess { .. } => Vec::new(),
     }
 }
@@ -49,42 +44,27 @@ fn resolve_use(
     file: &Url,
     scope_id: ScopeId,
     use_id: UseId,
-    use_site: &Use,
 ) -> Vec<NavigationTarget> {
-    let symbol_name = index.symbols(scope_id).symbol(use_site.symbol()).name();
+    let symbol = index.uses(scope_id)[use_id].symbol();
+    let symbol_name = index.symbols(scope_id).symbol(symbol).name().to_string();
 
-    let local_targets = |scope, defs: &[DefinitionId]| -> Vec<NavigationTarget> {
-        defs.iter()
-            .map(|&def_id| {
-                let def = &index.definitions(scope)[def_id];
-                NavigationTarget {
-                    file: file.clone(),
-                    name: symbol_name.to_string(),
-                    full_range: def.range(),
-                    focus_range: def.range(),
-                }
-            })
-            .collect()
-    };
-
-    let bindings = index.use_def_map(scope_id).bindings_at_use(use_id);
-    let definitions = bindings.definitions();
-    if !definitions.is_empty() {
-        return local_targets(scope_id, definitions);
-    }
-
-    // Free in this scope: walk enclosing scopes (the symbol might be bound
-    // in an outer function or at file scope).
-    if let Some((enclosing_scope, enclosing_bindings)) =
-        index.enclosing_bindings(scope_id, use_site.symbol())
-    {
-        let enclosing_defs = enclosing_bindings.definitions();
-        if !enclosing_defs.is_empty() {
-            return local_targets(enclosing_scope, enclosing_defs);
-        }
-    }
-
-    // TODO(salsa): Use salsa-based resolution of file imports for external targets
-
-    Vec::new()
+    // `reaching_definitions` unions the local use-def map with the
+    // enclosing-scope snapshot when `may_be_unbound` is true. That
+    // covers the conditional-local-plus-outer-binding case where both
+    // the inner conditional def and the outer def can reach the use.
+    //
+    // TODO(salsa): when the result is empty, fall through to cross-file
+    // resolution (file imports / package exports).
+    index
+        .reaching_definitions(scope_id, use_id)
+        .map(|(scope, def_id)| {
+            let def = &index.definitions(scope)[def_id];
+            NavigationTarget {
+                file: file.clone(),
+                name: symbol_name.clone(),
+                full_range: def.range(),
+                focus_range: def.range(),
+            }
+        })
+        .collect()
 }

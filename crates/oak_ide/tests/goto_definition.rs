@@ -147,6 +147,30 @@ fn test_enclosing_scope() {
     }]);
 }
 
+#[test]
+fn test_conditional_local_falls_through_to_enclosing() {
+    // Inside `f`, `x` is conditionally defined: bindings = {inner def}
+    // with `may_be_unbound = true`. At runtime the use of `x` reaches
+    // either the inner def (when the branch ran) or the outer def (when
+    // it didn't). Goto-def should return both.
+    //
+    //  "x <- 1\nf <- function(cond) {\n  if (cond) x <- 2\n  x\n}\n"
+    //   0      7                       30           42       49
+    let source = "x <- 1\nf <- function(cond) {\n  if (cond) x <- 2\n  x\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let outer_def = source.find("x <- 1").unwrap() as u32;
+    let inner_def = source.find("x <- 2").unwrap() as u32;
+    let use_offset = source.rfind('x').unwrap() as u32;
+
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    let ranges: Vec<_> = targets.into_iter().map(|t| t.full_range).collect();
+    assert!(ranges.contains(&text_range(outer_def, outer_def + 1)));
+    assert!(ranges.contains(&text_range(inner_def, inner_def + 1)));
+    assert_eq!(ranges.len(), 2);
+}
+
 // --- Member access (`$`) ---
 
 #[test]
