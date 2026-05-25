@@ -222,12 +222,12 @@ fn test_resolve_symbol_in_scope() {
     let inner = ScopeId::from(1);
 
     // `y` resolves in the function scope
-    let (scope, _) = index.resolve("y", inner).unwrap();
+    let (scope, _, _) = index.resolve("y", inner).unwrap();
     assert_eq!(scope, inner);
 
     // `x` resolves in the file scope
     let file = ScopeId::from(0);
-    let (scope, _) = index.resolve("x", inner).unwrap();
+    let (scope, _, _) = index.resolve("x", inner).unwrap();
     assert_eq!(scope, file);
 
     // `z` doesn't resolve
@@ -241,11 +241,11 @@ fn test_resolve_prefers_inner_scope() {
     let fun = ScopeId::from(1);
 
     // From function scope, `x` resolves to the function's own `x`
-    let (scope, _) = index.resolve("x", fun).unwrap();
+    let (scope, _, _) = index.resolve("x", fun).unwrap();
     assert_eq!(scope, fun);
 
     // From file scope, `x` resolves to file's `x`
-    let (scope, _) = index.resolve("x", file).unwrap();
+    let (scope, _, _) = index.resolve("x", file).unwrap();
     assert_eq!(scope, file);
 }
 

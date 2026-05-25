@@ -109,7 +109,7 @@ impl<'db> File {
         // `exports()` orders bindings in source order so steps 2/3 pick the
         // last winner between `<-` and a same-name `source()`.
         let file_scope = ScopeId::from(0);
-        if let Some((binding_scope, def_id)) = index.resolve(&name, use_scope) {
+        if let Some((binding_scope, def_id, _def)) = index.resolve(&name, use_scope) {
             if binding_scope != file_scope {
                 return Some(self.intern_definition(
                     db,

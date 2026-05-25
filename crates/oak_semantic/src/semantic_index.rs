@@ -208,10 +208,14 @@ impl SemanticIndex {
     }
 
     /// Resolve a name starting from `scope`, walking up the scope chain.
-    /// Returns the scope that owns the binding and the `DefinitionId` of
-    /// the first matching [`IndexDefinition`] in that scope (source-order
-    /// first), so callers can fetch kind/range without a second lookup.
-    pub fn resolve(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, DefinitionId)> {
+    /// Returns the scope that owns the binding, the `DefinitionId` of the
+    /// first matching [`Definition`] in that scope (source-order first),
+    /// and a borrow of the definition itself.
+    pub fn resolve(
+        &self,
+        name: &str,
+        scope: ScopeId,
+    ) -> Option<(ScopeId, DefinitionId, &Definition)> {
         for ancestor in self.ancestor_scopes(scope) {
             let Some(symbol_id) = self.symbol_tables[ancestor].id(name) else {
                 continue;
@@ -224,21 +228,22 @@ impl SemanticIndex {
                 continue;
             }
 
-            // `IS_BOUND` iff at least one `IndexDefinition` was recorded for
+            // `IS_BOUND` iff at least one `Definition` was recorded for
             // this symbol. The builder maintains this in lockstep, so the
             // panic below is unreachable.
-            let def_id = match self.definitions[ancestor]
+            let (def_id, def) = match self.definitions[ancestor]
                 .iter()
-                .find_map(|(id, d)| (d.symbol() == symbol_id).then_some(id))
+                .find(|(_id, d)| d.symbol() == symbol_id)
             {
-                Some(id) => id,
+                Some(pair) => pair,
                 None => unreachable!(
                     "IS_BOUND symbol {name:?} in scope {ancestor:?} has no \
-                    IndexDefinition: oak_semantic builder invariant violated"
+                    Definition: oak_semantic builder invariant violated"
                 ),
             };
-            return Some((ancestor, def_id));
+            return Some((ancestor, def_id, def));
         }
+
         None
     }
 
