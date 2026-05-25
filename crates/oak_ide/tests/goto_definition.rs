@@ -4,6 +4,7 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_ide::goto_definition;
+use oak_ide::FilePosition;
 use oak_ide::NavigationTarget;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::SemanticIndex;
@@ -29,6 +30,13 @@ fn offset(n: u32) -> TextSize {
     TextSize::from(n)
 }
 
+fn pos(file: &Url, n: u32) -> FilePosition {
+    FilePosition {
+        file: file.clone(),
+        offset: offset(n),
+    }
+}
+
 // --- Local resolution ---
 
 #[test]
@@ -39,7 +47,7 @@ fn test_local_simple() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(7), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -55,7 +63,7 @@ fn test_local_reassignment_shadows() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(14), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -72,7 +80,7 @@ fn test_local_conditional_returns_both() {
 
     let use_offset = source.rfind('x').unwrap() as u32;
 
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets, vec![
         NavigationTarget {
             file: file.clone(),
@@ -96,7 +104,7 @@ fn test_local_in_function() {
     let (root, idx) = parse_source(source);
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -112,7 +120,7 @@ fn test_local_parameter() {
     let (root, idx) = parse_source(source);
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -130,7 +138,7 @@ fn test_enclosing_scope() {
     let (root, idx) = parse_source(source);
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -149,7 +157,7 @@ fn test_dollar_lhs_resolves() {
     let (root, idx) = parse_source(source);
 
     // `foo` in `foo$bar` starts at offset 14
-    let targets = goto_definition(offset(14), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -166,7 +174,7 @@ fn test_dollar_rhs_no_resolution() {
     let (root, idx) = parse_source(source);
 
     // `bar` starts at offset 18
-    let targets = goto_definition(offset(18), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 18));
     assert!(targets.is_empty());
 }
 
@@ -178,7 +186,7 @@ fn test_no_use_at_offset() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(3), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 3));
     assert!(targets.is_empty());
 }
 
@@ -188,7 +196,7 @@ fn test_unresolved_symbol() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(0), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
     assert!(targets.is_empty());
 }
 
@@ -201,7 +209,7 @@ fn test_definition_site_assignment() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(0), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -217,7 +225,7 @@ fn test_definition_site_parameter() {
     let (root, idx) = parse_source(source);
 
     // Cursor on the `x` parameter name (offset 14)
-    let targets = goto_definition(offset(14), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -233,7 +241,7 @@ fn test_definition_site_for_variable() {
     let (root, idx) = parse_source(source);
 
     // Cursor on the `i` in `for (i in ...)`
-    let targets = goto_definition(offset(5), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 5));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "i".to_string(),
@@ -251,7 +259,7 @@ fn test_right_assignment_definition_site() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(5), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 5));
     assert_eq!(targets, vec![NavigationTarget {
         file: file.clone(),
         name: "x".to_string(),
@@ -267,7 +275,7 @@ fn test_right_assignment_use_resolves() {
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
-    let targets = goto_definition(offset(7), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -288,7 +296,7 @@ fn test_super_assignment_resolves_in_enclosing() {
 
     // `x` use in `g` body
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].name, "x");
     assert_eq!(targets[0].file, file);
@@ -303,7 +311,7 @@ fn test_super_assignment_definition_site() {
 
     // `x` at offset 20
     let def_offset = source.find("x <<-").unwrap() as u32;
-    let targets = goto_definition(offset(def_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, def_offset));
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].name, "x");
 }
@@ -318,7 +326,7 @@ fn test_string_definition() {
     let (root, idx) = parse_source(source);
 
     // Use of `foo` at offset 11
-    let targets = goto_definition(offset(11), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 11));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -338,7 +346,7 @@ fn test_deeply_nested_function() {
     let (root, idx) = parse_source(source);
 
     let use_offset = source.rfind('z').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "z".to_string(),
@@ -359,7 +367,7 @@ fn test_use_on_rhs_of_assignment() {
     // The `x` on the RHS of the second assignment. `x <- x + 1` starts at
     // offset 7, the RHS `x` is at offset 12.
     let rhs_offset = 7 + "x <- ".len() as u32;
-    let targets = goto_definition(offset(rhs_offset), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, rhs_offset));
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -378,11 +386,11 @@ fn test_namespace_access_returns_empty() {
     let (root, idx) = parse_source(source);
 
     // Cursor on `mutate` (offset 7)
-    let targets = goto_definition(offset(7), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
     assert!(targets.is_empty());
 
     // Cursor on `dplyr` (offset 0)
-    let targets = goto_definition(offset(0), &file, &root, &idx);
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
     assert!(targets.is_empty());
 }
 
@@ -398,7 +406,7 @@ fn test_namespace_classify() {
     let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     // Cursor on `mutate` (offset 7)
-    let ident = Identifier::classify(&root, &idx, offset(7));
+    let ident = Identifier::classify(&idx, &root, offset(7));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {
@@ -411,7 +419,7 @@ fn test_namespace_classify() {
     );
 
     // Cursor on `dplyr` (offset 2)
-    let ident = Identifier::classify(&root, &idx, offset(2));
+    let ident = Identifier::classify(&idx, &root, offset(2));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {
@@ -433,7 +441,7 @@ fn test_namespace_classify_triple_colon() {
     let root = parsed.syntax();
     let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
-    let ident = Identifier::classify(&root, &idx, offset(6));
+    let ident = Identifier::classify(&idx, &root, offset(6));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {
@@ -457,7 +465,7 @@ fn test_namespace_classify_in_call() {
     let root = parsed.syntax();
     let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
-    let ident = Identifier::classify(&root, &idx, offset(5));
+    let ident = Identifier::classify(&idx, &root, offset(5));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {
@@ -482,7 +490,7 @@ fn test_namespace_classify_in_extract() {
     let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     // Cursor on `bar` (offset 5) -- inside the RNamespaceExpression
-    let ident = Identifier::classify(&root, &idx, offset(5));
+    let ident = Identifier::classify(&idx, &root, offset(5));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {
@@ -495,7 +503,7 @@ fn test_namespace_classify_in_extract() {
     );
 
     // Cursor on `baz` (offset 9) -- RHS of $, not a namespace access
-    let ident = Identifier::classify(&root, &idx, offset(9));
+    let ident = Identifier::classify(&idx, &root, offset(9));
     assert_eq!(ident, None);
 }
 
@@ -510,7 +518,7 @@ fn test_namespace_classify_string_selectors() {
     let root = parsed.syntax();
     let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
-    let ident = Identifier::classify(&root, &idx, offset(7));
+    let ident = Identifier::classify(&idx, &root, offset(7));
     assert_eq!(
         ident,
         Some(Identifier::NamespaceAccess {

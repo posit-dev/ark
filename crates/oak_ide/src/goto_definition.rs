@@ -1,5 +1,4 @@
 use aether_syntax::RSyntaxNode;
-use biome_rowan::TextSize;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::Use;
 use oak_semantic::DefinitionId;
@@ -7,6 +6,7 @@ use oak_semantic::ScopeId;
 use oak_semantic::UseId;
 use url::Url;
 
+use crate::FilePosition;
 use crate::Identifier;
 use crate::NavigationTarget;
 
@@ -16,12 +16,11 @@ use crate::NavigationTarget;
 /// currently return an empty list. Cross-file resolution lives in the
 /// salsa-backed path and will be wired in later.
 pub fn goto_definition(
-    offset: TextSize,
-    file: &Url,
-    root: &RSyntaxNode,
     index: &SemanticIndex,
+    root: &RSyntaxNode,
+    pos: &FilePosition,
 ) -> Vec<NavigationTarget> {
-    let Some(ident) = Identifier::classify(root, index, offset) else {
+    let Some(ident) = Identifier::classify(index, root, pos.offset) else {
         return Vec::new();
     };
 
@@ -31,7 +30,7 @@ pub fn goto_definition(
             let name = index.symbols(scope_id).symbol(def.symbol()).name();
 
             vec![NavigationTarget {
-                file: file.clone(),
+                file: pos.file.clone(),
                 name: name.to_string(),
                 full_range: def.range(),
                 focus_range: def.range(),
@@ -39,15 +38,15 @@ pub fn goto_definition(
         },
         Identifier::Use { scope_id, use_id } => {
             let use_site = &index.uses(scope_id)[use_id];
-            resolve_use(file, index, scope_id, use_id, use_site)
+            resolve_use(index, &pos.file, scope_id, use_id, use_site)
         },
         Identifier::NamespaceAccess { .. } => Vec::new(),
     }
 }
 
 fn resolve_use(
-    file: &Url,
     index: &SemanticIndex,
+    file: &Url,
     scope_id: ScopeId,
     use_id: UseId,
     use_site: &Use,

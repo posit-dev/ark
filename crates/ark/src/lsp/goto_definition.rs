@@ -31,7 +31,11 @@ pub(crate) fn goto_definition(
 
     let index = document.semantic_index();
     let root = document.syntax()?;
-    let targets = oak_ide::goto_definition(offset, &uri, &root, &index);
+    let pos = oak_ide::FilePosition {
+        file: uri.clone(),
+        offset,
+    };
+    let targets = oak_ide::goto_definition(&index, &root, &pos);
 
     let links: Vec<_> = targets
         .into_iter()

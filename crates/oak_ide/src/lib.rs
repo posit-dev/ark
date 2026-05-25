@@ -2,9 +2,17 @@ mod goto_definition;
 mod identifier;
 
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 use url::Url;
+
+/// A cursor location in the workspace: a file and an offset into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePosition {
+    pub file: Url,
+    pub offset: TextSize,
+}
 
 /// A location in source code that the editor can navigate to.
 ///
