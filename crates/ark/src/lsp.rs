@@ -32,7 +32,7 @@ pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
 
-pub mod references;
+pub mod find_references;
 pub mod selection_range;
 pub mod signature_help;
 pub mod state;
