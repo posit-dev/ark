@@ -1,19 +1,24 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
-use anyhow::anyhow;
 use oak_ide::NavigationTarget;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
+use tower_lsp::lsp_types::Position;
+use tower_lsp::lsp_types::Range;
+use url::Url;
 
 use crate::lsp::document::Document;
+use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(crate) fn goto_definition(
     document: &Document,
     params: GotoDefinitionParams,
-    state: &WorldState,
+    _state: &WorldState,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
@@ -24,44 +29,86 @@ pub(crate) fn goto_definition(
         document.position_encoding,
     )?;
 
-    let (index, scope) = state.file_analysis(&uri, document);
+    let index = document.semantic_index();
     let root = document.syntax()?;
-    let targets = oak_ide::goto_definition(state, offset, &uri, &root, &index, &scope);
-
-    if targets.is_empty() {
-        return Ok(None);
-    }
+    let targets = oak_ide::goto_definition(offset, &uri, &root, &index);
 
     let links: Vec<_> = targets
         .into_iter()
-        .filter_map(|target| nav_target_to_link(target, state).log_err())
+        .filter_map(|target| nav_target_to_link(target, document).log_err())
         .collect();
 
-    if links.is_empty() {
-        return Ok(None);
+    if !links.is_empty() {
+        return Ok(Some(GotoDefinitionResponse::Link(links)));
     }
 
-    Ok(Some(GotoDefinitionResponse::Link(links)))
+    // Within-file resolution found nothing. Fall back to the workspace
+    // indexer for a best-effort cross-file lookup, then to a self-target
+    // (the cursor's own range) so the editor can still surface
+    // find-references for the symbol. TODO(salsa): Replace the indexer
+    // step with a proper cross-file (file imports) lookup.
+    if let Some(link) = fallback_link_at(document, position, &uri)? {
+        return Ok(Some(GotoDefinitionResponse::Link(vec![link])));
+    }
+
+    Ok(None)
+}
+
+/// Cross-file + self-target fallback. Looks up the identifier at `position`
+/// in the workspace indexer (current file first, then other files); if the
+/// indexer has nothing, returns the cursor's own range as both origin and
+/// target so the editor can still highlight the symbol. Returns `None` only
+/// when there's no node at the cursor at all.
+fn fallback_link_at(
+    document: &Document,
+    position: Position,
+    uri: &Url,
+) -> anyhow::Result<Option<LocationLink>> {
+    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let Some(node) = document.ast.root_node().find_closest_node_to_point(point) else {
+        log::warn!("Failed to find the closest node to point {point}.");
+        return Ok(None);
+    };
+
+    if node.is_identifier() {
+        let symbol = node.node_as_str(&document.contents)?;
+        if let Some((file_id, entry)) =
+            indexer::find_in_file(symbol, uri).or_else(|| indexer::find(symbol))
+        {
+            return Ok(Some(LocationLink {
+                origin_selection_range: None,
+                target_uri: file_id.as_uri().clone(),
+                target_range: entry.range,
+                target_selection_range: entry.range,
+            }));
+        }
+    }
+
+    let start = document.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = document.lsp_position_from_tree_sitter_point(node.end_position())?;
+    let range = Range { start, end };
+    Ok(Some(LocationLink {
+        origin_selection_range: Some(range),
+        target_uri: uri.clone(),
+        target_range: range,
+        target_selection_range: range,
+    }))
 }
 
 fn nav_target_to_link(
     target: NavigationTarget,
-    state: &WorldState,
+    document: &Document,
 ) -> anyhow::Result<LocationLink> {
-    let doc = if let Some(open) = state.documents.get(&target.file) {
-        open
-    } else {
-        let path = target
-            .file
-            .to_file_path()
-            .map_err(|_| anyhow!("Can't convert URI to path: {}", target.file))?;
-        let contents = std::fs::read_to_string(&path)?;
-        &Document::new(&contents, None)
-    };
-
-    let target_range = to_proto::range(target.full_range, &doc.line_index, doc.position_encoding)?;
-    let target_selection_range =
-        to_proto::range(target.focus_range, &doc.line_index, doc.position_encoding)?;
+    let target_range = to_proto::range(
+        target.full_range,
+        &document.line_index,
+        document.position_encoding,
+    )?;
+    let target_selection_range = to_proto::range(
+        target.focus_range,
+        &document.line_index,
+        document.position_encoding,
+    )?;
 
     Ok(LocationLink {
         origin_selection_range: None,
@@ -71,8 +118,17 @@ fn nav_target_to_link(
     })
 }
 
-#[cfg(test)]
-mod tests {
+// Parked cross-file goto-definition tests pending the Salsa Oak wiring.
+//
+// Snapshot of the old `LegacyDb`-based suite, trimmed to the cross-file
+// cases that the within-file handler doesn't cover (collation, `source()`,
+// `library()`, NAMESPACE, package scope, base/search path). Intra-file
+// tests live in `crates/ark/src/lsp/tests/goto_definition.rs`.
+// `#[cfg(any())]` skips the block at compile time so the references to
+// deleted types (`LegacyDb`, `ExternalScope`, `ScopeLayer`, ...) stay as
+// the behavioural spec to re-implement on top of `oak_db::File::resolve_at`.
+#[cfg(any())]
+mod parked_salsa_tests {
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -117,96 +173,6 @@ mod tests {
         let mut state = WorldState::default();
         state.documents.insert(uri.clone(), doc.clone());
         state
-    }
-
-    #[test]
-    fn test_goto_definition() {
-        let code = "foo <- 42\nprint(foo)\n";
-        let doc = Document::new(code, None);
-        let uri = test_path("test.R");
-        let state = make_state(&uri, &doc);
-
-        let params = make_params(uri, 1, 6);
-
-        assert_matches!(
-            goto_definition(&doc, params, &state).unwrap(),
-            Some(GotoDefinitionResponse::Link(ref links)) => {
-                assert_eq!(
-                    links[0].target_range,
-                    lsp_types::Range {
-                        start: lsp_types::Position::new(0, 0),
-                        end: lsp_types::Position::new(0, 3),
-                    }
-                );
-            }
-        );
-    }
-
-    #[test]
-    fn test_goto_definition_prefers_local_symbol() {
-        let code = "foo <- 1\nfoo\n";
-        let doc = Document::new(code, None);
-        let uri = test_path("file.R");
-        let state = make_state(&uri, &doc);
-
-        let params = make_params(uri.clone(), 1, 0);
-
-        assert_matches!(
-            goto_definition(&doc, params, &state).unwrap(),
-            Some(GotoDefinitionResponse::Link(ref links)) => {
-                assert_eq!(links[0].target_uri, uri);
-                assert_eq!(
-                    links[0].target_range,
-                    lsp_types::Range {
-                        start: lsp_types::Position::new(0, 0),
-                        end: lsp_types::Position::new(0, 3),
-                    }
-                );
-            }
-        );
-    }
-
-    #[test]
-    fn test_goto_definition_no_use_returns_none() {
-        let code = "x <- 1\n";
-        let doc = Document::new(code, None);
-        let uri = test_path("test.R");
-        let state = make_state(&uri, &doc);
-
-        let params = make_params(uri, 0, 3);
-        let result = goto_definition(&doc, params, &state).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_goto_definition_unresolved_returns_none() {
-        let code = "foo\n";
-        let doc = Document::new(code, None);
-        let uri = test_path("test.R");
-        let state = make_state(&uri, &doc);
-
-        let params = make_params(uri, 0, 0);
-        let result = goto_definition(&doc, params, &state).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_other_file_not_visible_without_scope_chain() {
-        // file2 uses `foo` but file1's definition is not in the scope chain,
-        // so it should not resolve.
-        let doc1 = Document::new("foo <- 1\n", None);
-        let uri1 = test_path("file1.R");
-
-        let doc2 = Document::new("foo\n", None);
-        let uri2 = test_path("file2.R");
-
-        let mut state = WorldState::default();
-        state.documents.insert(uri1, doc1);
-        state.documents.insert(uri2.clone(), doc2.clone());
-
-        let params = make_params(uri2, 0, 0);
-        let result = goto_definition(&doc2, params, &state).unwrap();
-        assert_eq!(result, None);
     }
 
     #[test]

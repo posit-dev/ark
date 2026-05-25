@@ -3,11 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use oak_sources::PackageSources;
-use stdext::result::ResultExt;
-
 use crate::package::Package;
-use crate::package_definitions::PackageDefinitions;
+
+// TODO(salsa): Replace by oak_db inputs
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]
@@ -15,23 +13,13 @@ pub struct Library {
     /// Paths to library directories, i.e. what `base::libPaths()` returns.
     pub library_paths: Arc<Vec<PathBuf>>,
 
-    /// Object for loading package sources
-    ///
-    /// Stored as `dyn PackageSources` so we can easily swap in a test cache during
-    /// LSP feature testing
-    package_sources: Option<Arc<dyn PackageSources>>,
-
     packages: Arc<RwLock<HashMap<String, Option<Arc<Package>>>>>,
 }
 
 impl Library {
-    pub fn new(
-        library_paths: Vec<PathBuf>,
-        package_sources: Option<Arc<dyn PackageSources>>,
-    ) -> Self {
+    pub fn new(library_paths: Vec<PathBuf>) -> Self {
         Self {
             library_paths: Arc::new(library_paths),
-            package_sources,
             packages: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -61,18 +49,6 @@ impl Library {
             .insert(name.to_string(), pkg.clone());
 
         pkg
-    }
-
-    /// Collect all top level definitions from a package's sources
-    ///
-    /// FIXME: This is currently very expensive as it reparses the package at every call.
-    /// We expect this to be a tracked salsa function, which should memoize it
-    /// efficiently.
-    pub fn definitions(&self, name: &str) -> Option<PackageDefinitions> {
-        let package_sources = self.package_sources.as_ref()?;
-        let package = self.get(name)?;
-        let directory = package_sources.get(&package.description().name)?;
-        PackageDefinitions::load_from_directory(&directory, package.namespace()).log_err()
     }
 
     /// Insert a package in the library for testing purposes.
@@ -144,7 +120,7 @@ importFrom(pkg, baz)
         let (temp_dir, _pkg_dir) = create_temp_package(pkg_name, description, namespace);
 
         // Library should point to the temp_dir as its only library path
-        let lib = Library::new(vec![temp_dir.path().to_path_buf()], None);
+        let lib = Library::new(vec![temp_dir.path().to_path_buf()]);
 
         // First access loads from disk
         let pkg = lib.get(pkg_name).unwrap();

@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
@@ -20,8 +19,6 @@ use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_semantic::library::Library;
-use oak_sources::PackageCache;
-use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -189,7 +186,7 @@ impl GlobalState {
     ///   and auxiliary loop.
     pub(crate) fn new(
         client: Client,
-        r_home: PathBuf,
+        _r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
         // Transmission channel for the main loop events. Shared with the
@@ -219,12 +216,7 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
-        let r = harp::command::r_executable(&r_home);
-        let package_sources = r
-            .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
-            .map(|cache| Arc::new(cache) as Arc<dyn oak_sources::PackageSources>);
-
-        let library = Library::new(library_paths, package_sources);
+        let library = Library::new(library_paths);
 
         Self {
             world: WorldState::new(library),
