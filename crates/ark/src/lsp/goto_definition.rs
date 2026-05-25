@@ -31,7 +31,7 @@ pub(crate) fn goto_definition(
 
     let index = document.semantic_index();
     let root = document.syntax()?;
-    let pos = oak_ide::FilePosition {
+    let pos = oak_ide::FileOffset {
         file: uri.clone(),
         offset,
     };

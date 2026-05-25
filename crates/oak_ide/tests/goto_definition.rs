@@ -4,7 +4,7 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_ide::goto_definition;
-use oak_ide::FilePosition;
+use oak_ide::FileOffset;
 use oak_ide::NavigationTarget;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::SemanticIndex;
@@ -30,8 +30,8 @@ fn offset(n: u32) -> TextSize {
     TextSize::from(n)
 }
 
-fn pos(file: &Url, n: u32) -> FilePosition {
-    FilePosition {
+fn pos(file: &Url, n: u32) -> FileOffset {
+    FileOffset {
         file: file.clone(),
         offset: offset(n),
     }
