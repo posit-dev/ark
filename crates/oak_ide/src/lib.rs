@@ -1,23 +1,35 @@
+mod find_references;
 mod goto_definition;
 mod identifier;
 
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+pub use find_references::find_references;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 use url::Url;
 
-/// A cursor location in the workspace: a file and an offset into it.
+/// A cursor location in the workspace: a file and a byte offset into it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilePosition {
     pub file: Url,
     pub offset: TextSize,
 }
 
+/// A span in the workspace: a file and a byte range within it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRange {
+    pub file: Url,
+    pub range: TextRange,
+}
+
 /// A location in source code that the editor can navigate to.
 ///
-/// Shared result type for IDE features like goto-definition, find-references,
-/// etc. The LSP layer converts these uniformly into `LocationLink`s.
+/// Shared result type for IDE features like goto-definition, hover,
+/// etc., where the editor distinguishes the full extent of the binding
+/// from the focus (the name selection). The LSP layer converts this into
+/// `LocationLink`. For features without that distinction (find-refs,
+/// document-highlight), use `FileRange` directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
     pub file: Url,

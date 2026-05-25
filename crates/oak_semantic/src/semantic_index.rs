@@ -198,6 +198,12 @@ impl SemanticIndex {
         }
     }
 
+    /// Iterate over every scope in the file (source order, file scope first).
+    /// Mirrors ty's `scope_ids()`.
+    pub fn scopes(&self) -> impl Iterator<Item = ScopeId> + '_ {
+        self.scopes.iter().map(|(id, _)| id)
+    }
+
     /// Walk from `scope` up through ancestors to the file root. Note that
     /// `scope` itself is included in the ancestors.
     pub fn ancestor_scopes(&self, scope: ScopeId) -> AncestorsIter<'_> {
@@ -247,7 +253,7 @@ impl SemanticIndex {
         None
     }
 
-    /// All definitions that reach the use at `(scope, use_id)`.
+    /// All definitions that could reach the use at `(scope, use_id)`.
     ///
     /// The local use-def bindings always count. The enclosing-scope snapshot
     /// also counts when `may_be_unbound` is true. That happens when the local

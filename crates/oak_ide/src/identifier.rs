@@ -7,21 +7,28 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
+use oak_semantic::semantic_index::Definition;
 use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index::Use;
 use oak_semantic::DefinitionId;
 use oak_semantic::ScopeId;
 use oak_semantic::UseId;
 
+/// Semantic identity of identifier at cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Identifier {
+pub enum Identifier<'a> {
     Definition {
         scope_id: ScopeId,
         def_id: DefinitionId,
+        def: &'a Definition,
+        name: &'a str,
     },
 
     Use {
         scope_id: ScopeId,
         use_id: UseId,
+        use_site: &'a Use,
+        name: &'a str,
     },
 
     NamespaceAccess {
@@ -33,20 +40,37 @@ pub enum Identifier {
     },
 }
 
-impl Identifier {
-    pub fn classify(index: &SemanticIndex, root: &RSyntaxNode, offset: TextSize) -> Option<Self> {
+impl<'a> Identifier<'a> {
+    pub fn classify(
+        index: &'a SemanticIndex,
+        root: &RSyntaxNode,
+        offset: TextSize,
+    ) -> Option<Self> {
         let (scope_id, _) = index.scope_at(offset);
+        let symbols = index.symbols(scope_id);
 
         // `Import` definitions have empty ranges (no physical text position,
         // since `source()` injects them) so `contains()` skips them. If the
         // cursor is on the `source` symbol, the offset classifies instead as a
         // use of `source` via the check below.
-        if let Some((def_id, _def)) = index.definitions(scope_id).contains(offset) {
-            return Some(Identifier::Definition { scope_id, def_id });
+        if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
+            let name = symbols.symbol(def.symbol()).name();
+            return Some(Identifier::Definition {
+                scope_id,
+                def_id,
+                def,
+                name,
+            });
         }
 
-        if let Some((use_id, _)) = index.uses(scope_id).contains(offset) {
-            return Some(Identifier::Use { scope_id, use_id });
+        if let Some((use_id, use_site)) = index.uses(scope_id).contains(offset) {
+            let name = symbols.symbol(use_site.symbol()).name();
+            return Some(Identifier::Use {
+                scope_id,
+                use_id,
+                use_site,
+                name,
+            });
         }
 
         if let Some(namespace_access) = classify_namespace(root, offset) {
@@ -57,7 +81,7 @@ impl Identifier {
     }
 }
 
-fn classify_namespace(root: &RSyntaxNode, offset: TextSize) -> Option<Identifier> {
+fn classify_namespace<'a>(root: &RSyntaxNode, offset: TextSize) -> Option<Identifier<'a>> {
     let token = root.token_at_offset(offset).right_biased()?;
 
     let ns_expr = token

@@ -23,10 +23,7 @@ pub fn goto_definition(
     };
 
     match ident {
-        Identifier::Definition { scope_id, def_id } => {
-            let def = &index.definitions(scope_id)[def_id];
-            let name = index.symbols(scope_id).symbol(def.symbol()).name();
-
+        Identifier::Definition { def, name, .. } => {
             vec![NavigationTarget {
                 file: position.file.clone(),
                 name: name.to_string(),
@@ -34,9 +31,12 @@ pub fn goto_definition(
                 focus_range: def.range(),
             }]
         },
-        Identifier::Use { scope_id, use_id } => {
-            resolve_use(index, &position.file, scope_id, use_id)
-        },
+        Identifier::Use {
+            scope_id,
+            use_id,
+            name,
+            ..
+        } => resolve_use(index, &position.file, scope_id, use_id, name),
         Identifier::NamespaceAccess { .. } => Vec::new(),
     }
 }
@@ -46,10 +46,8 @@ fn resolve_use(
     file: &Url,
     scope_id: ScopeId,
     use_id: UseId,
+    name: &str,
 ) -> Vec<NavigationTarget> {
-    let symbol = index.uses(scope_id)[use_id].symbol();
-    let symbol_name = index.symbols(scope_id).symbol(symbol).name().to_string();
-
     // `reaching_definitions` unions the local use-def map with the
     // enclosing-scope snapshot when `may_be_unbound` is true. That
     // covers the conditional-local-plus-outer-binding case where both
@@ -63,7 +61,7 @@ fn resolve_use(
             let def = &index.definitions(scope)[def_id];
             NavigationTarget {
                 file: file.clone(),
-                name: symbol_name.clone(),
+                name: name.to_string(),
                 full_range: def.range(),
                 focus_range: def.range(),
             }
