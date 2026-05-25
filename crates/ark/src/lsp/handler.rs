@@ -5,7 +5,6 @@
 //
 //
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use amalthea::comm::server_comm::ServerStartMessage;
@@ -24,7 +23,6 @@ use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
 
 pub(crate) struct Lsp {
-    r_home: PathBuf,
     runtime: Arc<Runtime>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
@@ -33,7 +31,6 @@ pub(crate) struct Lsp {
 
 impl Lsp {
     pub(crate) fn new(
-        r_home: PathBuf,
         kernel_init_rx: BusReader<KernelInfo>,
         console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
@@ -47,7 +44,6 @@ impl Lsp {
             .unwrap();
 
         Self {
-            r_home,
             runtime: Arc::new(rt),
             kernel_init_rx,
             kernel_initialized: false,
@@ -79,11 +75,9 @@ impl ServerHandler for Lsp {
         // account for potential reconnects
         let runtime = self.runtime.clone();
 
-        let r_home = self.r_home.clone();
         let console_notification_tx = self.console_notification_tx.clone();
         spawn!("ark-lsp", move || {
             backend::start_lsp(
-                r_home,
                 runtime,
                 server_start,
                 server_started_tx,

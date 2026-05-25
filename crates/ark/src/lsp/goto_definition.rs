@@ -11,14 +11,12 @@ use url::Url;
 
 use crate::lsp::document::Document;
 use crate::lsp::indexer;
-use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
 pub(crate) fn goto_definition(
     document: &Document,
     params: GotoDefinitionParams,
-    _state: &WorldState,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;

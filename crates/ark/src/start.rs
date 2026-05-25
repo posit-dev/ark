@@ -89,7 +89,6 @@ pub fn start_kernel(
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
-        r_home.clone(),
         kernel_init_tx.add_rx(),
         console_notification_tx.clone(),
     )));

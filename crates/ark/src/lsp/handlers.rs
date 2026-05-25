@@ -278,7 +278,7 @@ pub(crate) fn handle_goto_definition(
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
 
-    Ok(goto_definition(document, params, state).log_err().flatten())
+    Ok(goto_definition(document, params).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]

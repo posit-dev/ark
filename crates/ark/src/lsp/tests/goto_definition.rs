@@ -6,7 +6,6 @@ use tower_lsp::lsp_types::GotoDefinitionResponse;
 use crate::lsp::document::Document;
 use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::indexer;
-use crate::lsp::state::WorldState;
 use crate::lsp::util::test_path;
 
 fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
@@ -20,23 +19,16 @@ fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinition
     }
 }
 
-fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
-    let mut state = WorldState::default();
-    state.documents.insert(uri.clone(), doc.clone());
-    state
-}
-
 #[test]
 fn test_goto_definition() {
     let code = "foo <- 42\nprint(foo)\n";
     let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
 
     let params = make_params(uri, 1, 6);
 
     assert_matches!(
-        goto_definition(&doc, params, &state).unwrap(),
+        goto_definition(&doc, params).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(
                 links[0].target_range,
@@ -54,12 +46,11 @@ fn test_goto_definition_prefers_local_symbol() {
     let code = "foo <- 1\nfoo\n";
     let doc = Document::new(code, None);
     let uri = test_path("file.R");
-    let state = make_state(&uri, &doc);
 
     let params = make_params(uri.clone(), 1, 0);
 
     assert_matches!(
-        goto_definition(&doc, params, &state).unwrap(),
+        goto_definition(&doc, params).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links[0].target_uri, uri);
             assert_eq!(
@@ -83,11 +74,10 @@ fn test_fallback_empty_indexer_returns_self_target() {
 
     let doc = Document::new("foo\n", None);
     let uri = test_path("file.R");
-    let state = make_state(&uri, &doc);
 
     let params = make_params(uri.clone(), 0, 0);
     assert_matches!(
-        goto_definition(&doc, params, &state).unwrap(),
+        goto_definition(&doc, params).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
             assert_eq!(links[0].target_uri, uri);
@@ -115,13 +105,9 @@ fn test_fallback_resolves_cross_file() {
     let doc2 = Document::new("foo\n", None);
     let uri2 = test_path("uses.R");
 
-    let mut state = WorldState::default();
-    state.documents.insert(uri1.clone(), doc1);
-    state.documents.insert(uri2.clone(), doc2.clone());
-
     let params = make_params(uri2, 0, 0);
     assert_matches!(
-        goto_definition(&doc2, params, &state).unwrap(),
+        goto_definition(&doc2, params).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
             assert_eq!(links[0].target_uri, uri1);
@@ -142,11 +128,10 @@ fn test_fallback_skipped_when_local_def_wins() {
     let code = "foo <- 1\nfoo\n";
     let doc = Document::new(code, None);
     let uri = test_path("main.R");
-    let state = make_state(&uri, &doc);
 
     let params = make_params(uri.clone(), 1, 0);
     assert_matches!(
-        goto_definition(&doc, params, &state).unwrap(),
+        goto_definition(&doc, params).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links[0].target_uri, uri);
             assert_eq!(
