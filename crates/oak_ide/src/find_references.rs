@@ -80,7 +80,7 @@ pub fn find_references(
 
     // Walk all uses in every scope and check for each use of the same name
     // whether its binding set intersects the target.
-    for scope_id in index.scopes() {
+    for scope_id in index.scope_ids() {
         let symbols = index.symbols(scope_id);
         let Some(symbol_id) = symbols.id(&name) else {
             // The scope doesn't have any uses for that symbol
