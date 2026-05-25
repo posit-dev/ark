@@ -247,14 +247,16 @@ impl SemanticIndex {
         None
     }
 
-    /// All definitions reaching the use at `(scope, use_id)`, both the
-    /// local use-def map's bindings and (when the symbol may be unbound
-    /// locally) the enclosing-scope snapshot's bindings.
+    /// All definitions that reach the use at `(scope, use_id)`.
     ///
-    /// `may_be_unbound = false` (use fully covered by local defs) means the
-    /// enclosing scope can't reach this use, so its bindings are deliberately
-    /// excluded. Returning only local defs in that case is what stops shadowed
-    /// uses from falsely binding to outer-scope defs of the same name.
+    /// The local use-def bindings always count. The enclosing-scope snapshot
+    /// also counts when `may_be_unbound` is true. That happens when the local
+    /// binding doesn't cover every control-flow path, so execution can fall
+    /// through to the outer scope.
+    ///
+    /// When `may_be_unbound` is false we deliberately skip the enclosing scope.
+    /// Otherwise a shadowed inner use would also bind to the outer def of the
+    /// same name.
     pub fn reaching_definitions(
         &self,
         scope: ScopeId,
