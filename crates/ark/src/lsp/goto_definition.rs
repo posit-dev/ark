@@ -6,7 +6,6 @@ use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
 use tower_lsp::lsp_types::Position;
-use tower_lsp::lsp_types::Range;
 use url::Url;
 
 use crate::lsp::document::Document;
@@ -45,10 +44,10 @@ pub(crate) fn goto_definition(
     }
 
     // Within-file resolution found nothing. Fall back to the workspace
-    // indexer for a best-effort cross-file lookup, then to a self-target
-    // (the cursor's own range) so the editor can still surface
-    // find-references for the symbol. TODO(salsa): Replace the indexer
-    // step with a proper cross-file (file imports) lookup.
+    // indexer for a best-effort cross-file lookup of the identifier at the
+    // cursor. Non-identifier cursors (operators, parens, whitespace) return
+    // `None`. TODO(salsa): Replace the indexer step with a proper cross-file
+    // (file imports) lookup.
     if let Some(link) = fallback_link_at(document, position, &uri)? {
         return Ok(Some(GotoDefinitionResponse::Link(vec![link])));
     }
@@ -56,11 +55,9 @@ pub(crate) fn goto_definition(
     Ok(None)
 }
 
-/// Cross-file + self-target fallback. Looks up the identifier at `position`
-/// in the workspace indexer (current file first, then other files); if the
-/// indexer has nothing, returns the cursor's own range as both origin and
-/// target so the editor can still highlight the symbol. Returns `None` only
-/// when there's no node at the cursor at all.
+/// Look up the identifier at `position` in the workspace indexer (current
+/// file first, then other files). Returns `None` when the cursor isn't on
+/// an identifier or the symbol isn't in the index.
 fn fallback_link_at(
     document: &Document,
     position: Position,
@@ -72,28 +69,22 @@ fn fallback_link_at(
         return Ok(None);
     };
 
-    if node.is_identifier() {
-        let symbol = node.node_as_str(&document.contents)?;
-        if let Some((file_id, entry)) =
-            indexer::find_in_file(symbol, uri).or_else(|| indexer::find(symbol))
-        {
-            return Ok(Some(LocationLink {
-                origin_selection_range: None,
-                target_uri: file_id.as_uri().clone(),
-                target_range: entry.range,
-                target_selection_range: entry.range,
-            }));
-        }
+    if !node.is_identifier() {
+        return Ok(None);
     }
 
-    let start = document.lsp_position_from_tree_sitter_point(node.start_position())?;
-    let end = document.lsp_position_from_tree_sitter_point(node.end_position())?;
-    let range = Range { start, end };
+    let symbol = node.node_as_str(&document.contents)?;
+    let Some((file_id, entry)) =
+        indexer::find_in_file(symbol, uri).or_else(|| indexer::find(symbol))
+    else {
+        return Ok(None);
+    };
+
     Ok(Some(LocationLink {
-        origin_selection_range: Some(range),
-        target_uri: uri.clone(),
-        target_range: range,
-        target_selection_range: range,
+        origin_selection_range: None,
+        target_uri: file_id.as_uri().clone(),
+        target_range: entry.range,
+        target_selection_range: entry.range,
     }))
 }
 

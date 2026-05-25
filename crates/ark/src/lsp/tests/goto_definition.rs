@@ -65,30 +65,35 @@ fn test_goto_definition_prefers_local_symbol() {
 }
 
 #[test]
-fn test_fallback_empty_indexer_returns_self_target() {
-    // doc2 uses `foo` but has no local definition, and the workspace
-    // indexer has no entry either. We expect a self-target link (the
-    // cursor's own range) so the editor can still surface
-    // find-references for the symbol.
+fn test_unbound_identifier_returns_none() {
+    // A free identifier with no local def and no indexer entry returns
+    // `None`, matching how rust-analyzer and ty handle the same case.
     let _guard = indexer::ResetIndexerGuard;
 
     let doc = Document::new("foo\n", None);
     let uri = test_path("file.R");
 
-    let params = make_params(uri.clone(), 0, 0);
-    assert_matches!(
-        goto_definition(&doc, params).unwrap(),
-        Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, uri);
-            let expected = lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(0, 3),
-            };
-            assert_eq!(links[0].target_range, expected);
-            assert_eq!(links[0].origin_selection_range, Some(expected));
-        }
-    );
+    let params = make_params(uri, 0, 0);
+    assert_eq!(goto_definition(&doc, params).unwrap(), None);
+}
+
+#[test]
+fn test_cursor_on_operator_returns_none() {
+    // Cursor on `<-` (a non-identifier token): even though the file has
+    // an identifier nearby, the operator itself doesn't resolve to
+    // anything, so the response is `None`.
+    let _guard = indexer::ResetIndexerGuard;
+
+    let other = Document::new("foo <- function() 'other'\n", None);
+    let other_uri = test_path("other.R");
+    indexer::update(&other, &other_uri).unwrap();
+
+    let doc = Document::new("foo <- 1\n", None);
+    let uri = test_path("file.R");
+
+    // Cursor on the `<` of `<-` at column 4.
+    let params = make_params(uri, 0, 4);
+    assert_eq!(goto_definition(&doc, params).unwrap(), None);
 }
 
 #[test]
