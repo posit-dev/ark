@@ -64,10 +64,14 @@ pub fn rename(
 ) -> anyhow::Result<RenameTargets> {
     let new_text = to_identifier_text(new_name)?;
 
+    if prepare_rename(index, root, pos).is_none() {
+        return Err(anyhow!("No renamable identifier at cursor"));
+    }
+
     let ranges = find_references(index, root, pos, true);
     if ranges.is_empty() {
         return Err(anyhow!(
-            "no identifier at cursor, or symbol isn't renamable from this file"
+            "Cannot rename: symbol has no local binding in this file"
         ));
     }
 

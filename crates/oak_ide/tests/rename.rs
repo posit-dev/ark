@@ -145,26 +145,27 @@ fn test_rename_reserved_word_errors() {
 
 #[test]
 fn test_rename_non_renamable_errors() {
-    // Cursor on `mutate` in `dplyr::mutate` (NamespaceAccess: returns no
-    // refs, so rename errors). TODO: if package is in the workspace we should
-    // allow renaming.
+    // Cursor on `mutate` in `dplyr::mutate` (NamespaceAccess: not a
+    // renamable identifier). TODO: if package is in the workspace we
+    // should allow renaming.
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
     let err = rename(&idx, &root, &pos(&file, 7), "x").unwrap_err();
-    assert!(err.to_string().contains("renamable") || err.to_string().contains("identifier"));
+    assert!(err.to_string().contains("renamable identifier"));
 }
 
 #[test]
 fn test_rename_unbound_use_errors() {
-    // Free variable: no local binding to rename.
+    // Free variable: classifies as a Use but has no local binding, so
+    // rename refuses rather than producing a partial edit.
     let source = "foo\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
 
     let err = rename(&idx, &root, &pos(&file, 0), "bar").unwrap_err();
-    assert!(err.to_string().contains("renamable") || err.to_string().contains("identifier"));
+    assert!(err.to_string().contains("no local binding"));
 }
 
 // --- rename: backtick canonicalization ---

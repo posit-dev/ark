@@ -14,7 +14,7 @@ use anyhow::anyhow;
 /// `Err` (a backtick can't appear inside a backtick-quoted identifier).
 pub fn to_identifier_text(name: &str) -> anyhow::Result<String> {
     if name.is_empty() {
-        return Err(anyhow!("identifier must not be empty"));
+        return Err(anyhow!("Identifier cannot be empty"));
     }
     if is_reserved(name) {
         return Err(anyhow!("`{name}` is a reserved word in R"));
@@ -23,9 +23,7 @@ pub fn to_identifier_text(name: &str) -> anyhow::Result<String> {
         return Ok(name.to_string());
     }
     if name.contains('`') {
-        return Err(anyhow!(
-            "identifier contains a backtick, which can't appear in an R identifier"
-        ));
+        return Err(anyhow!("Identifier cannot contain a backtick"));
     }
     Ok(format!("`{name}`"))
 }

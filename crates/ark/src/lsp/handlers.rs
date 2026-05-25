@@ -336,6 +336,7 @@ pub(crate) fn handle_prepare_rename(
     params: TextDocumentPositionParams,
     state: &WorldState,
 ) -> LspResult<Option<PrepareRenameResponse>> {
+    // Don't propagate errors to the frontend
     Ok(rename::prepare_rename(params, state).log_err().flatten())
 }
 
@@ -344,7 +345,9 @@ pub(crate) fn handle_rename(
     params: RenameParams,
     state: &WorldState,
 ) -> LspResult<Option<WorkspaceEdit>> {
-    Ok(rename::rename(params, state).log_err().flatten())
+    // Propagate error to the frontend (unlike `prepare_rename()`) to give
+    // actionable feedback to the user
+    Ok(rename::rename(params, state)?)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
