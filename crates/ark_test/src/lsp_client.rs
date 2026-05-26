@@ -198,6 +198,27 @@ impl LspClient {
         self.recv_response(method, id)
     }
 
+    /// Send a JSON-RPC request expecting an error response. Returns the
+    /// error message string. Panics if the response is a success or has no
+    /// `message` field.
+    #[track_caller]
+    pub fn send_request_expect_error(&mut self, method: &str, params: Value) -> String {
+        self.next_id += 1;
+        let id = self.next_id;
+
+        let mut message = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+        });
+        if !params.is_null() {
+            message["params"] = params;
+        }
+
+        self.send_raw(&message);
+        self.recv_error_response(method, id)
+    }
+
     /// Send a JSON-RPC notification (no response expected).
     pub fn send_notification(&mut self, method: &str, params: Value) {
         let mut message = json!({
@@ -261,6 +282,46 @@ impl LspClient {
                         panic!("LSP error response for `{method}`: {error}");
                     }
                     return result.unwrap_or(Value::Null);
+                },
+                LspMessage::ServerRequest {
+                    method: req_method, ..
+                } => {
+                    panic!(
+                        "Unexpected LSP server request `{req_method}` while waiting for response to `{method}`"
+                    );
+                },
+                LspMessage::Notification { diagnostics } => {
+                    if let Some(params) = diagnostics {
+                        self.diagnostics.insert(params.uri, params.diagnostics);
+                    }
+                },
+            }
+        }
+    }
+
+    /// Receive an expected error response for `id`. Returns the error
+    /// `message` field. Panics on success responses or malformed errors.
+    #[track_caller]
+    fn recv_error_response(&mut self, method: &str, id: i64) -> String {
+        loop {
+            match self.recv_any() {
+                LspMessage::Response {
+                    id: msg_id,
+                    result: _,
+                    error,
+                } => {
+                    assert_eq!(
+                        msg_id, id,
+                        "Response id mismatch: expected {id}, got {msg_id}"
+                    );
+                    let error =
+                        error.unwrap_or_else(|| panic!("Expected error response for `{method}`"));
+                    return error["message"]
+                        .as_str()
+                        .unwrap_or_else(|| {
+                            panic!("Error response for `{method}` has no message: {error}")
+                        })
+                        .to_string();
                 },
                 LspMessage::ServerRequest {
                     method: req_method, ..

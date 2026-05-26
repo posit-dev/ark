@@ -497,7 +497,12 @@ fn respond<T>(
     let out = match response {
         RequestResponse::Result(Ok(_)) => Ok(()),
         RequestResponse::Result(Err(ref error)) => {
-            Err(anyhow!("Error while handling request:\n{error:?}"))
+            // The error has already been sent to the client on `response_tx`
+            // as a jsonrpc error, so the user sees the popup. Log here at
+            // info level (with `{:?}` for the full debug format including a
+            // backtrace) so server logs keep diagnostic context.
+            lsp::log_info!("Error while handling request:\n{error:?}");
+            Ok(())
         },
         RequestResponse::Crashed(ref error) => {
             Err(anyhow!("Crashed while handling request:\n{error:?}"))

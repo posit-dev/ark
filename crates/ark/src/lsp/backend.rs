@@ -81,7 +81,10 @@ macro_rules! cast_response {
             },
             RequestResponse::Result(Err(err)) => match err {
                 LspError::JsonRpc(err) => Err(err),
-                LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err:?}"))),
+                // `{err}` (Display) prints just the message. `{err:?}` (Debug)
+                // would include the captured backtrace when `RUST_BACKTRACE`
+                // is set, which then surfaces in the client's error popup.
+                LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err}"))),
             },
             RequestResponse::Crashed(err) => {
                 // Notify user that the LSP has crashed and is no longer active
