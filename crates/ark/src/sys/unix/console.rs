@@ -28,6 +28,7 @@ use libr::R_SignalHandlers;
 use libr::R_checkActivity;
 use libr::R_runHandlers;
 use libr::R_running_as_main_program;
+use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
 use crate::console::r_busy;
@@ -96,6 +97,15 @@ pub fn setup_r(args: &Vec<String>) {
         if stdext::IS_TESTING {
             libr::set(libr::R_CStackLimit, usize::MAX);
         }
+
+        // Set for exactly 1 reason, so that `Rsleep()` on Unix will use it as the
+        // interval to call `R_CheckUserInterrupt()` (and therefore our
+        // `R_ProcessEvents()` hook) at while `Sys.sleep()` is running. This allows
+        // `debug_filter` to flush during a long sleep. Not needed on Windows because
+        // `R_wait_usec` doesn't exist there, and because `Rsleep()` regularly calls
+        // `R_ProcessEvents()` directly every 500ms (hardcoded). The test
+        // `test_adversarial_cat_before_long_sleep` fails without this.
+        libr::set(R_wait_usec, 10000);
 
         // Set up main loop
         setup_Rmainloop();
