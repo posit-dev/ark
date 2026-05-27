@@ -345,8 +345,8 @@ pub(crate) fn handle_rename(
     params: RenameParams,
     state: &WorldState,
 ) -> LspResult<Option<WorkspaceEdit>> {
-    // Propagate error to the frontend (unlike `prepare_rename()`) to give
-    // actionable feedback to the user
+    // Propagate error to the frontend to give actionable feedback to the user.
+    // All errors thrown by `rename()` must be informative for users.
     Ok(rename::rename(params, state)?)
 }
 
