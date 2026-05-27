@@ -273,7 +273,7 @@ fn test_child_scopes() {
     let index = index("f <- function(x) x\ng <- function(y) y");
     let file = ScopeId::from(0);
 
-    let children: Vec<_> = index.child_scopes(file).collect();
+    let children: Vec<_> = index.child_scope_ids(file).collect();
     assert_eq!(children.len(), 2);
 }
 
@@ -284,7 +284,7 @@ fn test_ancestor_scopes() {
     let outer = ScopeId::from(1);
     let file = ScopeId::from(0);
 
-    let ancestors: Vec<_> = index.ancestor_scopes(inner).collect();
+    let ancestors: Vec<_> = index.ancestor_scope_ids(inner).collect();
     assert_eq!(ancestors, vec![inner, outer, file]);
 }
 

@@ -161,7 +161,7 @@ impl SemanticIndex {
         // Start at the file scope
         let mut current = ScopeId::from(0);
         'outer: loop {
-            for child_id in self.child_scopes(current) {
+            for child_id in self.child_scope_ids(current) {
                 if self.scopes[child_id].range.contains(offset) {
                     current = child_id;
                     continue 'outer;
@@ -189,21 +189,26 @@ impl SemanticIndex {
     }
 
     /// Iterate direct child scopes of `scope`.
-    pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
-        let descendants = &self.scopes[scope].descendants;
-        ChildScopesIter {
+    pub fn child_scope_ids(&self, scope_id: ScopeId) -> ChildScopeIdsIter<'_> {
+        let descendants = &self.scopes[scope_id].descendants;
+        ChildScopeIdsIter {
             index: self,
             current: descendants.start,
             end: descendants.end,
         }
     }
 
+    /// Iterate over every scope in the file (source order, file scope first).
+    pub fn scope_ids(&self) -> impl Iterator<Item = ScopeId> + '_ {
+        self.scopes.iter().map(|(id, _)| id)
+    }
+
     /// Walk from `scope` up through ancestors to the file root. Note that
     /// `scope` itself is included in the ancestors.
-    pub fn ancestor_scopes(&self, scope: ScopeId) -> AncestorsIter<'_> {
-        AncestorsIter {
+    pub fn ancestor_scope_ids(&self, scope_id: ScopeId) -> AncestorScopeIdsIter<'_> {
+        AncestorScopeIdsIter {
             index: self,
-            current: Some(scope),
+            current: Some(scope_id),
         }
     }
 
@@ -216,7 +221,7 @@ impl SemanticIndex {
         name: &str,
         scope: ScopeId,
     ) -> Option<(ScopeId, DefinitionId, &Definition)> {
-        for ancestor in self.ancestor_scopes(scope) {
+        for ancestor in self.ancestor_scope_ids(scope) {
             let Some(symbol_id) = self.symbol_tables[ancestor].id(name) else {
                 continue;
             };
@@ -247,7 +252,7 @@ impl SemanticIndex {
         None
     }
 
-    /// All definitions that reach the use at `(scope, use_id)`.
+    /// All definitions that could reach the use at `(scope, use_id)`.
     ///
     /// The local use-def bindings always count. The enclosing-scope snapshot
     /// also counts when `may_be_unbound` is true. That happens when the local
@@ -259,27 +264,21 @@ impl SemanticIndex {
     /// same name.
     pub fn reaching_definitions(
         &self,
-        scope: ScopeId,
+        scope_id: ScopeId,
         use_id: UseId,
     ) -> impl Iterator<Item = (ScopeId, DefinitionId)> + '_ {
-        let bindings = self.use_def_map(scope).bindings_at_use(use_id);
-        let local = bindings.definitions().iter().map(move |&d| (scope, d));
+        let bindings = self.use_def_map(scope_id).bindings_at_use(use_id);
+        let local = bindings.definitions().iter().map(move |&d| (scope_id, d));
 
         let enclosing = if bindings.may_be_unbound() {
-            let symbol = self.uses(scope)[use_id].symbol();
-            self.enclosing_bindings(scope, symbol)
+            let symbol_id = self.uses(scope_id)[use_id].symbol();
+            self.enclosing_bindings(scope_id, symbol_id)
         } else {
             None
         };
-        let enclosing_iter =
-            enclosing
-                .into_iter()
-                .flat_map(|(enclosing_scope, enclosing_bindings)| {
-                    enclosing_bindings
-                        .definitions()
-                        .iter()
-                        .map(move |&def| (enclosing_scope, def))
-                });
+        let enclosing_iter = enclosing.into_iter().flat_map(|(scope, bindings)| {
+            bindings.definitions().iter().map(move |&def| (scope, def))
+        });
 
         local.chain(enclosing_iter)
     }
@@ -665,13 +664,13 @@ impl SemanticCall {
 
 // --- Iterators ---
 
-pub struct ChildScopesIter<'a> {
+pub struct ChildScopeIdsIter<'a> {
     index: &'a SemanticIndex,
     current: ScopeId,
     end: ScopeId,
 }
 
-impl<'a> Iterator for ChildScopesIter<'a> {
+impl<'a> Iterator for ChildScopeIdsIter<'a> {
     type Item = ScopeId;
 
     fn next(&mut self) -> Option<ScopeId> {
@@ -685,12 +684,12 @@ impl<'a> Iterator for ChildScopesIter<'a> {
     }
 }
 
-pub struct AncestorsIter<'a> {
+pub struct AncestorScopeIdsIter<'a> {
     index: &'a SemanticIndex,
     current: Option<ScopeId>,
 }
 
-impl<'a> Iterator for AncestorsIter<'a> {
+impl<'a> Iterator for AncestorScopeIdsIter<'a> {
     type Item = ScopeId;
 
     fn next(&mut self) -> Option<ScopeId> {
