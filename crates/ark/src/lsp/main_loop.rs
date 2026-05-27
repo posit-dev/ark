@@ -186,6 +186,7 @@ impl GlobalState {
     ///   and auxiliary loop.
     pub(crate) fn new(
         client: Client,
+        _r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
         // Transmission channel for the main loop events. Shared with the
