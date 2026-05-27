@@ -49,14 +49,17 @@ pub fn to_identifier_text(name: &str) -> anyhow::Result<String> {
 /// Whether `name` is a valid bare R identifier (no backticks needed).
 ///
 /// R's rule: starts with a letter or `.`, then letters, digits, `.`, or
-/// `_`. A leading `.` followed by a digit is a number literal, not an
-/// identifier (e.g. `.5`).
+/// `_`. "Letter" is Unicode-aware (matching `iswalpha` in R's UTF-8
+/// locale), so non-ASCII identifiers like `μ`, `αβ`, and `文字` are valid.
+/// Digits are ASCII-only (per `?make.names`: "only ASCII digits are
+/// considered to be digits"). A leading `.` followed by an ASCII digit
+/// is a number literal, not an identifier (e.g. `.5`).
 pub fn is_valid_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !(first.is_ascii_alphabetic() || first == '.') {
+    if !(first.is_alphabetic() || first == '.') {
         return false;
     }
     if first == '.' {
@@ -66,7 +69,7 @@ pub fn is_valid_identifier(name: &str) -> bool {
             }
         }
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    chars.all(|c| c.is_alphabetic() || c.is_ascii_digit() || c == '.' || c == '_')
 }
 
 /// R reserved words that cannot be used as identifier names. Source:
@@ -129,6 +132,21 @@ mod tests {
         assert!(!is_valid_identifier(".1foo"));
         assert!(!is_valid_identifier("foo bar"));
         assert!(!is_valid_identifier("foo-bar"));
+    }
+
+    #[test]
+    fn test_non_ascii_identifiers() {
+        // Unicode letters are valid (R's `iswalpha` in UTF-8 locale).
+        assert!(is_valid_identifier("μ"));
+        assert!(is_valid_identifier("αβ"));
+        assert!(is_valid_identifier("文字"));
+        // Mixed with ASCII and continuation chars.
+        assert!(is_valid_identifier("foo_μ"));
+        assert!(is_valid_identifier("μ2"));
+        assert!(is_valid_identifier(".μ"));
+        // `to_identifier_text` should keep these as-is, not wrap them.
+        assert_eq!(to_identifier_text("μ").unwrap(), "μ");
+        assert_eq!(to_identifier_text("αβ").unwrap(), "αβ");
     }
 
     #[test]
