@@ -48,7 +48,7 @@ pub(crate) fn find_references(
         &document.line_index,
         document.position_encoding,
     )?;
-    let pos = oak_ide::FileOffset {
+    let pos = oak_ide::FilePosition {
         file: uri.clone(),
         offset,
     };

@@ -5,11 +5,11 @@ use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::DefinitionId;
 use oak_semantic::ScopeId;
 
-use crate::FileOffset;
+use crate::FilePosition;
 use crate::FileRange;
 use crate::Identifier;
 
-/// Find all in-file references to the symbol at `pos`.
+/// Find all in-file references to the symbol at offset.
 ///
 /// The target is usually a single def. It grows when a use is reached by
 /// conditional defs, or when a free variable picks up multiple visible
@@ -30,10 +30,10 @@ use crate::Identifier;
 pub fn find_references(
     index: &SemanticIndex,
     root: &RSyntaxNode,
-    pos: &FileOffset,
+    position: &FilePosition,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let Some(ident) = Identifier::classify(index, root, pos.offset) else {
+    let Some(ident) = Identifier::classify(index, root, position.offset) else {
         return Vec::new();
     };
 
@@ -72,7 +72,7 @@ pub fn find_references(
         for &(scope_id, def_id) in &target_defs {
             let def = &index.definitions(scope_id)[def_id];
             results.push(FileRange {
-                file: pos.file.clone(),
+                file: position.file.clone(),
                 range: def.range(),
             });
         }
@@ -98,7 +98,7 @@ pub fn find_references(
                 continue;
             }
             results.push(FileRange {
-                file: pos.file.clone(),
+                file: position.file.clone(),
                 range: use_site.range(),
             });
         }
