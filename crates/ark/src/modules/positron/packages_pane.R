@@ -98,13 +98,21 @@
     as.list(version)
 }
 
-# Return the list of outdated pacakages.
+# Return the list of outdated packages with their latest available versions.
+#
+# `utils::old.packages()` queries the user's configured repositories, so
+# `ReposVer` is the authoritative latest version for this session -- it reflects
+# what an upgrade would actually fetch, which P3M (a generic upstream mirror)
+# cannot guarantee.
 #' @export
 .ps.rpc.pkg_outdated <- function() {
     outdated <- utils::old.packages()
     if (is.null(outdated) || nrow(outdated) == 0) {
         return(list())
     }
-    # Return as list to ensure it serializes as an array
-    as.list(outdated[, "Package"])
+    unname(Map(
+        list,
+        name = outdated[, "Package"],
+        latestVersion = outdated[, "ReposVer"]
+    ))
 }
