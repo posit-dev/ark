@@ -46,15 +46,12 @@ impl<'a> Identifier<'a> {
         root: &RSyntaxNode,
         offset: TextSize,
     ) -> Option<Self> {
-        let (scope_id, _) = index.scope_at(offset);
-        let symbols = index.symbols(scope_id);
-
         // `Import` definitions have empty ranges (no physical text position,
-        // since `source()` injects them) so `contains()` skips them. If the
-        // cursor is on the `source` symbol, the offset classifies instead as a
-        // use of `source` via the check below.
-        if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
-            let name = symbols.symbol(def.symbol()).name();
+        // since `source()` injects them) so `definition_at()` skips them. If
+        // the cursor is on the `source` symbol, the offset classifies instead
+        // as a use of `source` via the check below.
+        if let Some((scope_id, def_id, def)) = index.definition_at(offset) {
+            let name = index.symbols(scope_id).symbol(def.symbol()).name();
             return Some(Identifier::Definition {
                 scope_id,
                 def_id,
@@ -63,8 +60,8 @@ impl<'a> Identifier<'a> {
             });
         }
 
-        if let Some((use_id, use_site)) = index.uses(scope_id).contains(offset) {
-            let name = symbols.symbol(use_site.symbol()).name();
+        if let Some((scope_id, use_id, use_site)) = index.use_at(offset) {
+            let name = index.symbols(scope_id).symbol(use_site.symbol()).name();
             return Some(Identifier::Use {
                 scope_id,
                 use_id,
