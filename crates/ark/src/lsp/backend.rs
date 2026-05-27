@@ -81,7 +81,10 @@ macro_rules! cast_response {
             },
             RequestResponse::Result(Err(err)) => match err {
                 LspError::JsonRpc(err) => Err(err),
-                LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err:?}"))),
+                // `{err}` (Display) prints just the message. `{err:?}` (Debug)
+                // would include the captured backtrace when `RUST_BACKTRACE`
+                // is set, which then surfaces in the client's error popup.
+                LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err}"))),
             },
             RequestResponse::Crashed(err) => {
                 // Notify user that the LSP has crashed and is no longer active
@@ -154,6 +157,8 @@ pub(crate) enum LspRequest {
     GotoImplementation(GotoImplementationParams),
     SelectionRange(SelectionRangeParams),
     References(ReferenceParams),
+    PrepareRename(TextDocumentPositionParams),
+    Rename(RenameParams),
     StatementRange(StatementRangeParams),
     HelpTopic(HelpTopicParams),
     OnTypeFormatting(DocumentOnTypeFormattingParams),
@@ -178,6 +183,8 @@ pub(crate) enum LspResponse {
     GotoImplementation(Option<GotoImplementationResponse>),
     SelectionRange(Option<Vec<SelectionRange>>),
     References(Option<Vec<Location>>),
+    PrepareRename(Option<PrepareRenameResponse>),
+    Rename(Option<WorkspaceEdit>),
     StatementRange(Option<StatementRangeResponse>),
     HelpTopic(Option<HelpTopicResponse>),
     OnTypeFormatting(Option<Vec<TextEdit>>),
@@ -429,6 +436,25 @@ impl LanguageServer for Backend {
             self,
             self.request(LspRequest::References(params)).await,
             LspResponse::References
+        )
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::PrepareRename(params)).await,
+            LspResponse::PrepareRename
+        )
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::Rename(params)).await,
+            LspResponse::Rename
         )
     }
 

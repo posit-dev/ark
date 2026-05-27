@@ -3,9 +3,10 @@ use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::ReferenceContext;
 use tower_lsp::lsp_types::ReferenceParams;
 
+use super::utils::make_state;
+use super::utils::range;
 use crate::lsp::document::Document;
 use crate::lsp::find_references::find_references;
-use crate::lsp::state::WorldState;
 use crate::lsp::util::test_path;
 
 fn make_params(
@@ -24,19 +25,6 @@ fn make_params(
         },
         work_done_progress_params: Default::default(),
         partial_result_params: Default::default(),
-    }
-}
-
-fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
-    let mut state = WorldState::default();
-    state.documents.insert(uri.clone(), doc.clone());
-    state
-}
-
-fn range(start: (u32, u32), end: (u32, u32)) -> lsp_types::Range {
-    lsp_types::Range {
-        start: lsp_types::Position::new(start.0, start.1),
-        end: lsp_types::Position::new(end.0, end.1),
     }
 }
 

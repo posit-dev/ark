@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 aether_syntax.workspace = true
+anyhow.workspace = true
 biome_rowan.workspace = true
 
 [dev-dependencies]
