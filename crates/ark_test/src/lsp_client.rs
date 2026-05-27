@@ -182,19 +182,7 @@ impl LspClient {
     /// Panics if the response contains an error.
     #[track_caller]
     pub fn send_request(&mut self, method: &str, params: Value) -> Value {
-        self.next_id += 1;
-        let id = self.next_id;
-
-        let mut message = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-        });
-        if !params.is_null() {
-            message["params"] = params;
-        }
-
-        self.send_raw(&message);
+        let id = self.send_request_raw(method, params);
         self.recv_response(method, id)
     }
 
@@ -203,6 +191,13 @@ impl LspClient {
     /// `message` field.
     #[track_caller]
     pub fn send_request_expect_error(&mut self, method: &str, params: Value) -> String {
+        let id = self.send_request_raw(method, params);
+        self.recv_error_response(method, id)
+    }
+
+    /// Wire-level request send. Allocates an id, frames the message, ships
+    /// it, and returns the id so the caller can await a matching response.
+    fn send_request_raw(&mut self, method: &str, params: Value) -> i64 {
         self.next_id += 1;
         let id = self.next_id;
 
@@ -216,7 +211,7 @@ impl LspClient {
         }
 
         self.send_raw(&message);
-        self.recv_error_response(method, id)
+        id
     }
 
     /// Send a JSON-RPC notification (no response expected).
@@ -267,6 +262,33 @@ impl LspClient {
     /// `diagnostics()`. Panics on unexpected messages.
     #[track_caller]
     fn recv_response(&mut self, method: &str, id: i64) -> Value {
+        match self.recv_any_response(method, id) {
+            Ok(result) => result,
+            Err(error) => panic!("LSP error response for `{method}`: {error}"),
+        }
+    }
+
+    /// Receive an expected error response for `id`. Returns the error
+    /// `message` field. Panics on success responses or malformed errors.
+    #[track_caller]
+    fn recv_error_response(&mut self, method: &str, id: i64) -> String {
+        match self.recv_any_response(method, id) {
+            Ok(_) => panic!("Expected error response for `{method}`"),
+            Err(error) => error["message"]
+                .as_str()
+                .unwrap_or_else(|| panic!("Error response for `{method}` has no message: {error}"))
+                .to_string(),
+        }
+    }
+
+    /// Receive JSON-RPC messages until we get the response matching `id`,
+    /// then return `Ok(result)` for a success response or `Err(error)` for
+    /// an error response. Caller decides how to handle each case.
+    ///
+    /// Buffers `publishDiagnostics` notifications for later assertion via
+    /// `diagnostics()`. Panics on unexpected messages.
+    #[track_caller]
+    fn recv_any_response(&mut self, method: &str, id: i64) -> Result<Value, Value> {
         loop {
             match self.recv_any() {
                 LspMessage::Response {
@@ -278,50 +300,10 @@ impl LspClient {
                         msg_id, id,
                         "Response id mismatch: expected {id}, got {msg_id}"
                     );
-                    if let Some(error) = error {
-                        panic!("LSP error response for `{method}`: {error}");
-                    }
-                    return result.unwrap_or(Value::Null);
-                },
-                LspMessage::ServerRequest {
-                    method: req_method, ..
-                } => {
-                    panic!(
-                        "Unexpected LSP server request `{req_method}` while waiting for response to `{method}`"
-                    );
-                },
-                LspMessage::Notification { diagnostics } => {
-                    if let Some(params) = diagnostics {
-                        self.diagnostics.insert(params.uri, params.diagnostics);
-                    }
-                },
-            }
-        }
-    }
-
-    /// Receive an expected error response for `id`. Returns the error
-    /// `message` field. Panics on success responses or malformed errors.
-    #[track_caller]
-    fn recv_error_response(&mut self, method: &str, id: i64) -> String {
-        loop {
-            match self.recv_any() {
-                LspMessage::Response {
-                    id: msg_id,
-                    result: _,
-                    error,
-                } => {
-                    assert_eq!(
-                        msg_id, id,
-                        "Response id mismatch: expected {id}, got {msg_id}"
-                    );
-                    let error =
-                        error.unwrap_or_else(|| panic!("Expected error response for `{method}`"));
-                    return error["message"]
-                        .as_str()
-                        .unwrap_or_else(|| {
-                            panic!("Error response for `{method}` has no message: {error}")
-                        })
-                        .to_string();
+                    return match error {
+                        Some(err) => Err(err),
+                        None => Ok(result.unwrap_or(Value::Null)),
+                    };
                 },
                 LspMessage::ServerRequest {
                     method: req_method, ..
