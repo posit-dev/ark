@@ -107,6 +107,11 @@ pub fn find_references(
     // Defs are emitted in `target_defs` (HashSet) iteration order, which
     // is non-deterministic. Sort by start offset so callers see source
     // order regardless of how we collected results.
+    //
+    // TODO(salsa): once cross-file resolution lands, this becomes
+    // file-then-offset: current file first, then other files in some
+    // stable order (probably alphabetical by URL), with source order
+    // preserved within each file.
     results.sort_by_key(|r| r.range.start());
 
     results
