@@ -34,7 +34,7 @@ pub enum Identifier {
 }
 
 impl Identifier {
-    pub fn classify(root: &RSyntaxNode, index: &SemanticIndex, offset: TextSize) -> Option<Self> {
+    pub fn classify(index: &SemanticIndex, root: &RSyntaxNode, offset: TextSize) -> Option<Self> {
         let (scope_id, _) = index.scope_at(offset);
 
         // `Import` definitions have empty ranges (no physical text position,

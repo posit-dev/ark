@@ -2583,15 +2583,9 @@ version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
- "assert_matches",
  "biome_rowan",
- "log",
  "oak_core",
- "oak_db",
- "oak_package_metadata",
  "oak_semantic",
- "oak_sources",
- "stdext",
  "url",
 ]
 
@@ -2633,7 +2627,6 @@ dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "anyhow",
- "assert_matches",
  "biome_rowan",
  "biome_text_size",
  "itertools 0.14.0",
@@ -2642,7 +2635,6 @@ dependencies = [
  "oak_index_vec",
  "oak_package_metadata",
  "oak_semantic",
- "oak_sources",
  "rustc-hash",
  "salsa",
  "smallvec",
