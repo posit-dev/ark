@@ -16,19 +16,19 @@ use oak_semantic::UseId;
 
 /// Semantic identity of identifier at cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Identifier<'a> {
+pub enum Identifier<'index> {
     Definition {
         scope_id: ScopeId,
         def_id: DefinitionId,
-        def: &'a Definition,
-        name: &'a str,
+        def: &'index Definition,
+        name: &'index str,
     },
 
     Use {
         scope_id: ScopeId,
         use_id: UseId,
-        use_site: &'a Use,
-        name: &'a str,
+        use_site: &'index Use,
+        name: &'index str,
     },
 
     NamespaceAccess {
@@ -40,9 +40,9 @@ pub enum Identifier<'a> {
     },
 }
 
-impl<'a> Identifier<'a> {
+impl<'index> Identifier<'index> {
     pub fn classify(
-        index: &'a SemanticIndex,
+        index: &'index SemanticIndex,
         root: &RSyntaxNode,
         offset: TextSize,
     ) -> Option<Self> {
@@ -78,7 +78,7 @@ impl<'a> Identifier<'a> {
     }
 }
 
-fn classify_namespace<'a>(root: &RSyntaxNode, offset: TextSize) -> Option<Identifier<'a>> {
+fn classify_namespace<'index>(root: &RSyntaxNode, offset: TextSize) -> Option<Identifier<'index>> {
     let token = root.token_at_offset(offset).right_biased()?;
 
     let ns_expr = token
