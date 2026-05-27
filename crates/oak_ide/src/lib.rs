@@ -9,7 +9,7 @@ use url::Url;
 
 /// A cursor location in the workspace: a file and an offset into it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileOffset {
+pub struct FilePosition {
     pub file: Url,
     pub offset: TextSize,
 }

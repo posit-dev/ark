@@ -4,7 +4,7 @@ use oak_semantic::ScopeId;
 use oak_semantic::UseId;
 use url::Url;
 
-use crate::FileOffset;
+use crate::FilePosition;
 use crate::Identifier;
 use crate::NavigationTarget;
 
@@ -16,9 +16,9 @@ use crate::NavigationTarget;
 pub fn goto_definition(
     index: &SemanticIndex,
     root: &RSyntaxNode,
-    pos: &FileOffset,
+    position: &FilePosition,
 ) -> Vec<NavigationTarget> {
-    let Some(ident) = Identifier::classify(index, root, pos.offset) else {
+    let Some(ident) = Identifier::classify(index, root, position.offset) else {
         return Vec::new();
     };
 
@@ -28,13 +28,15 @@ pub fn goto_definition(
             let name = index.symbols(scope_id).symbol(def.symbol()).name();
 
             vec![NavigationTarget {
-                file: pos.file.clone(),
+                file: position.file.clone(),
                 name: name.to_string(),
                 full_range: def.range(),
                 focus_range: def.range(),
             }]
         },
-        Identifier::Use { scope_id, use_id } => resolve_use(index, &pos.file, scope_id, use_id),
+        Identifier::Use { scope_id, use_id } => {
+            resolve_use(index, &position.file, scope_id, use_id)
+        },
         Identifier::NamespaceAccess { .. } => Vec::new(),
     }
 }
