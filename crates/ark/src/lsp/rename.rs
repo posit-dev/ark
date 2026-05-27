@@ -26,7 +26,7 @@ pub(crate) fn prepare_rename(
     )?;
     let index = document.semantic_index();
     let tree = document.syntax()?;
-    let pos = oak_ide::FileOffset { file: uri, offset };
+    let pos = oak_ide::FilePosition { file: uri, offset };
 
     let Some((range, placeholder)) = oak_ide::prepare_rename(&index, &tree, &pos) else {
         return Ok(None);
@@ -55,7 +55,7 @@ pub(crate) fn rename(
     )?;
     let index = document.semantic_index();
     let root = document.syntax()?;
-    let pos = oak_ide::FileOffset {
+    let pos = oak_ide::FilePosition {
         file: uri.clone(),
         offset,
     };

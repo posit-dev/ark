@@ -5,7 +5,7 @@ use oak_core::identifier::to_identifier_text;
 use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::find_references;
-use crate::FileOffset;
+use crate::FilePosition;
 use crate::FileRange;
 use crate::Identifier;
 
@@ -19,8 +19,8 @@ pub struct RenameTargets {
     pub new_text: String,
 }
 
-/// Identify the renamable identifier at `pos`, returning its range and
-/// current (unquoted) name. Returns `None` when the cursor is on a
+/// Identify the renamable identifier at `position`, returning its range
+/// and current (unquoted) name. Returns `None` when the cursor is on a
 /// non-identifier, a `pkg::sym` namespace access, or a `$`/`@` member
 /// name (TODO(places)).
 ///
@@ -29,9 +29,9 @@ pub struct RenameTargets {
 pub fn prepare_rename(
     index: &SemanticIndex,
     root: &RSyntaxNode,
-    pos: &FileOffset,
+    position: &FilePosition,
 ) -> Option<(TextRange, String)> {
-    let ident = Identifier::classify(index, root, pos.offset)?;
+    let ident = Identifier::classify(index, root, position.offset)?;
     match ident {
         Identifier::Definition { def, name, .. } => Some((def.range(), name.to_string())),
         Identifier::Use { use_site, name, .. } => Some((use_site.range(), name.to_string())),
@@ -59,16 +59,16 @@ pub fn prepare_rename(
 pub fn rename(
     index: &SemanticIndex,
     root: &RSyntaxNode,
-    pos: &FileOffset,
+    position: &FilePosition,
     new_name: &str,
 ) -> anyhow::Result<RenameTargets> {
     let new_text = to_identifier_text(new_name)?;
 
-    if prepare_rename(index, root, pos).is_none() {
+    if prepare_rename(index, root, position).is_none() {
         return Err(anyhow!("No renamable identifier at cursor"));
     }
 
-    let ranges = find_references(index, root, pos, true);
+    let ranges = find_references(index, root, position, true);
     if ranges.is_empty() {
         return Err(anyhow!(
             "Cannot rename: symbol has no local binding in this file"

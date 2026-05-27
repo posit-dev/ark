@@ -5,7 +5,7 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_ide::prepare_rename;
 use oak_ide::rename;
-use oak_ide::FileOffset;
+use oak_ide::FilePosition;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::NoopImportsResolver;
@@ -26,8 +26,8 @@ fn file_url(name: &str) -> Url {
     Url::parse(&format!("file:///project/R/{name}")).unwrap()
 }
 
-fn pos(file: &Url, n: u32) -> FileOffset {
-    FileOffset {
+fn pos(file: &Url, n: u32) -> FilePosition {
+    FilePosition {
         file: file.clone(),
         offset: TextSize::from(n),
     }
