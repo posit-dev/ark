@@ -231,6 +231,25 @@ fn test_conditional_binding_includes_both_defs() {
     ]);
 }
 
+// --- Boundary cursor ---
+
+#[test]
+fn test_cursor_at_trailing_edge_resolves() {
+    // LSP clients often send the cursor at offset == range.end after a
+    // double-click followed by a request. `Identifier::classify` retries
+    // one byte earlier so the use is still found.
+    //
+    //  "x <- 1\nx\n"
+    //   0      7 8
+    //  use of `x` spans 7..8; cursor at offset 8 is the trailing edge.
+    let source = "x <- 1\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let refs = ranges(find_references(&idx, &root, &pos(&file, 8), true));
+    assert_eq!(refs, vec![text_range(0, 1), text_range(7, 8)]);
+}
+
 // --- No resolution ---
 
 #[test]

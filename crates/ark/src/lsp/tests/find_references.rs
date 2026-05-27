@@ -84,6 +84,30 @@ fn test_no_identifier_returns_empty() {
 }
 
 #[test]
+fn test_cursor_past_trailing_edge_resolves_intra_file() {
+    // Locally-bound symbol with cursor at the trailing edge of the use
+    // (typical for double-click then "find references"). The intra-file
+    // pass must catch this via `Identifier::classify`'s offset retry --
+    // otherwise it would fall through to the textual walk and pollute
+    // the result with cross-file noise.
+    let code = "foo <- 1\nfoo\n";
+    let doc = Document::new(code, None);
+    let uri = test_path("intra_trailing.R");
+    let state = make_state(&uri, &doc);
+
+    // Cursor at line 1, column 3: one past the last character of `foo`
+    // (which spans columns 0..3).
+    let params = make_params(uri.clone(), 1, 3, true);
+    let locs = find_references(params, &state).unwrap();
+
+    let expected: Vec<Location> = vec![
+        Location::new(uri.clone(), range((0, 0), (0, 3))),
+        Location::new(uri, range((1, 0), (1, 3))),
+    ];
+    assert_eq!(locs, expected);
+}
+
+#[test]
 fn test_cursor_past_trailing_edge_resolves_via_fallback() {
     // Some LSP clients send the cursor one past the last character of a
     // selected identifier (typical for double-click then "find references").
