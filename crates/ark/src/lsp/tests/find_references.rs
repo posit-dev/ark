@@ -247,11 +247,13 @@ fn test_fixme_cross_file_walk_on_namespace_access() {
 }
 
 #[test]
-fn test_intra_file_match_skips_cross_file_walk() {
+fn test_intra_file_match_merges_with_cross_file_walk() {
     // file1 defines + uses `foo` locally. file2 has unrelated `foo`s.
-    // Cursor on file1's def -- intra-file resolves cleanly, so the
-    // textual walk is skipped and file2's `foo`s don't pollute the
-    // result.
+    // Cursor on file1's def: intra-file resolves precisely for file1
+    // (def + use), and the cross-file textual walk picks up file2's
+    // same-name occurrences. Until cross-file resolution lands those
+    // file2 hits are unrefined and they may belong to a different
+    // binding. TODO(salsa)
     let dir = tempfile::tempdir().unwrap();
 
     let file1_path = dir.path().join("a.R");
@@ -269,8 +271,16 @@ fn test_intra_file_match_skips_cross_file_walk() {
     let params = make_params(file1_uri.clone(), 0, 0, true);
     let locs = find_references(params, &state).unwrap();
 
-    // Exactly the two file1 refs. None from file2.
-    assert_eq!(locs.len(), 2);
-    assert!(locs.iter().all(|l| l.uri == file1_uri));
-    assert!(locs.iter().all(|l| l.uri != file2_uri));
+    // file1's two precise refs from intra-file, plus file2's two textual
+    // matches. Sort for a deterministic comparison: WalkDir traversal
+    // order isn't guaranteed across platforms.
+    let mut actual = locs;
+    actual.sort_by_key(|l| (l.uri.to_string(), l.range.start));
+    let expected = vec![
+        Location::new(file1_uri.clone(), range((0, 0), (0, 3))),
+        Location::new(file1_uri, range((1, 0), (1, 3))),
+        Location::new(file2_uri.clone(), range((0, 0), (0, 3))),
+        Location::new(file2_uri, range((1, 0), (1, 3))),
+    ];
+    assert_eq!(actual, expected);
 }
