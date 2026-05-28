@@ -142,7 +142,7 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    let library = Library::new(vec![], None);
+    let library = Library::new(vec![]);
 
     // If not in a comment, return `None`
     let point = Point { row: 0, column: 1 };
@@ -201,7 +201,7 @@ fn test_roxygen_comment() {
         Namespace::default(),
     );
 
-    let library = Library::new(vec![], None);
+    let library = Library::new(vec![]);
     let library = library.insert("roxygen2", package);
 
     let point = Point { row: 0, column: 4 };
