@@ -576,6 +576,47 @@ fn test_adversarial_cat_interleaved_with_normal() {
     frontend.recv_shell_execute_reply();
 }
 
+/// For `Sys.sleep()` on Unix in particular, we must set `R_wait_usec` so that `Rsleep()`
+/// calls `R_CheckUserInterrupt()` (and therefore our `R_ProcessEvents()` hook) regularly.
+/// Otherwise, the default behavior with an unset `R_wait_usec` is to just block until the
+/// sleep is finished, and then check for interrupts once on the way out.
+/// https://github.com/wch/r-source/blob/62ee67d861d80e8985227a51dc032d8d9a8115f7/src/unix/sys-std.c#L1488
+///
+/// If R blocks without checking for interrupts, our adversarial user output of `debug at
+/// foo` won't get flushed because we won't be able to check that the `ConsoleFilter`
+/// timeout is hit (500ms in test mode).
+///
+/// On Windows, `Rsleep()` calls `R_ProcessEvents()` on a hardcoded 500ms interval, so
+/// this test should also pass there with no issues.
+/// https://github.com/wch/r-source/blob/62ee67d861d80e8985227a51dc032d8d9a8115f7/src/gnuwin32/extra.c#L363-L366
+#[test]
+fn test_adversarial_cat_before_long_sleep() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = r#"{
+        cat("debug at foo")
+        Sys.sleep(5)
+    }"#;
+
+    let start = std::time::Instant::now();
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Buffered text should arrive ~500 ms (`ConsoleFilter` timeout in test mode)
+    // after `cat()` runs, not after the 5s sleep completes.
+    frontend.assert_stream_stdout_contains("debug at foo");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "Expected 'debug at foo' to flush during Sys.sleep, but it took {elapsed:?}"
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// When stderr arrives while stdout is buffered in the filter (e.g. partial
 /// prefix match), the buffered stdout is flushed before the stderr so that
 /// ordering is preserved.

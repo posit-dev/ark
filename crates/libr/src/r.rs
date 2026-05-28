@@ -99,8 +99,6 @@ functions::generate! {
 
     pub fn R_PreserveObject(arg1: SEXP);
 
-    pub fn R_RunPendingFinalizers();
-
     pub fn R_ToplevelExec(
         fun: Option<unsafe extern "C-unwind" fn(arg1: *mut std::ffi::c_void)>,
         data: *mut std::ffi::c_void
@@ -745,9 +743,6 @@ mutable_globals::generate! {
     pub static mut R_wait_usec: i32;
 
     #[cfg(target_family = "unix")]
-    pub static mut R_PolledEvents: Option<unsafe extern "C-unwind" fn()>;
-
-    #[cfg(target_family = "unix")]
     pub static mut ptr_R_WriteConsole: Option<
         unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char, arg2: std::ffi::c_int),
     >;
@@ -782,6 +777,9 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_CleanUp: Option<unsafe extern "C-unwind" fn(std::ffi::c_int, std::ffi::c_int, std::ffi::c_int)>;
+
+    #[cfg(target_family = "unix")]
+    pub static mut ptr_R_ProcessEvents: Option<unsafe extern "C-unwind" fn()>;
 
     // -----------------------------------------------------------------------------------
     // Windows

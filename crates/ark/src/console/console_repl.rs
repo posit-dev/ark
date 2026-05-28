@@ -375,11 +375,10 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
+        let (tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             r_home,
-            tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
             comm_event_tx,
@@ -505,9 +504,12 @@ impl Console {
         // integration tests by spawning an async task. The deadlock is caused
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
-        r_task::spawn(RTask::interrupt({
+        //
+        // Use `idle_any_prompt` so DAP breakpoint invalidation still fires when
+        // the LSP signals a document change while R is paused at `browser()`.
+        r_task::spawn(RTask::idle_any_prompt({
             let dap_clone = console.debug_dap.clone();
-            async move || {
+            async move |_| {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         }));
@@ -613,7 +615,6 @@ impl Console {
 
     fn new(
         r_home: PathBuf,
-        tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
         comm_event_tx: Sender<CommEvent>,
@@ -648,7 +649,6 @@ impl Console {
             debug_dap: dap,
             debug_is_debugging: false,
             debug_stopped_reason: None,
-            tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
             pending_futures: HashMap::new(),
@@ -756,7 +756,6 @@ impl Console {
             }
             init.set(true);
 
-            let (_, tasks_interrupt_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
             let (comm_event_tx, _) = crossbeam::channel::unbounded();
@@ -769,7 +768,6 @@ impl Console {
 
             CONSOLE.set(UnsafeCell::new(Console::new(
                 PathBuf::new(),
-                tasks_interrupt_rx,
                 tasks_idle_rx,
                 tasks_idle_any_rx,
                 comm_event_tx,
@@ -852,7 +850,8 @@ impl Console {
         self.active_request.as_ref().map(|req| &req.request)
     }
 
-    // Async messages for the Console. Processed at interrupt time.
+    // Async messages for the Console. Polled at any idle prompt (top-level or
+    // browser) so DAP doc-change handling continues during debug sessions.
     async fn process_console_notifications(
         mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
         dap: Arc<Mutex<Dap>>,
@@ -1069,9 +1068,10 @@ impl Console {
     /// This handles events for:
     /// - Reception of either input replies or execute requests (as determined
     ///   by `wait_for`)
-    /// - Idle-time and interrupt-time tasks
+    /// - Idle-time tasks
     /// - Requests from the frontend (currently only used for establishing UI comm)
-    /// - R's polled events
+    /// - R's activity handlers
+    /// - R's `R_ProcessEvents()`
     fn run_event_loop(
         &mut self,
         info: &PromptInfo,
@@ -1085,15 +1085,19 @@ impl Console {
         let r_request_rx = self.r_request_rx.clone();
         let stdin_reply_rx = self.stdin_reply_rx.clone();
         let kernel_request_rx = self.kernel_request_rx.clone();
-        let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
         let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
 
-        // Process R's polled events regularly while waiting for console input.
-        // We used to poll every 200ms but that lead to visible delays for the
-        // processing of plot events, it also slowed down callbacks from the later
+        // Run activity handlers regularly while waiting for console input.
+        // We used to poll every 200ms but that slowed down callbacks from the later
         // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
-        let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
+        let activity_handlers_rx = crossbeam::channel::tick(Duration::from_millis(50));
+
+        // Run `R_ProcessEvents()` regularly out of good faith. We don't think this
+        // actually does all that much on the R side, and our use case to flush
+        // `debug_filter` isn't that critical, so we don't run them as often as activity
+        // handlers.
+        let process_events_rx = crossbeam::channel::tick(Duration::from_millis(200));
 
         // This is the main kind of message from the frontend that we are
         // expecting. We either wait for `input_reply` messages on StdIn, or for
@@ -1109,8 +1113,8 @@ impl Console {
         };
 
         let kernel_request_index = select.recv(&kernel_request_rx);
-        let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
-        let polled_events_index = select.recv(&polled_events_rx);
+        let activity_handlers_index = select.recv(&activity_handlers_rx);
+        let process_events_index = select.recv(&process_events_rx);
 
         // Only process idle at top level. We currently don't want idle tasks
         // (e.g. for srcref generation) to run when the call stack is not empty.
@@ -1131,12 +1135,13 @@ impl Console {
         loop {
             // If an interrupt was signaled and we are waiting for user
             // input (readline, or browser-as-stdin in notebook mode), we
-            // need to propagate the interrupt to the R stack. This needs
-            // to happen before `process_idle_events()`, particularly on
-            // Windows, because it calls `R_ProcessEvents()`, which checks
-            // and resets `UserBreak`, but won't actually fire the
-            // interrupt b/c we have them disabled, so it would end up
-            // swallowing the user interrupt request.
+            // need to propagate the interrupt to the R stack.
+            //
+            // This needs to happen before we `select()`, particularly for
+            // `process_events()` on Windows. `R_ProcessEvents()` will reset `UserBreak`
+            // there and call `onintr()`, but `onintr()` won't actually fire the interrupt
+            // b/c we have them disabled while inside `run_event_loop()`, so it would end
+            // up swallowing the user interrupt request.
             if matches!(wait_for, WaitFor::InputReply) && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
@@ -1206,12 +1211,6 @@ impl Console {
                     self.handle_kernel_request(req);
                 },
 
-                // An interrupt task woke us up
-                i if i == tasks_interrupt_index => {
-                    let task = oper.recv(&tasks_interrupt_rx).unwrap();
-                    self.handle_task_interrupt(task);
-                },
-
                 // An idle task woke us up
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
@@ -1224,10 +1223,16 @@ impl Console {
                     self.handle_task(task);
                 },
 
-                // It's time to run R's polled events
-                i if i == polled_events_index => {
-                    let _ = oper.recv(&polled_events_rx).unwrap();
-                    Self::process_idle_events();
+                // It's time to run activity handlers
+                i if i == activity_handlers_index => {
+                    let _ = oper.recv(&activity_handlers_rx).unwrap();
+                    Self::run_activity_handlers();
+                },
+
+                // It's time to run R's `R_ProcessEvents()`
+                i if i == process_events_index => {
+                    let _ = oper.recv(&process_events_rx).unwrap();
+                    Self::run_process_events();
                 },
 
                 i => log::error!("Unexpected index in Select: {i}"),
@@ -1947,36 +1952,30 @@ impl Console {
         }
     }
 
-    /// Handle a task at interrupt time.
+    /// Handle a task
     ///
-    /// Wrapper around `handle_task()` that does some extra logging to record
-    /// how long a task waited before being picked up by the R or ReadConsole
-    /// event loop.
-    ///
-    /// Since tasks running during interrupt checks block the R thread while
-    /// they are running, they should return very quickly. The log message helps
-    /// monitor excessively long-running tasks.
-    fn handle_task_interrupt(&mut self, mut task: QueuedRTask) {
-        if let Some(start_info) = task.start_info_mut() {
-            // Log excessive waiting before starting task
-            if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
-                start_info.span.in_scope(|| {
-                    tracing::info!(
-                        "{} milliseconds wait before running task.",
-                        start_info.start_time.elapsed().as_millis()
-                    )
-                });
-            }
+    /// The log message helps monitor excessively long-running tasks.
+    fn handle_task(&mut self, mut task: QueuedRTask) {
+        // For Sync tasks (i.e. only `r_task()`s), we want to log excessive waiting,
+        // because we are blocking the calling thread
+        if matches!(task, QueuedRTask::Sync(_)) {
+            if let Some(start_info) = task.start_info_mut() {
+                if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                    start_info.span.in_scope(|| {
+                        tracing::info!(
+                            "{} milliseconds wait before running task.",
+                            start_info.start_time.elapsed().as_millis()
+                        )
+                    });
+                }
 
-            // Reset timer, next time we'll log how long the task took
-            start_info.start_time = std::time::Instant::now();
+                // Reset timer, next time we'll log how long the task took
+                start_info.start_time = std::time::Instant::now();
+            }
         }
 
-        let finished_task_info = self.handle_task(task);
+        let finished_task_info = self.handle_task_inner(task);
 
-        // We only log long task durations in the interrupt case since we expect
-        // idle tasks to take longer. Use the tracing profiler to monitor the
-        // duration of idle tasks.
         if let Some(info) = finished_task_info {
             if info.elapsed() > std::time::Duration::from_millis(50) {
                 info.span.in_scope(|| {
@@ -1987,7 +1986,7 @@ impl Console {
     }
 
     /// Returns start information when the task has been completed
-    fn handle_task(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
+    fn handle_task_inner(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
@@ -2447,24 +2446,51 @@ impl Console {
         }
     }
 
-    /// Invoked by the R event loop
-    #[cfg(unix)]
-    fn polled_events(&mut self) {
-        // Don't process tasks until R is fully initialized
-        if !Self::is_initialized() {
-            if !self.tasks_interrupt_rx.is_empty() {
-                log::trace!("Delaying execution of interrupt task as R isn't initialized yet");
-            }
-            return;
-        }
+    fn run_activity_handlers() {
+        crate::sys::console::run_activity_handlers();
+    }
 
-        // Skip running tasks if we don't have 128KB of stack space available.
-        // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
-        // and Linux have 8MB).
-        if harp::exec::r_check_stack(Some(128 * 1024)).is_err() {
-            return;
-        }
+    /// Invoke `R_ProcessEvents()`
+    ///
+    /// We call this out of good faith at regular intervals while idling in the event
+    /// loop, but we don't think it actually does very much on the R side. It is what
+    /// ends up calling our `process_events()` hook, which drains `debug_filter` during
+    /// long computations, but that is a non-critical use case.
+    ///
+    /// Also, R itself will call `R_ProcessEvents()` at regular times, like via
+    /// `R_CheckUserInterrupt()`.
+    ///
+    /// Unix <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/unix/sys-unix.c#L1168-L1181>:
+    /// - Calls `ptr_R_ProcessEvents()`, our `process_events()`
+    /// - Calls `R_PolledEvents()`, a no-op since we don't set it
+    /// - Calls `R_CheckTimeLimits()`
+    ///
+    /// Windows <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/gnuwin32/system.c#L123-L158>:
+    /// - Calls graphapp's `doevent()` (but we are unsure if you can even use graphapp
+    ///   in Ark)
+    /// - Calls `R_CheckTimeLimits()`
+    /// - If `UserBreak=true`, sets it to `false` and calls `onintr()`. Never the case
+    ///   for us, since `run_event_loop()` always sets `set_interrupts_pending(false)`.
+    /// - Calls `ptr_R_ProcessEvents()`, i.e. `Rp->Callback`, i.e. our `process_events()`
+    /// - Calls `R_Tcl_do` (but we are unsure if you can even use tcktk in Ark)
+    fn run_process_events() {
+        unsafe { R_ProcessEvents() };
+    }
 
+    /// Hook invoked by `R_ProcessEvents()`
+    ///
+    /// This hook is run at regular intervals in `run_event_loop()` via
+    /// `run_process_events()` calling `R_ProcessEvents()`, which ends up calling us via
+    /// `ptr_R_ProcessEvents()`.
+    ///
+    /// It is also called at interrupt time via `R_CheckUserInterrupt()` calling
+    /// `R_ProcessEvents()`, but this happens very irregularly and is dependent on both
+    /// base R and other R packages checking this, so we should never rely on that.
+    ///
+    /// We should only use this for non-critical side effects / clean up. And ideally it
+    /// should not run any R code, because running R code at interrupt time is generally
+    /// unsafe.
+    fn process_events(&mut self) {
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
         // confirm debug output within a reasonable amount of time, so
@@ -2474,33 +2500,6 @@ impl Console {
         if let Some(text) = self.debug_filter.check_timeout() {
             self.emit_stdout(text);
         }
-
-        // Coalesce up to three concurrent tasks in case the R event loop is
-        // slowed down
-        for _ in 0..3 {
-            if let Ok(task) = self.tasks_interrupt_rx.try_recv() {
-                self.handle_task_interrupt(task);
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn process_idle_events() {
-        // Process regular R events. We're normally running with polled
-        // events disabled so that won't run here. We also run with
-        // interrupts disabled, so on Windows those won't get run here
-        // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
-        // so we need to ensure we handle interrupts right before calling
-        // this.
-        unsafe { R_ProcessEvents() };
-
-        crate::sys::console::run_activity_handlers();
-
-        // Run pending finalizers. We need to do this eagerly as otherwise finalizers
-        // might end up being executed on the LSP thread.
-        // https://github.com/rstudio/positron/issues/431
-        unsafe { R_RunPendingFinalizers() };
     }
 
     pub(super) fn eval_env(&self) -> RObject {
@@ -2872,11 +2871,10 @@ pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
     panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
-#[cfg(unix)]
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C-unwind" fn r_polled_events() {
-    if let Err(err) = r_sandbox(|| Console::get_mut().polled_events()) {
-        panic!("Unexpected longjump while polling events: {err:?}");
+pub unsafe extern "C-unwind" fn r_process_events() {
+    if let Err(err) = r_sandbox(|| Console::get_mut().process_events()) {
+        panic!("Unexpected longjump while processing events: {err:?}");
     };
 }
 

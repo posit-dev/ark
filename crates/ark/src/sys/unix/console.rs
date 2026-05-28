@@ -11,6 +11,7 @@ use std::sync::Condvar;
 use std::sync::Mutex;
 
 use libr::ptr_R_Busy;
+use libr::ptr_R_ProcessEvents;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
 use libr::ptr_R_Suicide;
@@ -23,7 +24,6 @@ use libr::R_HomeDir;
 use libr::R_InputHandlers;
 use libr::R_Interactive;
 use libr::R_Outputfile;
-use libr::R_PolledEvents;
 use libr::R_SignalHandlers;
 use libr::R_checkActivity;
 use libr::R_runHandlers;
@@ -32,7 +32,7 @@ use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
 use crate::console::r_busy;
-use crate::console::r_polled_events;
+use crate::console::r_process_events;
 use crate::console::r_read_console;
 use crate::console::r_show_message;
 use crate::console::r_suicide;
@@ -77,6 +77,7 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
+        libr::set(ptr_R_ProcessEvents, Some(r_process_events));
 
         // Install a CleanUp hook for integration tests that test the shutdown process.
         // We confirm that shutdown occurs by waiting in the test until `CLEANUP_SIGNAL`'s
@@ -97,6 +98,15 @@ pub fn setup_r(args: &Vec<String>) {
             libr::set(libr::R_CStackLimit, usize::MAX);
         }
 
+        // Set for exactly 1 reason, so that `Rsleep()` on Unix will use it as the
+        // interval to call `R_CheckUserInterrupt()` (and therefore our
+        // `R_ProcessEvents()` hook) at while `Sys.sleep()` is running. This allows
+        // `debug_filter` to flush during a long sleep. Not needed on Windows because
+        // `R_wait_usec` doesn't exist there, and because `Rsleep()` regularly calls
+        // `R_ProcessEvents()` directly every 500ms (hardcoded). The test
+        // `test_adversarial_cat_before_long_sleep` fails without this.
+        libr::set(R_wait_usec, 10000);
+
         // Set up main loop
         setup_Rmainloop();
     }
@@ -104,31 +114,32 @@ pub fn setup_r(args: &Vec<String>) {
 
 pub fn run_r() {
     unsafe {
-        // Listen for polled events
-        libr::set(R_wait_usec, 10000);
-        libr::set(R_PolledEvents, Some(r_polled_events));
-
         run_Rmainloop();
     }
 }
 
+/// Run handlers if we have data available. This is necessary
+/// for things like the HTML help server, which will listen
+/// for requests on an open socket() which would then normally
+/// be handled in a select() call when reading input from stdin.
+///
+/// https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
+///
+/// We run this in a loop just to make sure the R help server can
+/// be as responsive as possible when rendering help pages.
+///
+/// Note that the later package also adds an input handler to `R_InputHandlers`
+/// which runs the later event loop, so it's also important that we are fairly
+/// responsive for that as well (posit-dev/positron#7235).
+///
+/// Note that `R_runHandlers()` would call `R_PolledEvents()` if we give it a `NULL`
+/// `fdset` and we don't want necessarily want this, though in practice it would probably
+/// be fine since we don't register anything for `R_PolledEvents()`, making it a no-op by
+/// default.
+/// https://github.com/wch/r-source/blob/0cd50b1014de382cc27cf72b0e418565f611334a/src/unix/sys-std.c#L408
 pub fn run_activity_handlers() {
     unsafe {
-        // Run handlers if we have data available. This is necessary
-        // for things like the HTML help server, which will listen
-        // for requests on an open socket() which would then normally
-        // be handled in a select() call when reading input from stdin.
-        //
-        // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
-        //
-        // We run this in a loop just to make sure the R help server can
-        // be as responsive as possible when rendering help pages.
-        //
-        // Note that the later package also adds an input handler to `R_InputHandlers`
-        // which runs the later event loop, so it's also important that we are fairly
-        // responsive for that as well (posit-dev/positron#7235).
         let mut fdset = R_checkActivity(0, 1);
-
         while !fdset.is_null() {
             R_runHandlers(libr::get(R_InputHandlers), fdset);
             fdset = R_checkActivity(0, 1);

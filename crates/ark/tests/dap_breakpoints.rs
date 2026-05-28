@@ -5,8 +5,10 @@
 //
 //
 
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
+use tower_lsp::lsp_types;
 
 #[test]
 fn test_dap_set_breakpoints_unverified() {
@@ -237,4 +239,89 @@ fn test_dap_breakpoints_unsaved_file_unverified() {
         .as_ref()
         .unwrap()
         .contains("Can't read file"));
+}
+
+/// When the LSP signals a document change while R is paused at a `browser()` prompt, DAP
+/// must still invalidate that file's breakpoints. The `process_console_notifications()`
+/// task is routed through `IDLE_ANY_TASKS` so it drains at browser prompts.
+#[test]
+fn test_dap_an_lsp_did_change_notification_at_browser_invalidates_breakpoints() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+    let mut lsp = frontend.start_lsp();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  browser()
+  1
+}
+foo()
+",
+    );
+
+    // Set a breakpoint on the line after `browser()`, then source the file. The
+    // breakpoint becomes verified when the function definition is evaluated. The call to
+    // `foo()` then pauses R at `browser()`.
+    let breakpoints = dap.set_breakpoints(&file.path, &[4]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_stopped();
+
+    // Open the file on the LSP using its real URL so the LSP-side `UrlId`
+    // canonicalizes to the same one the DAP indexed the breakpoint under.
+    let uri = lsp_types::Url::from_file_path(&file.path).unwrap();
+    lsp.send_notification(
+        "textDocument/didOpen",
+        serde_json::to_value(lsp_types::DidOpenTextDocumentParams {
+            text_document: lsp_types::TextDocumentItem {
+                uri: uri.clone(),
+                language_id: String::from("r"),
+                version: 0,
+                text: String::from("x <- 1\n"),
+            },
+        })
+        .unwrap(),
+    );
+
+    // Send a full-document change. The LSP `did_change` handler forwards a
+    // `ConsoleNotification::DidChangeDocument` to the console, which the DAP
+    // turns into a `BreakpointState{verified:false}` event.
+    lsp.send_notification(
+        "textDocument/didChange",
+        serde_json::to_value(lsp_types::DidChangeTextDocumentParams {
+            text_document: lsp_types::VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version: 1,
+            },
+            content_changes: vec![lsp_types::TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: String::from("x <- 2\n"),
+            }],
+        })
+        .unwrap(),
+    );
+
+    // The event must arrive while we are still paused in the browser
+    let bp = dap.recv_breakpoint_event();
+    assert_eq!(bp.id, bp_id);
+    assert!(!bp.verified);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
 }
