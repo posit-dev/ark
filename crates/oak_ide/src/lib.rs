@@ -6,6 +6,7 @@ mod rename;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 pub use find_references::find_references;
+pub use find_references::References;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 pub use rename::prepare_rename;

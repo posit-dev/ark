@@ -53,8 +53,10 @@ pub(crate) fn find_references(
         offset,
     };
     let intra = oak_ide::find_references(&index, &root, &pos, include_declaration);
+    let intra_resolved = !intra.ranges.is_empty();
+    let target_locally_scoped = intra.locally_scoped;
 
-    for file_range in intra {
+    for file_range in intra.ranges {
         let Some(range) = to_proto::range(
             file_range.range,
             &document.line_index,
@@ -66,22 +68,37 @@ pub(crate) fn find_references(
         locations.push(Location::new(file_range.file, range));
     }
 
-    if !locations.is_empty() {
-        // If the intra-file pass resolved cleanly, we have the precise answer.
-        // The textual cross-file walk can only add unrefined external matches
-        // which, for a locally-bound symbol, would just be unrelated noise.
+    // Skip the cross-file textual walk when the target is function-scoped.
+    // Local bindings aren't visible to other files, so any same-name match
+    // elsewhere is by definition a different binding. TODO(salsa): the
+    // short-circuit moves inside `oak_ide::find_references` once cross-file
+    // resolution lands; the `locally_scoped` flag goes away.
+    if target_locally_scoped {
         return Ok(locations);
     }
 
-    // Truly free variable: no within-file binding. Fall back to a textual walk
-    // over workspace folders (including the current file: intra-file gave
-    // nothing, so no dedup needed). No semantic refinement yet, so unrelated
-    // same-name symbols in other files leak through.
+    // Run the textual walk to pick up cross-file references. When intra-file
+    // resolved cleanly, skip the current file (intra-file is authoritative
+    // there). When it didn't, include the current file so an unbound symbol
+    // still surfaces its own occurrences. Cross-file results are textual
+    // candidates only, so until proper imports resolution lands they may
+    // include false positives (other bindings that happen to share the name).
+    let skip_current = if intra_resolved {
+        uri.to_file_path().ok()
+    } else {
+        None
+    };
     if let Ok(context) = build_context(&uri, position, state) {
         for folder in state.workspace.folders.iter() {
             if let Ok(path) = folder.to_file_path() {
                 lsp::log_info!("searching references in folder {}", path.display());
-                find_references_in_folder(&context, &path, &mut locations, state);
+                find_references_in_folder(
+                    &context,
+                    &path,
+                    skip_current.as_deref(),
+                    &mut locations,
+                    state,
+                );
             }
         }
     }
@@ -215,6 +232,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
 fn find_references_in_folder(
     context: &Context,
     path: &Path,
+    skip_path: Option<&Path>,
     locations: &mut Vec<Location>,
     state: &WorldState,
 ) {
@@ -224,6 +242,10 @@ fn find_references_in_folder(
         let path = entry.path();
         let ext = unwrap!(path.extension(), None => { continue; });
         if ext != "r" && ext != "R" {
+            continue;
+        }
+        if skip_path.is_some_and(|p| p == path) {
+            // Caller's intra-file pass already produced refs for this file.
             continue;
         }
 
