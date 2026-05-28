@@ -20,7 +20,7 @@ use crate::inputs::DbScan;
 use crate::inputs::RootExt;
 
 fn file_url(s: &str) -> UrlId {
-    UrlId::from_canonical(Url::parse(&format!("file://{s}")).unwrap())
+    UrlId::from_url(Url::parse(&format!("file://{s}")).unwrap())
 }
 
 #[test]

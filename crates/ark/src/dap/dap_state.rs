@@ -6,6 +6,7 @@
 //
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -220,6 +221,92 @@ impl DapBackendEvent {
     }
 }
 
+/// Breakpoint storage keyed on the verbatim `UrlId` the frontend sent in
+/// `setBreakpoints`. A secondary index maps `fs::canonicalize`d paths
+/// back to the primary key, bridging R-runtime srcref URIs (which go
+/// through `normalizePath()` and therefore arrive symlink-resolved)
+/// against the editor's pre-resolution form.
+///
+/// `fs::canonicalize` runs at insert time and at lookup-fallback time
+/// only. Lookups try the primary first (cheap, no fs touch), then
+/// canonicalise the incoming URI and consult the secondary. DAP wire
+/// output (`debugInfo` source paths, breakpoint events) round-trips the
+/// primary key unchanged, so the frontend always sees the URI it sent.
+#[derive(Debug, Default)]
+pub struct BreakpointMap {
+    /// Primary index, keyed on the URI the frontend gave us.
+    by_url: HashMap<UrlId, (blake3::Hash, Vec<Breakpoint>)>,
+    /// `fs::canonicalize`d path -> primary key. Populated at insert
+    /// only when the URL is a `file:` and `canonicalize` succeeds (i.e.
+    /// the file exists, which it does at `setBreakpoints` time).
+    by_canonical: HashMap<PathBuf, UrlId>,
+}
+
+impl BreakpointMap {
+    pub fn insert(&mut self, url: UrlId, value: (blake3::Hash, Vec<Breakpoint>)) {
+        if let Some(canonical) = canonical_path(&url) {
+            self.by_canonical.insert(canonical, url.clone());
+        }
+        self.by_url.insert(url, value);
+    }
+
+    pub fn remove(&mut self, url: &UrlId) -> Option<(blake3::Hash, Vec<Breakpoint>)> {
+        let primary = self.resolve_primary(url)?.clone();
+        self.by_canonical.retain(|_, p| p != &primary);
+        self.by_url.remove(&primary)
+    }
+
+    pub fn get(&self, url: &UrlId) -> Option<&(blake3::Hash, Vec<Breakpoint>)> {
+        let primary = self.resolve_primary(url)?;
+        self.by_url.get(primary)
+    }
+
+    pub fn get_mut(&mut self, url: &UrlId) -> Option<&mut (blake3::Hash, Vec<Breakpoint>)> {
+        // Cloning because the mut accessors can't hold a `&self.by_canonical`
+        // borrow across `&mut self.by_url`.
+        let primary = self.resolve_primary(url)?.clone();
+        self.by_url.get_mut(&primary)
+    }
+
+    pub fn contains_key(&self, url: &UrlId) -> bool {
+        self.resolve_primary(url).is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&UrlId, &(blake3::Hash, Vec<Breakpoint>))> {
+        self.by_url.iter()
+    }
+
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&UrlId, &mut (blake3::Hash, Vec<Breakpoint>))> {
+        self.by_url.iter_mut()
+    }
+
+    /// Resolve to the primary key. Tries bare `url` first. On miss,
+    /// canonicalises `url` and consults the secondary index. The
+    /// secondary catches cases like an R srcref `/private/tmp/foo.R`
+    /// (resolved by `normalizePath()`) looking up an editor URI
+    /// `/tmp/foo.R` (not resolved).
+    fn resolve_primary<'a>(&'a self, url: &'a UrlId) -> Option<&'a UrlId> {
+        if self.by_url.contains_key(url) {
+            return Some(url);
+        }
+        let canonical = canonical_path(url)?;
+        self.by_canonical.get(&canonical)
+    }
+}
+
+/// `fs::canonicalize` of the path component of a `file:` URL, if any.
+/// Returns `None` for non-`file:` URLs (`ark://`, `untitled:`, ...) and
+/// when the file isn't on disk.
+fn canonical_path(url: &UrlId) -> Option<PathBuf> {
+    if !url.is_file() {
+        return None;
+    }
+    let path = url.to_file_path().ok()?;
+    std::fs::canonicalize(path).ok()
+}
+
 pub struct Dap {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
@@ -241,8 +328,8 @@ pub struct Dap {
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
-    /// Known breakpoints keyed by canonical URI, with document hash
-    pub breakpoints: HashMap<UrlId, (blake3::Hash, Vec<Breakpoint>)>,
+    /// Known breakpoints, with document hash.
+    pub breakpoints: BreakpointMap,
 
     /// Filters for enabled condition breakpoints
     pub exception_breakpoint_filters: Vec<String>,
@@ -306,7 +393,7 @@ impl Dap {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
@@ -864,7 +951,7 @@ mod tests {
             is_connected: true,
             backend_events_tx: Some(backend_events_tx),
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
@@ -978,7 +1065,7 @@ mod tests {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),

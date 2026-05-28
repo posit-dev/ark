@@ -68,7 +68,7 @@ impl File {
                     name: target_name,
                     ..
                 } => {
-                    let target_url_id = UrlId::from_canonical(target_url.clone());
+                    let target_url_id = UrlId::from_url(target_url.clone());
                     let Some(target_file) = db.file_by_url(&target_url_id) else {
                         continue;
                     };

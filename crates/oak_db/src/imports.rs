@@ -107,7 +107,7 @@ fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<UrlId> {
     let raw: PathBuf = anchor_dir.join(path);
     let target_path = normalise_path(&raw);
     let url = Url::from_file_path(&target_path).ok()?;
-    Some(UrlId::from_canonical(url))
+    Some(UrlId::from_url(url))
 }
 
 /// Resolve `..` and `.` components in `path` lexically, without
