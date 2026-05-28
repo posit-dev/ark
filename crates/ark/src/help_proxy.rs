@@ -5,6 +5,7 @@
 //
 //
 
+use std::error::Error;
 use std::time::Duration;
 
 use actix_web::get;
@@ -111,8 +112,11 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         .map(PathAndQuery::as_str)
         .unwrap_or_default();
 
-    // Construct the target URL string.
-    let target_url_string = format!("http://localhost:{target_port}{target_path_and_query}");
+    // Construct the target URL string. Use `127.0.0.1` rather than `localhost`:
+    // on Windows `localhost` resolves to both `::1` and `127.0.0.1`, but R's
+    // `tools::startDynamicHelp()` binds to IPv4 only, and R itself hands us URLs
+    // formed with `127.0.0.1`.
+    let target_url_string = format!("http://127.0.0.1:{target_port}{target_path_and_query}");
 
     // Parse the target URL string into the target URL.
     let target_url = match Url::parse(&target_url_string) {
@@ -147,12 +151,16 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
             let headers = response.headers().clone();
             let content_type = headers.get("content-type");
 
-            // Log.
+            // Log content-length and transfer-encoding too: body-decode failures
+            // we see on Windows CI may be due to chunked-encoding or truncation
+            // issues against R's HTTPD, and these headers narrow it down.
             log::info!(
-                "Proxying URL {:?} path '{}' content-type is '{:?}'",
-                target_url.to_string(),
-                target_url.path(),
-                content_type,
+                "Proxying URL {url:?} path '{path}' content-type {ct:?} content-length {cl:?} transfer-encoding {te:?}",
+                url = target_url.to_string(),
+                path = target_url.path(),
+                ct = content_type,
+                cl = headers.get("content-length"),
+                te = headers.get("transfer-encoding"),
             );
 
             // We only handle OK. Everything else is unexpected.
@@ -191,7 +199,13 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
                 None => http_response_builder.body(match response.bytes().await {
                     Ok(body) => body,
                     Err(error) => {
-                        log::error!("Error proxying {}: {}", target_url_string, error);
+                        // Walk the source chain: reqwest's top-level error often
+                        // hides the actual cause (truncated chunk, decompression
+                        // failure, socket close).
+                        log::error!(
+                            "Error proxying {target_url_string}: {chain}",
+                            chain = error_source_chain(&error),
+                        );
                         return HttpResponse::BadGateway().finish();
                     },
                 }),
@@ -199,7 +213,10 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         },
         // Error.
         Err(error) => {
-            log::error!("Error proxying {}: {}", target_url, error);
+            log::error!(
+                "Error proxying {target_url}: {chain}",
+                chain = error_source_chain(&error),
+            );
             HttpResponse::BadGateway().finish()
         },
     }
@@ -281,4 +298,18 @@ fn convert_header_value(x: &reqwest::header::HeaderValue) -> actix_web::http::he
     out.set_sensitive(x.is_sensitive());
 
     out
+}
+
+// Walks an error's source chain into a single string. Reqwest's top-level error
+// message often hides the underlying cause (e.g. truncated chunk, decompression
+// failure, socket close), so we surface the whole chain in logs.
+fn error_source_chain(error: &dyn Error) -> String {
+    use std::fmt::Write;
+    let mut chain = format!("{error}");
+    let mut source = error.source();
+    while let Some(err) = source {
+        let _ = write!(chain, " -> {err}");
+        source = err.source();
+    }
+    chain
 }
