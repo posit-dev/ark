@@ -5,6 +5,12 @@
 //
 //
 
+mod file_path;
+
+pub use file_path::AbsPathBuf;
+pub use file_path::FilePath;
+pub use file_path::VirtualUri;
+
 use std::fmt;
 use std::path::Component;
 

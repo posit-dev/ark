@@ -43,6 +43,7 @@ biome_rowan = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8
 biome_text_size = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
 blake3 = "1.8.5"
 bus = "2.4.1"
+camino = "1.1"
 cc = "1.2.61"
 cfg-if = "1.0.4"
 chrono = "0.4.44"
