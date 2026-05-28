@@ -68,7 +68,7 @@ pub fn rename(
         return Err(anyhow!("No renamable identifier at cursor"));
     }
 
-    let ranges = find_references(index, root, position, true);
+    let ranges = find_references(index, root, position, true).ranges;
     if ranges.is_empty() {
         return Err(anyhow!(
             "Cannot rename: symbol has no local binding in this file"

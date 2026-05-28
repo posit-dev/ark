@@ -5,7 +5,6 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_ide::find_references;
 use oak_ide::FilePosition;
-use oak_ide::FileRange;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::NoopImportsResolver;
@@ -37,8 +36,8 @@ fn pos(file: &Url, n: u32) -> FilePosition {
     }
 }
 
-fn ranges(refs: Vec<FileRange>) -> Vec<TextRange> {
-    refs.into_iter().map(|r| r.range).collect()
+fn ranges(refs: oak_ide::References) -> Vec<TextRange> {
+    refs.ranges.into_iter().map(|r| r.range).collect()
 }
 
 // --- Local resolution ---
@@ -260,7 +259,7 @@ fn test_no_identifier_at_offset() {
 
     // Cursor on `<-` operator
     let refs = find_references(&idx, &root, &pos(&file, 3), true);
-    assert!(refs.is_empty());
+    assert!(refs.ranges.is_empty());
 }
 
 #[test]
@@ -273,7 +272,7 @@ fn test_unbound_use_returns_empty() {
     let (root, idx) = parse_source(source);
 
     let refs = find_references(&idx, &root, &pos(&file, 0), true);
-    assert!(refs.is_empty());
+    assert!(refs.ranges.is_empty());
 }
 
 #[test]
@@ -284,7 +283,7 @@ fn test_fixme_namespace_access_returns_empty() {
 
     // Cursor on `mutate` - NamespaceAccess, returns empty.
     let refs = find_references(&idx, &root, &pos(&file, 7), true);
-    assert!(refs.is_empty());
+    assert!(refs.ranges.is_empty());
 }
 
 // --- Dollar/at member access (places TODO) ---
@@ -312,7 +311,7 @@ fn test_fixme_dollar_rhs_returns_empty() {
     let (root, idx) = parse_source(source);
 
     let refs = find_references(&idx, &root, &pos(&file, 18), true);
-    assert!(refs.is_empty());
+    assert!(refs.ranges.is_empty());
 }
 
 #[test]

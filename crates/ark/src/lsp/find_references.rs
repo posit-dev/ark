@@ -53,9 +53,10 @@ pub(crate) fn find_references(
         offset,
     };
     let intra = oak_ide::find_references(&index, &root, &pos, include_declaration);
-    let intra_resolved = !intra.is_empty();
+    let intra_resolved = !intra.ranges.is_empty();
+    let target_locally_scoped = intra.locally_scoped;
 
-    for file_range in intra {
+    for file_range in intra.ranges {
         let Some(range) = to_proto::range(
             file_range.range,
             &document.line_index,
@@ -67,13 +68,21 @@ pub(crate) fn find_references(
         locations.push(Location::new(file_range.file, range));
     }
 
-    // Always run the textual walk to pick up cross-file references. When
-    // intra-file resolved cleanly, skip the current file (intra-file is
-    // authoritative there). When it didn't, include the current file so
-    // an unbound symbol still surfaces its own occurrences. Cross-file
-    // results are textual candidates only, so until proper imports
-    // resolution lands they may include false positives (other bindings
-    // that happen to share the name).
+    // Skip the cross-file textual walk when the target is function-scoped.
+    // Local bindings aren't visible to other files, so any same-name match
+    // elsewhere is by definition a different binding. TODO(salsa): the
+    // short-circuit moves inside `oak_ide::find_references` once cross-file
+    // resolution lands; the `locally_scoped` flag goes away.
+    if target_locally_scoped {
+        return Ok(locations);
+    }
+
+    // Run the textual walk to pick up cross-file references. When intra-file
+    // resolved cleanly, skip the current file (intra-file is authoritative
+    // there). When it didn't, include the current file so an unbound symbol
+    // still surfaces its own occurrences. Cross-file results are textual
+    // candidates only, so until proper imports resolution lands they may
+    // include false positives (other bindings that happen to share the name).
     let skip_current = if intra_resolved {
         uri.to_file_path().ok()
     } else {

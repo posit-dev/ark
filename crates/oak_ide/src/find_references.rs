@@ -9,13 +9,35 @@ use crate::FilePosition;
 use crate::FileRange;
 use crate::Identifier;
 
+/// Result of [`find_references`].
+///
+/// TODO(salsa): the `locally_scoped` flag is temporary infrastructure. It
+/// exists today because cross-file references are handled outside the semantic
+/// index by a separate textual workspace scan, and the caller needs to know
+/// whether to run that scan. When cross-file resolution lands,
+/// [`find_references`] becomes a single salsa-aware query and the
+/// locally-scoped optimization moves inside it as an internal short-circuit, at
+/// which point this field disappears.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct References {
+    /// In-file occurrences of the target binding, in source order.
+    pub ranges: Vec<FileRange>,
+    /// Whether the target binding is entirely locally scoped. When `true`, no
+    /// cross-file references are possible (function-local bindings aren't
+    /// visible to other files) so callers can skip any workspace-wide candidate
+    /// scan. When `false` the target is at file scope, the symbol is unbound,
+    /// or the cursor doesn't resolve to a binding at all: all cases where
+    /// cross-file matches are possible.
+    pub locally_scoped: bool,
+}
+
 /// Find all in-file references to the symbol at offset.
 ///
 /// The target is usually a single def. It grows when a use is reached by
 /// conditional defs, or when a free variable picks up multiple visible
 /// defs from an enclosing scope.
 ///
-/// Returns an empty vec for:
+/// Returns empty ranges for:
 /// - Non-identifier cursors (no `Identifier::classify` match).
 /// - `pkg::sym` namespace access. TODO(salsa).
 /// - Truly free variables. These are handled by the ark-layer cross-file
@@ -32,9 +54,12 @@ pub fn find_references(
     root: &RSyntaxNode,
     position: &FilePosition,
     include_declaration: bool,
-) -> Vec<FileRange> {
+) -> References {
     let Some(ident) = Identifier::classify(index, root, position.offset) else {
-        return Vec::new();
+        return References {
+            ranges: Vec::new(),
+            locally_scoped: false,
+        };
     };
 
     // Compute the cursor's reaching defs. Same operation we'll run on
@@ -58,12 +83,25 @@ pub fn find_references(
             index.reaching_definitions(scope_id, use_id).collect(),
             name.to_string(),
         ),
-        Identifier::NamespaceAccess { .. } => return Vec::new(),
+        Identifier::NamespaceAccess { .. } => {
+            return References {
+                ranges: Vec::new(),
+                locally_scoped: false,
+            };
+        },
     };
 
     if target_defs.is_empty() {
-        return Vec::new();
+        return References {
+            ranges: Vec::new(),
+            locally_scoped: false,
+        };
     }
+
+    // All target defs in scopes other than the file scope means the
+    // binding can only be referenced from within this file.
+    let file_scope = ScopeId::from(0);
+    let locally_scoped = target_defs.iter().all(|(scope, _)| *scope != file_scope);
 
     let mut results: Vec<FileRange> = Vec::new();
 
@@ -114,5 +152,8 @@ pub fn find_references(
     // preserved within each file.
     results.sort_by_key(|r| r.range.start());
 
-    results
+    References {
+        ranges: results,
+        locally_scoped,
+    }
 }
