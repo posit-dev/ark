@@ -10,7 +10,7 @@ use aether_syntax::RLanguage;
 use aether_syntax::RSyntaxElement;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
-use aether_url::UrlId;
+use aether_path::UrlId;
 use amalthea::wire::execute_request::CodeLocation;
 use anyhow::anyhow;
 use biome_line_index::LineIndex;

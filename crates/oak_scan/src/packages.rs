@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use ignore::WalkBuilder;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;

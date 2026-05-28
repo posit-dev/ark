@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use url::Url;
 
 use crate::Db;

@@ -16,7 +16,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-aether_url.workspace = true
+aether_path.workspace = true
 ignore.workspace = true
 log.workspace = true
 oak_core.workspace = true

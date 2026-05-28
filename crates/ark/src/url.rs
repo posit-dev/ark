@@ -5,7 +5,7 @@
 //
 //
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use amalthea::wire::execute_request::CodeLocation;
 use url::Url;
 

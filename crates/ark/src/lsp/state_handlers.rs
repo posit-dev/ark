@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use anyhow::anyhow;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;

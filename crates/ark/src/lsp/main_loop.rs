@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;

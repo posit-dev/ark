@@ -2,7 +2,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use stdext::result::ResultExt;

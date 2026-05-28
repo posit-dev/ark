@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;

@@ -216,7 +216,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether_url"
+name = "aether_path"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -395,7 +395,7 @@ version = "0.1.251"
 dependencies = [
  "actix-web",
  "aether_lsp_utils",
- "aether_url",
+ "aether_path",
  "air_r_factory",
  "air_r_parser",
  "air_r_syntax",
@@ -482,7 +482,7 @@ dependencies = [
 name = "ark_test"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "amalthea",
  "anyhow",
  "ark",
@@ -2590,7 +2590,7 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
@@ -2663,7 +2663,7 @@ dependencies = [
 name = "oak_scan"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "ignore",
  "log",
  "oak_core",

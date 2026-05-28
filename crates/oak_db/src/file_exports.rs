@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_semantic::semantic_index::DefinitionKind;
 
 use crate::Db;

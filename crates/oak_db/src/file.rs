@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;

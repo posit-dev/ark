@@ -4,7 +4,7 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;

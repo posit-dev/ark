@@ -7,7 +7,7 @@
 //! lives here on the write side, next to its only caller, rather than on
 //! `oak_db`'s public `Db` trait.
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use oak_db::Db;
 use oak_db::LiveRoot;
 use oak_db::Package;

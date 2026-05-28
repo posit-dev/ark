@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use aether_url::UrlId;
+use aether_path::UrlId;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;

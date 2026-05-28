@@ -1,4 +1,4 @@
-use aether_url::UrlId;
+use aether_path::UrlId;
 use rustc_hash::FxHashMap;
 
 use crate::File;
