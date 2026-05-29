@@ -48,7 +48,12 @@ fn set_workspace_paths(state: &mut WorldState, paths: &[PathBuf], editor_owned: 
     let reqs = lsp_state
         .oak_scheduler
         .set_workspace_paths(&mut state.db, paths, editor_owned);
-    drain(&mut state.db, &mut lsp_state.db_scheduler, reqs, editor_owned);
+    drain(
+        &mut state.db,
+        &mut lsp_state.oak_scheduler,
+        reqs,
+        editor_owned,
+    );
 }
 
 fn editor_owned_of(state: &WorldState) -> HashSet<UrlId> {
@@ -64,15 +69,12 @@ fn did_change_watched_files(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let mut lsp_state = test_lsp_state();
-    let pending = crate::lsp::state_handlers::did_change_watched_files(
-        params,
-        state,
-        &mut lsp_state,
-    )?;
+    let pending =
+        crate::lsp::state_handlers::did_change_watched_files(params, state, &mut lsp_state)?;
     let editor_owned = editor_owned_of(state);
     drain(
         &mut state.db,
-        &mut lsp_state.db_scheduler,
+        &mut lsp_state.oak_scheduler,
         pending,
         &editor_owned,
     );
@@ -84,15 +86,12 @@ fn did_change_workspace_folders(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let mut lsp_state = test_lsp_state();
-    let pending = crate::lsp::state_handlers::did_change_workspace_folders(
-        params,
-        state,
-        &mut lsp_state,
-    )?;
+    let pending =
+        crate::lsp::state_handlers::did_change_workspace_folders(params, state, &mut lsp_state)?;
     let editor_owned = editor_owned_of(state);
     drain(
         &mut state.db,
-        &mut lsp_state.db_scheduler,
+        &mut lsp_state.oak_scheduler,
         pending,
         &editor_owned,
     );

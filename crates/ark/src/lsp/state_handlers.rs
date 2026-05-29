@@ -431,9 +431,10 @@ pub(crate) fn did_change_watched_files(
         })
         .collect();
 
-    let pending = lsp_state
-        .oak_scheduler
-        .apply_watcher_events(&mut state.db, events, &editor_owned);
+    let pending =
+        lsp_state
+            .oak_scheduler
+            .apply_watcher_events(&mut state.db, events, &editor_owned);
     Ok(pending)
 }
 
