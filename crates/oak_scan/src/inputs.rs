@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -47,7 +47,7 @@ use crate::stale::stale_file_by_url;
 /// VFS) is the authoritative way to update content.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
-    pub url: UrlId,
+    pub url: FilePath,
     pub contents: String,
 }
 
@@ -100,7 +100,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If no `File` exists at all, one is created in `orphan_root().files`.
     /// It stays there until another handler reclassifies it.
-    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File;
+    fn upsert_editor(&mut self, url: FilePath, contents: String) -> File;
 
     /// Mark the editor as no longer holding a buffer for this URL.
     ///
@@ -113,7 +113,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If the file is in a live workspace / library container, the call is a
     /// no-op.
-    fn close_editor(&mut self, url: &UrlId);
+    fn close_editor(&mut self, url: &FilePath);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -121,7 +121,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
         crate::library::set_library_paths(self, paths);
     }
 
-    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File {
+    fn upsert_editor(&mut self, url: FilePath, contents: String) -> File {
         if let Some(existing) = self.file_by_url(&url) {
             existing.set_contents(self).to(contents);
             return existing;
@@ -142,7 +142,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
         file
     }
 
-    fn close_editor(&mut self, url: &UrlId) {
+    fn close_editor(&mut self, url: &FilePath) {
         let Some(file) = self.file_by_url(url) else {
             return;
         };
@@ -187,7 +187,7 @@ pub trait RootExt {
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
-        description_url: UrlId,
+        description_url: FilePath,
         name: String,
         version: Option<String>,
         namespace: Namespace,
@@ -208,7 +208,7 @@ pub trait RootExt {
     ///
     /// Doesn't touch `LibraryRoots` / `WorkspaceRoots`. The caller is
     /// responsible for rebuilding those Vec inputs with `self` excluded.
-    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>);
+    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>);
 
     /// Replace `self.scripts` with `File` entities for `files`. Same identity
     /// rules as [`set_package`](Self::set_package): existing `File` entities at
@@ -220,7 +220,7 @@ impl RootExt for Root {
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
-        description_url: UrlId,
+        description_url: FilePath,
         name: String,
         version: Option<String>,
         namespace: Namespace,
@@ -267,7 +267,7 @@ impl RootExt for Root {
         pkg
     }
 
-    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>) {
+    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>) {
         crate::stale::set_root_stale(db, self, editor_owned);
     }
 

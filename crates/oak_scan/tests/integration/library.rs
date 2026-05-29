@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -266,8 +266,8 @@ fn test_set_library_paths_stale_no_duplicates_across_cycles() {
 // resolution logic that PR 12's workspace scanner -- which walks any depth
 // and is the realistic trigger -- depends on.
 
-fn file_url(s: &str) -> UrlId {
-    UrlId::from_url(Url::parse(&format!("file://{s}")).unwrap())
+fn file_url(s: &str) -> FilePath {
+    FilePath::from_url(&Url::parse(&format!("file://{s}")).unwrap())
 }
 
 fn empty_library_root(db: &OakDatabase, path: &str) -> Root {

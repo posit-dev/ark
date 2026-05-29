@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;
@@ -22,7 +22,7 @@ use crate::File;
 #[salsa::input(debug)]
 pub struct Root {
     #[returns(ref)]
-    pub path: UrlId,
+    pub path: FilePath,
     pub kind: RootKind,
     /// Top-level R scripts directly under this root. Each entry is a
     /// `File` with `package(db) == None`. Always empty for `Library`
@@ -193,7 +193,7 @@ pub struct Package {
     /// package belongs to whichever `Root.packages` currently holds it.
     /// Workspace-vs-library is then `root.kind(db)`.
     #[returns(ref)]
-    pub description_url: UrlId,
+    pub description_url: FilePath,
     // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
     // method so `db.package_by_name()` and other lookups key on the
     // interned id rather than the string. Can't store `Name<'db>` on

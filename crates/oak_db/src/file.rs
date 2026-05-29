@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
-use stdext::result::ResultExt;
 
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -20,7 +19,7 @@ use crate::Root;
 /// This matches rust-analyzer's push model and avoids tying parsing to
 /// disk/network I/O inside a Salsa query.
 ///
-/// The `url` field is a [`UrlId`], so the type system enforces "everything
+/// The `url` field is a [`FilePath`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
 ///
 /// `package` is a back-pointer to the [`Package`] this file belongs to, or
@@ -47,7 +46,7 @@ use crate::Root;
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
-    pub url: UrlId,
+    pub url: FilePath,
     #[returns(ref)]
     pub contents: String,
     /// **Placement invariant.** Call this setter only through
@@ -171,18 +170,18 @@ impl File {
 /// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
 /// every workspace folder. Private helper: the only caller is
 /// [`File::root`] (for files without a registered package).
-fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+fn root_by_url(db: &dyn Db, url: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
     if !url.is_file() {
         return None;
     }
 
-    let path = url.to_file_path().log_err()?;
+    let path = url.to_path_buf()?;
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).to_file_path().log_err()?;
+            let root_path = root.path(db).to_path_buf()?;
             path.starts_with(&root_path).then_some((root_path, *root))
         })
         .max_by_key(|(p, _)| p.components().count())

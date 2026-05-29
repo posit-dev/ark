@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use ignore::WalkBuilder;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
@@ -28,7 +28,7 @@ pub(crate) struct PackageEntry {
     /// minting a new one (see `Package::description_url`). The `name`
     /// can't serve as identity because two packages can declare the
     /// same `Package:` field, and dedup picks one of them per root.
-    pub description_url: UrlId,
+    pub description_url: FilePath,
     pub name: String,
     pub version: Option<String>,
     pub namespace: Namespace,
@@ -54,7 +54,7 @@ pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> 
     let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
-    let description_url = UrlId::from_file_path(&description_path).ok()?;
+    let description_url = FilePath::from_file_path(&description_path).ok()?;
 
     let namespace = fs::read_to_string(package_dir.join("NAMESPACE"))
         .ok()
@@ -169,7 +169,7 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
                 continue;
             },
         };
-        let Ok(url) = UrlId::from_file_path(path) else {
+        let Ok(url) = FilePath::from_file_path(path) else {
             log::warn!("Skipping R file, can't build a URL: {}", path.display());
             continue;
         };
@@ -284,7 +284,7 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         let Ok(contents) = fs::read_to_string(path) else {
             continue;
         };
-        let Ok(url) = UrlId::from_file_path(path) else {
+        let Ok(url) = FilePath::from_file_path(path) else {
             continue;
         };
         scripts.push(FileEntry { url, contents });

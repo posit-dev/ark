@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -19,8 +19,8 @@ use url::Url;
 use crate::inputs::DbScan;
 use crate::inputs::RootExt;
 
-fn file_url(s: &str) -> UrlId {
-    UrlId::from_url(Url::parse(&format!("file://{s}")).unwrap())
+fn file_url(s: &str) -> FilePath {
+    FilePath::from_url(&Url::parse(&format!("file://{s}")).unwrap())
 }
 
 #[test]

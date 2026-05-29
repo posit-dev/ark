@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;
@@ -146,11 +146,7 @@ pub(crate) fn initialize(
     // Start first round of indexing. `state.documents` is empty at init since
     // no `didOpen` has fired yet, but build the set through the same shape we
     // use elsewhere so the call site reads consistently.
-    let editor_owned: HashSet<UrlId> = state
-        .documents
-        .keys()
-        .map(|url| UrlId::from_url(url.clone()))
-        .collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
     let requests =
         lsp_state
             .oak_scheduler
@@ -278,9 +274,8 @@ pub(crate) fn did_open(
     lsp_state.parsers.insert(uri.clone(), parser);
     state.documents.insert(uri.clone(), document.clone());
 
-    state
-        .db
-        .upsert_editor(UrlId::from_url(uri.clone()), contents.to_string());
+    let url_id = FilePath::from_url(&uri);
+    state.db.upsert_editor(url_id, contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -307,17 +302,16 @@ pub(crate) fn did_change(
     document.on_did_change(parser, &params);
 
     let new_contents = document.contents.to_string();
-    state
-        .db
-        .upsert_editor(UrlId::from_url(uri.clone()), new_contents);
+    let url_id = FilePath::from_url(uri);
+    state.db.upsert_editor(url_id, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
         .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(UrlId::from_url(
-            uri.clone(),
+        .send(ConsoleNotification::DidChangeDocument(FilePath::from_url(
+            uri,
         )))
         .log_err();
 
@@ -345,7 +339,8 @@ pub(crate) fn did_close(
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
-    state.db.close_editor(&UrlId::from_url(uri.clone()));
+    let url_id = FilePath::from_url(&uri);
+    state.db.close_editor(&url_id);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
@@ -412,11 +407,7 @@ pub(crate) fn did_change_watched_files(
 ) -> anyhow::Result<()> {
     // Editor owns the contents of files it has open: Oak should ignore
     // disk-side events for those URLs.
-    let editor_owned: HashSet<UrlId> = state
-        .documents
-        .keys()
-        .map(|url| UrlId::from_url(url.clone()))
-        .collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
 
     let events: Vec<FileEvent> = params
         .changes
@@ -429,7 +420,7 @@ pub(crate) fn did_change_watched_files(
                 _ => return None,
             };
             Some(FileEvent {
-                url: UrlId::from_url(e.uri),
+                url: FilePath::from_url(&e.uri),
                 kind,
             })
         })
@@ -469,11 +460,7 @@ pub(crate) fn did_change_workspace_folders(
     // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
     // open buffers keep getting analysed even when their workspace
     // folder goes away.
-    let editor_owned: HashSet<UrlId> = state
-        .documents
-        .keys()
-        .map(|url| UrlId::from_url(url.clone()))
-        .collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
 
     let requests =
         lsp_state

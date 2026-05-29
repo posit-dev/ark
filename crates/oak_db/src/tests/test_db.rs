@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use url::Url;
 
 use crate::Db;
@@ -100,7 +100,7 @@ impl DbInputs for TestDb {
 
 #[salsa::db]
 impl Db for TestDb {
-    fn file_by_url(&self, url: &UrlId) -> Option<crate::File> {
+    fn file_by_url(&self, url: &FilePath) -> Option<crate::File> {
         crate::db::file_by_url_query(self, url)
     }
 
@@ -117,7 +117,7 @@ impl Db for TestDb {
     }
 }
 
-pub(super) fn file_url(name: &str) -> UrlId {
+pub(super) fn file_url(name: &str) -> FilePath {
     // `Url::to_file_path` on Windows requires a drive-letter prefix, so
     // synthesize one for tests. Linux is happy with rootless paths.
     let url = if cfg!(windows) {
@@ -125,7 +125,7 @@ pub(super) fn file_url(name: &str) -> UrlId {
     } else {
         Url::parse(&format!("file:///{name}")).unwrap()
     };
-    UrlId::from_url(url)
+    FilePath::from_url(&url)
 }
 
 /// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each

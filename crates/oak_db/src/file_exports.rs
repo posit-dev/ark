@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_semantic::semantic_index::DefinitionKind;
 
 use crate::Db;
@@ -68,7 +68,7 @@ impl File {
                     name: target_name,
                     ..
                 } => {
-                    let target_url_id = UrlId::from_url(target_url.clone());
+                    let target_url_id = FilePath::from_url(target_url);
                     let Some(target_file) = db.file_by_url(&target_url_id) else {
                         continue;
                     };

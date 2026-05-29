@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Package;
@@ -31,16 +31,16 @@ use crate::packages::read_package_metadata;
 /// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
 /// follows `paths`, matching R's `.libPaths()` precedence.
 pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf]) {
-    let new: Vec<(PathBuf, UrlId)> = paths
+    let new: Vec<(PathBuf, FilePath)> = paths
         .iter()
         .filter_map(|p| {
-            let url = UrlId::from_file_path(p).ok()?;
+            let url = FilePath::from_file_path(p).ok()?;
             Some((p.clone(), url))
         })
         .collect();
-    let new_urls: HashSet<UrlId> = new.iter().map(|(_, u)| u.clone()).collect();
+    let new_urls: HashSet<FilePath> = new.iter().map(|(_, u)| u.clone()).collect();
 
-    let old: HashMap<UrlId, Root> = db
+    let old: HashMap<FilePath, Root> = db
         .library_roots()
         .roots(db)
         .iter()
@@ -71,7 +71,7 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
 /// Initial scan of a path that wasn't previously a library root. Walks only the
 /// package directories, not the package directory contents. Calls `set_package()`
 /// per package directory, returns the freshly-built `Root`.
-fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId) -> Root {
+fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: FilePath) -> Root {
     let root = Root::new(db, url, RootKind::Library, Vec::new(), Vec::new());
 
     let mut packages: Vec<Package> = Vec::new();

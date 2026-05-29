@@ -1,4 +1,4 @@
-use aether_path::UrlId;
+use aether_path::FilePath;
 use rustc_hash::FxHashMap;
 
 use crate::File;
@@ -52,7 +52,7 @@ pub trait Db: DbInputs {
     /// then falls back to the orphan bucket. The walk short-circuits
     /// on the first hit, so callers depend only on the index maps
     /// actually visited.
-    fn file_by_url(&self, url: &UrlId) -> Option<File>;
+    fn file_by_url(&self, url: &FilePath) -> Option<File>;
 
     /// Look up the `Package` named `name`, applying the following precedence:
     /// - Workspace packages shadow installed ones
@@ -104,11 +104,11 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
 
 /// Implementation of [`Db::file_by_url`]. Walks the per-root indices.
 ///
-/// Not itself salsa-tracked (its `&UrlId` argument isn't a salsa
+/// Not itself salsa-tracked (its `&FilePath` argument isn't a salsa
 /// entity), but every step is: each [`root_url_index`] call returns a
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
-pub(crate) fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
+pub(crate) fn file_by_url_query(db: &dyn Db, url: &FilePath) -> Option<File> {
     for &root in db.live_roots() {
         let hit = match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
@@ -165,7 +165,7 @@ pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
 /// of the URL hierarchy, so the URL itself is the right source.
 fn root_depth(db: &dyn Db, root: Root) -> usize {
     root.path(db)
-        .as_url()
+        .to_url()
         .path_segments()
         .map(|s| s.filter(|seg| !seg.is_empty()).count())
         .unwrap_or(0)
@@ -176,7 +176,7 @@ fn root_depth(db: &dyn Db, root: Root) -> usize {
 /// `pkg.scripts` reachable from this root. Adding or removing a file
 /// in *this* root invalidates this entry; other roots stay cached.
 #[salsa::tracked(returns(ref))]
-fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, File> {
+fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in root.scripts(db) {
         map.insert(file.url(db).clone(), file);
@@ -194,7 +194,7 @@ fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, File> {
 
 /// Orphan URL -> File index. Reads only `orphan_root().files`.
 #[salsa::tracked(returns(ref))]
-fn orphan_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
+fn orphan_url_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in db.orphan_root().files(db) {
         map.insert(file.url(db).clone(), file);

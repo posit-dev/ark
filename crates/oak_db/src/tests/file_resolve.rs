@@ -220,7 +220,7 @@ fn test_name_range_returns_none_for_import_kind() {
             .expect("file must contain a call");
         let kind = DefinitionKind::Import {
             call: AstPtr::new(&call),
-            file: file.url(db).as_url().clone(),
+            file: file.url(db).to_url(),
             name: name.text(db).to_string(),
         };
         Definition::new(db, file, ScopeId::from(0), name, kind)

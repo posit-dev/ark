@@ -48,6 +48,29 @@ impl FilePath {
         Self::Virtual(VirtualUri::new(url.clone()))
     }
 
+    /// Build a [`FilePath::File`] from a filesystem path. Errors if
+    /// the path can't be expressed as a UTF-8 absolute path.
+    pub fn from_file_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        AbsPathBuf::from_path(path)
+            .map(Self::File)
+            .ok_or_else(|| anyhow::anyhow!("Path is not UTF-8 absolute: {}", path.display()))
+    }
+
+    /// Parse a URI string into a [`FilePath`]. `file:` URIs become
+    /// [`FilePath::File`]; everything else becomes [`FilePath::Virtual`].
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        let url = Url::parse(s)?;
+        Ok(Self::from_url(&url))
+    }
+
+    /// Filesystem path buffer for the `File` arm. Returns `None` for the
+    /// `Virtual` arm.
+    pub fn to_path_buf(&self) -> Option<std::path::PathBuf> {
+        self.as_file()
+            .map(|p| p.as_path().as_std_path().to_path_buf())
+    }
+
     /// Reconstruct a [`Url`].
     ///
     /// `File` arms rebuild a `file:` URL from the stored path; `Virtual`
@@ -81,6 +104,19 @@ impl FilePath {
         match self {
             Self::Virtual(u) => Some(u),
             Self::File(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for FilePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `File` arms format as a `file:` URL so the output matches
+        // what we'd send on the wire, not as a bare path. The path
+        // form is reachable via `as_file().map(|p| p.as_path())` for
+        // callers that want it.
+        match self {
+            Self::File(p) => p.to_url().fmt(f),
+            Self::Virtual(u) => u.fmt(f),
         }
     }
 }

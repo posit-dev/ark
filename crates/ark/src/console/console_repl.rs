@@ -68,7 +68,7 @@ pub enum SessionMode {
 #[derive(Debug)]
 pub(crate) enum ConsoleNotification {
     /// Notification that a document has changed, requiring breakpoint invalidation.
-    DidChangeDocument(UrlId),
+    DidChangeDocument(FilePath),
 }
 
 /// Stack of pending inputs
@@ -1522,7 +1522,7 @@ impl Console {
                 let (uri_id, loc) = if cell_id.is_some() {
                     match dap_notebook::notebook_code_location(&code) {
                         Some(notebook_loc) => {
-                            let id = UrlId::from_url(notebook_loc.uri.clone());
+                            let id = FilePath::from_url(&notebook_loc.uri);
                             (Some(id), Some(notebook_loc))
                         },
                         None => (uri_id, loc),

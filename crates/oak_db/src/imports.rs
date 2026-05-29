@@ -2,10 +2,9 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
-use stdext::result::ResultExt;
 use url::Url;
 
 use crate::Db;
@@ -68,7 +67,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            url: url.as_url().clone(),
+            url: url.to_url(),
             names,
             packages,
         })
@@ -87,27 +86,27 @@ fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
         .filter(|r| r.kind(db) == RootKind::Workspace)
     {
         // Workspace roots are file URLs by construction.
-        return root.path(db).to_file_path().log_err();
+        return root.path(db).to_path_buf();
     }
 
     let url = calling_file.url(db);
     if !url.is_file() {
         return None;
     }
-    let calling_path = url.to_file_path().log_err()?;
+    let calling_path = url.to_path_buf()?;
     calling_path.parent().map(PathBuf::from)
 }
 
 /// Resolve `path` (the literal `source("path")` argument) against the anchor
 /// directory. Applies pure `..` / `.` normalisation (no I/O). Returns `None` if
 /// the joined path can't be turned back into a file URL.
-fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<UrlId> {
+fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<FilePath> {
     // `from_file_path` failures are expected for ill-formed paths.
     // Drop silently rather than logging noise during discovery.
     let raw: PathBuf = anchor_dir.join(path);
     let target_path = normalise_path(&raw);
     let url = Url::from_file_path(&target_path).ok()?;
-    Some(UrlId::from_url(url))
+    Some(FilePath::from_url(&url))
 }
 
 /// Resolve `..` and `.` components in `path` lexically, without

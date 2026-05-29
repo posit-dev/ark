@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -16,7 +16,7 @@ use crate::ScanScheduler;
 
 /// Sync helper: scan to quiescence on the current thread. Production
 /// drivers spawn each request on a task pool.
-fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
+fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<FilePath>) {
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.set_workspace_paths(db, paths, editor_owned);
     drain_scheduler(db, &mut scheduler, reqs, editor_owned);
@@ -27,7 +27,7 @@ fn basenames(db: &OakDatabase, files: &[File]) -> Vec<String> {
         .iter()
         .map(|f| {
             f.url(db)
-                .as_url()
+                .to_url()
                 .path()
                 .rsplit('/')
                 .next()
@@ -108,7 +108,7 @@ fn test_scan_workspace_collects_top_level_scripts() {
         .iter()
         .map(|f| {
             f.url(&db)
-                .as_url()
+                .to_url()
                 .path()
                 .rsplit('/')
                 .next()
@@ -134,7 +134,7 @@ fn test_scan_workspace_excludes_package_r_files_from_scripts() {
     let packages = root.packages(&db).clone();
 
     assert_eq!(scripts.len(), 1);
-    assert!(scripts[0].url(&db).as_url().path().ends_with("outside.R"));
+    assert!(scripts[0].url(&db).to_url().path().ends_with("outside.R"));
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].files(&db).len(), 1);
 }
@@ -164,7 +164,7 @@ fn test_scan_workspace_routes_package_subdir_r_files_to_pkg_scripts() {
         .iter()
         .map(|f| {
             f.url(&db)
-                .as_url()
+                .to_url()
                 .path()
                 .rsplit('/')
                 .next()
@@ -189,7 +189,7 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let url = UrlId::from_file_path(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
+    let url = FilePath::from_file_path(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
     let file = db.file_by_url(&url).expect("script must be findable");
     assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
     // Package backpointer is set to the containing package.
@@ -220,7 +220,7 @@ fn test_scan_workspace_honors_gitignore() {
         .iter()
         .map(|f| {
             f.url(&db)
-                .as_url()
+                .to_url()
                 .path()
                 .rsplit('/')
                 .next()
@@ -268,7 +268,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     let mut db = OakDatabase::new();
 
     // Editor event before any scan.
-    let url = UrlId::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_file_path(&r_path).unwrap();
     db.upsert_editor(url.clone(), "edited_version <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
@@ -291,7 +291,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let r_path = tmp.path().join("pkg/R/a.R");
     let mut db = OakDatabase::new();
 
-    let url = UrlId::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_file_path(&r_path).unwrap();
     db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
@@ -393,7 +393,7 @@ fn test_scan_workspace_drops_duplicate_package_names() {
     assert_eq!(files.len(), 1);
     assert!(files[0]
         .url(&db)
-        .as_url()
+        .to_url()
         .path()
         .ends_with("aaa-clone/R/a.R"));
 }
@@ -443,14 +443,14 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let url = FilePath::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert!(file.package(&db).is_some());
 
     // Editor opens the file; subsequent `set_workspace_paths` calls
     // treat it as editor-owned.
     db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
-    let editor_owned: HashSet<UrlId> = [url.clone()].into_iter().collect();
+    let editor_owned: HashSet<FilePath> = [url.clone()].into_iter().collect();
 
     // Workspace folder removed. File routes to orphan, package goes to stale.
     set_workspace_paths(&mut db, &[], &editor_owned);
@@ -484,7 +484,7 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = UrlId::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let url = FilePath::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
 
     set_workspace_paths(&mut db, &[], &HashSet::new());
@@ -545,8 +545,8 @@ fn test_scan_workspace_package_files_sorted_by_basename() {
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let files = pkg.files(&db).clone();
     assert_eq!(files.len(), 2);
-    assert!(files[0].url(&db).as_url().path().ends_with("mutate.R"));
-    assert!(files[1].url(&db).as_url().path().ends_with("select.R"));
+    assert!(files[0].url(&db).to_url().path().ends_with("mutate.R"));
+    assert!(files[1].url(&db).to_url().path().ends_with("select.R"));
 }
 
 #[test]
@@ -567,7 +567,7 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
     fs::write(&r_path, "v2\n").unwrap();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = UrlId::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_file_path(&r_path).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert_eq!(file.contents(&db), "v2\n");
 }

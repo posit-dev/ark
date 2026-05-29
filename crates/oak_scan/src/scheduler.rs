@@ -54,14 +54,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
-use stdext::result::ResultExt;
 
 use crate::inputs::FileEntry;
 use crate::inputs::RootExt;
@@ -185,15 +184,15 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         paths: &[PathBuf],
-        editor_owned: &HashSet<UrlId>,
+        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
-        let new: Vec<(PathBuf, UrlId)> = paths
+        let new: Vec<(PathBuf, FilePath)> = paths
             .iter()
-            .filter_map(|p| Some((p.clone(), UrlId::from_file_path(p).ok()?)))
+            .filter_map(|p| Some((p.clone(), FilePath::from_file_path(p).ok()?)))
             .collect();
-        let new_urls: HashSet<UrlId> = new.iter().map(|(_, u)| u.clone()).collect();
+        let new_urls: HashSet<FilePath> = new.iter().map(|(_, u)| u.clone()).collect();
 
-        let old: HashMap<UrlId, Root> = db
+        let old: HashMap<FilePath, Root> = db
             .workspace_roots()
             .roots(db)
             .iter()
@@ -246,7 +245,7 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         events: Vec<FileEvent>,
-        skip: &HashSet<UrlId>,
+        skip: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let roots = workspace_root_paths(db);
         let mut requests = Vec::new();
@@ -257,7 +256,7 @@ impl ScanScheduler {
         // instead of applying surgically against a transient world.
         let mut description_roots: HashSet<Root> = HashSet::new();
         for event in &events {
-            let Ok(path) = event.url.to_file_path() else {
+            let Some(path) = event.url.to_path_buf() else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -278,7 +277,7 @@ impl ScanScheduler {
 
         // Pass 2: R-file events.
         for event in events {
-            let Ok(path) = event.url.to_file_path() else {
+            let Some(path) = event.url.to_path_buf() else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -333,7 +332,7 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         result: ScanCompleted,
-        editor_owned: &HashSet<UrlId>,
+        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let root = result.root;
 
@@ -357,7 +356,7 @@ impl ScanScheduler {
                 // would stay pending forever. On success the buffer rides along
                 // and replays when the requeued scan finishes. On failure we
                 // fall back to the idle drain.
-                match root.path(db).to_file_path().warn_on_err() {
+                match root.path(db).to_path_buf() {
                     Some(path) => {
                         self.state.insert(root, ScanState::Scanning);
                         vec![ScanRequest { root, path }]
@@ -389,7 +388,7 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         root: Root,
-        editor_owned: &HashSet<UrlId>,
+        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         match self.buffered.remove(&root) {
             Some(buffered) => self.apply_watcher_events(db, buffered, editor_owned),
@@ -409,7 +408,10 @@ impl ScanScheduler {
             },
             Some(ScanState::ScanningWithRescanQueued) => None,
             None => {
-                let path = root.path(db).to_file_path().warn_on_err()?;
+                let Some(path) = root.path(db).to_path_buf() else {
+                    log::warn!("Skipping rescan: root path is not a filesystem path");
+                    return None;
+                };
                 self.state.insert(root, ScanState::Scanning);
                 Some(ScanRequest { root, path })
             },
@@ -430,7 +432,7 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
     db: &mut DB,
     scheduler: &mut ScanScheduler,
     mut requests: Vec<ScanRequest>,
-    editor_owned: &HashSet<UrlId>,
+    editor_owned: &HashSet<FilePath>,
 ) {
     while let Some(req) = requests.pop() {
         let result = req.run();
@@ -442,7 +444,13 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
     db.workspace_roots()
         .roots(db)
         .iter()
-        .filter_map(|root| Some((root.path(db).to_file_path().warn_on_err()?, *root)))
+        .filter_map(|root| {
+            let Some(path) = root.path(db).to_path_buf() else {
+                log::warn!("Skipping workspace root: path is not a filesystem path");
+                return None;
+            };
+            Some((path, *root))
+        })
         .collect()
 }
 
@@ -461,8 +469,8 @@ mod tests {
     #[test]
     fn test_unresolvable_rescan_path_does_not_strand_root_scanning() {
         let mut db = OakDatabase::new();
-        let url = UrlId::parse("untitled:Untitled-1").unwrap();
-        let root = Root::new(&db, url, RootKind::Workspace, Vec::new(), Vec::new());
+        let path = FilePath::parse("untitled:Untitled-1").unwrap();
+        let root = Root::new(&db, path, RootKind::Workspace, Vec::new(), Vec::new());
         db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
         let mut scheduler = ScanScheduler::new();

@@ -4,13 +4,13 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
+use aether_path::FilePath;
 use aether_syntax::RBracedExpressions;
 use aether_syntax::RExpressionList;
 use aether_syntax::RLanguage;
 use aether_syntax::RSyntaxElement;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
-use aether_path::UrlId;
 use amalthea::wire::execute_request::CodeLocation;
 use anyhow::anyhow;
 use biome_line_index::LineIndex;
@@ -933,7 +933,7 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     // R source references may flow back to the frontend, which expects its
     // own URI representation.
     let uri = Url::parse(&uri)?;
-    let uri_id = UrlId::from_url(uri.clone());
+    let uri_id = FilePath::from_url(&uri);
 
     let mut dap_guard = Console::get().debug_dap.lock().unwrap();
 

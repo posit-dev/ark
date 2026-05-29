@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -62,7 +62,7 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
     assert!(followups.is_empty());
 
     // The package the scan would have created shouldn't surface.
-    let pkg_url = UrlId::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let pkg_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     assert!(package_by_url(&db, &pkg_url).is_none());
 }
 
@@ -125,7 +125,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     // Mid-scan: a new file appears under pkg/R/, the watcher fires.
     let new_path = tmp.path().join("pkg/R/b.R");
     fs::write(&new_path, "y <- 2\n").unwrap();
-    let new_url = UrlId::from_file_path(&new_path).unwrap();
+    let new_url = FilePath::from_file_path(&new_path).unwrap();
     let event_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
@@ -174,7 +174,7 @@ fn test_description_event_during_scan_queues_rescan() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = UrlId::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let watcher_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
@@ -228,7 +228,7 @@ fn test_description_event_on_idle_root_returns_scan_request() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = UrlId::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
@@ -263,7 +263,7 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
     let roots = db.workspace_roots().roots(&db).clone();
     assert_eq!(roots.len(), 1);
     assert!(roots[0].packages(&db).is_empty());
-    // `UrlId` construction is lexical, so the stored path is the one
+    // `FilePath` construction is lexical, so the stored path is the one
     // we handed in, byte for byte.
-    assert_eq!(roots[0].path(&db).to_file_path().unwrap(), tmp.path());
+    assert_eq!(roots[0].path(&db).to_path_buf().unwrap(), tmp.path());
 }

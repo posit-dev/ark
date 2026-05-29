@@ -14,7 +14,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -241,7 +241,7 @@ impl DapHandler {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match UrlId::from_file_path(path) {
+        let uri = match FilePath::from_file_path(path) {
             Ok(uri) => uri,
             Err(err) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");

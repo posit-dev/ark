@@ -26,7 +26,7 @@
 
 use std::collections::HashSet;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -52,7 +52,7 @@ use crate::inputs::with_cow_remove;
 pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     db: &mut DB,
     root: Root,
-    editor_owned: Option<&HashSet<UrlId>>,
+    editor_owned: Option<&HashSet<FilePath>>,
 ) {
     let packages: Vec<Package> = root.packages(db).clone();
 
@@ -130,7 +130,7 @@ pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Pa
 /// Look up a stale `File` by URL. The scanner's upsert helpers call this to
 /// fall back to the eviction bucket after `oak_db::Db::file_by_url` misses,
 /// reusing the evicted entity instead of minting a new one.
-pub(crate) fn stale_file_by_url(db: &dyn Db, url: &UrlId) -> Option<File> {
+pub(crate) fn stale_file_by_url(db: &dyn Db, url: &FilePath) -> Option<File> {
     stale_url_index(db).get(url).copied()
 }
 
@@ -139,7 +139,7 @@ pub(crate) fn stale_file_by_url(db: &dyn Db, url: &UrlId) -> Option<File> {
 /// the scanner is the only reader, via [`stale_file_by_url`] when re-adding a
 /// path.
 #[salsa::tracked(returns(ref))]
-fn stale_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
+fn stale_url_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in db.stale_root().files(db) {
         map.insert(file.url(db).clone(), file);
@@ -151,7 +151,7 @@ fn stale_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
 /// the live per-root `root_package_url_index`; consulted by `package_by_url`
 /// as its stale fallback.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn stale_package_url_index(db: &dyn Db) -> FxHashMap<UrlId, Package> {
+pub(crate) fn stale_package_url_index(db: &dyn Db) -> FxHashMap<FilePath, Package> {
     let mut map = FxHashMap::default();
     for &pkg in db.stale_root().packages(db) {
         map.insert(pkg.description_url(db).clone(), pkg);

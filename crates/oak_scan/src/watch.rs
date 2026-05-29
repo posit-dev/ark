@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use aether_path::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -33,7 +33,7 @@ use crate::packages::PackagePlacement;
 #[derive(Clone, Debug)]
 pub struct FileEvent {
     pub kind: FileEventKind,
-    pub url: UrlId,
+    pub url: FilePath,
 }
 
 /// Mirrors the three states an OS file watcher reports.
@@ -51,13 +51,13 @@ pub enum FileEventKind {
 /// `<pkg>/R/*.R`, `pkg.scripts` for other R files under a package
 /// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
 /// every package. Mirrors the placement the bulk scanner would pick.
-pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId, contents: String) {
+pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath, contents: String) {
     if let Some(existing) = db.file_by_url(&url) {
         existing.set_contents(db).to(contents);
         return;
     }
 
-    let Ok(path) = url.to_file_path() else {
+    let Some(path) = url.to_path_buf() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
         return;
     };
@@ -101,7 +101,7 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
 /// `File` entity itself stays in the salsa graph (salsa doesn't
 /// support deleting inputs), but with no container references nothing
 /// will reach it.
-pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId) {
+pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath) {
     let Some(file) = db.file_by_url(&url) else {
         return;
     };
@@ -148,7 +148,7 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
     }
 
     let root = workspace_root_containing(db, path)?;
-    let root_path = root.path(db).to_file_path().ok()?;
+    let root_path = root.path(db).to_path_buf()?;
 
     // Find the nearest ancestor (within `root_path`) that contains a
     // `DESCRIPTION`. None means no package above the file, so it's a
@@ -181,9 +181,9 @@ fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<
     db.workspace_roots()
         .roots(db)
         .iter()
-        .find(|root| match root.path(db).to_file_path() {
-            Ok(root_path) => path.starts_with(&root_path),
-            Err(_) => false,
+        .find(|root| match root.path(db).to_path_buf() {
+            Some(root_path) => path.starts_with(&root_path),
+            None => false,
         })
         .copied()
 }

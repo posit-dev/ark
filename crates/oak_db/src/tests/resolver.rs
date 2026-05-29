@@ -52,7 +52,7 @@ fn test_cross_file_source_injection() {
 
     match import_def.unwrap().1.kind() {
         DefinitionKind::Import { file, name, .. } => {
-            assert_eq!(file, b.url(&db).as_url());
+            assert_eq!(file, &b.url(&db).to_url());
             assert_eq!(name, "x");
         },
         _ => unreachable!(),
