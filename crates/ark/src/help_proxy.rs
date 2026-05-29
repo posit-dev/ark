@@ -131,6 +131,11 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
     // Disable proxy since we're connecting to localhost; otherwise HTTP_PROXY
     // and other env vars can cause the request to get incorrectly routed to a
     // proxy.
+    //
+    // Note: `RetryTransientMiddleware` only retries the request *setup* (before
+    // headers arrive). Body-decode failures after headers have been received
+    // (seen intermittently on Windows CI against R's HTTPD) are retried
+    // separately in the loop below.
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
     let reqwest_client = match Client::builder().no_proxy().build() {
         Ok(client) => client,
@@ -143,83 +148,95 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
         .build();
 
-    // Get the target URL.
-    match client.get(target_url.clone()).send().await {
-        // OK.
-        Ok(response) => {
-            // Get the headers we need.
-            let headers = response.headers().clone();
-            let content_type = headers.get("content-type");
+    // Certain resources are served from our embedded bundle instead of from R.
+    let replacement_embedded_file = match target_url.path().to_lowercase() {
+        path if path.ends_with("r.css") => Asset::get("R.css"),
+        path if path.ends_with("prism.css") => Asset::get("prism.css"),
+        _ => None,
+    };
 
-            // Log content-length and transfer-encoding too: body-decode failures
-            // we see on Windows CI may be due to chunked-encoding or truncation
-            // issues against R's HTTPD, and these headers narrow it down.
-            log::info!(
-                "Proxying URL {url:?} path '{path}' content-type {ct:?} content-length {cl:?} transfer-encoding {te:?}",
-                url = target_url.to_string(),
-                path = target_url.path(),
-                ct = content_type,
-                cl = headers.get("content-length"),
-                te = headers.get("transfer-encoding"),
-            );
+    // Retry the full GET (including body read) on transient body-decode failures.
+    // The R HTTPD will re-serve the same page, so this is safe.
+    const MAX_BODY_RETRIES: u32 = 3;
+    let mut last_body_error: Option<String> = None;
 
-            // We only handle OK. Everything else is unexpected.
-            if response.status() != reqwest::StatusCode::OK {
+    for attempt in 0..=MAX_BODY_RETRIES {
+        let response = match client.get(target_url.clone()).send().await {
+            Ok(response) => response,
+            Err(error) => {
                 log::error!(
-                    "Got status {status} proxying {url:?}: {response:?}",
-                    status = response.status(),
-                    url = target_url.to_string(),
-                    response = match response.text().await {
-                        Ok(response) => response,
-                        Err(err) => format!("Response error: {err:?}"),
-                    },
+                    "Error proxying {target_url}: {chain}",
+                    chain = error_source_chain(&error),
                 );
                 return HttpResponse::BadGateway().finish();
-            }
+            },
+        };
 
-            // Build and return the response.
-            let mut http_response_builder = HttpResponse::Ok();
-            if let Some(content_type) = content_type {
-                let content_type = convert_header_value(content_type);
-                http_response_builder.content_type(content_type);
-            }
+        // Snapshot headers we'll log and forward downstream.
+        let headers = response.headers().clone();
+        let content_type = headers.get("content-type").cloned();
 
-            // Certain resources are replaced.
-            let replacement_embedded_file = match target_url.path().to_lowercase() {
-                path if path.ends_with("r.css") => Asset::get("R.css"),
-                path if path.ends_with("prism.css") => Asset::get("prism.css"),
-                _ => None,
-            };
+        // Log content-length and transfer-encoding too: body-decode failures
+        // we see on Windows CI may be due to chunked-encoding or truncation
+        // issues against R's HTTPD, and these headers narrow it down.
+        log::info!(
+            "Proxying URL {url:?} path '{path}' content-type {ct:?} content-length {cl:?} transfer-encoding {te:?}",
+            url = target_url.to_string(),
+            path = target_url.path(),
+            ct = content_type,
+            cl = headers.get("content-length"),
+            te = headers.get("transfer-encoding"),
+        );
 
-            // Return the replacement resource or the real resource.
-            match replacement_embedded_file {
-                Some(replacement_embedded_file) => {
-                    http_response_builder.body(replacement_embedded_file.data)
-                },
-                None => http_response_builder.body(match response.bytes().await {
-                    Ok(body) => body,
-                    Err(error) => {
-                        // Walk the source chain: reqwest's top-level error often
-                        // hides the actual cause (truncated chunk, decompression
-                        // failure, socket close).
-                        log::error!(
-                            "Error proxying {target_url_string}: {chain}",
-                            chain = error_source_chain(&error),
-                        );
-                        return HttpResponse::BadGateway().finish();
-                    },
-                }),
-            }
-        },
-        // Error.
-        Err(error) => {
+        // We only handle OK. Everything else is unexpected and not worth retrying.
+        if response.status() != reqwest::StatusCode::OK {
             log::error!(
-                "Error proxying {target_url}: {chain}",
-                chain = error_source_chain(&error),
+                "Got status {status} proxying {url:?}: {body}",
+                status = response.status(),
+                url = target_url.to_string(),
+                body = match response.text().await {
+                    Ok(text) => text,
+                    Err(err) => format!("Response error: {err:?}"),
+                },
             );
-            HttpResponse::BadGateway().finish()
-        },
+            return HttpResponse::BadGateway().finish();
+        }
+
+        let mut http_response_builder = HttpResponse::Ok();
+        if let Some(content_type) = content_type.as_ref() {
+            http_response_builder.content_type(convert_header_value(content_type));
+        }
+
+        // For embedded replacements we don't need R's body at all; serve the
+        // bundled bytes directly. `Cow<'static, [u8]>::clone()` on a `Borrowed`
+        // variant is just a pointer copy.
+        if let Some(replacement) = replacement_embedded_file.as_ref() {
+            return http_response_builder.body(replacement.data.clone());
+        }
+
+        match response.bytes().await {
+            Ok(body) => return http_response_builder.body(body),
+            Err(error) => {
+                // Walk the source chain: reqwest's top-level error often hides
+                // the actual cause (truncated chunk, decompression failure,
+                // socket close).
+                let chain = error_source_chain(&error);
+                log::warn!(
+                    "Body read failed (attempt {n}/{total}) for {target_url_string}: {chain}",
+                    n = attempt + 1,
+                    total = MAX_BODY_RETRIES + 1,
+                );
+                last_body_error = Some(chain);
+            },
+        }
     }
+
+    log::error!(
+        "Error proxying {target_url_string}: body read failed after {attempts} attempts: {err}",
+        attempts = MAX_BODY_RETRIES + 1,
+        err = last_body_error.unwrap_or_default(),
+    );
+    HttpResponse::BadGateway().finish()
 }
 
 #[get("/preview")]
