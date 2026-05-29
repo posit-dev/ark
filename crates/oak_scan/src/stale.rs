@@ -10,7 +10,8 @@
 //!   its contents until `didClose`.
 //!
 //!   `OrphanRoot` has no `packages` field, so an evicted package file
-//!   loses its package association: `file.package` clears to `None` and
+//!   loses its package association: with the file in orphan and its old
+//!   package no longer in a live root, `File::package` derives `None` and
 //!   analysis treats it as a standalone script for as long as the
 //!   workspace is removed. If the workspace comes back, `upsert_file`
 //!   finds the same `File` via `OrphanRoot` and re-promotes it into
@@ -57,14 +58,9 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         all_files.extend(pkg.files(db).iter().copied());
     }
 
-    // Clear `file.package` first: by the time these files land in their new
-    // home, their old `Package` entity is itself in stale and the backpointer
-    // would lie about live containment. Setting to `None` here keeps the
-    // placement invariant honest.
-    for &file in &all_files {
-        file.set_package(db).to(None);
-    }
-
+    // Ownership is derived from live containment, so there's no back-pointer
+    // to clear: once these files leave the root (to orphan / stale) and the
+    // root's packages are emptied below, `File::package` derives `None`.
     let (to_orphan, to_stale): (Vec<File>, Vec<File>) = all_files
         .into_iter()
         .partition(|f| editor_owned.is_some_and(|owned| owned.contains(f.url(db))));

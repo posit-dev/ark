@@ -15,7 +15,7 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| File::new(db, file_url(name), contents.to_string(), None))
+        .map(|(name, contents)| File::new(db, file_url(name), contents.to_string()))
         .collect();
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -289,18 +289,8 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
         None,
     );
 
-    let a = File::new(
-        &db,
-        file_url("/w/pkg/R/a.R"),
-        "x <- 1\n".to_string(),
-        Some(pkg),
-    );
-    let b = File::new(
-        &db,
-        file_url("/w/pkg/R/b.R"),
-        "y <- 2\n".to_string(),
-        Some(pkg),
-    );
+    let a = File::new(&db, file_url("/w/pkg/R/a.R"), "x <- 1\n".to_string());
+    let b = File::new(&db, file_url("/w/pkg/R/b.R"), "y <- 2\n".to_string());
     pkg.set_files(&mut db).to(vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -328,17 +318,11 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
         None,
     );
 
-    let a = File::new(
-        &db,
-        file_url("/w/pkg/R/a.R"),
-        "shared <- 1\n".to_string(),
-        Some(pkg),
-    );
+    let a = File::new(&db, file_url("/w/pkg/R/a.R"), "shared <- 1\n".to_string());
     let b = File::new(
         &db,
         file_url("/w/pkg/R/b.R"),
         "use_shared <- function() shared\n".to_string(),
-        Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);

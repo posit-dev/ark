@@ -12,7 +12,7 @@ use crate::Package;
 #[test]
 fn test_root_returns_none_for_orphan_file_outside_workspace() {
     let db = OakDatabase::new();
-    let file = File::new(&db, file_url("orphan.R"), String::new(), None);
+    let file = File::new(&db, file_url("orphan.R"), String::new());
 
     assert_eq!(file.root(&db), None);
 }
@@ -23,7 +23,7 @@ fn test_root_finds_containing_workspace_for_orphan_file() {
     let workspace = workspace_root(&db, "proj");
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
-    let file = File::new(&db, file_url("proj/scripts/foo.R"), String::new(), None);
+    let file = File::new(&db, file_url("proj/scripts/foo.R"), String::new());
     assert_eq!(file.root(&db), Some(workspace));
 }
 
@@ -36,10 +36,10 @@ fn test_root_returns_longest_prefix_for_orphan_file() {
         .set_roots(&mut db)
         .to(vec![outer, inner]);
 
-    let inner_file = File::new(&db, file_url("proj/inner/foo.R"), String::new(), None);
+    let inner_file = File::new(&db, file_url("proj/inner/foo.R"), String::new());
     assert_eq!(inner_file.root(&db), Some(inner));
 
-    let outer_file = File::new(&db, file_url("proj/foo.R"), String::new(), None);
+    let outer_file = File::new(&db, file_url("proj/foo.R"), String::new());
     assert_eq!(outer_file.root(&db), Some(outer));
 }
 
@@ -56,18 +56,14 @@ fn test_root_dispatches_through_library_package_when_set() {
         Vec::new(),
         None,
     );
+    // File placed in `pkg.files`. `root()` derives the package from that
+    // containment and dispatches through `Db::root_by_package` rather than
+    // falling back to the URL-prefix walk against workspace roots.
+    let file = File::new(&db, file_url("libs/mypkg/R/foo.R"), String::new());
+    pkg.set_files(&mut db).to(vec![file]);
     pkg_root.set_packages(&mut db).to(vec![pkg]);
     db.library_roots().set_roots(&mut db).to(vec![pkg_root]);
 
-    // File created with package back-pointer set. `root()` dispatches
-    // through `Db::root_by_package` rather than falling back to the URL-
-    // prefix walk against workspace roots.
-    let file = File::new(
-        &db,
-        file_url("libs/mypkg/R/foo.R"),
-        String::new(),
-        Some(pkg),
-    );
     assert_eq!(file.root(&db), Some(pkg_root));
 }
 
@@ -75,7 +71,7 @@ fn test_root_dispatches_through_library_package_when_set() {
 fn test_root_dispatches_through_workspace_package_when_set() {
     // Same dispatch as the library case, but the owning root is a
     // `Workspace` kind. The URL-prefix fallback is *not* consulted here
-    // because `package` is set.
+    // because the file belongs to a package.
     let mut db = OakDatabase::new();
     let pkg_root = workspace_root(&db, "proj");
     let pkg = Package::new(
@@ -87,9 +83,10 @@ fn test_root_dispatches_through_workspace_package_when_set() {
         Vec::new(),
         None,
     );
+    let file = File::new(&db, file_url("proj/R/foo.R"), String::new());
+    pkg.set_files(&mut db).to(vec![file]);
     pkg_root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![pkg_root]);
 
-    let file = File::new(&db, file_url("proj/R/foo.R"), String::new(), Some(pkg));
     assert_eq!(file.root(&db), Some(pkg_root));
 }

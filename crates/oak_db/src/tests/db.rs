@@ -14,7 +14,7 @@ use crate::Package;
 fn test_file_by_url_finds_workspace_script() {
     let mut db = TestDb::new();
     let root = workspace_root(&db, "proj");
-    let file = File::new(&db, file_url("proj/a.R"), String::new(), None);
+    let file = File::new(&db, file_url("proj/a.R"), String::new());
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -25,10 +25,9 @@ fn test_file_by_url_finds_workspace_script() {
 fn test_file_by_url_finds_workspace_package_file() {
     let mut db = TestDb::new();
     let root = workspace_root(&db, "proj");
-    // Construct the back-pointer + forward-edge pair: create the
-    // `Package` with an empty `files` list, then the `File` with the
-    // `package` set, then attach the file via `set_files`. Matches the
-    // shape `oak_scan`'s placement-preserving helpers will produce.
+    // Attach the file to the package via the forward edge (`set_files`),
+    // the single source of truth for membership. Matches the shape
+    // `oak_scan`'s placement-preserving helpers produce.
     let pkg = Package::new(
         &db,
         file_url("proj/DESCRIPTION"),
@@ -38,7 +37,7 @@ fn test_file_by_url_finds_workspace_package_file() {
         vec![],
         None,
     );
-    let file = File::new(&db, file_url("proj/R/foo.R"), String::new(), Some(pkg));
+    let file = File::new(&db, file_url("proj/R/foo.R"), String::new());
     pkg.set_files(&mut db).to(vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
@@ -59,7 +58,7 @@ fn test_file_by_url_finds_library_package_file() {
         vec![],
         None,
     );
-    let file = File::new(&db, file_url("libs/foo/R/a.R"), String::new(), Some(pkg));
+    let file = File::new(&db, file_url("libs/foo/R/a.R"), String::new());
     pkg.set_files(&mut db).to(vec![file]);
     lib.set_packages(&mut db).to(vec![pkg]);
     db.library_roots().set_roots(&mut db).to(vec![lib]);
@@ -70,7 +69,7 @@ fn test_file_by_url_finds_library_package_file() {
 #[test]
 fn test_file_by_url_finds_orphan_file() {
     let mut db = TestDb::new();
-    let file = File::new(&db, file_url("untitled.R"), String::new(), None);
+    let file = File::new(&db, file_url("untitled.R"), String::new());
     db.orphan_root().set_files(&mut db).to(vec![file]);
 
     assert_eq!(db.file_by_url(&file_url("untitled.R")), Some(file));
@@ -90,8 +89,8 @@ fn test_root_url_index_invalidates_per_root() {
     let mut db = TestDb::new();
     let root_a = workspace_root(&db, "a");
     let root_b = workspace_root(&db, "b");
-    let file_a = File::new(&db, file_url("a/file.R"), String::new(), None);
-    let file_b = File::new(&db, file_url("b/file.R"), String::new(), None);
+    let file_a = File::new(&db, file_url("a/file.R"), String::new());
+    let file_b = File::new(&db, file_url("b/file.R"), String::new());
     root_a.set_scripts(&mut db).to(vec![file_a]);
     root_b.set_scripts(&mut db).to(vec![file_b]);
     db.workspace_roots()
@@ -106,7 +105,7 @@ fn test_root_url_index_invalidates_per_root() {
     assert_eq!(db.executions("root_url_index"), 2);
 
     // Add a script to root B. B's index invalidates; A's stays cached.
-    let file_b2 = File::new(&db, file_url("b/other.R"), String::new(), None);
+    let file_b2 = File::new(&db, file_url("b/other.R"), String::new());
     root_b.set_scripts(&mut db).to(vec![file_b, file_b2]);
 
     // Look up the file in A. A's index is still cached, no re-exec.

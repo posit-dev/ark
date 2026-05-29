@@ -42,7 +42,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
 }
 
 fn make_script(db: &mut OakDatabase, name: &str) -> File {
-    File::new(db, file_url(name), String::new(), None)
+    File::new(db, file_url(name), String::new())
 }
 
 #[test]

@@ -23,14 +23,14 @@ pub struct Root {
     pub path: UrlId,
     pub kind: RootKind,
     /// Top-level R scripts directly under this root. Each entry is a
-    /// `File` with `package(db) == None`. Always empty for `Library`
-    /// roots.
+    /// `File` not owned by any package (`package(db) == None`). Always
+    /// empty for `Library` roots.
     ///
-    /// **Placement invariant.** A file present here must have
-    /// `package(db) == None`, and a file with `package == None` must
-    /// live here, in another `Root.scripts`, or in
-    /// `OrphanRoot.files`. Call this setter only through `oak_scan`'s
-    /// helpers, which keep the back-pointer and the container in sync.
+    /// A file should live in exactly one container (`Root.scripts`,
+    /// `Package.files`, or `OrphanRoot.files`); `File::package` derives
+    /// ownership from that. Push files here only through `oak_scan`'s
+    /// helpers, which move a file out of its old container as it changes
+    /// homes.
     #[returns(ref)]
     pub scripts: Vec<File>,
     /// Packages discovered under this root (workspace packages for
@@ -121,9 +121,10 @@ impl LibraryRoots {
 /// [`crate::Db::file_by_url`] consults to find unanchored files.
 #[salsa::input(debug)]
 pub struct OrphanRoot {
-    /// **Placement invariant.** Files here must have `package(db) ==
-    /// None`. Call this setter only through `oak_scan`'s helpers,
-    /// which keep the back-pointer and the container in sync.
+    /// Files here are owned by no package: since the orphan bucket has no
+    /// `packages`, `File::package` derives `None` for them. Push files
+    /// here only through `oak_scan`'s helpers, which move a file out of
+    /// its old container as it changes homes.
     #[returns(ref)]
     pub files: Vec<File>,
 }
@@ -204,10 +205,11 @@ pub struct Package {
     /// package doesn't invalidate tracked queries reading another
     /// package's files.
     ///
-    /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`. Call this setter only through
-    /// `oak_scan`'s helpers, which keep the back-pointer and the
-    /// container in sync.
+    /// This vec is the source of truth for package membership:
+    /// `File::package` derives ownership by finding the file here. A file
+    /// should live in exactly one container, so push files here only
+    /// through `oak_scan`'s helpers, which move a file out of its old
+    /// container as it changes homes.
     #[returns(ref)]
     pub files: Vec<File>,
     /// The basename ordering from `DESCRIPTION`'s `Collate` field, if

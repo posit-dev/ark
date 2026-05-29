@@ -25,7 +25,7 @@ fn file_url(s: &str) -> UrlId {
 fn test_set_stale_routes_editor_owned_to_orphan() {
     let mut db = OakDatabase::new();
     let root = Root::new(&db, file_url("/proj"), RootKind::Workspace, vec![], vec![]);
-    let file = File::new(&db, file_url("/proj/foo.R"), "x".to_string(), None);
+    let file = File::new(&db, file_url("/proj/foo.R"), "x".to_string());
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -42,7 +42,7 @@ fn test_set_stale_routes_editor_owned_to_orphan() {
 fn test_set_stale_routes_non_editor_owned_to_stale() {
     let mut db = OakDatabase::new();
     let root = Root::new(&db, file_url("/proj"), RootKind::Workspace, vec![], vec![]);
-    let file = File::new(&db, file_url("/proj/foo.R"), "x".to_string(), None);
+    let file = File::new(&db, file_url("/proj/foo.R"), "x".to_string());
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -68,7 +68,7 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
         vec![],
         None,
     );
-    let file = File::new(&db, file_url("/proj/R/a.R"), "x".to_string(), Some(pkg));
+    let file = File::new(&db, file_url("/proj/R/a.R"), "x".to_string());
     pkg.set_files(&mut db).to(vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);

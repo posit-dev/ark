@@ -11,7 +11,7 @@ use crate::File;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
-    File::new(db, file_url(name), contents.to_string(), None)
+    File::new(db, file_url(name), contents.to_string())
 }
 
 /// Build a fresh workspace root, attach the given scripts, register
@@ -328,9 +328,8 @@ fn test_source_anchors_relative_to_workspace_root() {
         &db,
         file_url("proj/sub/a.R"),
         "source(\"b.R\")\n".to_string(),
-        None,
     );
-    let b = File::new(&db, file_url("proj/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(&db, file_url("proj/b.R"), "x <- 1\n".to_string());
     root.set_scripts(&mut db).to(vec![a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -343,13 +342,8 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     // Calling file isn't under any workspace root, so the anchor
     // falls back to the file's own parent directory.
     let mut db = TestDb::new();
-    let a = File::new(
-        &db,
-        file_url("dir/a.R"),
-        "source(\"b.R\")\n".to_string(),
-        None,
-    );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    let a = File::new(&db, file_url("dir/a.R"), "source(\"b.R\")\n".to_string());
+    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string());
     db.orphan_root().set_files(&mut db).to(vec![a, b]);
 
     let index = a.semantic_index(&db);
@@ -365,9 +359,8 @@ fn test_source_path_with_parent_dir_segments() {
         &db,
         file_url("dir/sub/a.R"),
         "source(\"../b.R\")\n".to_string(),
-        None,
     );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string());
     db.orphan_root().set_files(&mut db).to(vec![a, b]);
 
     let index = a.semantic_index(&db);

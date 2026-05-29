@@ -128,10 +128,11 @@ fn narrow_script_top_level(file: File, db: &dyn Db, offset: TextSize) -> Vec<Imp
 fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
     let files = package.files(db);
     let Some(file_pos) = files.iter().position(|f| *f == file) else {
-        // File claims membership but isn't in the package's `files`.
+        // `package` was derived from `package.files` containing this file
+        // (via `File::package`), so the position is always found.
         // Shouldn't happen.
         log::warn!(
-            "File {file} has package back-pointer to {package} but is not in its files",
+            "File {file} resolved to package {package} but is not in its files",
             file = file.url(db),
             package = package.name(db),
         );

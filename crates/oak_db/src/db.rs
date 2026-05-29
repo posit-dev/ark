@@ -178,6 +178,29 @@ pub fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
     best.map(|(root, _)| root)
 }
 
+/// Resolve the [`Package`] that owns `file`, if any.
+///
+/// Walks live roots' `File -> Package` indexes in workspace-then-library
+/// order and returns the first hit. A file belongs to at most one package
+/// *entity* (in the nested-root case both roots' `packages` hold the same
+/// entity), so first-hit is unambiguous. The orphan bucket has no packages
+/// and contributes nothing; stale entities are invisible by design, which
+/// is what makes an evicted file's package association clear to `None`.
+///
+/// Backs [`crate::File::package`], which is the derived replacement for the
+/// old `File.package` back-pointer field: the container vecs are now the
+/// single source of truth for file ownership.
+pub fn package_by_file_query(db: &dyn Db, file: File) -> Option<Package> {
+    for &root in db.live_roots() {
+        if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
+            if let Some(&pkg) = root_file_package_index(db, r).get(&file) {
+                return Some(pkg);
+            }
+        }
+    }
+    None
+}
+
 /// Number of path segments in a root's URL. Used as the tiebreaker by
 /// [`root_by_package_query`] when nested roots both claim the same package.
 ///
@@ -207,6 +230,21 @@ fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, File> {
     for &pkg in root.packages(db) {
         for &file in pkg.files(db) {
             map.insert(file.url(db).clone(), file);
+        }
+    }
+    map
+}
+
+/// Per-root File -> owning Package index. Built from `root.packages` and
+/// each package's `files`. Same per-root granularity as [`root_url_index`]:
+/// adding or removing a file in this root invalidates only this entry.
+/// Backs [`package_by_file_query`].
+#[salsa::tracked(returns(ref))]
+fn root_file_package_index(db: &dyn Db, root: Root) -> FxHashMap<File, Package> {
+    let mut map = FxHashMap::default();
+    for &pkg in root.packages(db) {
+        for &file in pkg.files(db) {
+            map.insert(file, pkg);
         }
     }
     map

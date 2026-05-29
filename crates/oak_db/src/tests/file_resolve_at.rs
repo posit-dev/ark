@@ -11,11 +11,7 @@ use crate::Package;
 use crate::Root;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_url(path), contents.to_string(), None)
-}
-
-fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_url(path), contents.to_string(), Some(package))
+    File::new(db, file_url(path), contents.to_string())
 }
 
 /// Set up a workspace root with the given scripts (top-level files with
@@ -146,9 +142,9 @@ fn test_resolves_package_sibling_predecessor() {
     let mut db = TestDb::new();
     let (_root, pkg) = install_workspace_package(&mut db, "pkg");
 
-    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
+    let a = make_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n");
     let b_source = "use_shared <- function() shared\n";
-    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
+    let b = make_file(&mut db, "workspace/pkg/R/b.R", b_source);
     pkg.set_files(&mut db).to(vec![a, b]);
 
     // Cursor on `shared` inside `b`'s function body. Lexical walk finds

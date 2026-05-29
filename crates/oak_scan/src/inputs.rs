@@ -9,12 +9,11 @@
 //! entities for goto-def) stable across changes that don't actually
 //! touch a given file's content.
 //!
-//! The trade-off is a small placement invariant: `file.package` must
-//! agree with which container Vec holds the file (`pkg.files`,
-//! `root.scripts`, or `orphan_root().files`). Outside callers should
-//! not call `file.set_package(...)` directly. This crate is the only
-//! intended caller of the placement-affecting setters on `oak_db`'s
-//! input structs.
+//! Placement is single-source-of-truth: a file belongs to whichever
+//! container Vec holds it (`pkg.files`, `root.scripts`, or
+//! `orphan_root().files`), and `File::package` derives ownership from
+//! that. These helpers keep a file in exactly one container as it moves,
+//! so the derived lookup stays unambiguous.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -168,20 +167,19 @@ impl RootExt for Root {
 
 fn upsert_file<DB: Db + DbInputs>(db: &mut DB, package: Option<Package>, entry: FileEntry) -> File {
     if let Some(old) = db.file_by_url(&entry.url) {
-        // Two cleanups before handing the file to the caller, which will place
-        // it in a new container:
+        // The caller will place this file in `package`'s `files` vec. Two
+        // cleanups keep the file in exactly one live container, so the
+        // derived `File::package` stays unambiguous:
         //
-        // - If the package backpointer changed and the old package was Some,
-        //   the old package's `files` vec still references this file. Drop it,
-        //   otherwise that `Package` would carry a stale entry until its next
-        //   wholesale rescan.
+        // - If the file currently belongs to a *different* package, drop it
+        //   from that package's `files` vec; otherwise both would list it.
+        //   Normally a no-op, since a file's package is fixed by its path:
+        //   this only fires in the pathological nested-root case where two
+        //   packages claim the same URL.
         //
-        // - If the file was in `OrphanRoot.files` (typically because the editor
-        //   had it open before a scan classified it), remove it. The placement
-        //   invariant for orphan says `file.package == None`, and we're about
-        //   to set the package.
+        // - If the file was in `OrphanRoot.files` (typically because the
+        //   editor had it open before a scan classified it), remove it.
         let old_package = old.package(db);
-        old.set_package(db).to(package);
         if old_package != package {
             if let Some(old_pkg) = old_package {
                 remove_from_pkg_files(db, old_pkg, old);
@@ -194,14 +192,13 @@ fn upsert_file<DB: Db + DbInputs>(db: &mut DB, package: Option<Package>, entry: 
     if let Some(stale) = stale_file_by_url(db, &entry.url) {
         // Resurrecting an evicted File. Restore disk contents (the editor-owned
         // variant lives in `orphan_root` instead; this branch only sees
-        // scanner-discovered files).
+        // scanner-discovered files). The caller places it into `package.files`.
         stale.set_contents(db).to(entry.contents);
-        stale.set_package(db).to(package);
         remove_from_stale_files(db, stale);
         return stale;
     }
 
-    File::new(db, entry.url, entry.contents, package)
+    File::new(db, entry.url, entry.contents)
 }
 
 fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {

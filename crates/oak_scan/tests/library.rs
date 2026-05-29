@@ -471,7 +471,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
 
     // Editor opens the file before any scan -> orphan.
     let r_url = file_url("/lib/pkg/R/a.R");
-    let file = File::new(&db, r_url.clone(), "editor content".to_string(), None);
+    let file = File::new(&db, r_url.clone(), "editor content".to_string());
     db.orphan_root().set_files(&mut db).to(vec![file]);
     assert_eq!(file.package(&db), None);
 
@@ -489,8 +489,12 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
         }],
         None,
     );
+    // Wire the package into a live root so `File::package` (derived from
+    // live containment) can see it, mirroring the real scanner.
+    register_package(&mut db, lib, pkg);
 
-    // Same `File` entity, editor content preserved, package backpointer set.
+    // Same `File` entity, editor content preserved, package ownership
+    // derived from `pkg.files`.
     let pkg_file = pkg.files(&db)[0];
     assert_eq!(pkg_file, file);
     assert_eq!(file.contents(&db), "editor content");

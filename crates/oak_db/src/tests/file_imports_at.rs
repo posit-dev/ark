@@ -12,11 +12,7 @@ use crate::ImportLayer;
 use crate::Package;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_url(path), contents.to_string(), None)
-}
-
-fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_url(path), contents.to_string(), Some(package))
+    File::new(db, file_url(path), contents.to_string())
 }
 
 /// Register a set of installed packages on `LibraryRoots`, one library
@@ -148,10 +144,10 @@ fn test_package_top_level_sees_predecessor_files_only() {
     let _ = install_packages(&mut db, &["base"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
+    let a = make_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n");
     let b_source = "x <- 1\n";
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
+    let b = make_file(&mut db, "/w/pkg/R/b.R", b_source);
+    let c = make_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n");
     pkg.set_files(&mut db).to(vec![a, b, c]);
 
     // Cursor at top-level in b. Only a (the predecessor in `Package.files`)
@@ -167,10 +163,10 @@ fn test_package_function_body_sees_other_package_files_in_lifo_order() {
     let _ = install_packages(&mut db, &["base"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
+    let a = make_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n");
     let b_source = "f <- function() {\n  x\n}\n";
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
+    let b = make_file(&mut db, "/w/pkg/R/b.R", b_source);
+    let c = make_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n");
     pkg.set_files(&mut db).to(vec![a, b, c]);
 
     // Cursor inside f's body. Full lazy view (same as `imports()`).
@@ -190,10 +186,10 @@ fn test_package_top_level_predecessors_appear_in_lifo_order() {
     let _ = install_packages(&mut db, &["base"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", "second <- 2\n", pkg);
+    let a = make_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n");
+    let b = make_file(&mut db, "/w/pkg/R/b.R", "second <- 2\n");
     let c_source = "x <- 1\n";
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", c_source, pkg);
+    let c = make_file(&mut db, "/w/pkg/R/c.R", c_source);
     pkg.set_files(&mut db).to(vec![a, b, c]);
 
     let offset = TextSize::from(c_source.find('x').unwrap() as u32);
@@ -209,7 +205,7 @@ fn test_package_namespace_and_base_layers_always_visible() {
     let base = packages[0];
     let pkg = install_workspace_package(&mut db, "pkg");
 
-    let file = make_package_file(&mut db, "/w/pkg/R/a.R", "x <- 1\n", pkg);
+    let file = make_file(&mut db, "/w/pkg/R/a.R", "x <- 1\n");
     pkg.set_files(&mut db).to(vec![file]);
 
     let layers = file.imports_at(&db, TextSize::from(0));

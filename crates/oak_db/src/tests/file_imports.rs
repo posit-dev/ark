@@ -51,7 +51,7 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
     let base = packages[0];
     let stats = packages[1];
 
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string(), None);
+    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
     let layers = file.imports(&db);
 
     // Only `stats` and `base` are registered in this test; the other
@@ -77,7 +77,6 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
         &db,
         file_url("a.R"),
         "library(dplyr)\nlibrary(ggplot2)\n".to_string(),
-        None,
     );
     let layers = file.imports(&db);
 
@@ -98,7 +97,7 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
 fn test_script_attach_to_unregistered_package_drops_layer() {
     let db = TestDb::new();
     // No `dplyr` in any library root.
-    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string());
 
     let layers = file.imports(&db);
     assert!(layers.is_empty());
@@ -132,18 +131,8 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         Vec::new(),
         None,
     );
-    let first = File::new(
-        &db,
-        file_url("w/pkg/R/_a.R"),
-        "first <- 1\n".to_string(),
-        Some(pkg),
-    );
-    let second = File::new(
-        &db,
-        file_url("w/pkg/R/b.R"),
-        "second <- 2\n".to_string(),
-        Some(pkg),
-    );
+    let first = File::new(&db, file_url("w/pkg/R/_a.R"), "first <- 1\n".to_string());
+    let second = File::new(&db, file_url("w/pkg/R/b.R"), "second <- 2\n".to_string());
     pkg.set_files(&mut db).to(vec![first, second]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -189,7 +178,7 @@ fn test_imports_is_cached_per_file() {
     let mut db = TestDb::new();
     let _ = install_packages(&mut db, &["dplyr"]);
 
-    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string());
     let _ = file.imports(&db);
     let _ = file.imports(&db);
 

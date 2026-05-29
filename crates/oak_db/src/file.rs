@@ -23,36 +23,18 @@ use crate::Root;
 /// The `url` field is a [`UrlId`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
 ///
-/// `package` is a back-pointer to the [`Package`] this file belongs to, or
-/// `None` for standalone scripts. Inverse of `Package.files`, so queries
-/// answering "what package owns this file?" don't walk the forward edge.
-/// Files with `package == None` are either standalone scripts under a
-/// workspace root or orphan files not registered anywhere.
-///
-/// # Placement invariant
-///
-/// `File.package` and the file's physical location in a `Vec<File>` are
-/// expected to agree. A file with `package == Some(pkg)` should live in
-/// `pkg.files`. A file with `package == None` should live in either some
-/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_url`,
-/// `set_contents`, `set_package`) are `pub` because field visibility couples to
-/// setter visibility in salsa but calling `set_package` directly leaves the
-/// file in its old bucket and silently breaks this invariant.
-///
-/// The scanner crate (`oak_scan`) wraps these setters in helpers that
-/// maintain placement (move the file between `pkg.files`,
-/// `root.scripts`, and `orphan_root().files` as `package` changes).
-/// Callers that go around the helpers and use the salsa setters
-/// directly must maintain placement themselves.
+/// File ownership has a single source of truth: the forward edge. A file
+/// belongs to whichever container currently holds it -- `pkg.files`,
+/// `root.scripts`, or `orphan_root().files`. There is no stored
+/// back-pointer to keep in sync. "What package owns this file?" is
+/// answered by the derived [`File::package`] query, which walks the
+/// per-root `File -> Package` indexes; "what root?" by [`File::root`].
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
-    /// **Placement invariant.** Call this setter only through
-    /// `oak_scan`'s helpers; see the type-level doc above.
-    pub package: Option<Package>,
 }
 
 #[salsa::tracked]
@@ -144,9 +126,23 @@ impl File {
             .collect()
     }
 
+    /// The [`Package`] that owns this file, or `None` for standalone
+    /// scripts and orphan / stale files.
+    ///
+    /// Derived from live-graph containment via
+    /// [`package_by_file_query`](crate::db::package_by_file_query): the
+    /// file belongs to whichever live `pkg.files` currently holds it.
+    /// This replaces the old `File.package` back-pointer field, so file
+    /// ownership has a single source of truth (the forward edge) and no
+    /// invariant to maintain by hand.
+    #[salsa::tracked]
+    pub fn package(self, db: &dyn Db) -> Option<Package> {
+        crate::db::package_by_file_query(db, self)
+    }
+
     /// The root containing this file, if any.
     ///
-    /// If the file has a registered [`Package`], asks the db which live
+    /// If the file has an owning [`Package`], asks the db which live
     /// root holds it via [`Db::root_by_package`]. Otherwise falls back to a
     /// URL-prefix lookup against [`WorkspaceRoots`] (orphan files live
     /// under a workspace root or nowhere). Library files normally have
