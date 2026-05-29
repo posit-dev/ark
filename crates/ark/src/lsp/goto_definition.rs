@@ -164,7 +164,7 @@ mod parked_salsa_tests {
 
     fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
         let mut state = WorldState::default();
-        state.documents.insert(uri.clone(), doc.clone());
+        state.insert_document(uri.clone(), doc.clone());
         state
     }
 
@@ -229,8 +229,8 @@ mod parked_salsa_tests {
         let pkg = Package::from_parts(pkg_root, desc, ns);
 
         let mut state = WorldState::default();
-        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
-        state.documents.insert(uri_ccc.clone(), doc_ccc.clone());
+        state.insert_document(uri_aaa.clone(), doc_aaa.clone());
+        state.insert_document(uri_ccc.clone(), doc_ccc.clone());
         state.root = Some(SourceRoot::Package(pkg));
 
         // ccc.R sees bbb.R's definition (later in collation)
@@ -283,9 +283,9 @@ mod parked_salsa_tests {
         let pkg = Package::from_parts(pkg_root, desc, ns);
 
         let mut state = WorldState::default();
-        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
-        state.documents.insert(uri_bbb.clone(), doc_bbb);
-        state.documents.insert(uri_ccc.clone(), doc_ccc.clone());
+        state.insert_document(uri_aaa.clone(), doc_aaa.clone());
+        state.insert_document(uri_bbb.clone(), doc_bbb);
+        state.insert_document(uri_ccc.clone(), doc_ccc.clone());
         state.root = Some(SourceRoot::Package(pkg));
 
         // aaa.R is now last in collation, so it can see bbb.R's definition
@@ -332,7 +332,7 @@ mod parked_salsa_tests {
         let pkg = Package::from_parts(pkg_root, desc, ns);
 
         let mut state = WorldState::default();
-        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
+        state.insert_document(uri_aaa.clone(), doc_aaa.clone());
         state.root = Some(SourceRoot::Package(pkg));
 
         // Cursor on `helper` inside the function body (line 0, col 16)
@@ -464,7 +464,7 @@ mod parked_salsa_tests {
         // `is.null` is NOT in the INDEX
         let doc_null = Document::new("is.null(1)\n", None);
         let uri_null = lsp_types::Url::from_file_path(pkg_root.join("R/bar.R")).unwrap();
-        state.documents.insert(uri_null.clone(), doc_null.clone());
+        state.insert_document(uri_null.clone(), doc_null.clone());
 
         let params = make_params(uri_null, 0, 0);
         let result = goto_definition(&doc_null, params, &state).unwrap();
@@ -523,9 +523,7 @@ mod parked_salsa_tests {
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
         state.workspace.folders = vec![lsp_types::Url::from_directory_path(dir.path()).unwrap()];
 
         let params = make_params(script_uri, 1, 0);
@@ -551,10 +549,8 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(script_dir.join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state.documents.insert(helpers_uri.clone(), helpers_doc);
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(helpers_uri.clone(), helpers_doc);
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // Cursor on `helper` (line 1, col 0)
         let params = make_params(script_uri, 1, 0);
@@ -594,7 +590,7 @@ mod parked_salsa_tests {
 
         let mut state = make_state(&script_uri, &script_doc);
         state.library = library;
-        state.documents.insert(helpers_uri.clone(), helpers_doc);
+        state.insert_document(helpers_uri.clone(), helpers_doc);
 
         // `mutate` (line 1) resolves via dplyr, attached by helpers.R's library() call.
         // Package symbol, no NavigationTarget.
@@ -634,9 +630,7 @@ mod parked_salsa_tests {
             lsp_types::Url::from_file_path(script_dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
         // helpers.R is intentionally NOT inserted into state.documents
 
         let params = make_params(script_uri, 1, 0);
@@ -755,9 +749,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // Should resolve without hanging. Both symbols are reachable
         // because a.R is visited first (gets its exports + b.R's exports),
@@ -801,9 +793,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
@@ -848,9 +838,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // `foo` on line 2 should resolve to the LOCAL definition on line 1,
         // not to the sourced one from helpers.R.
@@ -897,9 +885,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
         let a_uri = lsp_types::Url::from_file_path(dir.path().join("a.R")).unwrap();
@@ -947,9 +933,7 @@ mod parked_salsa_tests {
         let script_doc = Document::new("source(\"script.R\")\nmy_var <- 1\nmy_var\n", None);
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // `my_var` (line 2) should resolve to its own definition on line 1,
         // not to a Sourced duplicate.
@@ -993,9 +977,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let (index, file_scope) = state.file_analysis(&script_uri, &script_doc);
 
@@ -1033,9 +1015,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let b_uri = lsp_types::Url::from_file_path(dir.path().join("b.R")).unwrap();
 
@@ -1063,9 +1043,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
@@ -1103,9 +1081,7 @@ mod parked_salsa_tests {
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
@@ -1138,9 +1114,7 @@ mod parked_salsa_tests {
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // `helper` on line 2 should resolve to helpers.R (source() shadows local)
         let params = make_params(script_uri, 2, 0);
@@ -1177,9 +1151,7 @@ mod parked_salsa_tests {
         let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
         let mut state = WorldState::default();
-        state
-            .documents
-            .insert(script_uri.clone(), script_doc.clone());
+        state.insert_document(script_uri.clone(), script_doc.clone());
 
         // `fn` on line 1 should resolve to the SECOND def in helpers.R (line 1)
         let params = make_params(script_uri, 1, 0);

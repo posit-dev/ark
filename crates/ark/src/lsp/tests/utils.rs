@@ -5,7 +5,7 @@ use crate::lsp::state::WorldState;
 
 pub(super) fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
     let mut state = WorldState::default();
-    state.documents.insert(uri.clone(), doc.clone());
+    state.insert_document(uri.clone(), doc.clone());
     state
 }
 

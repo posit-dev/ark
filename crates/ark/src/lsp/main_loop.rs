@@ -455,12 +455,7 @@ impl GlobalState {
                 // time: a buffer may have opened or closed since the scan
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
-                let editor_owned: HashSet<FilePath> = self.world
-                    .documents
-                    .keys()
-                    .map(FilePath::from_url)
-                    .collect();
-
+                let editor_owned: HashSet<FilePath> = self.world.documents.keys().cloned().collect();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
                     &mut self.world.db,
                     scan,
@@ -1000,7 +995,7 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
         futures.push(task::spawn_blocking(move || {
             let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
-            if let Some(document) = state.documents.get(&uri) {
+            if let Some(document) = state.documents.get(&FilePath::from_url(&uri)) {
                 // Special case testthat-specific behaviour. This is a simple
                 // stopgap approach that has some false positives (e.g. when we
                 // work on testthat itself the flag will always be true), but
@@ -1136,8 +1131,8 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
         n = state.documents.len()
     );
 
-    for (uri, _document) in state.documents.iter() {
-        if !ExtUrl::should_diagnose(uri) {
+    for document in state.documents.values() {
+        if !ExtUrl::should_diagnose(&document.url) {
             continue;
         }
 
@@ -1147,7 +1142,7 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
         // non-oak state).
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
-                uri: uri.clone(),
+                uri: document.url.clone(),
                 state: state.legacy_snapshot(),
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));

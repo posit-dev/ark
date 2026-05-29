@@ -64,7 +64,7 @@ fn set_workspace_paths(
 }
 
 fn editor_owned_of(state: &WorldState) -> HashSet<FilePath> {
-    state.documents.keys().map(FilePath::from_url).collect()
+    state.documents.keys().cloned().collect()
 }
 
 fn did_change_watched_files(
@@ -268,9 +268,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let mut state = workspace_state(tmp.path());
 
     let url = Url::from_file_path(&path).unwrap();
-    state
-        .documents
-        .insert(url.clone(), Document::new("editor_v2\n", None));
+    state.insert_document(url.clone(), Document::new("editor_v2\n", None));
     // Pretend the editor pushed its content into oak too.
     let file_path = FilePath::from_url(&url);
     state
@@ -357,9 +355,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let mut state = workspace_state(tmp.path());
 
     let url = Url::from_file_path(&path).unwrap();
-    state
-        .documents
-        .insert(url.clone(), Document::new("editor_v2\n", None));
+    state.insert_document(url.clone(), Document::new("editor_v2\n", None));
     let file_path = FilePath::from_url(&url);
     state
         .db
@@ -577,9 +573,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
     let file_path = FilePath::from_url(&url);
-    state
-        .documents
-        .insert(url.clone(), Document::new("editor <- 2\n", None));
+    state.insert_document(url.clone(), Document::new("editor <- 2\n", None));
     state
         .db
         .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
@@ -637,9 +631,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // Simulate `didOpen` via state mutation (matches the rest of the file's
     // pattern).
-    state
-        .documents
-        .insert(url.clone(), Document::new("edited\n", None));
+    state.insert_document(url.clone(), Document::new("edited\n", None));
     lsp_state
         .parsers
         .insert(url.clone(), tree_sitter::Parser::new());

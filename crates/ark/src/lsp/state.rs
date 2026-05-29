@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
 use oak_semantic::library::Library;
@@ -18,8 +19,10 @@ pub(crate) struct WorldState {
     /// Salsa input tree for Oak queries.
     pub(crate) db: OakDatabase,
 
-    /// Watched documents
-    pub(crate) documents: HashMap<Url, Document>,
+    /// Watched documents, keyed on the normalised [`FilePath`] form.
+    /// The verbatim editor URL is preserved on each [`Document::url`]
+    /// for wire output.
+    pub(crate) documents: HashMap<FilePath, Document>,
 
     /// Watched folders
     pub(crate) workspace: Workspace,
@@ -79,7 +82,8 @@ impl WorldState {
     }
 
     pub(crate) fn get_document(&self, uri: &Url) -> anyhow::Result<&Document> {
-        if let Some(doc) = self.documents.get(uri) {
+        let key = FilePath::from_url(uri);
+        if let Some(doc) = self.documents.get(&key) {
             Ok(doc)
         } else {
             Err(anyhow!("Can't find document for URI {uri}"))
@@ -87,7 +91,8 @@ impl WorldState {
     }
 
     pub(crate) fn get_document_mut(&mut self, uri: &Url) -> anyhow::Result<&mut Document> {
-        if let Some(doc) = self.documents.get_mut(uri) {
+        let key = FilePath::from_url(uri);
+        if let Some(doc) = self.documents.get_mut(&key) {
             Ok(doc)
         } else {
             Err(anyhow!("Can't find document for URI {uri}"))
@@ -114,6 +119,15 @@ impl WorldState {
             db: OakDatabase::new(),
             ..self.clone()
         }
+    }
+
+    /// Insert a document, keying on the normalised [`FilePath`] and
+    /// stashing the verbatim editor URL on [`Document::url`] for wire
+    /// output.
+    pub(crate) fn insert_document(&mut self, uri: Url, mut doc: Document) {
+        let key = FilePath::from_url(&uri);
+        doc.url = uri;
+        self.documents.insert(key, doc);
     }
 }
 
@@ -151,8 +165,11 @@ where
 }
 
 pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
-    let uris: Vec<Url> = state.documents.iter().map(|elt| elt.0.clone()).collect();
-    uris
+    state
+        .documents
+        .values()
+        .map(|doc| doc.url.clone())
+        .collect()
 }
 
 #[cfg(test)]
