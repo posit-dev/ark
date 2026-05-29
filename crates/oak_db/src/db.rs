@@ -178,12 +178,19 @@ pub fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
     best.map(|(root, _)| root)
 }
 
-/// Number of path components in a root's URL. Used as the tiebreaker by
+/// Number of path segments in a root's URL. Used as the tiebreaker by
 /// [`root_by_package_query`] when nested roots both claim the same package.
+///
+/// Counts URL segments directly rather than going through `to_file_path()`.
+/// `to_file_path()` errors on Windows for non-OS-style URLs (no drive
+/// letter), which would silently collapse all depths to zero and degrade
+/// the tiebreaker into "first found wins". Depth is a structural property
+/// of the URL hierarchy, so the URL itself is the right source.
 fn root_depth(db: &dyn Db, root: Root) -> usize {
     root.path(db)
-        .to_file_path()
-        .map(|p| p.components().count())
+        .as_url()
+        .path_segments()
+        .map(|s| s.filter(|seg| !seg.is_empty()).count())
         .unwrap_or(0)
 }
 
