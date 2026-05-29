@@ -263,7 +263,11 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
     let roots = db.workspace_roots().roots(&db).clone();
     assert_eq!(roots.len(), 1);
     assert!(roots[0].packages(&db).is_empty());
-    // Path matches (canonicalized; macOS prefixes with `/private`).
-    let expected = tmp.path().canonicalize().unwrap();
-    assert_eq!(roots[0].path(&db).to_file_path().unwrap(), expected);
+    // Path matches. Compare via the URL conversion the scheduler uses
+    // internally, so this stays cross-platform: macOS canonicalization
+    // resolves symlinks (`/var` -> `/private/var`), Windows adds a `\\?\`
+    // UNC prefix, and going through `UrlId::from_file_path` on both sides
+    // is the only round-trip that matches.
+    let expected = UrlId::from_file_path(tmp.path()).unwrap();
+    assert_eq!(roots[0].path(&db), &expected);
 }
