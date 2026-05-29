@@ -88,7 +88,7 @@ jobs:
             GITHUB_TOKEN: ${{ github.token }}
         steps:
             - name: Create release
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               id: create_release
               with:
                   draft: false
@@ -147,7 +147,7 @@ jobs:
                   name: ark-${{ matrix.flavor }}-linux-arm64-archive
 
             - name: Upload macOS release artifact (universal)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -155,7 +155,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
 
             - name: Upload macOS release artifact (arm64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -163,7 +163,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-arm64.zip
 
             - name: Upload macOS release artifact (x64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -171,7 +171,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-x64.zip
 
             - name: Upload Windows release artifact (x64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -179,7 +179,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
 
             - name: Upload Windows release artifact (arm64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -187,7 +187,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-arm64.zip
 
             - name: Upload Linux release artifacts (x64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
@@ -195,7 +195,7 @@ jobs:
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
 
             - name: Upload Linux release artifacts (arm64)
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3.0.0
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
