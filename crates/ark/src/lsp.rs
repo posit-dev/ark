@@ -11,6 +11,7 @@ pub mod code_action;
 pub mod comm;
 pub mod completions;
 mod config;
+pub(crate) mod db;
 mod declarations;
 pub mod diagnostics;
 pub mod diagnostics_syntax;

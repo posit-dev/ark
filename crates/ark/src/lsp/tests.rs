@@ -1,3 +1,4 @@
+mod db;
 mod find_references;
 mod goto_definition;
 mod main_loop;
