@@ -1,5 +1,6 @@
 use aether_path::FilePath;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 
 use crate::File;
 use crate::LibraryRoots;
@@ -100,6 +101,49 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
 
     roots.push(LiveRoot::Orphan(db.orphan_root()));
     roots
+}
+
+/// All files known to the database, in stable order (workspace, library,
+/// orphan). Deduplicates files that appear in multiple roots.
+///
+/// Used as the workspace-wide candidate pool for find-references: callers
+/// apply a textual name filter before building indexes.
+#[salsa::tracked(returns(ref))]
+pub fn all_files(db: &dyn Db) -> Vec<File> {
+    let mut seen: FxHashSet<File> = FxHashSet::default();
+    let mut files: Vec<File> = Vec::new();
+
+    for &root in db.live_roots() {
+        match root {
+            LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
+                for &f in r.scripts(db) {
+                    if seen.insert(f) {
+                        files.push(f);
+                    }
+                }
+                for &pkg in r.packages(db) {
+                    for &f in pkg.files(db) {
+                        if seen.insert(f) {
+                            files.push(f);
+                        }
+                    }
+                    for &f in pkg.scripts(db) {
+                        if seen.insert(f) {
+                            files.push(f);
+                        }
+                    }
+                }
+            },
+            LiveRoot::Orphan(orphan) => {
+                for &f in orphan.files(db) {
+                    if seen.insert(f) {
+                        files.push(f);
+                    }
+                }
+            },
+        }
+    }
+    files
 }
 
 /// Implementation of [`Db::file_by_path`]. Walks the per-root indices.

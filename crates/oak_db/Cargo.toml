@@ -22,6 +22,7 @@ biome_rowan.workspace = true
 camino.workspace = true
 compact_str.workspace = true
 log.workspace = true
+oak_core.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
 rustc-hash.workspace = true

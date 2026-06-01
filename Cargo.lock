@@ -2599,6 +2599,7 @@ dependencies = [
  "camino",
  "compact_str",
  "log",
+ "oak_core",
  "oak_package_metadata",
  "oak_semantic",
  "rustc-hash",
@@ -2629,8 +2630,10 @@ dependencies = [
  "biome_rowan",
  "oak_core",
  "oak_db",
+ "oak_package_metadata",
  "oak_scan",
  "oak_semantic",
+ "salsa",
  "url",
 ]
 

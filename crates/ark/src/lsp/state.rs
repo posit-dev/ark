@@ -129,6 +129,7 @@ impl WorldState {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn with_document<T, F>(
     path: &Path,
     state: &WorldState,

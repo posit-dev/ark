@@ -4,6 +4,7 @@ mod file;
 mod file_exports;
 mod file_imports;
 mod file_resolve;
+mod identifier;
 mod imports;
 mod inputs;
 mod name;
@@ -13,6 +14,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
+pub use db::all_files;
 pub use db::Db;
 pub use db::DbInputs;
 pub use definition::Definition;
@@ -20,6 +22,8 @@ pub use file::File;
 pub use file_exports::ExportEntry;
 pub use file_exports::FileExports;
 pub use file_imports::ImportLayer;
+pub use identifier::Identifier;
+pub use identifier::MemberKind;
 pub use inputs::LibraryRoots;
 pub use inputs::LiveRoot;
 pub use inputs::OrphanRoot;
