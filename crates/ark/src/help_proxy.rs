@@ -155,10 +155,21 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         _ => None,
     };
 
-    // Retry the full GET (including body read) on transient body-decode failures.
-    // The R HTTPD will re-serve the same page, so this is safe.
+    // Retry the full GET (including body read) on transient failures: both
+    // body-decode errors and 200-with-empty-body responses (the latter seen on
+    // Windows CI, where the Help pane renders a blank page). The R HTTPD will
+    // re-serve the same page, so retrying is safe.
     const MAX_BODY_RETRIES: u32 = 3;
-    let mut last_body_error: Option<String> = None;
+
+    // Why the most recent attempt failed; used to pick a final response once all
+    // retries are exhausted.
+    enum BodyFailure {
+        // `response.bytes()` errored; carries the source chain.
+        Decode(String),
+        // 200 OK with an empty body.
+        Empty,
+    }
+    let mut last_failure: Option<BodyFailure> = None;
 
     for attempt in 0..=MAX_BODY_RETRIES {
         let response = match client.get(target_url.clone()).send().await {
@@ -215,6 +226,20 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         }
 
         match response.bytes().await {
+            Ok(body) if body.is_empty() => {
+                // A 200 with no body is never a valid help page. Treat it as a
+                // transient failure and retry; log the framing headers so we can
+                // tell an explicit `content-length: 0` from a silently truncated
+                // chunked response.
+                log::warn!(
+                    "Empty body (attempt {n}/{total}) for {target_url_string}: content-length {cl:?} transfer-encoding {te:?}",
+                    n = attempt + 1,
+                    total = MAX_BODY_RETRIES + 1,
+                    cl = headers.get("content-length"),
+                    te = headers.get("transfer-encoding"),
+                );
+                last_failure = Some(BodyFailure::Empty);
+            },
             Ok(body) => return http_response_builder.body(body),
             Err(error) => {
                 // Walk the source chain: reqwest's top-level error often hides
@@ -226,17 +251,37 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
                     n = attempt + 1,
                     total = MAX_BODY_RETRIES + 1,
                 );
-                last_body_error = Some(chain);
+                last_failure = Some(BodyFailure::Decode(chain));
             },
         }
     }
 
-    log::error!(
-        "Error proxying {target_url_string}: body read failed after {attempts} attempts: {err}",
-        attempts = MAX_BODY_RETRIES + 1,
-        err = last_body_error.unwrap_or_default(),
-    );
-    HttpResponse::BadGateway().finish()
+    // Every attempt failed. An empty body is plausibly what R really served, so
+    // pass the empty 200 through (matching pre-retry behavior); a decode error
+    // means we never got a usable body, so report a gateway error.
+    match last_failure {
+        Some(BodyFailure::Empty) => {
+            log::error!(
+                "Empty body after {attempts} attempts for {target_url_string}; serving empty 200 response",
+                attempts = MAX_BODY_RETRIES + 1,
+            );
+            HttpResponse::Ok().finish()
+        },
+        Some(BodyFailure::Decode(err)) => {
+            log::error!(
+                "Error proxying {target_url_string}: body read failed after {attempts} attempts: {err}",
+                attempts = MAX_BODY_RETRIES + 1,
+            );
+            HttpResponse::BadGateway().finish()
+        },
+        None => {
+            // Unreachable: the loop only exits here after recording a failure.
+            log::error!(
+                "Error proxying {target_url_string}: retries exhausted with no recorded failure"
+            );
+            HttpResponse::BadGateway().finish()
+        },
+    }
 }
 
 #[get("/preview")]
