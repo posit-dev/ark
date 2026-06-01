@@ -1,3 +1,4 @@
+use biome_rowan::TextSize;
 use salsa::Setter;
 
 use crate::tests::test_db::file_path;
@@ -22,6 +23,40 @@ fn test_parse_is_cached_across_calls() {
 
     let _ = file.parse(&db);
     assert_eq!(db.executions("parse"), 1);
+}
+
+#[test]
+fn test_line_index_is_cached_across_calls() {
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
+
+    let _ = file.line_index(&db);
+    assert_eq!(db.executions("line_index"), 1);
+
+    let _ = file.line_index(&db);
+    assert_eq!(db.executions("line_index"), 1);
+}
+
+#[test]
+fn test_line_index_recomputes_on_content_change() {
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
+
+    // One offset per line start: byte 0, then just past the `\n` at byte 6.
+    assert_eq!(file.line_index(&db).newlines, vec![
+        TextSize::from(0u32),
+        TextSize::from(7u32)
+    ]);
+    assert_eq!(db.executions("line_index"), 1);
+
+    file.set_contents(&mut db).to("x\ny\nz\n".to_string());
+    assert_eq!(file.line_index(&db).newlines, vec![
+        TextSize::from(0u32),
+        TextSize::from(2u32),
+        TextSize::from(4u32),
+        TextSize::from(6u32),
+    ]);
+    assert_eq!(db.executions("line_index"), 2);
 }
 
 #[test]

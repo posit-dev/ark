@@ -52,6 +52,11 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let target_path = resolve_relative_to(&anchor, path)?;
+        // TODO(diagnostics): a `source()` target outside the workspace never
+        // becomes a `File` (nothing watches or scans it), so `file_by_path`
+        // misses it and the names it injects are invisible. Picking these up
+        // (to resolve and to lint) needs a non-LSP file watcher we don't have
+        // yet.
         let file = self.db.file_by_path(&target_path)?;
 
         let names: Vec<String> = file

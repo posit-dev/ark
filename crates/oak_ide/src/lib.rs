@@ -9,6 +9,7 @@ pub use find_references::find_references;
 pub use find_references::References;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
+use oak_db::File;
 pub use rename::prepare_rename;
 pub use rename::rename;
 pub use rename::RenameTargets;
@@ -37,7 +38,7 @@ pub struct FileRange {
 /// document-highlight), use `FileRange` directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
-    pub file: Url,
+    pub file: File,
     pub name: String,
     pub full_range: TextRange,
     pub focus_range: TextRange,

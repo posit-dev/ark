@@ -17,6 +17,7 @@ workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_path.workspace = true
+biome_line_index.workspace = true
 biome_rowan.workspace = true
 camino.workspace = true
 compact_str.workspace = true

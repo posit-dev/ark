@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use aether_path::FilePath;
 use biome_rowan::TextSize;
+use oak_semantic::semantic_index::DefinitionKind;
+use oak_semantic::DefinitionId;
 use oak_semantic::ScopeId;
 
 use crate::Db;
@@ -75,72 +78,86 @@ impl<'db> File {
         None
     }
 
-    /// Resolve the name at `offset` to its definition.
+    /// Resolve the name at `offset` to its definition(s).
     ///
-    /// Implements R's full lookup chain at the use site, with offset-aware
-    /// sequential semantics for top-level code:
-    ///
-    /// 1. **Lexical scopes**: walk ancestor scopes from the use, returning
-    ///    the first function-scope binding (parameter, local `<-`, etc.).
-    /// 2. **In a function body (lazy context)**: defer to `resolve`, which
-    ///    uses the EOF state (full imports, source forwards). The function
-    ///    will run after the whole script/package is loaded, so we
-    ///    over-approximate accordingly.
-    /// 3. **At top-level (sequential context)**: walk the exports chain
-    ///    (handles `<-` and `source()` shadowing via `exports`'s
-    ///    last-wins ordering), then walk `imports_at(offset)` for the
-    ///    visible subset of attaches / collation predecessors.
+    /// Returns every binding that could reach the use, so a name defined on
+    /// both arms of an `if`/`else` yields two. A cursor on a binding's own name
+    /// resolves to that binding. Empty means nothing reachable binds the name
+    /// here.
     ///
     /// Not `#[salsa::tracked]` because keying on `(self, offset)` would
     /// balloon the cache. The `Definition` entities it returns are minted by
-    /// the tracked [`File::definitions()`], so they stay cached and
-    /// identity-stable even though this lookup isn't.
-    pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Option<Definition<'db>> {
+    /// the tracked [`File::definitions()`] and looked up via
+    /// [`File::definition()`], so they stay cached and identity-stable even
+    /// though this lookup isn't.
+    pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Vec<Definition<'db>> {
         let index = self.semantic_index(db);
-        let (use_scope, _use_id, use_site) = index.use_at(offset)?;
+        let Some((use_scope, use_id, use_site)) = index.use_at(offset) else {
+            // Cursor on a binding's own name (a def site, not a use): jump to
+            // it, like rust-analyzer / ty.
+            return match index.definition_at(offset) {
+                Some((scope, def_id, _)) => {
+                    self.definition(db, scope, def_id).into_iter().collect()
+                },
+                None => Vec::new(),
+            };
+        };
         let name = index
             .symbols(use_scope)
             .symbol(use_site.symbol())
             .name()
             .to_string();
-
-        // Step 1, lexical. Function-scope hits return directly. File-scope
-        // hits fall through. `resolve_symbol()` only tracks IS_BOUND, but
-        // `exports()` orders bindings in source order so steps 2/3 pick the
-        // last winner between `<-` and a same-name `source()`.
-        let file_scope = ScopeId::from(0);
-        if let Some((binding_scope, def_id, _def)) = index.resolve(&name, use_scope) {
-            if binding_scope != file_scope {
-                return self.definition(db, binding_scope, def_id);
-            }
-        }
-
-        let in_function = use_scope != file_scope;
         let interned = Name::new(db, name.as_str());
 
-        // 2. Function body: In lazy contexts we over-approximate by resolving
-        // as if cursor was at EOF. Defer to `resolve`.
-        if in_function {
-            return self.resolve(db, interned);
+        // Get local definitions for that use
+        let reaching: Vec<(ScopeId, DefinitionId)> =
+            index.reaching_definitions(use_scope, use_id).collect();
+
+        if !reaching.is_empty() {
+            return reaching
+                .into_iter()
+                .filter_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
+                .collect();
         }
 
-        // 3. Top-level: exports chain (here) offset-narrowed imports (below).
-        if let Some(def) = self.resolve_export(db, interned) {
-            return Some(def);
+        // Nothing local reaches the use, so resolve across files.
+        let file_scope = ScopeId::from(0);
+        if use_scope != file_scope {
+            // Function body: the lazy / end-of-file view the body sees at run time.
+            return self.resolve(db, interned).into_iter().collect();
         }
 
-        // Same exports-only chase as `resolve`'s imports walk: avoids the
-        // sibling cycle, matches R's namespace semantics. TODO: Package-level
-        // layers.
+        // Top level: collation predecessors / other visible files (exports-only
+        // chase, same as `resolve`'s imports walk). Avoids the sibling cycle and
+        // matches R's namespace semantics. TODO: Package-level layers.
         for layer in self.imports_at(db, offset) {
             if let ImportLayer::File(target) = layer {
                 if let Some(def) = target.resolve_export(db, interned) {
-                    return Some(def);
+                    return vec![def];
                 }
             }
         }
 
-        None
+        Vec::new()
+    }
+
+    fn resolve_definition(
+        self,
+        db: &'db dyn Db,
+        scope: ScopeId,
+        def_id: DefinitionId,
+    ) -> Option<Definition<'db>> {
+        let index = self.semantic_index(db);
+        if let DefinitionKind::Import {
+            file: target_url,
+            name: forwarded,
+            ..
+        } = index.definitions(scope)[def_id].kind()
+        {
+            let target = db.file_by_url(&FilePath::from_url(target_url))?;
+            return target.resolve_export(db, Name::new(db, forwarded.as_str()));
+        }
+        self.definition(db, scope, def_id)
     }
 
     /// Walk this file's exports chain for `name`, chasing `source()`-forwarded
