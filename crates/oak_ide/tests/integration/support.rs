@@ -119,8 +119,7 @@ fn install_pkg(
     let file = File::new(
         db,
         FilePath::from_url(&file_url),
-        oak_db::FileRevision::zero(),
-        Some(contents.to_string()),
+        contents.to_string(),
         Some(pkg),
     );
     pkg.set_files(db).to(vec![file]);

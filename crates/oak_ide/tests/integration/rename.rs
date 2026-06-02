@@ -1,8 +1,6 @@
 //! Rename at the ide layer.
 
 use aether_path::FilePath;
-use biome_rowan::TextRange;
-use biome_rowan::TextSize;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
@@ -11,41 +9,16 @@ use oak_db::Root;
 use oak_db::RootKind;
 use oak_ide::prepare_rename;
 use oak_ide::rename;
-use oak_ide::FileRange;
 use oak_package_metadata::namespace::Namespace;
-use oak_scan::DbScan;
 use salsa::Setter;
 use url::Url;
 
-fn file_url(name: &str) -> Url {
-    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
-    // synthesize one for tests. Linux is happy with rootless paths.
-    if cfg!(windows) {
-        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
-    } else {
-        Url::parse(&format!("file:///project/R/{name}")).unwrap()
-    }
-}
-
-fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
-    db.upsert_editor(FilePath::from_url(&file_url(name)), contents.to_string())
-}
-
-fn offset(n: u32) -> TextSize {
-    TextSize::from(n)
-}
-
-fn range(start: u32, end: u32) -> TextRange {
-    TextRange::new(TextSize::from(start), TextSize::from(end))
-}
-
-fn ranges(targets: &[FileRange]) -> Vec<TextRange> {
-    targets.iter().map(|r| r.range).collect()
-}
-
-fn pairs(targets: &[FileRange]) -> Vec<(File, TextRange)> {
-    targets.iter().map(|r| (r.file, r.range)).collect()
-}
+use crate::support::install_library_package;
+use crate::support::offset;
+use crate::support::pairs;
+use crate::support::range;
+use crate::support::ranges;
+use crate::support::upsert;
 
 // --- prepare_rename ---
 
@@ -209,6 +182,22 @@ fn test_rename_refuses_library_package_symbol() {
 
     // Cursor on the def `foo` at offset 0.
     let err = rename(&db, lib_file, offset(0)).unwrap_err();
+    assert!(err.to_string().contains("installed package"));
+}
+
+#[test]
+fn test_rename_refuses_package_export_used_via_library() {
+    // `library(mypkg)` then a use of its exported `foo`. The use now resolves
+    // through the package layer to the installed-package binding, so rename
+    // refuses with the installed-package guard. Before package-layer resolution
+    // this use was unbound and errored with "no binding" instead.
+    let mut db = OakDatabase::new();
+    let _pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    let use_start = "library(mypkg)\n".len() as u32;
+    let err = rename(&db, script, offset(use_start)).unwrap_err();
     assert!(err.to_string().contains("installed package"));
 }
 

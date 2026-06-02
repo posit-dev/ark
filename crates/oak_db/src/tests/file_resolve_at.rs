@@ -321,20 +321,172 @@ fn test_top_level_conditional_reports_both_arm_defs() {
     assert!(starts.contains(&source.find("foo <- 2").unwrap()));
 }
 
-// Package-layer resolution, pending. `resolve` / `resolve_at` walk only
-// `ImportLayer::File`; the `From` / `Package` layers (`library()`, NAMESPACE
-// `importFrom`, the base search path) are deferred, see the TODOs in
-// `file_resolve.rs`. These scenarios came from the old goto-def `LegacyDb`
-// suite, which only asserted them as unsupported (resolved to `None`). When
-// package layers land, add them here on `resolve_at`:
+// Package-layer resolution, remaining items. These need either installed-package
+// files as `oak_db::File` entities (for navigable locations) or a broader test
+// infrastructure:
 //
-// - `library(pkg)` in a script makes a `pkg` export resolve at a later use.
 // - `importFrom(dplyr, mutate)` in a package's NAMESPACE makes `mutate` resolve.
 // - a package file resolves base symbols (e.g. `cat`).
 // - a standalone script resolves base / default-attached symbols.
 // - a script's search path is identical at top level and in a function body.
 // - `library()` attached inside a sourced file is visible to a function body
 //   that runs after the `source()`.
-//
-// Resolving package symbols also needs a navigable location for installed
-// package files, which aren't `oak_db::File` entities yet.
+
+fn install_library_package(
+    db: &mut TestDb,
+    name: &str,
+    exports: &[&str],
+    files: &[(&str, &str)],
+) -> (Root, Package) {
+    use oak_package_metadata::namespace::Namespace;
+    use stdext::SortedVec;
+
+    use crate::tests::test_db::library_root;
+
+    let root = library_root(db, &format!("library/{name}"));
+    let namespace = Namespace {
+        exports: SortedVec::from_vec(exports.iter().map(|s| s.to_string()).collect()),
+        ..Default::default()
+    };
+    let pkg = Package::new(
+        db,
+        file_url(&format!("library/{name}/DESCRIPTION")),
+        name.to_string(),
+        Some("1.0.0".to_string()),
+        namespace,
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let pkg_files: Vec<File> = files
+        .iter()
+        .map(|(path, contents)| File::new(db, file_url(path), contents.to_string(), Some(pkg)))
+        .collect();
+    pkg.set_files(db).to(pkg_files);
+    root.set_packages(db).to(vec![pkg]);
+    db.library_roots().set_roots(db).to(vec![root]);
+    (root, pkg)
+}
+
+#[test]
+fn test_library_call_makes_pkg_export_resolve() {
+    // `library(mypkg)` in a script attaches `mypkg` as a `Package` layer.
+    // A later bare use of an exported name should resolve to the binding
+    // in `mypkg`'s file.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "mypkg", &["foo"], &[(
+        "library/mypkg/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let (_ws_root, files) =
+        setup_workspace_scripts(&mut db, "ws", &[("ws/script.R", "library(mypkg)\nfoo\n")]);
+    let script = files[0];
+    let source = script.contents(&db).clone();
+
+    // Cursor on `foo` (the use after `library(mypkg)`).
+    let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
+    let def = resolve_one(&db, script, offset);
+
+    assert_eq!(def.file(&db), pkg_file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "foo");
+}
+
+#[test]
+fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
+    // A package file whose NAMESPACE has `import(extpkg)` can resolve
+    // a bare use of `bar` to `extpkg`'s file via the `Package` layer that
+    // `package_imports` injects.
+    let mut db = TestDb::new();
+    let (_lib_root, ext_pkg) = install_library_package(&mut db, "extpkg", &["bar"], &[(
+        "library/extpkg/R/b.R",
+        "bar <- function() 99\n",
+    )]);
+    let ext_file = ext_pkg.files(&db)[0];
+
+    // Workspace package that `import(extpkg)` in its NAMESPACE.
+    let ws_root = workspace_root(&db, "workspace/mypkg");
+    let ns = {
+        use oak_package_metadata::namespace::Namespace;
+        Namespace {
+            package_imports: vec!["extpkg".to_string()],
+            ..Default::default()
+        }
+    };
+    let ws_pkg = Package::new(
+        &db,
+        file_url("workspace/mypkg/DESCRIPTION"),
+        "mypkg".to_string(),
+        None,
+        ns,
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let source = "bar\n";
+    let ws_file = File::new(
+        &db,
+        file_url("workspace/mypkg/R/a.R"),
+        source.to_string(),
+        Some(ws_pkg),
+    );
+    ws_pkg.set_files(&mut db).to(vec![ws_file]);
+    ws_root.set_packages(&mut db).to(vec![ws_pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![ws_root]);
+
+    let offset = TextSize::from(0);
+    let def = resolve_one(&db, ws_file, offset);
+
+    assert_eq!(def.file(&db), ext_file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "bar");
+}
+
+#[test]
+fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
+    // A package file whose NAMESPACE has `importFrom(extpkg, baz)` resolves a
+    // bare use of `baz` to `extpkg`'s file via the `From` layer that
+    // `package_imports` injects (symbol -> source-package map).
+    use oak_package_metadata::namespace::Import;
+    use oak_package_metadata::namespace::Namespace;
+
+    let mut db = TestDb::new();
+    let (_lib_root, ext_pkg) = install_library_package(&mut db, "extpkg", &["baz"], &[(
+        "library/extpkg/R/b.R",
+        "baz <- function() 99\n",
+    )]);
+    let ext_file = ext_pkg.files(&db)[0];
+
+    let ws_root = workspace_root(&db, "workspace/mypkg");
+    let ns = Namespace {
+        imports: vec![Import {
+            name: "baz".to_string(),
+            package: "extpkg".to_string(),
+        }],
+        ..Default::default()
+    };
+    let ws_pkg = Package::new(
+        &db,
+        file_url("workspace/mypkg/DESCRIPTION"),
+        "mypkg".to_string(),
+        None,
+        ns,
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let ws_file = File::new(
+        &db,
+        file_url("workspace/mypkg/R/a.R"),
+        "baz\n".to_string(),
+        Some(ws_pkg),
+    );
+    ws_pkg.set_files(&mut db).to(vec![ws_file]);
+    ws_root.set_packages(&mut db).to(vec![ws_pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![ws_root]);
+
+    let def = resolve_one(&db, ws_file, TextSize::from(0));
+
+    assert_eq!(def.file(&db), ext_file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "baz");
+}

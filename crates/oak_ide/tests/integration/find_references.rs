@@ -9,53 +9,17 @@
 //! then by source offset), so tests assert the full result vector rather than
 //! membership.
 
-use aether_path::FilePath;
-use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_db::DbInputs;
-use oak_db::File;
 use oak_db::OakDatabase;
-use oak_db::Package;
-use oak_db::Root;
-use oak_db::RootKind;
 use oak_ide::find_references;
-use oak_ide::FileRange;
-use oak_package_metadata::namespace::Namespace;
-use oak_scan::DbScan;
-use salsa::Setter;
-use url::Url;
 
-fn file_url(name: &str) -> Url {
-    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
-    // synthesize one for tests. Linux is happy with rootless paths.
-    if cfg!(windows) {
-        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
-    } else {
-        Url::parse(&format!("file:///project/R/{name}")).unwrap()
-    }
-}
-
-fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
-    db.upsert_editor(FilePath::from_url(&file_url(name)), contents.to_string())
-}
-
-fn offset(n: u32) -> TextSize {
-    TextSize::from(n)
-}
-
-fn range(start: u32, end: u32) -> TextRange {
-    TextRange::new(TextSize::from(start), TextSize::from(end))
-}
-
-/// Project results down to in-file ranges, for single-file tests.
-fn ranges(refs: &[FileRange]) -> Vec<TextRange> {
-    refs.iter().map(|r| r.range).collect()
-}
-
-/// Project results down to (file, range) pairs, for cross-file tests.
-fn pairs(refs: &[FileRange]) -> Vec<(File, TextRange)> {
-    refs.iter().map(|r| (r.file, r.range)).collect()
-}
+use crate::support::install_library_package;
+use crate::support::install_workspace_package;
+use crate::support::offset;
+use crate::support::pairs;
+use crate::support::range;
+use crate::support::ranges;
+use crate::support::upsert;
 
 // --- Local resolution ---
 
@@ -349,8 +313,8 @@ fn test_package_symbol_bridges_to_namespace_access() {
     // same binding. `script.R`'s bare `foo` doesn't resolve to `pkg` (no
     // attach), so it isn't included.
     let mut db = OakDatabase::new();
-    let pkg_files = build_workspace_package(&mut db, &[("foo.R", "foo <- function() 1\n")]);
-    let foo_file = pkg_files[0];
+    let foo_file =
+        install_workspace_package(&mut db, "pkg", &["foo"], "foo.R", "foo <- function() 1\n");
     let script = upsert(&mut db, "script.R", "pkg::foo()\nfoo\n");
 
     // Cursor on the def `foo` at offset 0.
@@ -364,38 +328,22 @@ fn test_package_symbol_bridges_to_namespace_access() {
     ]);
 }
 
-// --- helpers for root / package wiring ---
+#[test]
+fn test_cross_package_references_via_library() {
+    // A script attaches `mypkg` and uses its exported `foo`. The use resolves
+    // through the package layer to the binding in the package file, so
+    // find-references reports both the script use and (with include_declaration)
+    // the package definition. Newly live now that package-layer resolution
+    // feeds `resolve_at`.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
 
-/// Build a workspace package holding `files` (name, contents), each with the
-/// package back-pointer set, and register it under a workspace root. Returns
-/// the created `File`s in order.
-fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<File> {
-    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION");
-    let created: Vec<File> = files
-        .iter()
-        .map(|(name, contents)| {
-            let url =
-                FilePath::from_url(&Url::parse(&format!("file:///project/pkg/R/{name}")).unwrap());
-            File::new(db, url, contents.to_string(), Some(pkg))
-        })
-        .collect();
-    pkg.set_files(db).to(created.clone());
-
-    let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
-    db.workspace_roots().set_roots(db).to(vec![root]);
-    created
-}
-
-fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
-    Package::new(
-        db,
-        FilePath::from_url(&Url::parse(description_url).unwrap()),
-        "pkg".to_string(),
-        None,
-        Namespace::default(),
-        vec![],
-        vec![],
-        None,
-    )
+    let use_start = "library(mypkg)\n".len() as u32;
+    let refs = find_references(&db, script, offset(use_start), true);
+    assert_eq!(pairs(&refs), vec![
+        (script, range(use_start, use_start + 3)),
+        (pkg_file, range(0, 3)),
+    ]);
 }
