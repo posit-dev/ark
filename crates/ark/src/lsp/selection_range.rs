@@ -103,16 +103,19 @@ fn range_default(node: Node) -> Range {
     node.range()
 }
 
-pub fn convert_selection_range_from_tree_sitter_to_lsp(
+pub(crate) fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
-    document: &crate::lsp::document::Document,
+    ark_file: &crate::lsp::ark_file::ArkFile,
+    db: &dyn crate::lsp::db::ArkDb,
+    encoding: aether_lsp_utils::proto::PositionEncoding,
 ) -> anyhow::Result<lsp_types::SelectionRange> {
-    let range = document.lsp_range_from_tree_sitter_range(selection.range)?;
+    let range = ark_file.lsp_range_from_tree_sitter_range(db, encoding, selection.range)?;
 
     // If there is a parent, convert it and box it
     let parent = match selection.parent {
         Some(selection) => {
-            let selection = convert_selection_range_from_tree_sitter_to_lsp(*selection, document)?;
+            let selection =
+                convert_selection_range_from_tree_sitter_to_lsp(*selection, ark_file, db, encoding)?;
             Some(Box::new(selection))
         },
         None => None,

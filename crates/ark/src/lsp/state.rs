@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
+use crate::lsp::ark_file::ArkFile;
 use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
@@ -116,6 +118,29 @@ impl WorldState {
             db: OakDatabase::new(),
             ..self.clone()
         }
+    }
+
+    /// Build an [`ArkFile`] for a request.
+    ///
+    /// Most fields come from the legacy `Document` struct, namely `version`,
+    /// `config`, and `url`. The `encoding` comes from the world config instead.
+    /// The analysis handle comes from the matching `oak_db::File`.
+    ///
+    /// The `Document` and the `File` are kept in sync by the editor bridge,
+    /// which calls `upsert_editor()` on every `did_open` and `did_change`. So a
+    /// `File` exists whenever a `Document` does.
+    pub(crate) fn ark_file(&self, uri: &Url) -> anyhow::Result<ArkFile> {
+        let key = FilePath::from_url(uri);
+        let document = self.get_document(&key)?;
+        let Some(file) = self.db.file_by_url(&key) else {
+            return Err(anyhow!("No `oak_db` file for URI {uri}"));
+        };
+        Ok(ArkFile {
+            file,
+            version: document.version,
+            config: document.config.clone(),
+            url: document.url.clone(),
+        })
     }
 
     /// Insert a document, keying on the normalised [`FilePath`] and

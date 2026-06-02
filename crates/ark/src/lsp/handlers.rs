@@ -185,8 +185,9 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let document = state.get_document(&FilePath::from_url(uri))?;
-    match folding_range(document) {
+    let ark_file = state.ark_file(uri)?;
+    let db = &state.db;
+    match folding_range(&ark_file, db) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
             lsp::log_error!("{err:?}");
@@ -316,23 +317,28 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
+    let uri = &params.text_document.uri;
+    let ark_file = state.ark_file(uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     // Get tree-sitter points to return selection ranges for
     let points = params
         .positions
         .into_iter()
-        .map(|position| document.tree_sitter_point_from_lsp_position(position))
+        .map(|position| ark_file.tree_sitter_point_from_lsp_position(db, encoding, position))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let Some(selections) = selection_range(&document.ast, points) else {
+    let Some(selections) = selection_range(ark_file.tree_sitter(db), points) else {
         return Ok(None);
     };
 
     // Convert tree-sitter points to LSP positions everywhere
     let selections = selections
         .into_iter()
-        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, document))
+        .map(|selection| {
+            convert_selection_range_from_tree_sitter_to_lsp(selection, &ark_file, db, encoding)
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(selections))
