@@ -386,9 +386,12 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    statement_range(document, point)
+    let uri = &params.text_document.uri;
+    let ark_file = state.ark_file(uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let point = ark_file.tree_sitter_point_from_lsp_position(db, encoding, params.position)?;
+    statement_range(&ark_file, db, encoding, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -410,10 +413,12 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let doc = state.get_document(&FilePath::from_url(&ctxt.text_document.uri))?;
-    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
-
-    indent_edit(doc, point.row)
+    let uri = &ctxt.text_document.uri;
+    let ark_file = state.ark_file(uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let point = ark_file.tree_sitter_point_from_lsp_position(db, encoding, ctxt.position)?;
+    indent_edit(&ark_file, db, encoding, point.row)
 }
 
 #[tracing::instrument(level = "info", skip_all)]

@@ -995,23 +995,28 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
         futures.push(task::spawn_blocking(move || {
             let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
-            if let Some(document) = state.documents.get(&FilePath::from_url(&uri)) {
-                // Special case testthat-specific behaviour. This is a simple
-                // stopgap approach that has some false positives (e.g. when we
-                // work on testthat itself the flag will always be true), but
-                // that shouldn't have much practical impact.
-                let testthat = Path::new(uri.path())
-                    .components()
-                    .any(|c| c.as_os_str() == "testthat");
+            match state.ark_file(&uri) {
+                Ok(ark_file) => {
+                    // Special case testthat-specific behaviour. This is a simple
+                    // stopgap approach that has some false positives (e.g. when we
+                    // work on testthat itself the flag will always be true), but
+                    // that shouldn't have much practical impact.
+                    let testthat = Path::new(uri.path())
+                        .components()
+                        .any(|c| c.as_os_str() == "testthat");
 
-                let diagnostics = generate_diagnostics(document.clone(), state.clone(), testthat);
-                Some(RefreshDiagnosticsResult {
-                    uri,
-                    diagnostics,
-                    version: document.version,
-                })
-            } else {
-                None
+                    let version = ark_file.version;
+                    let diagnostics = generate_diagnostics(ark_file, state.clone(), testthat);
+                    Some(RefreshDiagnosticsResult {
+                        uri,
+                        diagnostics,
+                        version,
+                    })
+                },
+                Err(err) => {
+                    tracing::warn!("Can't build ArkFile for diagnostics of '{uri}': {err:?}");
+                    None
+                },
             }
         }));
     }

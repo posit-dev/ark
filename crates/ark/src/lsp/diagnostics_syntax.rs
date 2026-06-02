@@ -339,7 +339,7 @@ fn diagnose_missing_binary_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(&context.doc.contents)?;
+    let text = operator.node_as_str(context.contents)?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
@@ -370,7 +370,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(&context.doc.contents)?;
+    let text = operator.node_as_str(context.contents)?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
@@ -421,7 +421,10 @@ fn new_syntax_diagnostic(
     range: Range,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Diagnostic> {
-    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    let range =
+        context
+            .ark_file
+            .lsp_range_from_tree_sitter_range(context.db, context.encoding, range)?;
     Ok(Diagnostic::new_simple(range, message))
 }
 
@@ -431,15 +434,18 @@ mod tests {
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 
+    use crate::lsp::ark_file::ark_file_for_test;
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-    use crate::lsp::document::Document;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let document = Document::new(text, None);
+        let (db, ark_file) = ark_file_for_test(text);
         let library = Library::default();
-        let context = DiagnosticContext::new(&document, &None, &library);
-        let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
+        let encoding =
+            aether_lsp_utils::proto::PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+        let context = DiagnosticContext::new(&ark_file, &db, encoding, &None, &library);
+        let diagnostics =
+            syntax_diagnostics(ark_file.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

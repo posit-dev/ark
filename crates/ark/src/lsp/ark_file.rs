@@ -35,7 +35,6 @@ use crate::lsp::db::FileExt;
 pub(crate) struct ArkFile {
     pub(crate) file: File,
     pub(crate) version: Option<i32>,
-    #[allow(dead_code)]
     pub(crate) config: DocumentConfig,
     #[allow(dead_code)]
     pub(crate) url: Url,
