@@ -5,17 +5,24 @@
 //
 //
 
+use aether_lsp_utils::proto::to_proto;
+use aether_lsp_utils::proto::PositionEncoding;
+use tower_lsp::lsp_types;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
-    pub document: &'a Document,
+    /// We store extracted components of `&ArkFile` + `&dyn ArkDb` here because
+    /// the latter can't be sent over an `r_task()`.
+    pub tree: &'a tree_sitter::Tree,
+    pub contents: &'a str,
+    pub line_index: biome_line_index::LineIndex,
+    pub encoding: PositionEncoding,
     pub node: Node<'a>,
     /// Formerly known just as "node". This renaming unblocks completion
     /// improvements, where we really do want to focus on the smallest node
@@ -28,22 +35,25 @@ pub struct DocumentContext<'a> {
 }
 
 impl<'a> DocumentContext<'a> {
-    pub fn new(document: &'a Document, point: Point, trigger: Option<String>) -> Self {
-        // get reference to AST
-        let ast = &document.ast;
+    pub fn new(
+        tree: &'a tree_sitter::Tree,
+        contents: &'a str,
+        encoding: PositionEncoding,
+        point: Point,
+        trigger: Option<String>,
+    ) -> Self {
+        let line_index = biome_line_index::LineIndex::new(contents);
 
-        let Some(node) = ast.root_node().find_smallest_spanning_node(point) else {
-            let contents = document.contents.to_string();
+        let Some(node) = tree.root_node().find_smallest_spanning_node(point) else {
             panic!(
                 "Failed to find spanning node containing point: {point} with contents '{contents}'"
             );
         };
 
         // find closest node at point
-        let Some(closest_node) = ast.root_node().find_closest_node_to_point(point) else {
+        let Some(closest_node) = tree.root_node().find_closest_node_to_point(point) else {
             // TODO: We really want to track this down and figure out what's happening
             // and fix it in `find_closest_node_to_point()`.
-            let contents = document.contents.to_string();
             panic!("Failed to find closest node to point: {point} with contents '{contents}'");
         };
 
@@ -85,12 +95,35 @@ impl<'a> DocumentContext<'a> {
         };
 
         DocumentContext {
-            document,
+            tree,
+            contents,
+            line_index,
+            encoding,
             node,
             closest_node,
             point,
             trigger,
         }
+    }
+
+    pub fn lsp_position_from_tree_sitter_point(
+        &self,
+        point: tree_sitter::Point,
+    ) -> anyhow::Result<lsp_types::Position> {
+        let line_col = biome_line_index::LineCol {
+            line: point.row as u32,
+            col: point.column as u32,
+        };
+        to_proto::position_from_line_col(line_col, &self.line_index, self.encoding)
+    }
+
+    pub fn lsp_range_from_tree_sitter_range(
+        &self,
+        range: tree_sitter::Range,
+    ) -> anyhow::Result<lsp_types::Range> {
+        let start = self.lsp_position_from_tree_sitter_point(range.start_point)?;
+        let end = self.lsp_position_from_tree_sitter_point(range.end_point)?;
+        Ok(lsp_types::Range::new(start, end))
     }
 }
 
@@ -105,27 +138,17 @@ mod tests {
     fn test_document_context_start_of_document() {
         // Empty document
         let (text, point) = point_from_cursor("@");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
-        assert_eq!(
-            context
-                .node
-                .node_as_str(&context.document.contents)
-                .unwrap(),
-            ""
-        );
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+        assert_eq!(context.node.node_as_str(context.contents).unwrap(), "");
 
         // Start of document with text
         let (text, point) = point_from_cursor("@1 + 1");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
-        assert_eq!(
-            context
-                .node
-                .node_as_str(&context.document.contents)
-                .unwrap(),
-            "1"
-        );
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+        assert_eq!(context.node.node_as_str(context.contents).unwrap(), "1");
     }
 
     #[test]
@@ -133,31 +156,24 @@ mod tests {
         // Cursor at end of identifier "lib" at position (0, 3)
         // This reproduced a panic where find_smallest_spanning_node returned None
         let (text, point) = point_from_cursor("lib@");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
         // The node should be the identifier "lib"
-        assert_eq!(
-            context
-                .node
-                .node_as_str(&context.document.contents)
-                .unwrap(),
-            "lib"
-        );
+        assert_eq!(context.node.node_as_str(context.contents).unwrap(), "lib");
     }
 
     #[test]
     fn test_document_context_cursor_on_empty_line() {
         // as if we're about to type on the second line
         let (text, point) = point_from_cursor("toupper(letters)\n@");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
         assert_eq!(context.node.node_type(), NodeType::Program);
         assert_eq!(
-            context
-                .node
-                .node_as_str(&context.document.contents)
-                .unwrap(),
+            context.node.node_as_str(context.contents).unwrap(),
             "toupper(letters)\n"
         );
 
@@ -166,10 +182,7 @@ mod tests {
             NodeType::Anonymous(String::from(")"))
         );
         assert_eq!(
-            context
-                .closest_node
-                .node_as_str(&context.document.contents)
-                .unwrap(),
+            context.closest_node.node_as_str(context.contents).unwrap(),
             ")"
         );
     }

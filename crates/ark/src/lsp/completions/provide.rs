@@ -25,7 +25,7 @@ pub(crate) fn provide_completions(
         "provide_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
         node_text = document_context
             .node
-            .node_as_str(&document_context.document.contents)
+            .node_as_str(document_context.contents)
             .unwrap_or_default(),
         node_type = document_context.node.node_type()
     );

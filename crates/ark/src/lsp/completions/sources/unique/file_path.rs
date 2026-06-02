@@ -32,7 +32,7 @@ pub(super) fn completions_from_string_file_path(
     // NOTE: This includes the quotation characters on the string, and so
     // also includes any internal escapes! We need to decode the R string
     // by parsing it before searching the path entries.
-    let token = node.node_as_str(&context.document.contents)?;
+    let token = node.node_as_str(context.contents)?;
 
     // It's entirely possible that we can fail to parse the string, `R_ParseVector()`
     // can fail in various ways. We silently swallow these because they are unlikely
@@ -96,7 +96,6 @@ pub(super) fn completions_from_string_file_path(
 mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::file_path::completions_from_string_file_path;
-    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
     use crate::treesitter::node_find_string;
@@ -107,8 +106,9 @@ mod tests {
         r_task(|| {
             // "\R" is an unrecognized escape character and `R_ParseVector()` errors on it
             let (text, point) = point_from_cursor(r#" ".\R\utils.R@" "#);
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let node = node_find_string(&context.node).unwrap();
 
             let completions = completions_from_string_file_path(&node, &context).unwrap();

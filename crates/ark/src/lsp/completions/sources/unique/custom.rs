@@ -210,7 +210,6 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
-    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::state::WorldState;
     use crate::r_task;
@@ -219,8 +218,9 @@ mod tests {
     fn assert_has_completion(code_with_cursor: &str, name: &str, expected_insert_text: &str) {
         let (text, point) = point_from_cursor(code_with_cursor);
         let state = WorldState::default();
-        let document = Document::new(text.as_str(), None);
-        let document_context = DocumentContext::new(&document, point, None);
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let document_context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
         let context = CompletionContext::new(&document_context, &state);
 
         let completions = completions_from_custom_source(&context).unwrap().unwrap();
@@ -237,8 +237,9 @@ mod tests {
     fn assert_no_completions(code_with_cursor: &str) {
         let (text, point) = point_from_cursor(code_with_cursor);
         let state = WorldState::default();
-        let document = Document::new(text.as_str(), None);
-        let document_context = DocumentContext::new(&document, point, None);
+        let tree = crate::fixtures::tree_sitter_parse(&text);
+        let document_context =
+            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
         let context = CompletionContext::new(&document_context, &state);
 
         let completions = completions_from_custom_source(&context).unwrap();
@@ -256,8 +257,9 @@ mod tests {
 
             let (text, point) = point_from_cursor("library(@)");
             let state = WorldState::default();
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let document_context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let context = CompletionContext::new(&document_context, &state);
 
             let n_compls = completions_from_custom_source(&context)
@@ -270,8 +272,9 @@ mod tests {
 
             let (text, point) = point_from_cursor("library(uti@)");
             let state = WorldState::default();
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let document_context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let context = CompletionContext::new(&document_context, &state);
 
             let compls = completions_from_custom_source(&context).unwrap().unwrap();

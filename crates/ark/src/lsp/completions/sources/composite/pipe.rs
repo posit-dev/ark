@@ -121,7 +121,7 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result
     let Some(root) = find_pipe_root_node(context, *node)? else {
         return Ok(None);
     };
-    if !root.is_pipe_operator(&context.document.contents)? {
+    if !root.is_pipe_operator(context.contents)? {
         return Ok(None);
     }
 
@@ -130,7 +130,7 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result
         return Ok(None);
     };
 
-    while lhs.is_pipe_operator(&context.document.contents)? {
+    while lhs.is_pipe_operator(context.contents)? {
         lhs = match lhs.child_by_field_name("lhs") {
             Some(lhs) => lhs,
             None => return Ok(None),
@@ -138,7 +138,7 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result
     }
 
     // Try to evaluate the left-hand side
-    let root = lhs.node_as_str(&context.document.contents)?.to_string();
+    let root = lhs.node_as_str(context.contents)?.to_string();
 
     Ok(Some(root))
 }
@@ -150,7 +150,7 @@ fn find_pipe_root_node<'a>(
     let mut root = None;
 
     loop {
-        if node.is_pipe_operator(&context.document.contents)? {
+        if node.is_pipe_operator(context.contents)? {
             root = Some(node);
         }
 
@@ -167,7 +167,6 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
-    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
     use crate::treesitter::node_find_containing_call;
@@ -177,8 +176,9 @@ mod tests {
         r_task(|| {
             // Place cursor between `()` of `bar()`
             let (text, point) = point_from_cursor("x |> foo() %>% bar(@)");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap().unwrap();
@@ -190,8 +190,9 @@ mod tests {
             // `%||%` is not a pipe!
             // Place cursor between `()` of `bar()`
             let (text, point) = point_from_cursor("x |> foo() %||% bar(@)");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap();
@@ -209,8 +210,9 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("x %>% foo(@)");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap().unwrap();

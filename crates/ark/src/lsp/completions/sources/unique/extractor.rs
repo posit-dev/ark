@@ -100,7 +100,7 @@ fn completions_from_extractor(
     };
 
     // Extract out its name from the document
-    let text = node.node_as_str(&context.document.contents)?;
+    let text = node.node_as_str(context.contents)?;
 
     completions.append(&mut completions_from_extractor_object(text, fun)?);
 
@@ -208,7 +208,6 @@ mod tests {
     use crate::fixtures::package_is_installed;
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
-    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
 
@@ -224,8 +223,9 @@ mod tests {
             harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             let completions = completions_from_dollar(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
@@ -238,8 +238,9 @@ mod tests {
             assert_eq!(completion.label, "a".to_string());
 
             let (text, point) = point_from_cursor("foo@$");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             let completions = completions_from_dollar(&context).unwrap();
             assert!(completions.is_none());
 
@@ -261,8 +262,9 @@ mod tests {
             assert_eq!(r_lgl_get(exists.sexp, 0), 0);
 
             let (text, point) = point_from_cursor("foo$@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // No error and empty completions list
             // (If the user is typing pseudocode, we want to respect that and say that we
@@ -272,8 +274,9 @@ mod tests {
             assert_eq!(completions.len(), 0);
 
             let (text, point) = point_from_cursor("foo$mat@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // Same as above
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -285,8 +288,9 @@ mod tests {
     fn test_dollar_completions_on_complex_lhs() {
         r_task(|| {
             let (text, point) = point_from_cursor("list(a = 1, b = 2)$@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // No error and empty completions list
             // We know we are on the RHS of a `$`, but `r_parse_eval()` will fail on the
@@ -310,8 +314,9 @@ mod tests {
             harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo@$");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // `None` because we have no completions to provide, and we do want other
             // completion sources to get a chance to run, as you can put arbitrary
@@ -336,8 +341,9 @@ mod tests {
             harp::parse_eval("foo <- list(abcd = 1, wxyz = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$abc@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // All names of `foo`, the frontend filters them
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -346,8 +352,9 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
 
             let (text, point) = point_from_cursor("foo$a@bc");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // Same as above
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -383,8 +390,9 @@ foo <- Foo$new()
             .unwrap();
 
             let (text, point) = point_from_cursor("foo$@");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             // We get some default R6 methods back, but we are looking for `abc`
             let completions = completions_from_dollar(&context).unwrap().unwrap();

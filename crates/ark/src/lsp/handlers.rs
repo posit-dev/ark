@@ -5,7 +5,6 @@
 //
 //
 
-use aether_path::FilePath;
 use anyhow::anyhow;
 use serde_json::Value;
 use stdext::result::ResultExt;
@@ -210,17 +209,23 @@ pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
 ) -> LspResult<Option<CompletionResponse>> {
-    // Get reference to document.
     let uri = params.text_document_position.text_document.uri;
-    let document = state.get_document(&FilePath::from_url(&uri))?;
+    let file = state.ark_file(&uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = file.tree_sitter_point_from_lsp_position(db, position)?;
 
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
-    // Build the document context.
-    let context = DocumentContext::new(document, point, trigger);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.contents(db),
+        encoding,
+        point,
+        trigger,
+    );
     lsp::log_info!("Completion context: {:#?}", context);
 
     // TODO(oak/completions): Clone so the closure captures by value. `r_task()`
@@ -245,13 +250,20 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&FilePath::from_url(&uri))?;
+    let file = state.ark_file(&uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = file.tree_sitter_point_from_lsp_position(db, position)?;
 
-    // build document context
-    let context = DocumentContext::new(document, point, None);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.contents(db),
+        encoding,
+        point,
+        None,
+    );
 
     // request hover information
     let result = r_task(|| r_hover(&context));
@@ -280,12 +292,20 @@ pub(crate) fn handle_signature_help(
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&FilePath::from_url(&uri))?;
+    let file = state.ark_file(&uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = file.tree_sitter_point_from_lsp_position(db, position)?;
 
-    let context = DocumentContext::new(document, point, None);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.contents(db),
+        encoding,
+        point,
+        None,
+    );
 
     // request signature help
     let result = r_task(|| r_signature_help(&context));

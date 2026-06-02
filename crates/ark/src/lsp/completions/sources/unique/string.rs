@@ -77,7 +77,6 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
-    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::state::WorldState;
     use crate::r_task;
@@ -90,8 +89,9 @@ mod tests {
             // Before or after the `''`, i.e. `|''` or `''|`.
             // Still considered part of the string node.
             let (text, point) = point_from_cursor("@''");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             assert!(node_find_string(&context.node).is_some());
             assert_eq!(completions_from_string(&context).unwrap(), None);
@@ -102,8 +102,9 @@ mod tests {
     fn test_not_string() {
         r_task(|| {
             let (text, point) = point_from_cursor("@foo");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
 
             assert!(context.node.is_identifier());
             assert_eq!(completions_from_string(&context).unwrap(), None);
@@ -116,10 +117,11 @@ mod tests {
             let (text, point) = point_from_cursor("'~/@'");
 
             // Assume home directory is not empty
-            let document = Document::new(text.as_str(), None);
+            let tree = crate::fixtures::tree_sitter_parse(&text);
 
             // `None` trigger -> Return file completions
-            let context = DocumentContext::new(&document, point, None);
+            let context =
+                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
             assert_match!(
                 completions_from_string(&context).unwrap(),
                 Some(items) => {
@@ -128,7 +130,13 @@ mod tests {
             );
 
             // `Some` trigger -> Should return empty completion set
-            let context = DocumentContext::new(&document, point, Some(String::from("$")));
+            let context = DocumentContext::new(
+                &tree,
+                &text,
+                crate::fixtures::TEST_ENCODING,
+                point,
+                Some(String::from("$")),
+            );
             let res = completions_from_string(&context).unwrap();
             assert_match!(res, Some(items) => { assert!(items.is_empty()) });
 

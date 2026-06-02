@@ -11,14 +11,14 @@ use tower_lsp::lsp_types::CompletionTextEdit;
 use crate::fixtures::point_from_cursor;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
-use crate::lsp::document::Document;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
 pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
     let (text, point) = point_from_cursor(cursor_text);
-    let document = Document::new(&text, None);
-    let document_context = DocumentContext::new(&document, point, None);
+    let tree = crate::fixtures::tree_sitter_parse(&text);
+    let document_context =
+        DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
     let state = WorldState::default();
 
     match provide_completions(&document_context, &state) {

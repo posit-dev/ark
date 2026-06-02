@@ -62,7 +62,7 @@ fn completions_from_workspace(
     let mut completions = vec![];
 
     let token = if node.is_identifier() {
-        node.node_as_str(&context.document.contents)?.to_string()
+        node.node_as_str(context.contents)?.to_string()
     } else {
         "".to_string()
     };
