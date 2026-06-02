@@ -5,13 +5,13 @@
 //
 //
 
+pub(crate) mod ark_file;
 pub mod backend;
 pub mod capabilities;
 pub mod code_action;
 pub mod comm;
 pub mod completions;
 mod config;
-pub(crate) mod ark_file;
 pub(crate) mod db;
 mod declarations;
 pub mod diagnostics;

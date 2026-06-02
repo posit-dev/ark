@@ -1,11 +1,13 @@
+use aether_lsp_utils::proto::PositionEncoding;
 use tower_lsp::lsp_types;
 use url::Url;
 
+use crate::lsp::ark_file::ArkFile;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::code_action;
 use crate::lsp::code_action::code_action_workspace_text_edit;
 use crate::lsp::code_action::CodeActions;
-use crate::lsp::document::Document;
+use crate::lsp::db::ArkDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -13,7 +15,9 @@ use crate::treesitter::NodeTypeExt;
 pub(crate) fn roxygen_documentation(
     actions: &mut CodeActions,
     uri: &Url,
-    document: &Document,
+    ark_file: &ArkFile,
+    db: &dyn ArkDb,
+    encoding: PositionEncoding,
     range: tree_sitter::Range,
     capabilities: &Capabilities,
 ) -> Option<()> {
@@ -26,8 +30,8 @@ pub(crate) fn roxygen_documentation(
     // For selections, we require that the start point be touching the function name.
     let start = range.start_point;
 
-    let node = document
-        .ast
+    let node = ark_file
+        .tree_sitter(db)
         .root_node()
         .named_descendant_for_point_range(start, start)?;
 
@@ -63,7 +67,7 @@ pub(crate) fn roxygen_documentation(
 
     // Fairly simple detection of existing `#'` on the previous line (but starting at the
     // same `column` offset), which tells us not to provide this code action
-    if let Some(previous_line) = document.get_line(position.row.saturating_sub(1)) {
+    if let Some(previous_line) = ark_file.get_line(db, position.row.saturating_sub(1)) {
         if let Some(previous_line) = previous_line.get(position.column..) {
             let mut previous_line = previous_line.bytes();
 
@@ -90,7 +94,7 @@ pub(crate) fn roxygen_documentation(
 
     for child in parameters.children_by_field_name("parameter", &mut cursor) {
         let parameter_name = child.child_by_field_name("name")?;
-        let parameter_name = parameter_name.node_to_string(&document.contents).ok()?;
+        let parameter_name = parameter_name.node_to_string(ark_file.contents(db)).ok()?;
         parameter_names.push(parameter_name);
     }
 
@@ -100,13 +104,13 @@ pub(crate) fn roxygen_documentation(
     // We insert the documentation string at the start position of the function name.
     // This handles the indentation of the first documentation line, and makes new line
     // handling trivial (we just add a new line to every documentation line).
-    let position = document
-        .lsp_position_from_tree_sitter_point(position)
+    let position = ark_file
+        .lsp_position_from_tree_sitter_point(db, encoding, position)
         .ok()?;
     let range = lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =
-        code_action_workspace_text_edit(uri.clone(), document.version, vec![edit], capabilities);
+        code_action_workspace_text_edit(uri.clone(), ark_file.version, vec![edit], capabilities);
 
     actions.add_action(code_action(
         "Generate a roxygen template".to_string(),
@@ -160,6 +164,7 @@ fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use tower_lsp::lsp_types::CodeActionOrCommand;
     use tower_lsp::lsp_types::DocumentChanges;
     use tower_lsp::lsp_types::OneOf;
@@ -169,10 +174,10 @@ mod tests {
     use url::Url;
 
     use crate::fixtures::point_and_offset_from_cursor;
+    use crate::lsp::ark_file::ark_file_for_test;
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::roxygen::roxygen_documentation;
     use crate::lsp::code_action::CodeActions;
-    use crate::lsp::document::Document;
 
     fn point_range(point: Point, byte: usize) -> Range {
         Range {
@@ -197,12 +202,14 @@ mod tests {
             .with_workspace_edit_document_changes(true);
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );
@@ -303,12 +310,14 @@ outer <- function(a, b = 2) {
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );
@@ -332,12 +341,14 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );
@@ -361,12 +372,14 @@ fn@ <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );
@@ -390,12 +403,14 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );
@@ -419,12 +434,14 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let document = Document::new(&text, None);
+        let (db, ark_file) = ark_file_for_test(&text);
 
         roxygen_documentation(
             &mut actions,
             &uri,
-            &document,
+            &ark_file,
+            &db,
+            PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             point_range(point, offset),
             &capabilities,
         );

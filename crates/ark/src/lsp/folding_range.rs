@@ -17,7 +17,10 @@ use crate::lsp;
 use crate::lsp::ark_file::ArkFile;
 use crate::lsp::db::ArkDb;
 
-pub(crate) fn folding_range(ark_file: &ArkFile, db: &dyn ArkDb) -> anyhow::Result<Vec<FoldingRange>> {
+pub(crate) fn folding_range(
+    ark_file: &ArkFile,
+    db: &dyn ArkDb,
+) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
 
     let ast = ark_file.tree_sitter(db);

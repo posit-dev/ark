@@ -9,13 +9,15 @@
 
 use std::collections::HashMap;
 
+use aether_lsp_utils::proto::PositionEncoding;
 use tower_lsp::lsp_types;
 use tree_sitter::Range;
 use url::Url;
 
+use crate::lsp::ark_file::ArkFile;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::roxygen::roxygen_documentation;
-use crate::lsp::document::Document;
+use crate::lsp::db::ArkDb;
 
 mod roxygen;
 
@@ -26,13 +28,23 @@ pub(crate) struct CodeActions {
 
 pub(crate) fn code_actions(
     uri: &Url,
-    document: &Document,
+    ark_file: &ArkFile,
+    db: &dyn ArkDb,
+    encoding: PositionEncoding,
     range: Range,
     capabilities: &Capabilities,
 ) -> lsp_types::CodeActionResponse {
     let mut actions = CodeActions::new();
 
-    roxygen_documentation(&mut actions, uri, document, range, capabilities);
+    roxygen_documentation(
+        &mut actions,
+        uri,
+        ark_file,
+        db,
+        encoding,
+        range,
+        capabilities,
+    );
 
     actions.into_response()
 }

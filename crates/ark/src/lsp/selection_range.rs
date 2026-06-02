@@ -114,8 +114,9 @@ pub(crate) fn convert_selection_range_from_tree_sitter_to_lsp(
     // If there is a parent, convert it and box it
     let parent = match selection.parent {
         Some(selection) => {
-            let selection =
-                convert_selection_range_from_tree_sitter_to_lsp(*selection, ark_file, db, encoding)?;
+            let selection = convert_selection_range_from_tree_sitter_to_lsp(
+                *selection, ark_file, db, encoding,
+            )?;
             Some(Box::new(selection))
         },
         None => None,

@@ -34,7 +34,6 @@ use crate::lsp::db::FileExt;
 /// is the salsa idiom anyway (`file.parse(db)`).
 pub(crate) struct ArkFile {
     pub(crate) file: File,
-    #[allow(dead_code)]
     pub(crate) version: Option<i32>,
     #[allow(dead_code)]
     pub(crate) config: DocumentConfig,
@@ -120,7 +119,6 @@ impl ArkFile {
         Ok(lsp_types::Range::new(start, end))
     }
 
-    #[allow(dead_code)]
     pub(crate) fn tree_sitter_range_from_lsp_range(
         &self,
         db: &dyn ArkDb,

@@ -396,9 +396,12 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    help_topic(point, document)
+    let uri = &params.text_document.uri;
+    let ark_file = state.ark_file(uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let point = ark_file.tree_sitter_point_from_lsp_position(db, encoding, params.position)?;
+    help_topic(point, &ark_file, db)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -420,10 +423,19 @@ pub(crate) fn handle_code_action(
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
-    let doc = state.get_document(&FilePath::from_url(&uri))?;
-    let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
+    let ark_file = state.ark_file(&uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let range = ark_file.tree_sitter_range_from_lsp_range(db, encoding, params.range)?;
 
-    let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
+    let code_actions = code_actions(
+        &uri,
+        &ark_file,
+        db,
+        encoding,
+        range,
+        &lsp_state.capabilities,
+    );
 
     if code_actions.is_empty() {
         Ok(None)
