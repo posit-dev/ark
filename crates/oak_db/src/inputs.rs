@@ -206,7 +206,14 @@ pub struct Package {
     pub version: Option<String>,
     #[returns(ref)]
     pub namespace: Namespace,
-    /// R source files belonging to this package (the `R/*.R` files).
+    /// R source files belonging to this package (the `R/*.R` files), in
+    /// R's load order. When DESCRIPTION's `Collate:` directive is
+    /// present, this is exactly the files it lists, in that order;
+    /// files in `R/` not listed are excluded (matching R's loader,
+    /// Writing R Extensions §1.1.1). When `Collate:` is absent, files
+    /// are in case-insensitive alphabetical order. TODO(diagnostics):
+    /// Lint files missing from collation.
+    ///
     /// Per-package granularity: adding or removing a file in one
     /// package doesn't invalidate tracked queries reading another
     /// package's files.

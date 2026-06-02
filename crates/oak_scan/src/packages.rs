@@ -185,23 +185,86 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
         }
     }
 
-    // The basename order is currently needed, not cosmetic. `file_imports()` in
-    // `oak_db` reads `package.files` order as the collation chain, so a file
-    // only sees the files ordered before it. Alphabetical is R's default load
-    // order when `DESCRIPTION` has no `Collate` field.
-    //
-    // TODO(scan): honour the `Collate` field when present, falling back to this
-    // alphabetical order. The `collation` field is already parsed but unused.
-    files.sort_by(|a, b| {
-        let a_name = a.0.file_name().map(|n| n.to_ascii_lowercase());
-        let b_name = b.0.file_name().map(|n| n.to_ascii_lowercase());
-        a_name.cmp(&b_name)
-    });
+    // `file_imports()` in `oak_db` reads `package.files` order as the collation
+    // chain, so a file only sees the files ordered before it. `Collate:` is R's
+    // explicit load order; without it R loads `R/` in case-insensitive
+    // alphabetical order. R/ files left out of a `Collate:` directive aren't
+    // loaded into the namespace, so they move to `scripts` rather than `files`.
+    let (loadable, leftover) = match package.collation.as_deref() {
+        Some(order) => order_by_collation(files, order),
+        None => order_alphabetically(files),
+    };
+    scripts.extend(leftover);
 
-    package.files = files.into_iter().map(|(_, file)| file).collect();
+    package.files = loadable;
     package.scripts = scripts;
 
     Some(package)
+}
+
+/// Split the package's `R/*.R` files into `(loadable, leftover)` using the
+/// `Collate:` directive: `loadable` is the listed files in that order, and
+/// `leftover` is the R/ files not listed. Logs mismatches in either direction:
+/// `Collate:` entries with no file on disk, and R/ files absent from `Collate:`
+/// (which become standalone scripts, see [`read_workspace_package`]).
+///
+/// TODO(diagnostics): surface these as LSP diagnostics on `DESCRIPTION`
+/// instead of just log lines.
+fn order_by_collation(
+    files: Vec<(PathBuf, FileEntry)>,
+    order: &[String],
+) -> (Vec<FileEntry>, Vec<FileEntry>) {
+    let mut by_name: HashMap<String, (PathBuf, FileEntry)> = HashMap::with_capacity(files.len());
+    for (path, file) in files {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            log::warn!("Skipping R file with non-UTF8 basename: {}", path.display());
+            continue;
+        };
+        by_name.insert(name.to_string(), (path, file));
+    }
+
+    let mut loadable = Vec::with_capacity(order.len());
+    for name in order {
+        match by_name.remove(name) {
+            Some((_, file)) => loadable.push(file),
+            None => {
+                log::warn!("`Collate:` lists `{name}` but no matching file is present under `R/`")
+            },
+        }
+    }
+
+    // Anything left in `by_name` is on disk but not in `Collate:`. R won't load
+    // it into the namespace, so it can't go in `files`; keep it as a standalone
+    // script instead of dropping it. Sorted for a deterministic order.
+    let mut leftover: Vec<(PathBuf, FileEntry)> = by_name.into_values().collect();
+    leftover.sort_by_key(|(path, _)| basename_key(path));
+    for (path, _) in &leftover {
+        log::warn!(
+            "R file `{}` is not listed in `Collate:`; treating it as a standalone \
+             script (R will not load it into the namespace)",
+            path.display(),
+        );
+    }
+
+    (
+        loadable,
+        leftover.into_iter().map(|(_, file)| file).collect(),
+    )
+}
+
+/// All files are loadable, in case-insensitive alphabetical order by basename.
+/// No leftover: without `Collate:`, R loads every R/ file.
+fn order_alphabetically(mut files: Vec<(PathBuf, FileEntry)>) -> (Vec<FileEntry>, Vec<FileEntry>) {
+    files.sort_by_key(|(path, _)| basename_key(path));
+    (
+        files.into_iter().map(|(_, file)| file).collect(),
+        Vec::new(),
+    )
+}
+
+/// Case-insensitive sort key from a path's basename.
+fn basename_key(path: &Path) -> Option<std::ffi::OsString> {
+    path.file_name().map(|name| name.to_ascii_lowercase())
 }
 
 /// Walk a workspace root for its top-level scripts: every `.R` file that isn't

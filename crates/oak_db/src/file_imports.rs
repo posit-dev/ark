@@ -193,9 +193,9 @@ fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
     // and including self here would create a cycle in `resolve` for unbound
     // names.
     //
-    // TODO(scan): once `oak_scan` orders `Package.files` by the DESCRIPTION
-    // `Collate` field, this iteration becomes collation-ordered directly.
-    // Today `Package.files` is whatever order the scanner produces.
+    // `package.files(db)` is collation-ordered (see `Package::files`), so
+    // reversing it gives R's LIFO precedence: a name defined late in the
+    // collation shadows the same name defined earlier.
     layers.extend(
         package
             .files(db)

@@ -8,6 +8,7 @@ use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
+use oak_db::Package;
 use oak_db::RootKind;
 
 use crate::scheduler::drain_scheduler;
@@ -47,6 +48,43 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     for (basename, contents) in r_files {
         fs::write(dir.join("R").join(basename), contents).unwrap();
     }
+}
+
+/// Write a package with an optional `Collate:` directive. The directive
+/// references the given file basenames in quote form (`'foo.R'`) to
+/// match real R DESCRIPTION files.
+fn write_package_with_collate(
+    dir: &Path,
+    name: &str,
+    r_files: &[(&str, &str)],
+    collate: Option<&[&str]>,
+) {
+    fs::create_dir_all(dir.join("R")).unwrap();
+    let mut description = format!("Package: {name}\nVersion: 1.0.0\n");
+    if let Some(order) = collate {
+        description.push_str("Collate:");
+        for basename in order {
+            description.push_str(&format!(" '{basename}'"));
+        }
+        description.push('\n');
+    }
+    fs::write(dir.join("DESCRIPTION"), description).unwrap();
+    for (basename, contents) in r_files {
+        fs::write(dir.join("R").join(basename), contents).unwrap();
+    }
+}
+
+/// Basenames of the package's files in the order `pkg.files` stores them.
+fn file_basenames(db: &OakDatabase, pkg: Package) -> Vec<String> {
+    basenames(db, pkg.files(db))
+}
+
+/// Basenames of the package's scripts, sorted (order isn't meaningful for
+/// scripts, which are standalone).
+fn script_basenames(db: &OakDatabase, pkg: Package) -> Vec<String> {
+    let mut names = basenames(db, pkg.scripts(db));
+    names.sort();
+    names
 }
 
 #[test]
@@ -591,4 +629,93 @@ fn test_set_workspace_paths_stale_no_duplicates_across_cycles() {
     let stale = db.stale_root();
     assert_eq!(stale.files(&db).len(), 1);
     assert_eq!(stale.packages(&db).len(), 1);
+}
+
+#[test]
+fn test_scan_orders_files_alphabetically_without_collate() {
+    // Default behavior: case-insensitive alphabetical filename order.
+    // Matches R's load order for packages without an explicit `Collate:`.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[
+        ("zzz.R", "z <- 1\n"),
+        ("aaa.R", "a <- 1\n"),
+        ("mmm.R", "m <- 1\n"),
+    ]);
+    let mut db = OakDatabase::new();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(file_basenames(&db, pkg), vec!["aaa.R", "mmm.R", "zzz.R"]);
+}
+
+#[test]
+fn test_scan_orders_files_by_collate_directive() {
+    // `Collate: 'zzz.R' 'aaa.R' 'mmm.R'` overrides alphabetical order.
+    // `pkg.files` reflects the collation, so downstream consumers
+    // (sibling-chain resolution, namespace lookup) see R's actual load
+    // order.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package_with_collate(
+        &tmp.path().join("pkg"),
+        "pkg",
+        &[
+            ("aaa.R", "a <- 1\n"),
+            ("mmm.R", "m <- 1\n"),
+            ("zzz.R", "z <- 1\n"),
+        ],
+        Some(&["zzz.R", "aaa.R", "mmm.R"]),
+    );
+    let mut db = OakDatabase::new();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(file_basenames(&db, pkg), vec!["zzz.R", "aaa.R", "mmm.R"]);
+}
+
+#[test]
+fn test_scan_collate_routes_unlisted_files_to_scripts() {
+    // R's loader processes exactly the files in `Collate:`; files in `R/` not
+    // listed are not loaded into the namespace (Writing R Extensions §1.1.1).
+    // The scanner keeps `pkg.files` to the listed file, but the unlisted
+    // `aaa.R` / `bbb.R` go to `pkg.scripts` (standalone analysis, out of the
+    // namespace) rather than being dropped.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package_with_collate(
+        &tmp.path().join("pkg"),
+        "pkg",
+        &[
+            ("aaa.R", "a <- 1\n"),
+            ("bbb.R", "b <- 1\n"),
+            ("zzz.R", "z <- 1\n"),
+        ],
+        Some(&["zzz.R"]),
+    );
+    let mut db = OakDatabase::new();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(file_basenames(&db, pkg), vec!["zzz.R"]);
+    assert_eq!(script_basenames(&db, pkg), vec!["aaa.R", "bbb.R"]);
+}
+
+#[test]
+fn test_scan_collate_drops_listed_files_missing_from_disk() {
+    // `Collate:` references a file that doesn't exist in `R/`. The
+    // scanner skips it silently (no entry, no panic).
+    let tmp = tempfile::tempdir().unwrap();
+    write_package_with_collate(
+        &tmp.path().join("pkg"),
+        "pkg",
+        &[("aaa.R", "a <- 1\n")],
+        Some(&["aaa.R", "missing.R"]),
+    );
+    let mut db = OakDatabase::new();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(file_basenames(&db, pkg), vec!["aaa.R"]);
 }
