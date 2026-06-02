@@ -125,15 +125,27 @@ impl SemanticIndex {
 
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
-    /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn exports(&self) -> FxHashMap<&str, (DefinitionId, &Definition)> {
+    ///
+    /// A name maps to every file-scope definition that binds it, in definition
+    /// order, so a name bound twice (e.g. `if (cond) x <- 1 else x <- 2`) yields
+    /// both. Callers that want R's last-wins runtime view take the last element.
+    pub fn exports(&self) -> FxHashMap<&str, Vec<(DefinitionId, &Definition)>> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
-        let mut exports = FxHashMap::default();
+        let mut exports: FxHashMap<&str, Vec<(DefinitionId, &Definition)>> = FxHashMap::default();
         for (id, def) in self.definitions[file_scope].iter() {
             let name = symbols.symbol(def.symbol()).name();
-            exports.insert(name, (id, def));
+            let list = exports.entry(name).or_default();
+            // A top-level `<<-` records the binding in both the scope where it
+            // appears and the super-assign target scope, which coincide at file
+            // scope, so the same binding lands here twice. Drop the byte-equal
+            // duplicate while still keeping genuinely distinct definitions, like
+            // both arms of a top-level `if`/`else` or two `source()` forwards of
+            // one name (those differ in range or in the forwarded file).
+            if !list.iter().any(|(_, d)| *d == def) {
+                list.push((id, def));
+            }
         }
 
         exports

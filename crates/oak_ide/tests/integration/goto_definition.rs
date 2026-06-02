@@ -85,3 +85,23 @@ fn test_navigates_to_package_export_via_library_call() {
     assert_eq!(target.name, "foo");
     assert_eq!(target.full_range, range(0, 3));
 }
+
+#[test]
+fn test_navigates_to_both_candidates_through_source() {
+    // The sourced file binds `foo` on both arms of a top-level `if`/`else`, so
+    // the name has two candidate definitions. Multi-target exports carry both
+    // through the `source()` forward, and goto-def offers both jumps.
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "if (cond) foo <- 1 else foo <- 2\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nfoo\n");
+
+    let offset = TextSize::from("source(\"helpers.R\")\n".len() as u32);
+    let mut targets = goto_definition(&db, script, offset);
+    assert_eq!(targets.len(), 2);
+
+    // Both land in the sourced file, in definition order.
+    targets.sort_by_key(|t| t.focus_range.start());
+    assert!(targets.iter().all(|t| t.file == helpers && t.name == "foo"));
+    assert_eq!(targets[0].focus_range, range(10, 13));
+    assert_eq!(targets[1].focus_range, range(24, 27));
+}

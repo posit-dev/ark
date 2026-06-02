@@ -15,7 +15,7 @@ use crate::File;
 /// internal edits.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FileExports {
-    entries: HashMap<String, ExportEntry>,
+    entries: HashMap<String, Vec<ExportEntry>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,12 +28,16 @@ pub enum ExportEntry {
 }
 
 impl FileExports {
-    pub fn get(&self, name: &str) -> Option<&ExportEntry> {
-        self.entries.get(name)
+    /// Every entry bound to `name` in this file, deduplicated. A `Local`
+    /// marker appears at most once even when the name has several top-level
+    /// definitions; `File::resolve_export()` fans those back out by re-reading
+    /// the semantic index. `Import` entries are distinct per `(file, name)`.
+    pub fn get(&self, name: &str) -> Option<&[ExportEntry]> {
+        self.entries.get(name).map(Vec::as_slice)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &ExportEntry)> {
-        self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &[ExportEntry])> {
+        self.entries.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
     }
 
     pub fn len(&self) -> usize {
@@ -60,27 +64,42 @@ impl File {
     /// chains by returning empty exports for every cycle participant.
     #[salsa::tracked(returns(ref), cycle_result = exports_cycle_result)]
     pub fn exports(self, db: &dyn Db) -> FileExports {
-        let mut entries: HashMap<String, ExportEntry> = HashMap::new();
-        for (name, (_def_id, def)) in self.semantic_index(db).exports() {
-            let entry = match def.kind() {
-                DefinitionKind::Import {
-                    file: target_url,
-                    name: target_name,
-                    ..
-                } => {
-                    let target_url_id = FilePath::from_url(target_url);
-                    let Some(target_file) = db.file_by_path(&target_url_id) else {
-                        continue;
-                    };
-                    ExportEntry::Import {
-                        file: target_file,
-                        name: target_name.clone(),
-                    }
-                },
-                _ => ExportEntry::Local,
-            };
-            entries.insert(name.to_string(), entry);
+        let mut entries: HashMap<String, Vec<ExportEntry>> = HashMap::new();
+
+        for (name, defs) in self.semantic_index(db).exports() {
+            let list = entries.entry(name.to_string()).or_default();
+            for (_def_id, def) in defs {
+                let entry = match def.kind() {
+                    DefinitionKind::Import {
+                        file: target_url,
+                        name: target_name,
+                        ..
+                    } => {
+                        let target_url_id = FilePath::from_url(target_url);
+                        let Some(target_file) = db.file_by_path(&target_url_id) else {
+                            continue;
+                        };
+                        ExportEntry::Import {
+                            file: target_file,
+                            name: target_name.clone(),
+                        }
+                    },
+                    _ => ExportEntry::Local,
+                };
+                // Dedup, moving each entry to its last position so the final
+                // entry is the binding R picks at runtime (statements run in
+                // order, last write wins). `Local` carries no `def_id` (that
+                // contentlessness is what keeps `exports()` stable across body
+                // edits), so a name's several top-level definitions collapse to
+                // one `Local`, identical `source()` forwards to one `Import`,
+                // and `resolve_export` re-mints from the marker either way.
+                if let Some(pos) = list.iter().position(|e| e == &entry) {
+                    list.remove(pos);
+                }
+                list.push(entry);
+            }
         }
+
         FileExports { entries }
     }
 }

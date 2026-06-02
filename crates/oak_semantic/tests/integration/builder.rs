@@ -1299,9 +1299,9 @@ fn test_file_exports_empty() {
 fn test_file_exports_multiple_defs_same_symbol() {
     let index = index("x <- 1\nx <- 2");
     let exports = index.exports();
-    // Deduplicates: last definition wins
+    // One name, but both definitions are kept (in definition order).
     assert_eq!(exports.len(), 1);
-    assert!(exports.contains_key("x"));
+    assert_eq!(exports.get("x").unwrap().len(), 2);
 }
 
 // --- File directives ---
@@ -1505,15 +1505,24 @@ fn test_source_call_emitted_without_resolver() {
 }
 
 #[test]
-fn test_file_exports_last_def_wins() {
+fn test_file_exports_keeps_all_defs_in_order() {
     // When the same name is defined multiple times at file scope,
-    // file_exports() returns only the last definition.
+    // exports() keeps all of them, in definition order; the last is R's
+    // runtime winner.
     let index = index("foo <- 1\nfoo <- 2\nbar <- 3\n");
     let exports = index.exports();
     assert_eq!(exports.len(), 2);
-    // The range should be the second `foo` (offset 9..12)
-    let (_def_id, def) = exports.get("foo").unwrap();
-    assert_eq!(def.range().start(), biome_rowan::TextSize::from(9));
+
+    let foo = exports.get("foo").unwrap();
+    let starts: Vec<biome_rowan::TextSize> = foo
+        .iter()
+        .map(|(_def_id, def)| def.range().start())
+        .collect();
+    // First `foo` at offset 0, second at offset 9.
+    assert_eq!(starts, vec![
+        biome_rowan::TextSize::from(0),
+        biome_rowan::TextSize::from(9),
+    ]);
 }
 
 // --- source() semantic calls: bail paths ---

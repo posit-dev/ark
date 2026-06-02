@@ -4,6 +4,7 @@ use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
+use crate::Definition;
 use crate::File;
 use crate::Name;
 
@@ -26,13 +27,22 @@ fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
     Name::new(db, text)
 }
 
+/// Resolve `text` in `file`, asserting it lands on exactly one definition.
+/// Most cases here bind a name once; the multi-target fan-out cases assert on
+/// the full `Vec` directly.
+fn resolve_one<'db>(db: &'db TestDb, file: File, text: &str) -> Definition<'db> {
+    let defs = file.resolve(db, name(db, text));
+    assert_eq!(defs.len(), 1);
+    defs.into_iter().next().unwrap()
+}
+
 #[test]
 fn test_resolve_local_name_lands_on_owning_file() {
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);
     let file = files[0];
 
-    let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
+    let def = resolve_one(&db, file, "x");
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "x");
     // The name range is just the `x` identifier in `x <- 1`.
@@ -46,7 +56,7 @@ fn test_unresolved_name_returns_none() {
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);
     let file = files[0];
-    assert!(file.resolve(&db, name(&db, "nope")).is_none());
+    assert!(file.resolve(&db, name(&db, "nope")).is_empty());
 }
 
 #[test]
@@ -59,9 +69,7 @@ fn test_resolve_chases_source_forwarding_to_origin_file() {
     let helpers = files[0];
     let analysis = files[1];
 
-    let def = analysis
-        .resolve(&db, name(&db, "helper"))
-        .expect("helper should resolve through source()");
+    let def = resolve_one(&db, analysis, "helper");
 
     assert_eq!(def.file(&db), helpers);
     assert_eq!(def.name(&db).text(&db).as_str(), "helper");
@@ -78,9 +86,7 @@ fn test_resolve_chases_two_step_source_chain() {
     let leaf = files[0];
     let top = files[2];
 
-    let def = top
-        .resolve(&db, name(&db, "deep"))
-        .expect("deep should chase through mid -> leaf");
+    let def = resolve_one(&db, top, "deep");
 
     assert_eq!(def.file(&db), leaf);
     assert_eq!(def.name(&db).text(&db).as_str(), "deep");
@@ -117,8 +123,8 @@ fn test_resolve_in_cyclic_source_returns_none_without_panicking() {
     // names that would otherwise be found in those exports. The
     // point of the test is that resolution terminates cleanly rather
     // than panicking.
-    assert!(a.resolve(&db, name(&db, "a_local")).is_none());
-    assert!(b.resolve(&db, name(&db, "b_local")).is_none());
+    assert!(a.resolve(&db, name(&db, "a_local")).is_empty());
+    assert!(b.resolve(&db, name(&db, "b_local")).is_empty());
 }
 
 /// Extract the source slice at `range` from `source`.
@@ -131,9 +137,7 @@ fn test_name_range_for_left_assignment() {
     let mut db = TestDb::new();
     let source = "x <- 1\n";
     let files = setup_workspace(&mut db, &[("w/a.R", source)]);
-    let def = files[0]
-        .resolve(&db, name(&db, "x"))
-        .expect("x should resolve");
+    let def = resolve_one(&db, files[0], "x");
     let range = def.name_range(&db).expect("Local has name range");
     assert_eq!(slice(source, range), "x");
 }
@@ -143,9 +147,7 @@ fn test_name_range_for_right_assignment() {
     let mut db = TestDb::new();
     let source = "1 -> x\n";
     let files = setup_workspace(&mut db, &[("w/a.R", source)]);
-    let def = files[0]
-        .resolve(&db, name(&db, "x"))
-        .expect("x should resolve");
+    let def = resolve_one(&db, files[0], "x");
     let range = def.name_range(&db).expect("Local has name range");
     assert_eq!(slice(source, range), "x");
 }
@@ -155,9 +157,7 @@ fn test_name_range_for_super_left_assignment() {
     let mut db = TestDb::new();
     let source = "x <<- 1\n";
     let files = setup_workspace(&mut db, &[("w/a.R", source)]);
-    let def = files[0]
-        .resolve(&db, name(&db, "x"))
-        .expect("x should resolve");
+    let def = resolve_one(&db, files[0], "x");
     let range = def.name_range(&db).expect("Local has name range");
     assert_eq!(slice(source, range), "x");
 }
@@ -167,9 +167,7 @@ fn test_name_range_for_super_right_assignment() {
     let mut db = TestDb::new();
     let source = "1 ->> x\n";
     let files = setup_workspace(&mut db, &[("w/a.R", source)]);
-    let def = files[0]
-        .resolve(&db, name(&db, "x"))
-        .expect("x should resolve");
+    let def = resolve_one(&db, files[0], "x");
     let range = def.name_range(&db).expect("Local has name range");
     assert_eq!(slice(source, range), "x");
 }
@@ -182,9 +180,7 @@ fn test_name_range_for_string_as_name() {
     let mut db = TestDb::new();
     let source = "\"x\" <- 1\n";
     let files = setup_workspace(&mut db, &[("w/a.R", source)]);
-    let def = files[0]
-        .resolve(&db, name(&db, "x"))
-        .expect("x should resolve");
+    let def = resolve_one(&db, files[0], "x");
     let range = def.name_range(&db).expect("Local has name range");
     assert_eq!(slice(source, range), "\"x\"");
 }
@@ -250,7 +246,7 @@ fn test_definition_id_stable_across_body_edits() {
     // since the `Definition<'db>` borrow conflicts with `set_contents`'s
     // mutable borrow.
     let (id1, range1) = {
-        let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
+        let def = resolve_one(&db, file, "x");
         (def.as_id(), def.name_range(&db))
     };
 
@@ -259,9 +255,7 @@ fn test_definition_id_stable_across_body_edits() {
         .to("f <- function() 2\nx <- 1\n".to_string());
 
     let (id2, range2) = {
-        let def = file
-            .resolve(&db, name(&db, "x"))
-            .expect("x should still resolve");
+        let def = resolve_one(&db, file, "x");
         (def.as_id(), def.name_range(&db))
     };
 
@@ -316,16 +310,29 @@ fn test_definitions_mints_distinct_entities_for_same_name_redefinition() {
     // Two file-scope `x` bindings share the `(file, scope, name)` id-fields.
     // The single mint site must create two distinct salsa entities rather than
     // collide or panic; salsa disambiguates same-id-field tracked structs by
-    // creation order. Resolving `x` forces the mint of both (via `definitions`)
-    // and must land on the last definition (offset 7).
+    // creation order. With multi-target exports, resolving `x` returns both
+    // bindings, in definition order.
+    use salsa::plumbing::AsId;
+
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\nx <- 2\n")]);
     let file = files[0];
 
-    let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
-    assert_eq!(def.name(&db).text(&db).as_str(), "x");
-    let range = def.name_range(&db).expect("local binding has a name range");
-    assert_eq!(usize::from(range.start()), 7);
+    let defs = file.resolve(&db, name(&db, "x"));
+    assert_eq!(defs.len(), 2);
+    assert_ne!(defs[0].as_id(), defs[1].as_id());
+
+    let starts: Vec<usize> = defs
+        .iter()
+        .map(|d| {
+            usize::from(
+                d.name_range(&db)
+                    .expect("local binding has a name range")
+                    .start(),
+            )
+        })
+        .collect();
+    assert_eq!(starts, vec![0, 7]);
 }
 
 #[test]
@@ -350,7 +357,7 @@ fn test_position_shift_keeps_id_and_does_not_invalidate_identity_consumers() {
     let file = files[0];
 
     let (id1, range1) = {
-        let def = file.resolve(&db, name(&db, "x")).expect("x resolves");
+        let def = resolve_one(&db, file, "x");
         let _ = name_len(&db, def);
         (def.as_id(), def.name_range(&db))
     };
@@ -361,7 +368,7 @@ fn test_position_shift_keeps_id_and_does_not_invalidate_identity_consumers() {
         .to("# comment\nx <- 1\n".to_string());
 
     let (id2, range2) = {
-        let def = file.resolve(&db, name(&db, "x")).expect("x still resolves");
+        let def = resolve_one(&db, file, "x");
         let _ = name_len(&db, def);
         (def.as_id(), def.name_range(&db))
     };
@@ -389,19 +396,22 @@ fn test_same_name_sibling_insertion_churns_later_definition_id() {
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\nx <- 2\n")]);
     let file = files[0];
 
-    // `resolve` is last-wins, so it returns the final `x` (`x <- 2`), ordinal 1.
+    // `resolve` returns the file-scope `x` bindings in definition order; the
+    // final `x` (`x <- 2`) is the last element, ordinal 1 among same-name siblings.
     let id1 = file
         .resolve(&db, name(&db, "x"))
+        .last()
         .expect("x resolves")
         .as_id();
 
-    // Insert another `x` at the top. The final `x` is still last-wins, but its
+    // Insert another `x` at the top. The final `x` is still last, but its
     // ordinal among same-name siblings shifts from 1 to 2.
     file.set_contents(&mut db)
         .to("x <- 0\nx <- 1\nx <- 2\n".to_string());
 
     let id2 = file
         .resolve(&db, name(&db, "x"))
+        .last()
         .expect("x still resolves")
         .as_id();
 
@@ -443,8 +453,8 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
-    assert!(a.resolve(&db, name(&db, "nope")).is_none());
-    assert!(b.resolve(&db, name(&db, "nope")).is_none());
+    assert!(a.resolve(&db, name(&db, "nope")).is_empty());
+    assert!(b.resolve(&db, name(&db, "nope")).is_empty());
 }
 
 #[test]
@@ -486,7 +496,7 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
     // `b` has no top-level `shared`, but `a` (a sibling file in the
     // same package) does. `b.resolve("shared")` should find it via the
     // imports walk.
-    let def = b.resolve(&db, name(&db, "shared")).expect("should resolve");
+    let def = resolve_one(&db, b, "shared");
     assert_eq!(def.file(&db), a);
     assert_eq!(def.name(&db).text(&db).as_str(), "shared");
 }

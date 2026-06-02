@@ -146,10 +146,10 @@ fn test_local_def_shadows_sourced() {
 }
 
 #[test]
-fn test_last_def_in_sourced_file_wins() {
-    // When the sourced file binds the same name twice, the use navigates to
-    // the last definition. The link range must point at that second def, in
-    // the target file's coordinates.
+fn test_sourced_file_with_repeated_def_offers_both() {
+    // When the sourced file binds the same name twice, goto-def offers both
+    // candidate definitions, in definition order. The last link is the binding
+    // R picks at runtime. Ranges are in the target file's coordinates.
     let script_uri = test_path("script.R");
     let helpers_uri = test_path("helpers.R");
     let state = make_state_with(&[
@@ -164,8 +164,11 @@ fn test_last_def_in_sourced_file_wins() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 2);
             assert_eq!(links[0].target_uri, helpers_uri);
-            assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
+            assert_eq!(links[0].target_range, range((0, 0), (0, 2)));
+            assert_eq!(links[1].target_uri, helpers_uri);
+            assert_eq!(links[1].target_range, range((1, 0), (1, 2)));
         }
     );
 }
