@@ -1,10 +1,9 @@
 //! Smoke tests for the LSP -> oak translator in [`crate::lsp::state_handlers`].
 //! Dispatch behaviour itself is covered by `oak_scan/tests/watch.rs`. The tests
 //! here go through [`did_change_watched_files`] end-to-end so they catch a
-//! regression in either the translation step or the state.documents → skip set
+//! regression in either the translation step or the state.open_files -> skip set
 //! conversion.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -28,7 +27,6 @@ use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::document::Document;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
@@ -64,7 +62,7 @@ fn set_workspace_paths(
 }
 
 fn editor_owned_of(state: &WorldState) -> HashSet<FilePath> {
-    state.documents.keys().cloned().collect()
+    state.open_files.keys().cloned().collect()
 }
 
 fn did_change_watched_files(
@@ -128,7 +126,6 @@ where
 
 fn test_lsp_state() -> LspState {
     LspState {
-        parsers: HashMap::new(),
         capabilities: Capabilities::default(),
         console_notification_tx: tokio::sync::mpsc::unbounded_channel().0,
         oak_scheduler: ScanScheduler::new(),
@@ -268,12 +265,12 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let mut state = workspace_state(tmp.path());
 
     let url = Url::from_file_path(&path).unwrap();
-    state.insert_document(url.clone(), Document::new("editor_v2\n", None));
-    // Pretend the editor pushed its content into oak too.
     let file_path = FilePath::from_url(&url);
-    state
+    // Push the editor content into oak then register the buffer, the same as `didOpen`.
+    let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
+    state.insert_ark_file(url.clone(), file, None);
 
     // Now disk-side `Changed` fires with stale disk content.
     fs::write(&path, "disk_v3\n").unwrap();
@@ -355,11 +352,11 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let mut state = workspace_state(tmp.path());
 
     let url = Url::from_file_path(&path).unwrap();
-    state.insert_document(url.clone(), Document::new("editor_v2\n", None));
     let file_path = FilePath::from_url(&url);
-    state
+    let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
+    state.insert_ark_file(url.clone(), file, None);
 
     fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -561,7 +558,7 @@ fn test_did_change_workspace_folders_handles_add_and_remove_in_one_event() {
 #[test]
 fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     // End-to-end check that `did_change_workspace_folders` threads
-    // `state.documents` URLs through as `editor_owned` so an open buffer
+    // `state.open_files` URLs through as `editor_owned` so an open buffer
     // survives its workspace folder being removed and re-added: same
     // `File` entity, editor contents preserved, file findable through
     // both phases.
@@ -573,15 +570,15 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
     let file_path = FilePath::from_url(&url);
-    state.insert_document(url.clone(), Document::new("editor <- 2\n", None));
-    state
+    let file = state
         .db
         .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
+    state.insert_ark_file(url.clone(), file, None);
 
     let file_before = state.db.file_by_path(&file_path).unwrap();
 
     // Remove the workspace folder. The handler builds the editor_owned set
-    // from state.documents.keys() and passes it to oak; the buffer's file
+    // from state.open_files.keys() and passes it to oak; the buffer's file
     // routes to OrphanRoot rather than StaleRoot.
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
@@ -623,7 +620,6 @@ fn test_did_close_releases_orphan_file_to_stale() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
-    let mut lsp_state = test_lsp_state();
 
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
@@ -631,13 +627,10 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // Simulate `didOpen` via state mutation (matches the rest of the file's
     // pattern).
-    state.insert_document(url.clone(), Document::new("edited\n", None));
-    lsp_state
-        .parsers
-        .insert(url.clone(), tree_sitter::Parser::new());
-    state
+    let file = state
         .db
         .upsert_editor(file_path.clone(), "edited\n".to_string());
+    state.insert_ark_file(url.clone(), file, None);
 
     // Remove the workspace folder; file goes to orphan (editor-owned).
     did_change_workspace_folders(
@@ -657,7 +650,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     let params = DidCloseTextDocumentParams {
         text_document: TextDocumentIdentifier { uri: url.clone() },
     };
-    did_close(params, &mut lsp_state, &mut state).unwrap();
+    did_close(params, &mut state).unwrap();
 
     assert!(!state.db.orphan_root().files(&state.db).contains(&file));
     assert!(state.db.stale_root().files(&state.db).contains(&file));

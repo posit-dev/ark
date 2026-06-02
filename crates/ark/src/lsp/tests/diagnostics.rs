@@ -3,7 +3,6 @@ use oak_scan::DbScan;
 use url::Url;
 
 use crate::lsp::diagnostics::generate_diagnostics;
-use crate::lsp::document::Document;
 use crate::lsp::state::WorldState;
 use crate::r_task;
 
@@ -18,10 +17,10 @@ fn test_diagnostics_published_through_refresh_snapshot() {
         // a `Document` plus its matching `oak_db::File`.
         let uri = Url::parse("file:///test.R").unwrap();
         let code = "foo";
-        state.insert_document(uri.clone(), Document::new(code, None));
-        state
+        let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
+        state.insert_ark_file(uri.clone(), file, None);
 
         // Mirror `diagnostics_refresh_all`: build the `ArkFile` from the live
         // state, then hand the worker the `diagnostics_snapshot`. The snapshot's

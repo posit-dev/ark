@@ -89,68 +89,83 @@ fn ark_diagnostics_args<'tree>(ark_args: Node<'tree>, contents: &str) -> Option<
 mod test {
     use stdext::assert_match;
 
+    use crate::lsp::ark_file::test_ark_file;
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;
     use crate::lsp::declarations::top_level_declare_args;
-    use crate::lsp::document::Document;
 
     #[test]
     fn test_declare_args() {
-        let doc = Document::new("", None);
-        assert_match!(top_level_declare_args(&doc.ast, &doc.contents), None);
+        let (db, file) = test_ark_file("");
+        assert_match!(
+            top_level_declare_args(file.tree_sitter(&db), file.contents(&db)),
+            None
+        );
 
-        let doc = Document::new("declare()", None);
-        assert_match!(top_level_declare_args(&doc.ast, &doc.contents), Some(_));
+        let (db, file) = test_ark_file("declare()");
+        assert_match!(
+            top_level_declare_args(file.tree_sitter(&db), file.contents(&db)),
+            Some(_)
+        );
 
-        let doc = Document::new("~declare()", None);
-        assert_match!(top_level_declare_args(&doc.ast, &doc.contents), Some(_));
+        let (db, file) = test_ark_file("~declare()");
+        assert_match!(
+            top_level_declare_args(file.tree_sitter(&db), file.contents(&db)),
+            Some(_)
+        );
 
-        let doc = Document::new("# foo\n#bar\n\ndeclare()", None);
-        assert_match!(top_level_declare_args(&doc.ast, &doc.contents), Some(_));
+        let (db, file) = test_ark_file("# foo\n#bar\n\ndeclare()");
+        assert_match!(
+            top_level_declare_args(file.tree_sitter(&db), file.contents(&db)),
+            Some(_)
+        );
 
-        let doc = Document::new("# foo\nbar\n\ndeclare()", None);
-        assert_match!(top_level_declare_args(&doc.ast, &doc.contents), None);
+        let (db, file) = test_ark_file("# foo\nbar\n\ndeclare()");
+        assert_match!(
+            top_level_declare_args(file.tree_sitter(&db), file.contents(&db)),
+            None
+        );
     }
 
     #[test]
     fn test_declare_ark_args() {
-        let doc = Document::new("declare()", None);
-        let decls = top_level_declare_args(&doc.ast, &doc.contents).unwrap();
-        assert_match!(declare_ark_args(decls, &doc.contents), None);
+        let (db, file) = test_ark_file("declare()");
+        let decls = top_level_declare_args(file.tree_sitter(&db), file.contents(&db)).unwrap();
+        assert_match!(declare_ark_args(decls, file.contents(&db)), None);
 
-        let doc = Document::new("declare(ark())", None);
-        let decls = top_level_declare_args(&doc.ast, &doc.contents).unwrap();
-        assert_match!(declare_ark_args(decls, &doc.contents), Some(_));
+        let (db, file) = test_ark_file("declare(ark())");
+        let decls = top_level_declare_args(file.tree_sitter(&db), file.contents(&db)).unwrap();
+        assert_match!(declare_ark_args(decls, file.contents(&db)), Some(_));
 
-        let doc = Document::new("declare(foo, ark())", None);
-        let decls = top_level_declare_args(&doc.ast, &doc.contents).unwrap();
-        assert_match!(declare_ark_args(decls, &doc.contents), Some(_));
+        let (db, file) = test_ark_file("declare(foo, ark())");
+        let decls = top_level_declare_args(file.tree_sitter(&db), file.contents(&db)).unwrap();
+        assert_match!(declare_ark_args(decls, file.contents(&db)), Some(_));
     }
 
     #[test]
     fn test_declare_diagnostics() {
-        let doc = Document::new("", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(decls.diagnostics);
 
-        let doc = Document::new("declare(ark(diagnostics(enable = TRUE)))", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("declare(ark(diagnostics(enable = TRUE)))");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(decls.diagnostics);
 
-        let doc = Document::new("declare(ark(diagnostics(enable = NULL)))", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("declare(ark(diagnostics(enable = NULL)))");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(decls.diagnostics);
 
-        let doc = Document::new("declare(ark(diagnostics(enable = invalid())))", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("declare(ark(diagnostics(enable = invalid())))");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(decls.diagnostics);
 
-        let doc = Document::new("~declare()", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("~declare()");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(decls.diagnostics);
 
-        let doc = Document::new("declare(ark(diagnostics(enable = FALSE)))", None);
-        let decls = top_level_declare(&doc.ast, &doc.contents);
+        let (db, file) = test_ark_file("declare(ark(diagnostics(enable = FALSE)))");
+        let decls = top_level_declare(file.tree_sitter(&db), file.contents(&db));
         assert!(!decls.diagnostics);
     }
 }

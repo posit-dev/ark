@@ -16,7 +16,6 @@ pub(crate) mod db;
 mod declarations;
 pub mod diagnostics;
 pub mod diagnostics_syntax;
-pub mod document;
 pub mod document_context;
 pub mod events;
 pub mod folding_range;

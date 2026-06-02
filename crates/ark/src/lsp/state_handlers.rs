@@ -8,6 +8,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use aether_lsp_utils::proto::from_proto;
+use aether_lsp_utils::proto::PositionEncoding;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_scan::DbScan;
@@ -45,7 +47,6 @@ use tower_lsp::lsp_types::WorkDoneProgressOptions;
 use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp::lsp_types::WorkspaceServerCapabilities;
 use tracing::Instrument;
-use tree_sitter::Parser;
 use url::Url;
 
 use crate::console::ConsoleNotification;
@@ -55,7 +56,6 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -133,7 +133,7 @@ pub(crate) fn initialize(
     }
 
     // Kick off the initial workspace scan
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
     let requests =
         lsp_state
             .oak_scheduler
@@ -226,25 +226,14 @@ pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let contents = params.text_document.text.as_str();
+    let contents = params.text_document.text;
     let uri = params.text_document.uri;
     let version = params.text_document.version;
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-
-    let document = Document::new_with_parser(contents, &mut parser, Some(version));
-
-    lsp_state.parsers.insert(uri.clone(), parser);
-    state.insert_document(uri.clone(), document.clone());
-
-    let path = FilePath::from_url(&uri);
-    state.db.upsert_editor(path, contents.to_string());
+    let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
+    state.insert_ark_file(uri.clone(), file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -259,34 +248,115 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let document = state.get_document_mut(&FilePath::from_url(uri))?;
+    let key = FilePath::from_url(uri);
+    let new_version = params.text_document.version;
+    let encoding = state.config.position_encoding;
 
-    let parser = lsp_state
-        .parsers
-        .get_mut(uri)
-        .ok_or(anyhow!("No parser for {uri}"))?;
+    let Some(file) = state.open_files.get_mut(&key) else {
+        return Err(anyhow!("Can't find document for URI {uri}"));
+    };
 
-    document.on_did_change(parser, &params);
+    // Reject out-of-order change notifications. The spec allows version numbers
+    // to skip values but requires them to increase monotonically. A lower
+    // version means we've lost sync and can't keep our state consistent.
+    // Currently panicking, but in principle we should shut the LSP down in an
+    // orderly fashion.
+    if let Some(old_version) = file.version {
+        if new_version < old_version {
+            panic!(
+                "out-of-sync change notification: currently at {old_version}, got {new_version}"
+            );
+        }
+    }
 
-    let new_contents = document.contents.to_string();
-    let path = FilePath::from_url(uri);
-    state.db.upsert_editor(path, new_contents);
+    // Fold the edits into the new buffer text and push it into `oak`
+    let new_contents =
+        apply_content_changes(file.contents(&state.db), &params.content_changes, encoding);
+    state.db.upsert_editor(key.clone(), new_contents);
+
+    file.version = Some(new_version);
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
         .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(FilePath::from_url(
-            uri,
-        )))
+        .send(ConsoleNotification::DidChangeDocument(key))
         .log_err();
 
     Ok(())
 }
 
+// --- source
+// authors = ["rust-analyzer team"]
+// license = "MIT OR Apache-2.0"
+// origin = "https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/lsp/utils.rs"
+// ---
+/// Apply a batch of LSP content changes to `contents`, returning the new text.
+fn apply_content_changes(
+    contents: &str,
+    content_changes: &[lsp_types::TextDocumentContentChangeEvent],
+    encoding: PositionEncoding,
+) -> String {
+    let mut contents = contents.to_string();
+    let mut changes = content_changes.to_vec();
+
+    // If at least one of the changes is a full document change, use the last of them
+    // as the starting point and ignore all previous changes. We then know that all
+    // changes after this (if any!) are incremental changes.
+    //
+    // If we do have a full document change, that implies the `last_start_line`
+    // corresponding to that change is line 0, which will correctly force a rebuild
+    // of the line index before applying any incremental changes.
+    let (changes, mut last_start_line) =
+        match changes.iter().rposition(|change| change.range.is_none()) {
+            Some(idx) => {
+                let incremental = changes.split_off(idx + 1);
+                // Unwrap: `rposition()` confirmed this index contains a full document change
+                let change = changes.pop().unwrap();
+                contents = change.text;
+                (incremental, 0)
+            },
+            None => (changes, u32::MAX),
+        };
+
+    let mut line_index = biome_line_index::LineIndex::new(&contents);
+
+    // Handle all incremental changes after the last full document change. We don't
+    // typically get >1 incremental change as the user types, but we do get them in a
+    // batch after a find-and-replace, or after a format-on-save request.
+    //
+    // Some editors like VS Code send the edits in reverse order (from the bottom of
+    // file -> top of file). We can take advantage of this, because applying an edit
+    // on, say, line 10, doesn't invalidate the `line_index` if we then need to apply
+    // an additional edit on line 5. That said, we may still have edits that cross
+    // lines, so rebuilding the `line_index` is not always unavoidable.
+    for change in changes {
+        let range = change
+            .range
+            .expect("`None` case already handled by finding the last full document change.");
+
+        // If the end of this change is at or past the start of the last change, then
+        // the `line_index` needed to apply this change is now invalid, so we have to
+        // rebuild it.
+        if range.end.line >= last_start_line {
+            line_index = biome_line_index::LineIndex::new(&contents);
+        }
+        last_start_line = range.start.line;
+
+        // This is a panic if we can't convert. It means we can't keep the document up
+        // to date and something is very wrong.
+        let range: std::ops::Range<usize> = from_proto::text_range(range, &line_index, encoding)
+            .expect("Can convert `range` from `Position` to `TextRange`.")
+            .into();
+
+        contents.replace_range(range, &change.text);
+    }
+
+    contents
+}
+
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = params.text_document.uri;
@@ -295,14 +365,9 @@ pub(crate) fn did_close(
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
 
     state
-        .documents
+        .open_files
         .remove(&FilePath::from_url(&uri))
         .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
-
-    lsp_state
-        .parsers
-        .remove(&uri)
-        .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
@@ -321,7 +386,7 @@ pub(crate) fn did_change_watched_files(
 ) -> anyhow::Result<()> {
     // Editor owns the contents of files it has open: ignore disk-side events
     // for those URLs. Their content comes from `did_open` / `did_change`.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
     let events: Vec<FileEvent> = params
         .changes
@@ -378,7 +443,7 @@ pub(crate) fn did_change_workspace_folders(
     // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
     // open buffers keep getting analysed even when their workspace
     // folder goes away.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
     let requests =
         lsp_state
@@ -411,7 +476,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.get_document_mut(&FilePath::from_url(uri)) else {
+    let Ok(doc) = state.ark_file_mut(uri) else {
         return;
     };
 
@@ -502,9 +567,8 @@ async fn update_config(
         let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
         let head = std::mem::replace(&mut remaining, tail);
 
-        let path = FilePath::from_url(&uri);
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.get_document_mut(&path) {
+            if let Ok(doc) = state.ark_file_mut(&uri) {
                 (mapping.set)(&mut doc.config, value);
             }
         }
@@ -553,4 +617,51 @@ pub(crate) fn did_close_virtual_document(
 ) -> anyhow::Result<()> {
     state.virtual_documents.remove(&params.uri);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use biome_line_index::WideEncoding;
+
+    use super::*;
+
+    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
+
+    fn insert(text: &str, line: u32, character: u32) -> lsp_types::TextDocumentContentChangeEvent {
+        let position = lsp_types::Position::new(line, character);
+        lsp_types::TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range::new(position, position)),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_apply_content_changes_incremental_inserts() {
+        // Type "lib" one character at a time, the way an editor streams it.
+        let after_l = apply_content_changes("", &[insert("l", 0, 0)], ENCODING);
+        assert_eq!(after_l, "l");
+
+        let after_i = apply_content_changes(&after_l, &[insert("i", 0, 1)], ENCODING);
+        assert_eq!(after_i, "li");
+
+        let after_b = apply_content_changes(&after_i, &[insert("b", 0, 2)], ENCODING);
+        assert_eq!(after_b, "lib");
+    }
+
+    #[test]
+    fn test_apply_content_changes_full_replacement_wins() {
+        // A range-less change replaces the whole buffer; earlier changes in the
+        // batch are discarded, later incremental ones apply on top of it.
+        let changes = vec![
+            insert("ignored", 0, 0),
+            lsp_types::TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "abc\n".to_string(),
+            },
+            insert("X", 0, 3),
+        ];
+        assert_eq!(apply_content_changes("old", &changes, ENCODING), "abcX\n");
+    }
 }
