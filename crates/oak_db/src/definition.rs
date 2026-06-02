@@ -2,9 +2,12 @@ use aether_syntax::RBinaryExpression;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
+use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
+use rustc_hash::FxHashMap;
 
+use crate::Db;
 use crate::File;
 use crate::Name;
 
@@ -85,4 +88,71 @@ fn is_right_assignment(node: &RBinaryExpression) -> bool {
             RSyntaxKind::ASSIGN_RIGHT | RSyntaxKind::SUPER_ASSIGN_RIGHT
         )
     })
+}
+
+#[salsa::tracked]
+impl<'db> File {
+    /// Look up the `Definition` entity for the binding at `(scope, def_id)` in
+    /// this file. The entity has already been minted in [`File::definitions`]
+    /// and this is a plain lookup. The salsa id stays stable across edits that
+    /// renumber `def_id`.
+    pub(crate) fn definition(
+        self,
+        db: &'db dyn Db,
+        scope: ScopeId,
+        def_id: DefinitionId,
+    ) -> Option<Definition<'db>> {
+        self.definitions(db)
+            .by_site
+            .get(&DefinitionSite { scope, def_id })
+            .copied()
+    }
+
+    /// Mint every `Definition` in this file, keyed by its `(scope, def_id)`
+    /// site. This is the single `Definition::new` call site: every resolution
+    /// path looks entities up here rather than minting its own, so the same
+    /// binding has one salsa id no matter how it's reached.
+    ///
+    /// Identity is `(file, scope, name)` (see [`Definition`]). `def_id` is only
+    /// the lookup key, never part of identity, so inserting a binding earlier
+    /// in a scope doesn't churn the ids of the others.
+    #[salsa::tracked(returns(ref))]
+    fn definitions(self, db: &'db dyn Db) -> FileDefinitions<'db> {
+        let index = self.semantic_index(db);
+        let mut by_site = FxHashMap::default();
+
+        for scope in index.scope_ids() {
+            let symbols = index.symbols(scope);
+            for (def_id, def) in index.definitions(scope).iter() {
+                let name = Name::new(db, symbols.symbol(def.symbol()).name());
+                let definition = Definition::new(db, self, scope, name, def.kind().clone());
+                by_site.insert(DefinitionSite { scope, def_id }, definition);
+            }
+        }
+
+        FileDefinitions { by_site }
+    }
+}
+
+/// Every `Definition` in a file, keyed by its definition site.
+///
+/// A `salsa::Update` struct rather than a bare map so the salsa-tracked
+/// `File::definitions` query can store it: salsa needs the `Update` impl to
+/// handle the `Definition<'db>` lifetime that the map values carry.
+#[derive(Debug, PartialEq, Eq, salsa::Update)]
+struct FileDefinitions<'db> {
+    by_site: FxHashMap<DefinitionSite, Definition<'db>>,
+}
+
+/// Map key for [`FileDefinitions`]: a binding's `(scope, def_id)` site.
+///
+/// A named struct rather than a `(ScopeId, DefinitionId)` tuple so it can
+/// derive `salsa::Update` (the salsa map key must implement it). The derive
+/// falls back to a plain replace for the `'static` index fields, which don't
+/// implement `Update` themselves (`oak_semantic` has no salsa dependency).
+/// Mirrors ty's `DefinitionNodeKey`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+struct DefinitionSite {
+    scope: ScopeId,
+    def_id: DefinitionId,
 }
