@@ -136,16 +136,7 @@ impl SemanticIndex {
         let mut exports: FxHashMap<&str, Vec<(DefinitionId, &Definition)>> = FxHashMap::default();
         for (id, def) in self.definitions[file_scope].iter() {
             let name = symbols.symbol(def.symbol()).name();
-            let list = exports.entry(name).or_default();
-            // A top-level `<<-` records the binding in both the scope where it
-            // appears and the super-assign target scope, which coincide at file
-            // scope, so the same binding lands here twice. Drop the byte-equal
-            // duplicate while still keeping genuinely distinct definitions, like
-            // both arms of a top-level `if`/`else` or two `source()` forwards of
-            // one name (those differ in range or in the forwarded file).
-            if !list.iter().any(|(_, d)| *d == def) {
-                list.push((id, def));
-            }
+            exports.entry(name).or_default().push((id, def));
         }
 
         exports

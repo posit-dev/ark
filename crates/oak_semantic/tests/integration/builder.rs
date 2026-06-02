@@ -562,8 +562,9 @@ fn test_repeat_loop() {
 
 #[test]
 fn test_super_assignment_at_file_scope() {
-    // At file scope, `<<-` targets the file scope itself (no parent to
-    // walk to), so the symbol gets both IS_SUPER_BOUND and IS_BOUND.
+    // At file scope, `<<-` targets the file scope itself (no parent to walk
+    // to), so the marker scope and the binding scope coincide. The symbol gets
+    // both IS_SUPER_BOUND and IS_BOUND from a single recording.
     let index = index("x <<- 1");
     let file = ScopeId::from(0);
 
@@ -573,15 +574,10 @@ fn test_super_assignment_at_file_scope() {
         SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
     );
 
-    // Two definitions: one from the current-scope recording, one from the
-    // target-scope recording (same scope in this case).
-    assert_eq!(index.definitions(file).len(), 2);
+    // One definition, not a self-duplicate.
+    assert_eq!(index.definitions(file).len(), 1);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::SuperAssignment(_)
-    ));
-    assert!(matches!(
-        index.definitions(file)[DefinitionId::from(1)].kind(),
         DefinitionKind::SuperAssignment(_)
     ));
     assert_eq!(index.uses(file).len(), 0);
@@ -598,7 +594,7 @@ fn test_super_assignment_right_at_file_scope() {
         SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
     );
 
-    assert_eq!(index.definitions(file).len(), 2);
+    assert_eq!(index.definitions(file).len(), 1);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
         DefinitionKind::SuperAssignment(_)
