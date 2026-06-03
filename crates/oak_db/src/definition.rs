@@ -135,10 +135,6 @@ impl<'db> File {
 }
 
 /// Every `Definition` in a file, keyed by its definition site.
-///
-/// A `salsa::Update` struct rather than a bare map so the salsa-tracked
-/// `File::definitions` query can store it: salsa needs the `Update` impl to
-/// handle the `Definition<'db>` lifetime that the map values carry.
 #[derive(Debug, PartialEq, Eq, salsa::Update)]
 struct FileDefinitions<'db> {
     by_site: FxHashMap<DefinitionSite, Definition<'db>>,
@@ -146,10 +142,6 @@ struct FileDefinitions<'db> {
 
 /// Map key for [`FileDefinitions`]: a binding's `(scope, def_id)` site.
 ///
-/// A named struct rather than a `(ScopeId, DefinitionId)` tuple so it can
-/// derive `salsa::Update` (the salsa map key must implement it). The derive
-/// falls back to a plain replace for the `'static` index fields, which don't
-/// implement `Update` themselves (`oak_semantic` has no salsa dependency).
 /// Mirrors ty's `DefinitionNodeKey`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 struct DefinitionSite {

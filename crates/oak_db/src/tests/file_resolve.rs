@@ -388,7 +388,10 @@ fn test_same_name_sibling_insertion_churns_later_definition_id() {
     let file = files[0];
 
     // `resolve` is last-wins, so it returns the final `x` (`x <- 2`), ordinal 1.
-    let id1 = file.resolve(&db, name(&db, "x")).expect("x resolves").as_id();
+    let id1 = file
+        .resolve(&db, name(&db, "x"))
+        .expect("x resolves")
+        .as_id();
 
     // Insert another `x` at the top. The final `x` is still last-wins, but its
     // ordinal among same-name siblings shifts from 1 to 2.
