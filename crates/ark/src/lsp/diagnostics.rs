@@ -46,10 +46,9 @@ pub struct DiagnosticsConfig {
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
-    pub(crate) contents: &'a str,
-    pub(crate) ark_file: &'a ArkFile,
     pub(crate) db: &'a dyn ArkDb,
-    pub(crate) encoding: PositionEncoding,
+    pub(crate) file: &'a ArkFile,
+    pub(crate) contents: &'a str,
 
     /// The symbols currently defined and available in the session.
     pub session_symbols: HashSet<String>,
@@ -89,18 +88,16 @@ impl Default for DiagnosticsConfig {
 
 impl<'a> DiagnosticContext<'a> {
     pub(crate) fn new(
-        ark_file: &'a ArkFile,
         db: &'a dyn ArkDb,
-        encoding: PositionEncoding,
         root: &'a Option<SourceRoot>,
         library: &'a Library,
+        file: &'a ArkFile,
     ) -> Self {
-        let contents = ark_file.contents(db);
+        let contents = file.contents(db);
         Self {
             contents,
-            ark_file,
+            file,
             db,
-            encoding,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
@@ -147,7 +144,7 @@ impl<'a> DiagnosticContext<'a> {
 }
 
 pub(crate) fn generate_diagnostics(
-    ark_file: ArkFile,
+    file: ArkFile,
     state: WorldState,
     testthat: bool,
 ) -> Vec<Diagnostic> {
@@ -158,18 +155,17 @@ pub(crate) fn generate_diagnostics(
     }
 
     let db = &state.db;
-    let encoding = state.config.position_encoding;
 
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
-    let tree = ark_file.tree_sitter(db);
-    let contents = ark_file.contents(db);
+    let tree = file.tree_sitter(db);
+    let contents = file.contents(db);
     let decls = top_level_declare(tree, contents);
     if !decls.diagnostics {
         return diagnostics;
     }
 
-    let mut context = DiagnosticContext::new(&ark_file, db, encoding, &state.root, &state.library);
+    let mut context = DiagnosticContext::new(db, &state.root, &state.library, &file);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -239,7 +235,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     // Start iterating through the nodes.
-    let root = ark_file.tree_sitter(db).root_node();
+    let root = file.tree_sitter(db).root_node();
 
     // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
     match syntax_diagnostics(root, &context) {
@@ -711,11 +707,9 @@ fn recurse_namespace(
     let package = lhs.node_as_str(context.contents)?;
     if !context.installed_packages.contains(package) {
         let range = lhs.range();
-        let range = context.ark_file.lsp_range_from_tree_sitter_range(
-            context.db,
-            context.encoding,
-            range,
-        )?;
+        let range = context
+            .file
+            .lsp_range_from_tree_sitter_range(context.db, range)?;
         let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
@@ -1058,11 +1052,9 @@ fn check_invalid_na_comparison(
                 _ => continue,
             };
             let range = child.range();
-            let range = context.ark_file.lsp_range_from_tree_sitter_range(
-                context.db,
-                context.encoding,
-                range,
-            )?;
+            let range = context
+                .file
+                .lsp_range_from_tree_sitter_range(context.db, range)?;
             let mut diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
             diagnostics.push(diagnostic);
@@ -1096,10 +1088,9 @@ fn check_unexpected_assignment_in_if_conditional(
     }
 
     let range = condition.range();
-    let range =
-        context
-            .ark_file
-            .lsp_range_from_tree_sitter_range(context.db, context.encoding, range)?;
+    let range = context
+        .file
+        .lsp_range_from_tree_sitter_range(context.db, range)?;
     let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
@@ -1147,10 +1138,9 @@ fn check_symbol_in_scope(
 
     // No symbol in scope; provide a diagnostic.
     let range = node.range();
-    let range =
-        context
-            .ark_file
-            .lsp_range_from_tree_sitter_range(context.db, context.encoding, range)?;
+    let range = context
+        .file
+        .lsp_range_from_tree_sitter_range(context.db, range)?;
     let identifier = node.node_as_str(context.contents)?;
     let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
@@ -1189,6 +1179,9 @@ mod tests {
             version: None,
             config: DocumentConfig::default(),
             url,
+            encoding: aether_lsp_utils::proto::PositionEncoding::Wide(
+                biome_line_index::WideEncoding::Utf16,
+            ),
         };
         super::generate_diagnostics(ark_file, state, false)
     }

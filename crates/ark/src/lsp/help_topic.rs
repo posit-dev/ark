@@ -40,18 +40,18 @@ pub struct HelpTopicResponse {
 }
 
 pub(crate) fn help_topic(
-    point: Point,
-    ark_file: &ArkFile,
     db: &dyn ArkDb,
+    file: &ArkFile,
+    point: Point,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let tree = ark_file.tree_sitter(db);
+    let tree = file.tree_sitter(db);
 
     let Some(node) = locate_help_node(tree, point) else {
         lsp::log_warn!("help_topic(): No help node at position {point}");
         return Ok(None);
     };
 
-    let text = node.node_to_string(ark_file.contents(db))?;
+    let text = node.node_to_string(file.contents(db))?;
     let response = HelpTopicResponse { topic: text };
 
     lsp::log_info!(

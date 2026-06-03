@@ -101,23 +101,15 @@ impl ArkStatementRangeResponse {
     // which handles all Tree-sitter to LSP conversion at the method boundary
     fn into_lsp_response(
         self,
-        ark_file: &ArkFile,
         db: &dyn ArkDb,
-        encoding: PositionEncoding,
+        file: &ArkFile,
     ) -> anyhow::Result<StatementRangeResponse> {
         match self {
             ArkStatementRangeResponse::Success(response) => {
                 // Tree-sitter `Point`s to LSP `Position`s
-                let start = ark_file.lsp_position_from_tree_sitter_point(
-                    db,
-                    encoding,
-                    response.range.start_point,
-                )?;
-                let end = ark_file.lsp_position_from_tree_sitter_point(
-                    db,
-                    encoding,
-                    response.range.end_point,
-                )?;
+                let start =
+                    file.lsp_position_from_tree_sitter_point(db, response.range.start_point)?;
+                let end = file.lsp_position_from_tree_sitter_point(db, response.range.end_point)?;
                 let range = lsp_types::Range { start, end };
                 Ok(StatementRangeResponse::Success(StatementRangeSuccess {
                     range,
@@ -144,24 +136,23 @@ impl ArkStatementRangeResponse {
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
 pub(crate) fn statement_range(
-    ark_file: &ArkFile,
     db: &dyn ArkDb,
-    encoding: PositionEncoding,
+    file: &ArkFile,
     point: Point,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let root = ark_file.tree_sitter(db).root_node();
-    let contents = ark_file.contents(db);
+    let root = file.tree_sitter(db).root_node();
+    let contents = file.contents(db);
 
     // Initial check to see if we are in a roxygen2 comment, in which case we parse a
     // subdocument containing the `@examples` or `@examplesIf` section and locate a
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some(response) = find_roxygen_statement_range(&root, contents, point)? {
-        return Ok(Some(response.into_lsp_response(ark_file, db, encoding)?));
+        return Ok(Some(response.into_lsp_response(db, file)?));
     }
 
     if let Some(response) = find_statement_range(&root, point.row)? {
-        return Ok(Some(response.into_lsp_response(ark_file, db, encoding)?));
+        return Ok(Some(response.into_lsp_response(db, file)?));
     }
 
     Ok(None)

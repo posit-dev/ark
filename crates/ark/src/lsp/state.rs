@@ -140,6 +140,7 @@ impl WorldState {
             version: document.version,
             config: document.config.clone(),
             url: document.url.clone(),
+            encoding: self.config.position_encoding,
         })
     }
 

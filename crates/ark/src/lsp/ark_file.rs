@@ -18,26 +18,16 @@ use crate::lsp::db::FileExt;
 
 /// Editor-managed buffer state, paired with its `oak_db::File`.
 ///
-/// This is the LSP's replacement for the analysis-carrying `Document`. The
-/// protocol fields (`version`, `config`, `url`) are plain data. Everything
-/// derived from the buffer text (the tree-sitter tree, the line index, the
-/// contents) is reached through salsa queries on `file`, so it's computed once
-/// and never stored twice.
-///
-/// For now `ArkFile` is built per request, from the still-stored `Document`
-/// plus the `File` handle. Once `Document` is gone it becomes the value stored
-/// in `WorldState::documents`.
-///
-/// The methods take `db` as a parameter rather than holding it. `ArkFile` lives
-/// in `WorldState`, and the db is a sibling field there, so a stored borrow of
-/// it would be self-referential, which safe Rust forbids. Passing `db` per call
-/// is the salsa idiom anyway (`file.parse(db)`).
+/// `ArkFile` and `OakDatabase` are sibling fields on `WorldState`, so an
+/// `ArkFile` cannot hold a reference to the database. That's why the methods
+/// below take `db` as an argument instead of storing a reference, which is the
+/// Salsa convention anyway.
 pub(crate) struct ArkFile {
     pub(crate) file: File,
     pub(crate) version: Option<i32>,
     pub(crate) config: DocumentConfig,
-    #[allow(dead_code)]
     pub(crate) url: Url,
+    pub(crate) encoding: PositionEncoding,
 }
 
 impl ArkFile {
@@ -84,10 +74,10 @@ impl ArkFile {
     pub(crate) fn tree_sitter_point_from_lsp_position(
         &self,
         db: &dyn ArkDb,
-        encoding: PositionEncoding,
         position: lsp_types::Position,
     ) -> anyhow::Result<tree_sitter::Point> {
-        let line_col = from_proto::line_col_from_position(position, self.line_index(db), encoding);
+        let line_col =
+            from_proto::line_col_from_position(position, self.line_index(db), self.encoding);
         Ok(tree_sitter::Point::new(
             line_col.line as usize,
             line_col.col as usize,
@@ -97,37 +87,34 @@ impl ArkFile {
     pub(crate) fn lsp_position_from_tree_sitter_point(
         &self,
         db: &dyn ArkDb,
-        encoding: PositionEncoding,
         point: tree_sitter::Point,
     ) -> anyhow::Result<lsp_types::Position> {
         let line_col = biome_line_index::LineCol {
             line: point.row as u32,
             col: point.column as u32,
         };
-        to_proto::position_from_line_col(line_col, self.line_index(db), encoding)
+        to_proto::position_from_line_col(line_col, self.line_index(db), self.encoding)
     }
 
     pub(crate) fn lsp_range_from_tree_sitter_range(
         &self,
         db: &dyn ArkDb,
-        encoding: PositionEncoding,
         range: tree_sitter::Range,
     ) -> anyhow::Result<lsp_types::Range> {
-        let start = self.lsp_position_from_tree_sitter_point(db, encoding, range.start_point)?;
-        let end = self.lsp_position_from_tree_sitter_point(db, encoding, range.end_point)?;
+        let start = self.lsp_position_from_tree_sitter_point(db, range.start_point)?;
+        let end = self.lsp_position_from_tree_sitter_point(db, range.end_point)?;
         Ok(lsp_types::Range::new(start, end))
     }
 
     pub(crate) fn tree_sitter_range_from_lsp_range(
         &self,
         db: &dyn ArkDb,
-        encoding: PositionEncoding,
         range: lsp_types::Range,
     ) -> anyhow::Result<tree_sitter::Range> {
-        let start_point = self.tree_sitter_point_from_lsp_position(db, encoding, range.start)?;
-        let end_point = self.tree_sitter_point_from_lsp_position(db, encoding, range.end)?;
+        let start_point = self.tree_sitter_point_from_lsp_position(db, range.start)?;
+        let end_point = self.tree_sitter_point_from_lsp_position(db, range.end)?;
 
-        let text_range = from_proto::text_range(range, self.line_index(db), encoding)?;
+        let text_range = from_proto::text_range(range, self.line_index(db), self.encoding)?;
 
         Ok(tree_sitter::Range {
             start_byte: text_range.start().into(),
@@ -139,18 +126,18 @@ impl ArkFile {
 }
 
 #[cfg(test)]
-pub(crate) fn ark_file_for_test(code: &str) -> (oak_db::OakDatabase, ArkFile) {
+pub(crate) fn test_ark_file(code: &str) -> (oak_db::OakDatabase, ArkFile) {
     use aether_path::FilePath;
 
     let db = oak_db::OakDatabase::new();
     let url = Url::parse("file:///test.R").unwrap();
     let key = FilePath::from_url(&url);
-    let file = File::new(&db, key, code.to_string(), None);
-    let ark_file = ArkFile {
-        file,
+    let file = ArkFile {
+        file: File::new(&db, key, code.to_string(), None),
         version: None,
         config: DocumentConfig::default(),
         url,
+        encoding: PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
     };
-    (db, ark_file)
+    (db, file)
 }

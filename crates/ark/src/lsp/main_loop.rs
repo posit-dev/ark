@@ -996,7 +996,7 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
             let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
             match state.ark_file(&uri) {
-                Ok(ark_file) => {
+                Ok(file) => {
                     // Special case testthat-specific behaviour. This is a simple
                     // stopgap approach that has some false positives (e.g. when we
                     // work on testthat itself the flag will always be true), but
@@ -1005,8 +1005,8 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
                         .components()
                         .any(|c| c.as_os_str() == "testthat");
 
-                    let version = ark_file.version;
-                    let diagnostics = generate_diagnostics(ark_file, state.clone(), testthat);
+                    let version = file.version;
+                    let diagnostics = generate_diagnostics(file, state.clone(), testthat);
                     Some(RefreshDiagnosticsResult {
                         uri,
                         diagnostics,
