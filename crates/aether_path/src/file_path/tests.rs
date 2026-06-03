@@ -6,7 +6,7 @@ fn url(s: &str) -> Url {
 
 #[test]
 fn test_from_url_dispatches_by_scheme() {
-    let file = FilePath::from_url(&url("file:///home/user/foo.R"));
+    let file = FilePath::from_url(&url("file:///C:/Users/foo.R"));
     assert!(matches!(file, FilePath::File(_)));
 
     let ark = FilePath::from_url(&url("ark://namespace/foo.R"));
