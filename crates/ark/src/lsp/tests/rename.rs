@@ -1,4 +1,5 @@
 use aether_path::FilePath;
+use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Root;
 use oak_db::RootKind;
@@ -8,7 +9,6 @@ use tower_lsp::lsp_types::PrepareRenameResponse;
 use tower_lsp::lsp_types::RenameParams;
 use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tower_lsp::lsp_types::TextEdit;
-use url::Url;
 
 use super::utils::insert_file;
 use super::utils::make_state;
@@ -148,16 +148,26 @@ fn test_rename_cross_file_via_source() {
     let uri2 = test_path("script.R");
     insert_file(&mut state, &uri2, &doc2);
 
-    // Register both files in a workspace root. The root URL is not a
-    // prefix of the file URLs, so `anchor_dir` falls back to the files'
-    // parent directory, which makes `source("helpers.R")` resolve correctly.
+    // Register both files in a workspace root whose path is the temp
+    // directory. `anchor_dir` uses the root path as the anchor, so
+    // `source("helpers.R")` resolves to `<tmpdir>/helpers.R`.
     let fp1 = FilePath::from_url(&uri1);
     let fp2 = FilePath::from_url(&uri2);
     let file1 = state.oak.file_by_url(&fp1).unwrap();
     let file2 = state.oak.file_by_url(&fp2).unwrap();
-    let root_url = FilePath::from_url(&Url::parse("file:///test-workspace/").unwrap());
-    let root = Root::new(&mut state.oak, root_url, RootKind::Workspace, vec![file1, file2], vec![]);
-    state.oak.workspace_roots().set_roots(&mut state.oak).to(vec![root]);
+    let root_url = FilePath::from_file_path(std::env::temp_dir()).unwrap();
+    let root = Root::new(
+        &state.oak,
+        root_url,
+        RootKind::Workspace,
+        vec![file1, file2],
+        vec![],
+    );
+    state
+        .oak
+        .workspace_roots()
+        .set_roots(&mut state.oak)
+        .to(vec![root]);
 
     // Cursor on `helper` use in script.R (line 1, col 0).
     let params = make_rename_params(uri2.clone(), 1, 0, "renamed");

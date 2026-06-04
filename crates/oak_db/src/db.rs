@@ -1,6 +1,5 @@
 use aether_path::FilePath;
 use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
 
 use crate::File;
 use crate::LibraryRoots;
@@ -70,10 +69,11 @@ pub trait Db: DbInputs {
     /// nested inside the other, e.g. the frontend opens both `/proj` and
     /// `/proj/sub-pkg` as workspace folders and both scans walk into
     /// `sub-pkg/DESCRIPTION`. Both scans hand the same `Package` entity to
-    /// their respective root's `packages` vec; the longest-path root wins
-    /// the ownership query here. The shorter root's vec still transiently
-    /// lists the package, but it self-heals on its next scan since
-    /// `set_packages` replaces the vec wholesale.
+    /// their respective root's `packages` vec, and both vecs keep listing
+    /// it for as long as both folders are open (the outer scan re-walks
+    /// into `sub-pkg` every time). The overlap is steady state, not
+    /// transient, so this query resolves it by picking the longest-path
+    /// root. `root_by_file` applies the same rule at the file level.
     fn root_by_package(&self, pkg: Package) -> Option<Root>;
 
     /// All live roots in lookup-precedence order: workspace folders first, then
@@ -103,43 +103,35 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
     roots
 }
 
-/// All files known to the database, in stable order (workspace, library,
-/// orphan). Deduplicates files that appear in multiple roots.
+/// All files known to the database, in stable order (workspace, library, orphan).
 ///
 /// Used as the workspace-wide candidate pool for find-references: callers
 /// apply a textual name filter before building indexes.
+///
+/// Nested roots overlap on disk, so the same `File` is reachable from
+/// several roots (open `/proj` and `/proj/sub-pkg` and the outer scan walks
+/// into `sub-pkg`). We emit each file once by attributing it to a single
+/// owner via `root_by_file`, the same deepest-root rule
+/// [`root_by_package`] uses.
 #[salsa::tracked(returns(ref))]
 pub fn all_files(db: &dyn Db) -> Vec<File> {
-    let mut seen: FxHashSet<File> = FxHashSet::default();
     let mut files: Vec<File> = Vec::new();
 
     for &root in db.live_roots() {
         match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
-                for &f in r.scripts(db) {
-                    if seen.insert(f) {
-                        files.push(f);
-                    }
-                }
+                let owned = |f: File| root_by_file(db, f) == Some(r);
+                files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));
                 for &pkg in r.packages(db) {
-                    for &f in pkg.files(db) {
-                        if seen.insert(f) {
-                            files.push(f);
-                        }
-                    }
-                    for &f in pkg.scripts(db) {
-                        if seen.insert(f) {
-                            files.push(f);
-                        }
-                    }
+                    let pkg_files = pkg.files(db).iter().chain(pkg.scripts(db));
+                    files.extend(pkg_files.copied().filter(|&f| owned(f)));
                 }
             },
+            // Orphan files are disjoint from every root's scanned set
+            // (`upsert_root_file` removes a file from orphan as it promotes
+            // it into a root), so they need no ownership check.
             LiveRoot::Orphan(orphan) => {
-                for &f in orphan.files(db) {
-                    if seen.insert(f) {
-                        files.push(f);
-                    }
-                }
+                files.extend(orphan.files(db).iter().copied());
             },
         }
     }
@@ -199,8 +191,42 @@ pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
     best.map(|(root, _)| root)
 }
 
+/// The live root that owns `file`: among the workspace and library roots
+/// whose scanned set reaches `file`, the one with the longest path.
+///
+/// The file-level analogue of [`root_by_package`]. Nested roots overlap on
+/// disk, so a file reachable from several roots is owned by the deepest one,
+/// matching the package tiebreak. Ownership is keyed on reachability (the
+/// file is in the root's [`root_url_index`]), not bare path prefix, so the
+/// owner always actually contains the file. That's what makes it safe for
+/// [`all_files`] to emit each file exactly once: the owner is guaranteed to
+/// visit it. A bare path prefix would name a freshly-added but not-yet-scanned
+/// nested root and drop the file until its scan landed.
+///
+/// Returns `None` for orphan files (they live in no workspace or library
+/// root). [`File::root`] handles that case with a path-prefix fallback.
+pub(crate) fn root_by_file(db: &dyn Db, file: File) -> Option<Root> {
+    let mut best: Option<(Root, usize)> = None;
+
+    let url = file.url(db);
+    for &root in db.live_roots() {
+        let (LiveRoot::Workspace(r) | LiveRoot::Library(r)) = root else {
+            continue;
+        };
+        if root_url_index(db, r).contains_key(url) {
+            let depth = root_depth(db, r);
+            if best.is_none_or(|(_, d)| depth > d) {
+                best = Some((r, depth));
+            }
+        }
+    }
+
+    best.map(|(root, _)| root)
+}
+
 /// Number of path segments in a root's URL. Used as the tiebreaker by
-/// [`root_by_package_query`] when nested roots both claim the same package.
+/// [`root_by_package_query`] and [`root_by_file`] when nested roots both
+/// claim the same package or file.
 ///
 /// Counts URL segments directly rather than going through `to_file_path()`.
 /// `to_file_path()` errors on Windows for non-OS-style URLs (no drive

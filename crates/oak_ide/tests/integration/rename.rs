@@ -256,7 +256,11 @@ fn test_rename_refuses_library_package_symbol() {
 // --- helpers for root / package wiring ---
 
 fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
-    let url = FilePath::from_url(&Url::parse("file:///project/ws/").unwrap());
+    // Root path must be an ancestor of the files' URLs (see `file_url`), as a
+    // real scan guarantees: `File::root` resolves an unpackaged file to the
+    // root whose scan reached it, and `source()` anchoring reads that root's
+    // path.
+    let url = FilePath::from_url(&Url::parse("file:///project/R/").unwrap());
     let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
