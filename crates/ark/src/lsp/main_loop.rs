@@ -1121,10 +1121,14 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
             continue;
         }
 
+        // The task sits in the indexer queue off the main loop.
+        // `legacy_snapshot()` hands it a detached oak db so it can't pin the
+        // live one against the main loop's next `set_*` (diagnostics read only
+        // non-oak state).
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
                 uri: uri.clone(),
-                state: state.clone(),
+                state: state.legacy_snapshot(),
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
