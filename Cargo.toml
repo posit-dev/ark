@@ -43,14 +43,14 @@ biome_rowan = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8
 biome_text_size = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
 blake3 = "1.8.5"
 bus = "2.4.1"
-cc = "1.2.61"
+cc = "1.2.62"
 cfg-if = "1.0.4"
 chrono = "0.4.44"
 compact_str = "0.9"
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 ctor = "1.0.0"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }
-dashmap = "6.1.0"
+dashmap = "6.2.1"
 dirs = "6.0.0"
 ego-tree = "0.11.0"
 embed-resource = "3.0.9"
@@ -88,7 +88,7 @@ quote = "1.0.45"
 rand = "0.10"
 regex = "1.12.3"
 reqwest = { version = "0.13.3", default-features = false, features = ["json"] }
-reqwest-middleware = "0.5.1"
+reqwest-middleware = "0.5.2"
 reqwest-retry = "0.9.1"
 rust-embed = "8.11.0"
 rustc-hash = "2.1.2"
@@ -99,7 +99,7 @@ semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 serde_repr = "0.1.20"
-serde_with = "3.19.0"
+serde_with = "3.20.0"
 sha2 = "0.11.0"
 smallvec = "1.15.1"
 stdext = { path = "crates/stdext" }
@@ -107,7 +107,7 @@ streaming-iterator = "0.1.9"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 syn = { version = "2.0.117", features = ["full"] }
-tar = "0.4.45"
+tar = "0.4.46"
 tempfile = "3.27.0"
 tokio = { version = "1.52.1", features = ["full"] }
 # For https://github.com/ebkalderon/tower-lsp/pull/428
