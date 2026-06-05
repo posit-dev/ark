@@ -139,7 +139,7 @@ fn test_rename_non_renamable_errors() {
     let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
     let err = rename(&db, file, offset(7), "x").unwrap_err();
-    assert!(err.to_string().contains("renamable identifier"));
+    assert!(err.to_string().contains("Can't rename identifier"));
 }
 
 #[test]

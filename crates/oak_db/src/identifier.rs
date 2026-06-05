@@ -19,13 +19,12 @@ use crate::Name;
 #[derive(Debug, Clone)]
 pub enum Identifier<'db> {
     /// Cursor on a binding use or definition site tracked by the semantic
-    /// index. The range is the use or def site's text range. Its start is
-    /// the offset to pass to `resolve_at`.
+    /// index. The range is the use or def site's text range.
     Variable { name: Name<'db>, range: TextRange },
     /// Cursor on the RHS name of a `$` or `@` extract expression. Member
     /// names are not tracked by the semantic index.
     Member {
-        name: String,
+        name: Name<'db>,
         kind: MemberKind,
         operator_range: TextRange,
         name_range: TextRange,
@@ -71,7 +70,7 @@ impl<'db> Identifier<'db> {
 
         if let Some((name, kind, operator_range, name_range)) = classify_member(&root, snapped) {
             return Some(Identifier::Member {
-                name,
+                name: Name::new(db, name.as_str()),
                 kind,
                 operator_range,
                 name_range,
@@ -84,28 +83,8 @@ impl<'db> Identifier<'db> {
 
 impl<'db> File {
     /// All use-site ranges for `name` in this file, across every scope.
-    ///
-    /// Used as the candidate pool for find-references: each returned range is
-    /// confirmed by calling `resolve_at(range.start())` and checking whether
-    /// its definition set intersects the target.
     pub fn uses_of(self, db: &'db dyn Db, name: Name<'db>) -> Vec<TextRange> {
-        let index = self.semantic_index(db);
-        let name_str = name.text(db);
-        let mut ranges = Vec::new();
-
-        for scope_id in index.scope_ids() {
-            let symbols = index.symbols(scope_id);
-            let Some(symbol_id) = symbols.id(name_str) else {
-                continue;
-            };
-            for (_use_id, use_site) in index.uses(scope_id).iter() {
-                if use_site.symbol() == symbol_id {
-                    ranges.push(use_site.range());
-                }
-            }
-        }
-
-        ranges
+        self.semantic_index(db).uses_of(name.text(db).as_str())
     }
 
     /// All ranges where `name` appears as the RHS of a `$` or `@` with the
@@ -141,6 +120,9 @@ fn classify_member(
     root: &RSyntaxNode,
     offset: TextSize,
 ) -> Option<(String, MemberKind, TextRange, TextRange)> {
+    // Snapping put `offset` at the name's start, which is the operator's end,
+    // so `token_at_offset()` reports `Between(op, name)`. Take the name on the
+    // right side.
     let token = root.token_at_offset(offset).right_biased()?;
     if !is_name_token(&token) {
         return None;
@@ -150,8 +132,7 @@ fn classify_member(
     let selector_node = token.parent()?;
     let extract = RExtractExpression::cast(selector_node.parent()?)?;
 
-    // Token is after the operator -> it's on the RHS, not LHS.
-    // RHS start == op end (adjacent bytes), so use strict <.
+    // Token is after the operator -> it's on the RHS, not LHS
     let op = extract.operator().ok()?;
     if token.text_trimmed_range().start() < op.text_trimmed_range().end() {
         return None;
@@ -201,6 +182,9 @@ fn snap_to_name_at_boundary(root: &RSyntaxNode, offset: TextSize) -> TextSize {
 }
 
 fn is_name_token(token: &RSyntaxToken) -> bool {
+    // FIXME: Right now we're too liberal with strings. We should only match
+    // them when they stand for an identifier, e.g. in the LHS of `<-` or in
+    // function call position.
     matches!(
         token.kind(),
         RSyntaxKind::IDENT | RSyntaxKind::R_STRING_LITERAL

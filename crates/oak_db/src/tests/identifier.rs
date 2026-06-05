@@ -102,7 +102,7 @@ fn test_classify_on_dollar_member() {
             operator_range,
             name_range,
         }) => {
-            assert_eq!(name, "bar");
+            assert_eq!(name.text(&db).as_str(), "bar");
             assert_eq!(kind, MemberKind::Dollar);
             assert_eq!(operator_range, text_range(3, 4));
             assert_eq!(name_range, text_range(4, 7));
@@ -119,7 +119,7 @@ fn test_classify_on_at_member() {
 
     match Identifier::classify(&db, file, offset(4)) {
         Some(Identifier::Member { name, kind, .. }) => {
-            assert_eq!(name, "bar");
+            assert_eq!(name.text(&db).as_str(), "bar");
             assert_eq!(kind, MemberKind::At);
         },
         other => panic!("expected Member, got {other:?}"),

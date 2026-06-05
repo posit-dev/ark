@@ -30,7 +30,9 @@ pub fn find_references(
         Identifier::Variable { range, .. } => {
             find_variable_references(db, file, range.start(), include_declaration)
         },
-        Identifier::Member { name, kind, .. } => find_member_references(db, file, &name, kind),
+        Identifier::Member { name, kind, .. } => {
+            find_member_references(db, file, name.text(db).as_str(), kind)
+        },
     }
 }
 
@@ -55,6 +57,11 @@ fn find_variable_references(
     } else {
         all_matching_files(db, name.text(db).as_str())
     };
+
+    // Rust-Analyzer does a pure text search across all files, then resolves
+    // each occurrences. We are more aligned with ty: we filter files by a text
+    // search, but then we walk a post-parse tree. ty walks a raw AST, we walk
+    // the index via `uses_of()`. The latter is more to the point.
 
     // A candidate is a reference when it resolves to the same binding as the cursor.
     let target_set: HashSet<Definition<'_>> = target_defs.iter().copied().collect();
