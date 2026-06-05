@@ -48,7 +48,7 @@ fn test_prepare_rename_on_def() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
 
-    let result = prepare_rename(&db, file, offset(0)).unwrap();
+    let result = prepare_rename(&db, file, offset(0)).unwrap().unwrap();
     assert_eq!(result, (range(0, 3), "foo".to_string()));
 }
 
@@ -57,7 +57,7 @@ fn test_prepare_rename_on_use() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
 
-    let result = prepare_rename(&db, file, offset(9)).unwrap();
+    let result = prepare_rename(&db, file, offset(9)).unwrap().unwrap();
     assert_eq!(result, (range(9, 12), "foo".to_string()));
 }
 
@@ -66,7 +66,7 @@ fn test_prepare_rename_namespace_access_returns_none() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
-    assert!(prepare_rename(&db, file, offset(7)).is_none());
+    assert!(prepare_rename(&db, file, offset(7)).unwrap().is_none());
 }
 
 #[test]
@@ -74,7 +74,16 @@ fn test_prepare_rename_non_identifier_returns_none() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "x <- 1\n");
 
-    assert!(prepare_rename(&db, file, offset(3)).is_none());
+    assert!(prepare_rename(&db, file, offset(3)).unwrap().is_none());
+}
+
+#[test]
+fn test_prepare_rename_library_package_symbol_errors() {
+    let mut db = OakDatabase::new();
+    let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
+
+    let err = prepare_rename(&db, lib_file, offset(0)).unwrap_err();
+    assert!(err.to_string().contains("installed package"));
 }
 
 // --- rename: basic ---

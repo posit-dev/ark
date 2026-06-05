@@ -29,7 +29,7 @@ pub(crate) fn prepare_rename(
 
     let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
 
-    let Some((range, placeholder)) = oak_ide::prepare_rename(db, file, offset) else {
+    let Some((range, placeholder)) = oak_ide::prepare_rename(db, file, offset)? else {
         return Ok(None);
     };
 
