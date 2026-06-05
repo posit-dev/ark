@@ -109,11 +109,12 @@ fn test_resolve_sourced_and_local_same_name_skips_import_marker() {
     let analysis = files[1];
 
     let defs = analysis.resolve(&db, name(&db, "shared"));
-    assert_eq!(defs.len(), 2);
 
-    // Order out of resolve isn't a contract, so key on the name range to
-    // assert exactly which two bindings came back.
-    let mut hits: Vec<(File, usize)> = defs
+    // Two real bindings, in `exports()` order: the sourced `shared <- 1` in
+    // helpers (offset 0), then the local `shared <- 2` in analysis (offset 20,
+    // past `source("helpers.R")\n`). The local is R's runtime winner, so it's
+    // last. No third entry for the `Import` marker.
+    let hits: Vec<(File, usize)> = defs
         .iter()
         .map(|d| {
             let start = d
@@ -123,11 +124,48 @@ fn test_resolve_sourced_and_local_same_name_skips_import_marker() {
             (d.file(&db), usize::from(start))
         })
         .collect();
-    hits.sort_by_key(|(_, start)| *start);
-
-    // `shared <- 1` at offset 0 in helpers, `shared <- 2` at offset 20 in
-    // analysis (past `source("helpers.R")\n`).
     assert_eq!(hits, vec![(helpers, 0), (analysis, 20)]);
+}
+
+#[test]
+fn test_resolve_two_sourced_defs_put_runtime_winner_last() {
+    // `a.R` sources `b.R` then `c.R`, both binding `dup`. R runs the sources in
+    // order, so `c`'s binding wins at runtime. resolve returns both forwards in
+    // source order, so the runtime winner (`c`) is the last element.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\n"),
+    ]);
+    let b = files[0];
+    let c = files[1];
+    let a = files[2];
+
+    let defs = a.resolve(&db, name(&db, "dup"));
+    let hits: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
+    assert_eq!(hits, vec![b, c]);
+}
+
+#[test]
+fn test_resolve_interleaved_source_local_source_puts_runtime_winner_last() {
+    // `source("b.R")`, then a local `dup <- 3`, then `source("c.R")`, all
+    // binding `dup`. The last statement (the `c` source) wins at runtime, so it
+    // must be last. Entries come back in `exports()` order: the `b` forward, the
+    // local, then the `c` forward.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "source(\"b.R\")\ndup <- 3\nsource(\"c.R\")\n"),
+    ]);
+    let b = files[0];
+    let c = files[1];
+    let a = files[2];
+
+    let defs = a.resolve(&db, name(&db, "dup"));
+    let hits: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
+    assert_eq!(hits, vec![b, a, c]);
 }
 
 #[test]

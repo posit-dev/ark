@@ -207,7 +207,16 @@ impl<'db> File {
     /// `Import` entries through target exports until they land on `Local`
     /// definitions. Returns every definition the name reaches, so a name with
     /// two top-level bindings, or forwards from two different sourced files,
-    /// yields all of them. Cycles resolve to empty via `exports`'s `cycle_fn`.
+    /// yields all of them.
+    ///
+    /// Order follows `exports()`: entries are visited in definition order and
+    /// imports are chased in place, so the last element is the binding R picks
+    /// at runtime (statements run in order, last write wins). Several top-level
+    /// locals collapse to one `Local` marker, so they come out grouped at that
+    /// marker's position rather than each at its own offset, but the runtime
+    /// winner is still last.
+    ///
+    /// Cycles resolve to empty via `exports`'s `cycle_fn`.
     #[salsa::tracked]
     pub(crate) fn resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let mut results = Vec::new();
@@ -217,51 +226,63 @@ impl<'db> File {
         // `exports()`'s `cycle_result` already breaks) can't loop here. The
         // `Rc<str>` is cheap to clone (refcount bump).
         let mut visited: HashSet<(File, Rc<str>)> = HashSet::new();
-        let mut worklist: Vec<(File, Rc<str>)> = vec![(self, Rc::from(name.text(db).as_str()))];
-
-        while let Some((current_file, current_name)) = worklist.pop() {
-            if !visited.insert((current_file, current_name.clone())) {
-                continue;
-            }
-
-            let Some(entries) = current_file.exports(db).get(current_name.as_ref()) else {
-                continue;
-            };
-
-            for entry in entries {
-                match entry {
-                    ExportEntry::Local => {
-                        // The `Local` marker doesn't carry a `def_id`, so recover
-                        // every file-scope `def_id` for the name from the semantic
-                        // index and mint each through the single site. A name bound
-                        // more than once at top level fans out here.
-                        //
-                        // `exports()` also lists the `Import`-kind defs that
-                        // `source()` emits at file scope. Skip them: they're the
-                        // forwards already chased through the `Import` entries
-                        // above, and minting one here would add a bogus target at
-                        // the empty `source()` call span.
-                        let index = current_file.semantic_index(db);
-                        for &(def_id, def) in index
-                            .exports()
-                            .get(current_name.as_ref())
-                            .into_iter()
-                            .flatten()
-                        {
-                            if matches!(def.kind(), DefinitionKind::Import { .. }) {
-                                continue;
-                            }
-                            results.extend(current_file.definition(db, ScopeId::from(0), def_id));
-                        }
-                    },
-
-                    ExportEntry::Import { file, name } => {
-                        worklist.push((*file, Rc::from(name.as_str())));
-                    },
-                }
-            }
-        }
+        self.collect_exports(
+            db,
+            Rc::from(name.text(db).as_str()),
+            &mut visited,
+            &mut results,
+        );
 
         results
+    }
+
+    /// Append every definition `name` reaches in `self`'s exports to `results`,
+    /// in `exports()` order, recursing into `Import` forwards in place. See
+    /// [`File::resolve_export`] for the ordering contract.
+    fn collect_exports(
+        self,
+        db: &'db dyn Db,
+        name: Rc<str>,
+        visited: &mut HashSet<(File, Rc<str>)>,
+        results: &mut Vec<Definition<'db>>,
+    ) {
+        if !visited.insert((self, name.clone())) {
+            return;
+        }
+
+        let Some(entries) = self.exports(db).get(name.as_ref()) else {
+            return;
+        };
+
+        for entry in entries {
+            match entry {
+                ExportEntry::Local => {
+                    // The `Local` marker doesn't carry a `def_id`, so recover
+                    // every file-scope `def_id` for the name from the semantic
+                    // index and mint each through the single site. A name bound
+                    // more than once at top level fans out here.
+                    //
+                    // `exports()` also lists the `Import`-kind defs that
+                    // `source()` emits at file scope. Skip them: they're the
+                    // forwards already chased through the `Import` entries, and
+                    // minting one here would add a bogus target at the empty
+                    // `source()` call span.
+                    let index = self.semantic_index(db);
+                    for &(def_id, def) in index.exports().get(name.as_ref()).into_iter().flatten() {
+                        if matches!(def.kind(), DefinitionKind::Import { .. }) {
+                            continue;
+                        }
+                        results.extend(self.definition(db, ScopeId::from(0), def_id));
+                    }
+                },
+
+                ExportEntry::Import {
+                    file,
+                    name: forwarded,
+                } => {
+                    file.collect_exports(db, Rc::from(forwarded.as_str()), visited, results);
+                },
+            }
+        }
     }
 }
