@@ -93,6 +93,44 @@ fn test_resolve_chases_two_step_source_chain() {
 }
 
 #[test]
+fn test_resolve_sourced_and_local_same_name_skips_import_marker() {
+    // `analysis.R` both sources `shared` and rebinds it locally, so its file
+    // scope holds an `Import` def (from `source()`) and a `Local` def for the
+    // same name. resolve must return the two real bindings: the sourced def in
+    // `helpers` and the local rebind in `analysis`. It must not also mint the
+    // `Import` def as a candidate, which would point at the empty `source()`
+    // call span (`name_range == None`).
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/helpers.R", "shared <- 1\n"),
+        ("w/analysis.R", "source(\"helpers.R\")\nshared <- 2\n"),
+    ]);
+    let helpers = files[0];
+    let analysis = files[1];
+
+    let defs = analysis.resolve(&db, name(&db, "shared"));
+    assert_eq!(defs.len(), 2);
+
+    // Order out of resolve isn't a contract, so key on the name range to
+    // assert exactly which two bindings came back.
+    let mut hits: Vec<(File, usize)> = defs
+        .iter()
+        .map(|d| {
+            let start = d
+                .name_range(&db)
+                .expect("both real bindings have a name range")
+                .start();
+            (d.file(&db), usize::from(start))
+        })
+        .collect();
+    hits.sort_by_key(|(_, start)| *start);
+
+    // `shared <- 1` at offset 0 in helpers, `shared <- 2` at offset 20 in
+    // analysis (past `source("helpers.R")\n`).
+    assert_eq!(hits, vec![(helpers, 0), (analysis, 20)]);
+}
+
+#[test]
 fn test_resolve_is_cached_across_repeat_calls() {
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);

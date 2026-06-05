@@ -235,13 +235,22 @@ impl<'db> File {
                         // every file-scope `def_id` for the name from the semantic
                         // index and mint each through the single site. A name bound
                         // more than once at top level fans out here.
+                        //
+                        // `exports()` also lists the `Import`-kind defs that
+                        // `source()` emits at file scope. Skip them: they're the
+                        // forwards already chased through the `Import` entries
+                        // above, and minting one here would add a bogus target at
+                        // the empty `source()` call span.
                         let index = current_file.semantic_index(db);
-                        for &(def_id, _) in index
+                        for &(def_id, def) in index
                             .exports()
                             .get(current_name.as_ref())
                             .into_iter()
                             .flatten()
                         {
+                            if matches!(def.kind(), DefinitionKind::Import { .. }) {
+                                continue;
+                            }
                             results.extend(current_file.definition(db, ScopeId::from(0), def_id));
                         }
                     },
