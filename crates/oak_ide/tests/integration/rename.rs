@@ -14,6 +14,7 @@ use salsa::Setter;
 use url::Url;
 
 use crate::support::install_library_package;
+use crate::support::install_workspace_package;
 use crate::support::offset;
 use crate::support::pairs;
 use crate::support::range;
@@ -199,6 +200,24 @@ fn test_rename_refuses_package_export_used_via_library() {
     let use_start = "library(mypkg)\n".len() as u32;
     let err = rename(&db, script, offset(use_start)).unwrap_err();
     assert!(err.to_string().contains("installed package"));
+}
+
+#[test]
+fn test_rename_succeeds_for_workspace_package_export_via_library() {
+    // `library(mypkg)` where `mypkg` is a *workspace* package. Unlike an
+    // installed package, workspace files are editable, so rename must succeed
+    // and rewrite both the script use and the definition in the package file.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_workspace_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    let use_start = "library(mypkg)\n".len() as u32;
+    let result = rename(&db, script, offset(use_start), "bar").unwrap();
+    assert_eq!(pairs(&result.ranges), vec![
+        (script, range(use_start, use_start + 3)),
+        (pkg_file, range(0, 3)),
+    ]);
 }
 
 // --- helpers for root / package wiring ---

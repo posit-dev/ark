@@ -1,6 +1,7 @@
 use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
+use stdext::SortedVec;
 
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
@@ -10,6 +11,7 @@ use crate::Definition;
 use crate::File;
 use crate::Package;
 use crate::Root;
+use crate::RootKind;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
     File::new(db, file_path(path), contents.to_string(), None)
@@ -338,21 +340,36 @@ fn install_library_package(
     exports: &[&str],
     files: &[(&str, &str)],
 ) -> (Root, Package) {
-    use oak_package_metadata::namespace::Namespace;
-    use stdext::SortedVec;
+    install_package(db, RootKind::Library, name, exports, files)
+}
 
-    use crate::tests::test_db::library_root;
-
-    let root = library_root(db, &format!("library/{name}"));
+fn install_package(
+    db: &mut TestDb,
+    kind: RootKind,
+    name: &str,
+    exports: &[&str],
+    files: &[(&str, &str)],
+) -> (Root, Package) {
+    let (prefix, version) = match kind {
+        RootKind::Library => ("library", Some("1.0.0".to_string())),
+        RootKind::Workspace => ("workspace", None),
+    };
+    let root = Root::new(
+        db,
+        file_url(&format!("{prefix}/{name}")),
+        kind,
+        vec![],
+        vec![],
+    );
     let namespace = Namespace {
         exports: SortedVec::from_vec(exports.iter().map(|s| s.to_string()).collect()),
         ..Default::default()
     };
     let pkg = Package::new(
         db,
-        file_url(&format!("library/{name}/DESCRIPTION")),
+        file_url(&format!("{prefix}/{name}/DESCRIPTION")),
         name.to_string(),
-        Some("1.0.0".to_string()),
+        version,
         namespace,
         Vec::new(),
         Vec::new(),
@@ -364,7 +381,10 @@ fn install_library_package(
         .collect();
     pkg.set_files(db).to(pkg_files);
     root.set_packages(db).to(vec![pkg]);
-    db.library_roots().set_roots(db).to(vec![root]);
+    match kind {
+        RootKind::Library => db.library_roots().set_roots(db).to(vec![root]),
+        RootKind::Workspace => db.workspace_roots().set_roots(db).to(vec![root]),
+    };
     (root, pkg)
 }
 
@@ -386,6 +406,31 @@ fn test_library_call_makes_pkg_export_resolve() {
     let source = script.contents(&db).clone();
 
     // Cursor on `foo` (the use after `library(mypkg)`).
+    let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
+    let def = resolve_one(&db, script, offset);
+
+    assert_eq!(def.file(&db), pkg_file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "foo");
+}
+
+#[test]
+fn test_library_call_makes_workspace_pkg_export_resolve() {
+    // Same as `test_library_call_makes_pkg_export_resolve` but `mypkg` lives
+    // in the workspace rather than an installed library. `package_by_name`
+    // walks both workspace and library roots, so the resolution path is the
+    // same for both.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_package(&mut db, RootKind::Workspace, "mypkg", &["foo"], &[(
+        "workspace/mypkg/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    // Script is a floating file (no root registration needed for `imports()`
+    // to find workspace packages via `package_by_name`).
+    let source = "library(mypkg)\nfoo\n";
+    let script = make_file(&mut db, "ws/script.R", source);
+
     let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
     let def = resolve_one(&db, script, offset);
 
