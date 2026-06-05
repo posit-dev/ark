@@ -20,7 +20,13 @@ use oak_scan::DbExt;
 use url::Url;
 
 fn file_url(name: &str) -> Url {
-    Url::parse(&format!("file:///project/R/{name}")).unwrap()
+    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
+    // synthesize one for tests. Linux is happy with rootless paths.
+    if cfg!(windows) {
+        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
+    } else {
+        Url::parse(&format!("file:///project/R/{name}")).unwrap()
+    }
 }
 
 fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {

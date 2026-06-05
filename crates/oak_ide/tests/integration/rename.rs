@@ -18,7 +18,13 @@ use salsa::Setter;
 use url::Url;
 
 fn file_url(name: &str) -> Url {
-    Url::parse(&format!("file:///project/R/{name}")).unwrap()
+    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
+    // synthesize one for tests. Linux is happy with rootless paths.
+    if cfg!(windows) {
+        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
+    } else {
+        Url::parse(&format!("file:///project/R/{name}")).unwrap()
+    }
 }
 
 fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
@@ -269,7 +275,12 @@ fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
     // real scan guarantees: `File::root` resolves an unpackaged file to the
     // root whose scan reached it, and `source()` anchoring reads that root's
     // path.
-    let url = FilePath::from_url(&Url::parse("file:///project/R/").unwrap());
+    let raw = if cfg!(windows) {
+        "file:///C:/project/R/"
+    } else {
+        "file:///project/R/"
+    };
+    let url = FilePath::from_url(&Url::parse(raw).unwrap());
     let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
