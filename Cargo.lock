@@ -222,6 +222,7 @@ dependencies = [
  "anyhow",
  "camino",
  "log",
+ "percent-encoding",
  "stdext",
  "tempfile",
  "url",

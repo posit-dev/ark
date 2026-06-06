@@ -11,6 +11,7 @@ license.workspace = true
 anyhow.workspace = true
 camino.workspace = true
 log.workspace = true
+percent-encoding.workspace = true
 stdext.workspace = true
 url.workspace = true
 
