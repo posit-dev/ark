@@ -339,7 +339,7 @@ fn diagnose_missing_binary_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(context.contents)?;
+    let text = operator.node_as_str(context.contents())?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
@@ -370,7 +370,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(context.contents)?;
+    let text = operator.node_as_str(context.contents())?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
