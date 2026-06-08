@@ -302,6 +302,55 @@ fn test_package_r_file_does_not_take_testthat_path() {
     ]);
 }
 
+#[test]
+fn test_testthat_file_includes_top_level_library_calls() {
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["cli", "testthat", "base"]);
+    let cli = installed[0];
+    let testthat = installed[1];
+    let base = installed[2];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_url("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        None,
+        Namespace::default(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let r_file = File::new(
+        &db,
+        file_url("w/pkg/R/a.R"),
+        "f <- 1\n".to_string(),
+        Some(pkg),
+    );
+    let test_foo = File::new(
+        &db,
+        file_url("w/pkg/tests/testthat/test-foo.R"),
+        "library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![test_foo]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = (cli, testthat, base);
+    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
+        // The package's own R/ code.
+        "File(a.R)".to_string(),
+        // The test file's own `library()` call sits below the package but
+        // above testthat (attached more recently than the runner attached
+        // testthat).
+        "Package(cli)".to_string(),
+        "Package(testthat)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
 /// Render `ImportLayer`s to a stable, assertable shape. `File` layers
 /// collapse to their basename.
 fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {

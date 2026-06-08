@@ -219,6 +219,31 @@ fn test_package_namespace_and_base_layers_always_visible() {
 }
 
 #[test]
+fn test_testthat_top_level_library_narrows_by_offset() {
+    // A test file's own top-level `library()` call narrows like a script's:
+    // invisible before the call, visible after. Helpers, the package, and
+    // testthat (omitted here) stay visible at any offset.
+    let mut db = TestDb::new();
+    let cli = install_packages(&mut db, &["cli", "testthat", "base"])[0];
+    let pkg = install_workspace_package(&mut db, "pkg");
+
+    let source = "library(cli)\ntest_that('x', expect_true(TRUE))\n";
+    let test_file = make_package_file(
+        &mut db,
+        "workspace/pkg/tests/testthat/test-x.R",
+        source,
+        pkg,
+    );
+    pkg.set_scripts(&mut db).to(vec![test_file]);
+
+    let before = test_file.imports_at(&db, TextSize::from(0));
+    assert!(!attached_packages(&before).contains(&cli));
+
+    let after = test_file.imports_at(&db, TextSize::from(source.len() as u32));
+    assert!(attached_packages(&after).contains(&cli));
+}
+
+#[test]
 fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     // A `library()` inside a file that's `source()`d from a function body is
     // forwarded by the builder as an `Attach` scoped to that `source()` call,

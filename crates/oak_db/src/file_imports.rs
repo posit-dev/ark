@@ -66,7 +66,9 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         match self.package(db) {
-            Some(package) if is_testthat_file(self, db) => testthat_imports(self, db, package),
+            Some(package) if is_testthat_file(self, db) => {
+                testthat_imports(self, db, package, None)
+            },
             Some(package) => package_imports(self, db, package),
             None => script_imports(self, db),
         }
@@ -104,10 +106,13 @@ impl File {
 
         // Top-level cursor: sequential narrowing.
         match self.package(db) {
-            // testthat sources every helper/setup file before any test
-            // runs, so there's nothing to narrow by offset. The EOF view
-            // already reflects what a test file sees at any point.
-            Some(_) if is_testthat_file(self, db) => self.imports(db).clone(),
+            // Helpers, setup, the package, and testthat are all sourced or
+            // attached before a test file's body runs, so they stay visible
+            // at any offset. Only the file's own top-level `library()` calls
+            // narrow.
+            Some(package) if is_testthat_file(self, db) => {
+                testthat_imports(self, db, package, Some(offset))
+            },
             Some(package) => narrow_package_top_level(self, db, package),
             None => narrow_script_top_level(self, db, offset),
         }
@@ -115,19 +120,7 @@ impl File {
 }
 
 fn narrow_script_top_level(file: File, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
-    let index = file.semantic_index(db);
-    let file_scope = ScopeId::from(0);
-
-    // Keep file-scope `library()` calls that have run by `offset`, in
-    // LIFO order (latest-attached first).
-    let mut layers: Vec<_> = index
-        .semantic_calls()
-        .iter()
-        .rev()
-        .filter(|call| call.scope() == file_scope && call.offset() < offset)
-        .filter_map(|call| attach_layer(db, call))
-        .collect();
-
+    let mut layers = attach_layers(file, db, Some(offset));
     extend_with_default_search_path(db, &mut layers);
     layers
 }
@@ -164,30 +157,41 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
     layers
 }
 
+/// The file's `library()` / `require()` attaches as `Package` layers, in LIFO
+/// order (latest-attached first). `before` narrows to a top-level cursor: with
+/// `Some(offset)`, keep only file-scope calls that have run by `offset`; with
+/// `None`, keep every attach (the end-of-file view, used for lazy contexts).
+fn attach_layers(file: File, db: &dyn Db, before: Option<TextSize>) -> Vec<ImportLayer> {
+    let index = file.semantic_index(db);
+    let file_scope = ScopeId::from(0);
+    index
+        .semantic_calls()
+        .iter()
+        .rev()
+        .filter(|call| match before {
+            Some(offset) => call.scope() == file_scope && call.offset() < offset,
+            None => true,
+        })
+        .filter_map(|call| attach_layer(db, call))
+        .collect()
+}
+
 fn attach_layer(db: &dyn Db, call: &SemanticCall) -> Option<ImportLayer> {
     match call.kind() {
         SemanticCallKind::Attach { package: name } => {
             db.package_by_name(name).map(ImportLayer::Package)
         },
         SemanticCallKind::Source { .. } => {
-            // `source()` injects into local scope, not the search path,
-            // so it's not a scope-chain layer.
+            // A `library()` inside the sourced file is forwarded separately by
+            // the semantic index builder as its own `Attach`, scoped to this
+            // `source()`.
             None
         },
     }
 }
 
 fn script_imports(file: File, db: &dyn Db) -> Vec<ImportLayer> {
-    let index = file.semantic_index(db);
-
-    // Reverse: R searches LIFO, so latest-attached comes first.
-    let mut layers: Vec<_> = index
-        .semantic_calls()
-        .iter()
-        .rev()
-        .filter_map(|call| attach_layer(db, call))
-        .collect();
-
+    let mut layers = attach_layers(file, db, None);
     extend_with_default_search_path(db, &mut layers);
     layers
 }
@@ -230,9 +234,20 @@ fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
 /// 1. helper/setup files (sourced into the test env, shadow everything),
 /// 2. the whole package's `R/` code,
 /// 3. the package's NAMESPACE imports,
-/// 4. `testthat` on the search path,
-/// 5. base.
-fn testthat_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
+/// 4. the file's own top-level `library()` calls,
+/// 5. `testthat` on the search path,
+/// 6. base.
+///
+/// `offset` narrows the components of layer 4. `None` produces the end-of-file
+/// view and keeps every `library()` call. `Some(offset)` keeps only the calls
+/// that have run by `offset`. The other layers are sourced or attached before
+/// the file body runs, so they never narrow.
+fn testthat_imports(
+    file: File,
+    db: &dyn Db,
+    package: Package,
+    offset: Option<TextSize>,
+) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
 
     // testthat sources `helper*.R` / `setup*.R` sorted, so reversing gives
@@ -263,6 +278,11 @@ fn testthat_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLaye
     let namespace = package.namespace(db);
     extend_with_namespace_imports(namespace, &mut layers);
     extend_with_namespace_package_imports(db, namespace, &mut layers);
+
+    // The test file's own top-level `library()` / `require()` calls attach to
+    // the search path, below the package namespace and its imports but above
+    // `testthat` (they run after the runner attached it).
+    layers.extend(attach_layers(file, db, offset));
 
     if let Some(testthat) = db.package_by_name("testthat") {
         layers.push(ImportLayer::Package(testthat));
