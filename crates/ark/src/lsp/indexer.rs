@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
+use aether_lsp_utils::proto::PositionEncoding;
 use regex::Regex;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
@@ -18,11 +19,10 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 use url::Url;
-use walkdir::DirEntry;
-use walkdir::WalkDir;
 
 use crate::lsp;
-use crate::lsp::document::Document;
+use crate::lsp::ark_file::ArkFile;
+use crate::lsp::db::ArkDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -85,36 +85,6 @@ static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(Default::defaul
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
-#[tracing::instrument(level = "info", skip_all)]
-pub fn start(folders: Vec<String>) {
-    let now = std::time::Instant::now();
-    lsp::log_info!("Initial indexing started");
-
-    for folder in folders {
-        let walker = WalkDir::new(folder);
-        for entry in walker.into_iter().filter_entry(filter_entry) {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let Ok(uri) = Url::from_file_path(entry.path()) else {
-                lsp::log_warn!("Can't convert file path to URI {:?}", entry.path());
-                continue;
-            };
-            if let Err(err) = create(&uri) {
-                lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
-            }
-        }
-    }
-
-    lsp::log_info!(
-        "Initial indexing finished after {}ms",
-        now.elapsed().as_millis()
-    );
-}
-
 /// Search the workspace files and return the first symbol match
 pub fn find(symbol: &str) -> Option<(FileId, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
@@ -154,14 +124,35 @@ pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
     }
 }
 
-#[tracing::instrument(level = "trace", skip_all, fields(uri = %uri))]
-pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
+/// Index a single `oak_db` file, replacing any existing entries for its URL.
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) fn index_file(
+    db: &dyn ArkDb,
+    file: oak_db::File,
+    encoding: PositionEncoding,
+) -> anyhow::Result<()> {
+    let url = file.url(db).to_url();
+
     // Defensive, callers are expected to filter virtual doc URIs before queuing
-    if !ExtUrl::is_indexable(uri) {
+    if !ExtUrl::is_indexable(&url) {
         return Ok(());
     }
-    delete(uri)?;
-    index_document(document, uri);
+
+    // Build an `ArkFile` directly from the `oak_db::File` rather than go through
+    // `WorldState::ark_file()`, which requires a stored editor `Document`.
+    // Scanned workspace files have no `Document`, so we synthesize a minimal
+    // `ArkFile` that carries only what the extraction reads (tree, contents,
+    // line index).
+    let file = ArkFile {
+        file,
+        version: None,
+        config: Default::default(),
+        url: url.clone(),
+        encoding,
+    };
+
+    delete(&url)?;
+    index_document(db, &file, &url);
     Ok(())
 }
 
@@ -236,64 +227,14 @@ impl Drop for ResetIndexerGuard {
     }
 }
 
-// TODO: Should we consult the project .gitignore for ignored files?
-// TODO: What about front-end ignores?
-// TODO: What about other kinds of ignores (e.g. revdepcheck)?
-pub fn filter_entry(entry: &DirEntry) -> bool {
-    let name = entry.file_name();
-
-    // skip common ignores
-    for ignore in [".git", ".Rproj.user", "node_modules", "revdep"] {
-        if name == ignore {
-            return false;
-        }
-    }
-
-    // skip project 'renv' folder
-    if name == "renv" {
-        let companion = entry.path().join("activate.R");
-        if companion.exists() {
-            return false;
-        }
-    }
-
-    true
-}
-
-// Only called for actual files during workspace walking. Documents managed by
-// the LSP go through `update()` instead.
-pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
-    if uri.scheme() != "file" {
-        return Ok(());
-    }
-    let Ok(path) = uri.to_file_path() else {
-        return Ok(());
-    };
-
-    let ext = path.extension().unwrap_or_default();
-    if ext != "r" && ext != "R" {
-        return Ok(());
-    }
-
-    // TODO: Handle document encodings here.
-    // TODO: Check if there's an up-to-date buffer to be used.
-    let contents = std::fs::read(path)?;
-    let contents = String::from_utf8(contents)?;
-    let document = Document::new(contents.as_str(), None);
-
-    index_document(&document, uri);
-
-    Ok(())
-}
-
-fn index_document(doc: &Document, uri: &Url) {
-    let ast = &doc.ast;
+fn index_document(db: &dyn ArkDb, file: &ArkFile, uri: &Url) {
+    let ast = file.tree_sitter(db);
     let root = ast.root_node();
     let mut cursor = root.walk();
     let mut entries = Vec::new();
 
     for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(doc, &node, &mut entries) {
+        if let Err(err) = index_node(db, file, &node, &mut entries) {
             lsp::log_error!("Can't index document: {err:?}");
         }
     }
@@ -305,14 +246,20 @@ fn index_document(doc: &Document, uri: &Url) {
     }
 }
 
-fn index_node(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
-    index_assignment(doc, node, entries)?;
-    index_comment(doc, node, entries)?;
+fn index_node(
+    db: &dyn ArkDb,
+    file: &ArkFile,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
+    index_assignment(db, file, node, entries)?;
+    index_comment(db, file, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
-    doc: &Document,
+    db: &dyn ArkDb,
+    file: &ArkFile,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -333,14 +280,16 @@ fn index_assignment(
         return Ok(());
     };
 
-    if crate::treesitter::node_is_call(&rhs, "R6Class", &doc.contents) ||
-        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", &doc.contents)
+    let contents = file.contents(db);
+
+    if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
+        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class_methods(doc, &rhs, entries)?;
+        index_r6_class_methods(db, file, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
-    let lhs_text = lhs.node_to_string(&doc.contents)?;
+    let lhs_text = lhs.node_to_string(contents)?;
 
     // The method matching is super hacky but let's wait until the typed API to
     // do better
@@ -360,7 +309,7 @@ fn index_assignment(
             for child in parameters.children(&mut cursor) {
                 let name = unwrap!(child.child_by_field_name("name"), None => continue);
                 if name.is_identifier() {
-                    let name = name.node_to_string(&doc.contents)?;
+                    let name = name.node_to_string(contents)?;
                     arguments.push(name);
                 }
             }
@@ -368,8 +317,8 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
+        let start = file.lsp_position_from_tree_sitter_point(db, lhs.start_position())?;
+        let end = file.lsp_position_from_tree_sitter_point(db, lhs.end_position())?;
 
         entries.push(IndexEntry {
             key: lhs_text.clone(),
@@ -381,8 +330,8 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
+        let start = file.lsp_position_from_tree_sitter_point(db, lhs.start_position())?;
+        let end = file.lsp_position_from_tree_sitter_point(db, lhs.end_position())?;
         entries.push(IndexEntry {
             key: lhs_text.clone(),
             range: Range { start, end },
@@ -394,7 +343,8 @@ fn index_assignment(
 }
 
 fn index_r6_class_methods(
-    doc: &Document,
+    db: &dyn ArkDb,
+    file: &ArkFile,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -421,10 +371,12 @@ fn index_r6_class_methods(
     });
     let mut ts_query = TsQuery::from_query(&R6_METHODS_QUERY);
 
-    for method_node in ts_query.captures_for(*node, "method_name", doc.contents.as_bytes()) {
-        let name = method_node.node_to_string(&doc.contents)?;
-        let start = doc.lsp_position_from_tree_sitter_point(method_node.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(method_node.end_position())?;
+    let contents = file.contents(db);
+
+    for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
+        let name = method_node.node_to_string(contents)?;
+        let start = file.lsp_position_from_tree_sitter_point(db, method_node.start_position())?;
+        let end = file.lsp_position_from_tree_sitter_point(db, method_node.end_position())?;
 
         entries.push(IndexEntry {
             key: name.clone(),
@@ -436,14 +388,19 @@ fn index_r6_class_methods(
     Ok(())
 }
 
-fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
+fn index_comment(
+    db: &dyn ArkDb,
+    file: &ArkFile,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
     // check for comment
     if !node.is_comment() {
         return Ok(());
     }
 
     // see if it looks like a section
-    let comment = node.node_as_str(&doc.contents)?;
+    let comment = node.node_as_str(file.contents(db))?;
     let matches = match RE_COMMENT_SECTION.captures(comment) {
         Some(m) => m,
         None => return Ok(()),
@@ -460,8 +417,8 @@ fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> 
         return Ok(());
     }
 
-    let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
-    let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
+    let start = file.lsp_position_from_tree_sitter_point(db, node.start_position())?;
+    let end = file.lsp_position_from_tree_sitter_point(db, node.end_position())?;
 
     entries.push(IndexEntry {
         key: title.clone(),
@@ -476,21 +433,25 @@ fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> 
 mod tests {
 
     use assert_matches::assert_matches;
+    use biome_line_index::WideEncoding;
     use insta::assert_debug_snapshot;
     use tower_lsp::lsp_types;
 
     use super::*;
-    use crate::lsp::document::Document;
+    use crate::lsp::ark_file::test_ark_file;
+
+    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
 
     macro_rules! test_index {
         ($code:expr) => {
-            let doc = Document::new($code, None);
-            let root = doc.ast.root_node();
+            let (db, file) = test_ark_file($code);
+            let tree = file.tree_sitter(&db);
+            let root = tree.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(&doc, &node, &mut entries);
+                let _ = index_node(&db, &file, &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };
@@ -671,35 +632,29 @@ class <- R6::R6Class(
         );
     }
 
+    fn index_file_for_test(uri: &str, contents: &str) {
+        use aether_path::FilePath;
+
+        let db = oak_db::OakDatabase::new();
+        let url = Url::parse(uri).unwrap();
+        let key = FilePath::from_url(&url);
+        let file = oak_db::File::new(&db, key, contents.to_string(), None);
+        index_file(&db, file, ENCODING).unwrap();
+    }
+
     #[test]
-    fn test_update_skips_ark_virtual_doc() {
+    fn test_index_skips_ark_virtual_doc() {
         let _guard = ResetIndexerGuard;
 
-        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
-        let doc = Document::new("foo <- 1", None);
-
-        update(&doc, &ark_uri).unwrap();
+        index_file_for_test("ark://namespace/test.R", "foo <- 1");
         assert!(find("foo").is_none());
     }
 
     #[test]
-    fn test_update_indexes_git_uri() {
+    fn test_index_indexes_git_uri() {
         let _guard = ResetIndexerGuard;
 
-        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
-        let doc = Document::new("foo <- 1", None);
-
-        update(&doc, &git_uri).unwrap();
+        index_file_for_test("git:///home/user/test.R?ref=HEAD", "foo <- 1");
         assert!(find("foo").is_some());
-    }
-
-    #[test]
-    fn test_create_skips_non_file_uri() {
-        let _guard = ResetIndexerGuard;
-
-        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
-
-        create(&ark_uri).unwrap();
-        assert!(find("foo").is_none());
     }
 }

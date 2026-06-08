@@ -16,9 +16,11 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
+use aether_lsp_utils::proto::PositionEncoding;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use futures::StreamExt;
+use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
@@ -46,7 +48,6 @@ use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
-use crate::lsp::document::Document;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
@@ -471,11 +472,22 @@ impl GlobalState {
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.documents.keys().cloned().collect();
+                let root = scan.root;
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
                     &mut self.world.db,
                     scan,
                     &editor_owned,
                 );
+                // Now that we've included this root's files into the Oak
+                // database, we can safely process them with the legacy Ark
+                // indexer that powers completions, workspace symbols, and
+                // diagnostics. We skip library roots since the indexer is only
+                // covering the user's workspace.
+                if root.kind(&self.world.db) == oak_db::RootKind::Workspace {
+                    let files = root_files(&self.world.db, root);
+                    index_scanned_files(files, editor_owned, self.world.clone());
+                }
+
                 if followups.is_empty() {
                     // The scan settled (no more follow-ups). `apply_scan_completed()`
                     // was an oak write: it cancelled in-flight diagnostics and changed
@@ -861,11 +873,19 @@ pub(crate) enum IndexerQueueTask {
 }
 
 #[derive(Debug)]
-pub enum IndexerTask {
-    Create { uri: Url },
-    Delete { uri: Url },
-    Rename { uri: Url, new: Url },
-    Update { uri: Url, document: Document },
+pub(crate) enum IndexerTask {
+    Index {
+        uri: Url,
+        db: OakDatabase,
+        encoding: PositionEncoding,
+    },
+    Delete {
+        uri: Url,
+    },
+    Rename {
+        uri: Url,
+        new: Url,
+    },
 }
 
 #[derive(Debug)]
@@ -888,10 +908,9 @@ fn summarize_indexer_task(batch: &[IndexerTask]) -> String {
     let mut counts = std::collections::HashMap::new();
     for task in batch {
         let type_name = match task {
-            IndexerTask::Create { .. } => "Create",
+            IndexerTask::Index { .. } => "Index",
             IndexerTask::Delete { .. } => "Delete",
             IndexerTask::Rename { .. } => "Rename",
-            IndexerTask::Update { .. } => "Update",
         };
         *counts.entry(type_name).or_insert(0) += 1;
     }
@@ -979,31 +998,34 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
     );
 
     for task in batch {
-        let result: anyhow::Result<()> = async {
-            match &task {
-                IndexerTask::Create { uri } => {
-                    indexer::create(uri)?;
-                },
+        let result: anyhow::Result<()> = match &task {
+            IndexerTask::Index { uri, db, encoding } => {
+                // This is running on a separate task than the main loop, so
+                // Salsa cancellations are possible. Catch cancellation inline
+                // rather than through the `spawn_blocking()` funnel because
+                // this batch must finish before diagnostics are queued (see
+                // `process_indexer_queue()`) and it can't be fire-and-forget.
+                // On cancel we drop the pass and let the oak write that
+                // cancelled it re-enqueue.
+                let Some(result) = catch_cancellation(|| {
+                    let key = FilePath::from_url(uri);
+                    match db.file_by_url(&key) {
+                        Some(file) => indexer::index_file(db, file, *encoding),
+                        None => Err(anyhow!("No `oak_db` file for URI {uri}")),
+                    }
+                }) else {
+                    continue;
+                };
+                result
+            },
 
-                IndexerTask::Update { uri, document } => {
-                    indexer::update(document, uri)?;
-                },
+            IndexerTask::Delete { uri } => indexer::delete(uri),
 
-                IndexerTask::Delete { uri } => {
-                    indexer::delete(uri)?;
-                },
-
-                IndexerTask::Rename {
-                    uri: old_uri,
-                    new: new_uri,
-                } => {
-                    indexer::rename(old_uri, new_uri)?;
-                },
-            }
-
-            Ok(())
-        }
-        .await;
+            IndexerTask::Rename {
+                uri: old_uri,
+                new: new_uri,
+            } => indexer::rename(old_uri, new_uri),
+        };
 
         if let Err(err) = result {
             tracing::warn!("Can't process indexer task: {err}");
@@ -1072,73 +1094,17 @@ fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
     }
 }
 
-pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
-    lsp::log_info!("Initial indexing started");
-
-    let uris: Vec<Url> = folders
-        .into_iter()
-        .flat_map(|folder| {
-            walkdir::WalkDir::new(folder)
-                .into_iter()
-                .filter_entry(indexer::filter_entry)
-                .filter_map(|entry| {
-                    let entry = match entry {
-                        Ok(e) => e,
-                        Err(_) => return None,
-                    };
-
-                    if !entry.file_type().is_file() {
-                        return None;
-                    }
-                    let path = entry.path();
-
-                    // Only index R files
-                    let ext = path.extension().unwrap_or_default();
-                    if ext != "r" && ext != "R" {
-                        return None;
-                    }
-
-                    if let Ok(uri) = url::Url::from_file_path(path) {
-                        Some(uri)
-                    } else {
-                        tracing::warn!("Can't convert path to URI: {:?}", path);
-                        None
-                    }
-                })
-        })
-        .collect();
-
-    index_create(uris, state);
-}
-
-pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Create { uri }))
-            .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
-    }
-
-    diagnostics_refresh_all(&state);
-}
-
 pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
     for uri in uris {
         if !ExtUrl::is_indexable(&uri) {
             continue;
         }
 
-        let document = match state.get_document(&FilePath::from_url(&uri)) {
-            Ok(doc) => doc.clone(),
-            Err(err) => {
-                tracing::warn!("Can't get document '{uri}' for indexing: {err:?}");
-                continue;
-            },
-        };
-
         INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Update {
-                document,
+            .send(IndexerQueueTask::Indexer(IndexerTask::Index {
                 uri,
+                db: state.db.clone(),
+                encoding: state.config.position_encoding,
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
     }
@@ -1146,6 +1112,44 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
     diagnostics_refresh_all(&state);
+}
+
+/// Index all workspace files freshly scanned into `state.db`.
+///
+/// Called from the `OakScanCompleted` hook with a single `WorldState` clone
+/// for the whole root, not one clone per file. Runs on a blocking thread
+/// mirroring `process_diagnostics_batch`, since indexing parses every file
+/// in the root. `skip` carries the editor-owned URLs whose index comes from
+/// `did_open` / `did_change`, so we don't index them twice.
+fn index_scanned_files(files: Vec<oak_db::File>, skip: HashSet<FilePath>, state: WorldState) {
+    spawn_blocking(move || {
+        let db = &state.db;
+        let encoding = state.config.position_encoding;
+
+        for file in files {
+            if skip.contains(file.url(db)) {
+                continue;
+            }
+            if let Err(err) = indexer::index_file(db, file, encoding) {
+                tracing::warn!("Can't index scanned file: {err:?}");
+            }
+        }
+
+        Ok(None)
+    });
+}
+
+/// Collect every R file under one root: top-level scripts plus each package's
+/// loadable files and non-loadable scripts (`tests/`, `inst/`, ...). Unlike
+/// `oak_db::all_files`, which walks all live roots, this stays scoped to the
+/// single root that just finished scanning.
+fn root_files(db: &OakDatabase, root: oak_db::Root) -> Vec<oak_db::File> {
+    let mut files: Vec<oak_db::File> = root.scripts(db).to_vec();
+    for &pkg in root.packages(db) {
+        files.extend(pkg.files(db));
+        files.extend(pkg.scripts(db));
+    }
+    files
 }
 
 pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {

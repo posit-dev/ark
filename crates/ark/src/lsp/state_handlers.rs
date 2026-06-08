@@ -103,7 +103,6 @@ pub(crate) fn initialize(
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
-    let mut folders: Vec<String> = Vec::new();
     let mut workspace_paths: Vec<PathBuf> = Vec::new();
 
     for uri in workspace_uris {
@@ -137,22 +136,20 @@ pub(crate) fn initialize(
                     },
                 }
             }
-            if let Some(path_str) = path.to_str() {
-                folders.push(path_str.to_string());
-            }
         }
     }
 
-    // Start first round of indexing. `state.documents` is empty at init since
-    // no `didOpen` has fired yet, but build the set through the same shape we
-    // use elsewhere so the call site reads consistently.
+    // Kick off the first workspace scan. The resulting `OakScanCompleted`
+    // events drive workspace indexing, so there's no separate directory walk
+    // here anymore. `state.documents` is empty at init since no `didOpen` has
+    // fired yet, but build the set through the same shape we use elsewhere so
+    // the call site reads consistently.
     let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
     let requests =
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
-    lsp::main_loop::index_start(folders, state.clone());
 
     let result = InitializeResult {
         server_info: Some(ServerInfo {
@@ -280,7 +277,9 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    lsp::main_loop::diagnostics_refresh_all(state);
+    // Index the freshly opened buffer. Workspace indexing skips editor-owned
+    // files, so editor handlers own index creation and updating.
+    lsp::main_loop::index_update(vec![uri], state.clone());
 
     Ok(())
 }
@@ -364,7 +363,7 @@ pub(crate) fn did_create_files(
         .filter_map(|file| parse_uri_or_none(&file.uri))
         .collect();
 
-    lsp::main_loop::index_create(uris, state.clone());
+    lsp::main_loop::index_update(uris, state.clone());
 
     Ok(())
 }
