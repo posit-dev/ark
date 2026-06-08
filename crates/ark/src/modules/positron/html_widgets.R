@@ -29,7 +29,7 @@ view_html_widget_inline <- function(x) {
     rendered <- htmltools::renderTags(x)
     html <- embed_tags(rendered)
     label <- widget_label(x)
-    .ps.Call("ps_html_widget_emit", html, label)
+    .ps.Call("ps_html_display_data", html, label)
 }
 
 # Console path: write the widget to a temp HTML file via htmltools, then hand
