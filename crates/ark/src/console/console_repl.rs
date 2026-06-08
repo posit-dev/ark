@@ -3026,3 +3026,15 @@ pub unsafe extern "C-unwind" fn ps_get_active_request() -> anyhow::Result<SEXP> 
     let r_obj = RObject::try_from(json)?;
     Ok(r_obj.sexp)
 }
+
+/// Returns the current session mode as a length-1 character vector:
+/// `"console"`, `"notebook"`, or `"background"`.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_session_mode() -> anyhow::Result<SEXP> {
+    let mode = match Console::get().session_mode() {
+        SessionMode::Console => "console",
+        SessionMode::Notebook => "notebook",
+        SessionMode::Background => "background",
+    };
+    Ok(RObject::from(mode).sexp)
+}

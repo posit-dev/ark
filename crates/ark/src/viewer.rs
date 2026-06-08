@@ -136,15 +136,3 @@ fn emit_html_display_data(contents: String, kind: String, iopub_tx: &Sender<IOPu
         log::error!("Failed to emit HTML output: {err:?}");
     }
 }
-
-/// Returns `TRUE` when the kernel is running in a non-interactive output
-/// context (notebook or background session), where rich output must be emitted
-/// inline via `display_data` rather than routed through the Positron UI comm.
-#[harp::register]
-pub unsafe extern "C-unwind" fn ps_is_notebook() -> anyhow::Result<SEXP> {
-    let is_notebook = matches!(
-        Console::get().session_mode(),
-        SessionMode::Notebook | SessionMode::Background
-    );
-    Ok(libr::Rf_ScalarLogical(is_notebook as i32))
-}

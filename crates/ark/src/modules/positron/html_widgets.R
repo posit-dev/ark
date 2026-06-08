@@ -6,18 +6,15 @@
 #
 
 #' @export
-.ps.is_notebook <- function() {
-    .ps.Call("ps_is_notebook")
-}
-
-#' @export
 .ps.view_html_widget <- function(x, ...) {
-    if (isTRUE(.ps.is_notebook())) {
+    if (session_mode() == "console") {
+        # Interactive console: hand a temp HTML file to Positron's Viewer pane.
+        view_html_widget_viewer(x)
+    } else {
+        # Notebook / background: emit self-contained HTML inline so it survives
+        # notebook save/reload.
         view_html_widget_inline(x)
-        return(invisible(x))
     }
-
-    view_html_widget_viewer(x)
     invisible(x)
 }
 
@@ -61,10 +58,17 @@ embed_tags <- function(rendered) {
     deps <- filter_seen_deps(rendered$dependencies)
     dep_html <- vapply(deps, render_dep_inline, character(1))
 
+    # `renderTags()` yields "" (not NULL) when there is no `<head>` content;
+    # normalize so it doesn't become a stray blank line. An existing NULL is
+    # already fine and passes through `c()` untouched.
+    if (identical(rendered$head, "")) {
+        rendered$head <- NULL
+    }
+
     head_parts <- c(
         '<meta charset="utf-8"/>',
         dep_html,
-        if (nzchar(rendered$head %||% "")) rendered$head else NULL
+        rendered$head
     )
 
     paste0(
@@ -80,7 +84,12 @@ embed_tags <- function(rendered) {
     )
 }
 
-# Render one `htmlDependency` as the `<link>`/`<script>` block to embed in
+# An `htmlDependency` (from htmltools) describes the front-end assets a widget
+# needs: a name and version, a source location (either `src$file` on disk or a
+# `src$href` URL), and `script`/`stylesheet` files given relative to that
+# source. `renderTags()` returns these alongside the widget's HTML.
+#
+# Render one such dependency as the `<link>`/`<script>` block to embed in
 # `<head>`. Local files (`src$file`) are base64-inlined; CDN-only deps
 # (`src$href`) fall back to a remote reference, which is best-effort
 # self-containment but at least keeps the widget functional online.
@@ -109,6 +118,9 @@ render_dep_inline <- function(dep) {
                     css
                 )
             )
+        } else {
+            # Neither a local file nor a URL to point at — there's nothing we
+            # can reference, so the stylesheet is intentionally dropped.
         }
     }
 
@@ -134,11 +146,13 @@ render_dep_inline <- function(dep) {
                     js
                 )
             )
+        } else {
+            # As above: no local file and no URL, so the script is dropped.
         }
     }
 
     # Inline <script>/<style> blocks the dep wants in <head>.
-    if (length(dep$head) && nzchar(dep$head)) {
+    if (length(dep$head) == 1L && nzchar(dep$head)) {
         parts <- c(parts, dep$head)
     }
 
@@ -219,9 +233,9 @@ html_dep_cache <- function() {
 }
 
 # Test hook: clear the per-session dedup cache so tests can assert dedup
-# behavior independent of each other.
-#' @export
-.ps.html_widget_reset_deps <- function() {
+# behavior independently. Reached from tests via
+# `.ps.internal(html_widget_reset_deps())`.
+html_widget_reset_deps <- function() {
     the$html_dep_cache <- NULL
     invisible(NULL)
 }

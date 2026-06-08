@@ -64,6 +64,11 @@ active_request <- function() {
     .ps.Call("ps_get_active_request")
 }
 
+# Returns the current session mode: "console", "notebook", or "background".
+session_mode <- function() {
+    .ps.Call("ps_session_mode")
+}
+
 # Sleep that doesn't check for interrupts to test an unresponsive runtime.
 #' @export
 .ps.deep_sleep <- function(secs) {

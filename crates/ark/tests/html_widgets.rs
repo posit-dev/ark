@@ -46,7 +46,7 @@ fn execute_and_get_html(frontend: &DummyArkFrontendNotebook, code: &str) -> Stri
 fn test_html_widget_emits_self_contained_html() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut code = String::from(".ps.html_widget_reset_deps()\n");
+    let mut code = String::from(".ps.internal(html_widget_reset_deps())\n");
     // Defensive reset in case a sibling test leaked the option.
     code.push_str("options(ark.html_widget.deduplicate = NULL)\n");
     code.push_str(&setup_fake_widget("marker-A"));
@@ -73,7 +73,7 @@ fn test_html_widget_does_not_dedupe_by_default() {
     // The safe default is to re-inline deps every time.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut first = String::from(".ps.html_widget_reset_deps()\n");
+    let mut first = String::from(".ps.internal(html_widget_reset_deps())\n");
     // Defensive reset in case a sibling test leaked the option.
     first.push_str("options(ark.html_widget.deduplicate = NULL)\n");
     first.push_str(&setup_fake_widget("marker-first"));
@@ -96,7 +96,7 @@ fn test_html_widget_dedupe_can_be_enabled() {
     // JupyterLab) can opt into IRkernel-style dedup to keep notebooks small.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut first = String::from(".ps.html_widget_reset_deps()\n");
+    let mut first = String::from(".ps.internal(html_widget_reset_deps())\n");
     // Start from a known state so an earlier failed test that left the
     // option set TRUE doesn't make this one a no-op.
     first.push_str("options(ark.html_widget.deduplicate = NULL)\n");
@@ -142,7 +142,7 @@ fn test_html_widget_auto_print_emits_only_display_data() {
     // regression that adds a stray `execute_result` here fails loudly.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut code = String::from(".ps.html_widget_reset_deps()\n");
+    let mut code = String::from(".ps.internal(html_widget_reset_deps())\n");
     code.push_str("options(ark.html_widget.deduplicate = NULL)\n");
     code.push_str(&setup_fake_widget("marker-autoprint"));
     // Tests don't load `htmlwidgets`, so the package-load hook hasn't run
