@@ -342,6 +342,12 @@ pub(crate) fn did_close(
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
 
+    // `close_editor` is an oak write, so it cancels any diagnostics pass in
+    // flight for the other open files. Re-enqueue them so a cancelled pass
+    // isn't silently dropped. The closed file was removed above, so it isn't
+    // refreshed (we already cleared it with the empty publish).
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
+
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
     Ok(())

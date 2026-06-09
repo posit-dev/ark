@@ -475,7 +475,19 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
+                let scan_settled = followups.is_empty();
                 dispatch_scan_requests(&self.events_tx, followups);
+
+                // `apply_scan_completed` is an oak write. It cancels in-flight
+                // diagnostics, and it changes the workspace symbols diagnostics
+                // resolve against. Once the scan settles (no more follow-ups),
+                // recompute diagnostics for the open files so they reflect the
+                // indexed workspace and any cancelled pass is restored. We wait
+                // for settle rather than refreshing every round to avoid churn
+                // during the initial multi-round workspace scan.
+                if scan_settled {
+                    diagnostics_refresh_all(self.world.clone());
+                }
             },
         }
 
