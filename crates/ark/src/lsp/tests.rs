@@ -1,4 +1,5 @@
 mod db;
+mod diagnostics;
 mod find_references;
 mod goto_definition;
 mod main_loop;

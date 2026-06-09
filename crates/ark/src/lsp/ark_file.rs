@@ -22,6 +22,7 @@ use crate::lsp::db::FileExt;
 /// `ArkFile` cannot hold a reference to the database. That's why the methods
 /// below take `db` as an argument instead of storing a reference, which is the
 /// Salsa convention anyway.
+#[derive(Debug)]
 pub(crate) struct ArkFile {
     pub(crate) file: File,
     pub(crate) version: Option<i32>,

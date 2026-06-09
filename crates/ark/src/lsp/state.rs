@@ -98,25 +98,19 @@ impl WorldState {
         }
     }
 
-    /// Copy the world state for a background handler that does not query oak.
-    ///
-    /// The copy gets a fresh, empty `OakDatabase` instead of a handle to the
-    /// live one. A salsa db handle held off the main loop blocks the next
-    /// `set_*` on the owner: the setter waits for `clones == 1`, and an idle
-    /// handle (parked in the indexer queue, or held by a handler blocked in
-    /// `r_task`) never drops on its own.
-    ///
-    /// This is the snapshot for the non-salsa handlers (diagnostics,
-    /// indexing) that read only the plain `WorldState` fields. A salsa-based
-    /// handler that queries oak off the main loop needs a different snapshot,
-    /// one that keeps the live db handle and runs its queries under
-    /// cancellation (catch `Cancelled`, don't span `r_task`), so it sees real
-    /// oak data. That's what the `legacy_` prefix warns: don't reach for this
-    /// from oak-querying code.
-    pub(crate) fn legacy_snapshot(&self) -> WorldState {
+    /// Snapshot for the diagnostics worker, which runs off the main loop and
+    /// queries oak.
+    pub(crate) fn diagnostics_snapshot(&self) -> WorldState {
         WorldState {
-            db: OakDatabase::new(),
-            ..self.clone()
+            db: self.db.clone(),
+            console_scopes: self.console_scopes.clone(),
+            installed_packages: self.installed_packages.clone(),
+            root: self.root.clone(),
+            library: self.library.clone(),
+            config: self.config.clone(),
+            documents: HashMap::new(),
+            virtual_documents: HashMap::new(),
+            workspace: Workspace::default(),
         }
     }
 
@@ -160,62 +154,4 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
         .values()
         .map(|doc| doc.url.clone())
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-    use std::sync::Arc;
-    use std::sync::Barrier;
-    use std::time::Duration;
-
-    use oak_db::OakDatabase;
-    use oak_scan::DbScan;
-    use oak_semantic::library::Library;
-
-    use super::WorldState;
-
-    /// A legacy background snapshot must not pin the oak db against a
-    /// main-loop mutation.
-    ///
-    /// salsa reclaims `&mut` access for a setter by raising the cancellation
-    /// flag and then blocking on `clones == 1`. That flag only frees a clone
-    /// whose thread is inside a running query and notices it. A snapshot that
-    /// sits idle (parked in the indexer queue, or held by a `spawn_blocking`
-    /// handler blocked in `r_task`) never notices, so the next setter on the
-    /// owner blocks until the snapshot drops. This test parks a snapshot with
-    /// no query running and asserts a setter on the owner still completes.
-    #[test]
-    fn legacy_snapshot_does_not_pin_oak_against_mutation() {
-        let mut state = WorldState::new(OakDatabase::new(), Library::new(vec![]));
-
-        let snapshot = state.legacy_snapshot();
-
-        // Park the snapshot with no salsa query running, then hold it until
-        // the main thread has finished timing the mutation.
-        let release = Arc::new(Barrier::new(2));
-        let held = {
-            let release = Arc::clone(&release);
-            std::thread::spawn(move || {
-                let _snapshot = snapshot;
-                release.wait();
-            })
-        };
-
-        let (tx, rx) = mpsc::channel();
-        let mutator = std::thread::spawn(move || {
-            state.db.set_library_paths(&[]);
-            let _ = tx.send(());
-        });
-
-        let completed = rx.recv_timeout(Duration::from_secs(2)).is_ok();
-
-        // Release the parked snapshot so a blocked mutator can finish and both
-        // threads join, regardless of the outcome.
-        release.wait();
-        held.join().unwrap();
-        mutator.join().unwrap();
-
-        assert!(completed);
-    }
 }
