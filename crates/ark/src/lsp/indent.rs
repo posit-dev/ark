@@ -493,9 +493,9 @@ mod tests {
     #[test]
     fn test_line_indent_function_opening_brace_own_line() {
         let text = String::from("object <- function()\n{\n  body\n}");
-        let (db, ark_file) = crate::lsp::ark_file::test_ark_file(&text);
+        let (db, file) = crate::lsp::ark_file::test_ark_file(&text);
 
-        assert_match!(indent_edit(&db, &ark_file, 1).unwrap(), None);
+        assert_match!(indent_edit(&db, &file, 1).unwrap(), None);
     }
 
     #[test]

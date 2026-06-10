@@ -195,11 +195,11 @@ mod tests {
             .with_workspace_edit_document_changes(true);
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, file) = test_ark_file(&text);
 
         roxygen_documentation(
             &db,
-            &ark_file,
+            &file,
             &mut actions,
             point_range(point, offset),
             &capabilities,
@@ -303,11 +303,11 @@ outer <- function(a, b = 2) {
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, file) = test_ark_file(&text);
 
         roxygen_documentation(
             &db,
-            &ark_file,
+            &file,
             &mut actions,
             point_range(point, offset),
             &capabilities,
@@ -330,11 +330,11 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, file) = test_ark_file(&text);
 
         roxygen_documentation(
             &db,
-            &ark_file,
+            &file,
             &mut actions,
             point_range(point, offset),
             &capabilities,
