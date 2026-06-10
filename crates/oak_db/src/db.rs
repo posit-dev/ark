@@ -83,7 +83,7 @@ pub trait Db: DbInputs {
 }
 
 #[salsa::tracked(returns(ref))]
-pub fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
+pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
     let mut roots: Vec<LiveRoot> = db
         .workspace_roots()
         .roots(db)
@@ -108,7 +108,7 @@ pub fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
 /// entity), but every step is: each [`root_url_index`] call returns a
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
-pub fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
+pub(crate) fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
     for &root in db.live_roots() {
         let hit = match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
@@ -126,7 +126,7 @@ pub fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
 /// Implementation of [`Db::package_by_name`]. Same shape as
 /// [`file_by_url_query`]; orphan has no packages, so it contributes
 /// nothing to the walk.
-pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
+pub(crate) fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
     for &root in db.live_roots() {
         if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
             if let Some(&pkg) = root_package_index(db, r).get(name) {
@@ -139,7 +139,7 @@ pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
 
 /// Implementation of [`Db::root_by_package`]. Walks all live roots looking for
 /// `pkg` in their `packages` vec, picking the longest-path root on ties.
-pub fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
+pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
     let mut best: Option<(Root, usize)> = None;
     for &root in db.live_roots() {
         let (LiveRoot::Workspace(r) | LiveRoot::Library(r)) = root else {
