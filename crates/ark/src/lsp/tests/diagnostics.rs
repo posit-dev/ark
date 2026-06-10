@@ -9,9 +9,11 @@ use crate::r_task;
 
 #[test]
 fn test_diagnostics_published_through_refresh_snapshot() {
-    r_task(|| {
-        let mut state = WorldState::default();
+    let mut state = WorldState::default();
 
+    // A tighter scope for `r_task()` results in a compilation error about
+    // sharing Salsa ingredients across threads
+    let diagnostics = r_task(|| {
         // Open an editor file with an undefined symbol, mirroring `did_open`:
         // a `Document` plus its matching `oak_db::File`.
         let uri = Url::parse("file:///test.R").unwrap();
@@ -27,9 +29,10 @@ fn test_diagnostics_published_through_refresh_snapshot() {
         let ark_file = state
             .ark_file(&uri)
             .expect("ArkFile builds from live state");
-        let snapshot = state.diagnostics_snapshot();
-        let diagnostics = generate_diagnostics(ark_file, snapshot, false);
 
-        assert!(!diagnostics.is_empty());
-    })
+        let snapshot = state.diagnostics_snapshot();
+        generate_diagnostics(ark_file, snapshot, false)
+    });
+
+    assert!(!diagnostics.is_empty());
 }
