@@ -178,21 +178,18 @@ impl<DB: Db + DbInputs> DbScan for DB {
         };
 
         let orphan = self.orphan_root();
-        if !orphan.files(self).contains(&file) {
-            // A workspace or library root holds it
+        let Some(orphan_files) = with_removed(orphan.files(self), file) else {
+            // A workspace or library root holds it, nothing to do.
             return;
-        }
-        // If the opened editor was in the orphan root, the file is now stale
+        };
+        // The opened editor was in the orphan root, so the file is now stale
         // and unreachable. Move it to the stale root.
-
-        let mut orphan_files = orphan.files(self).clone();
-        orphan_files.retain(|f| *f != file);
         orphan.set_files(self).to(orphan_files);
 
         let stale = self.stale_root();
-        let mut stale_files = stale.files(self).clone();
-        stale_files.push(file);
-        stale.set_files(self).to(stale_files);
+        if let Some(stale_files) = with_appended(stale.files(self), file) {
+            stale.set_files(self).to(stale_files);
+        }
     }
 
     fn add_watched_file(&mut self, url: UrlId, contents: String) {
@@ -387,36 +384,49 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 /// entry. Also used by [`watch::remove_watched_file`] when a file
 /// disappears from disk.
 pub(crate) fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
-    if pkg.files(db).contains(&file) {
-        let mut files = pkg.files(db).clone();
-        files.retain(|f| *f != file);
+    if let Some(files) = with_removed(pkg.files(db), file) {
         pkg.set_files(db).to(files);
         return;
     }
-
-    if pkg.scripts(db).contains(&file) {
-        let mut scripts = pkg.scripts(db).clone();
-        scripts.retain(|f| *f != file);
+    if let Some(scripts) = with_removed(pkg.scripts(db), file) {
         pkg.set_scripts(db).to(scripts);
     }
 }
 
-fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
+pub(crate) fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
-    if !orphan.files(db).contains(&file) {
-        return;
+    if let Some(files) = with_removed(orphan.files(db), file) {
+        orphan.set_files(db).to(files);
     }
-    let mut files = orphan.files(db).clone();
-    files.retain(|f| *f != file);
-    orphan.set_files(db).to(files);
 }
 
 fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
-    if orphan.files(db).contains(&file) {
-        return;
+    if let Some(files) = with_appended(orphan.files(db), file) {
+        orphan.set_files(db).to(files);
     }
-    let mut files = orphan.files(db).clone();
-    files.push(file);
-    orphan.set_files(db).to(files);
+}
+
+/// The container with `file` appended, or `None` if it's already there.
+///
+/// `None` means nothing would change, so the caller skips the salsa write and
+/// the clone. This keeps the "clone only when the field actually changes"
+/// rule in one place, shared by every container update on `Root` / `Package` /
+/// `OrphanRoot`.
+pub(crate) fn with_appended<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
+    if files.contains(&file) {
+        return None;
+    }
+    let mut updated = files.to_vec();
+    updated.push(file);
+    Some(updated)
+}
+
+/// The container with `file` removed, or `None` if it wasn't there. `None`
+/// means nothing would change, see [`with_file_appended`].
+pub(crate) fn with_removed<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
+    if !files.contains(&file) {
+        return None;
+    }
+    Some(files.iter().filter(|f| **f != file).cloned().collect())
 }
