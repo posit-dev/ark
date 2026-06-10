@@ -19,7 +19,7 @@ use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_db::OakDatabase;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use oak_semantic::library::Library;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;

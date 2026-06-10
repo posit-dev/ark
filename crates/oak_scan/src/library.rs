@@ -28,7 +28,7 @@ use crate::inputs::RootExt;
 use crate::packages::read_package;
 
 /// Reconcile `LibraryRoots` to exactly `paths`. Called through
-/// [`crate::DbExt::set_library_paths`]. Order in `LibraryRoots.roots`
+/// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
 /// follows `paths`, matching R's `.libPaths()` precedence.
 pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf]) {
     let new: Vec<(PathBuf, UrlId)> = paths

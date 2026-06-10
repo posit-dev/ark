@@ -7,7 +7,7 @@ use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_db::RootKind;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     fs::create_dir_all(dir.join("R")).unwrap();

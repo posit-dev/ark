@@ -12,7 +12,7 @@ use std::path::Path;
 use aether_url::UrlId;
 use oak_db::Db;
 use oak_db::DbInputs;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;

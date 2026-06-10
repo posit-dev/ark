@@ -6,7 +6,7 @@ use aether_url::UrlId;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
 

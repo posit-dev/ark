@@ -25,7 +25,7 @@ use crate::inputs::RootExt;
 use crate::packages::scan_workspace;
 
 /// Reconcile `WorkspaceRoots` to exactly `paths`. Called through
-/// [`crate::DbExt::set_workspace_paths`].
+/// [`crate::DbScan::set_workspace_paths`].
 pub(crate) fn set_workspace_paths<DB: Db + DbInputs>(
     db: &mut DB,
     paths: &[PathBuf],

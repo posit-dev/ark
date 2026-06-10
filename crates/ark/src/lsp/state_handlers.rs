@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use aether_url::UrlId;
 use anyhow::anyhow;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
 use oak_semantic::package::Package;

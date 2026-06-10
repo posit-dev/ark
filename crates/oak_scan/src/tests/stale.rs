@@ -16,7 +16,7 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 use url::Url;
 
-use crate::inputs::DbExt;
+use crate::inputs::DbScan;
 use crate::inputs::RootExt;
 
 fn file_url(s: &str) -> UrlId {
