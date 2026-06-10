@@ -297,7 +297,19 @@ impl ScanScheduler {
                 Some(root) if self.state.contains_key(&root) => {
                     self.buffered.entry(root).or_default().push(event);
                 },
-                _ => apply_one_event_surgically(db, event),
+                // No in-flight scan for this root: apply the event directly,
+                // the watcher's single-file fast path.
+                _ => match event.kind {
+                    FileEventKind::Created | FileEventKind::Changed => {
+                        match std::fs::read_to_string(&path) {
+                            Ok(contents) => add_watched_file(db, event.url, contents),
+                            Err(err) => {
+                                log::warn!("Skipped watched file {}: {err:?}", path.display())
+                            },
+                        }
+                    },
+                    FileEventKind::Deleted => remove_watched_file(db, event.url),
+                },
             }
         }
 
@@ -339,21 +351,22 @@ impl ScanScheduler {
         let prior = self.state.remove(&root);
         match prior {
             Some(ScanState::ScanningWithRescanQueued) => {
-                // A rescan was queued mid-scan. Spawn it and keep the
-                // buffer; replay happens when this next scan finishes idle.
-                self.state.insert(root, ScanState::Scanning);
-                let Some(path) = root.path(db).to_file_path().warn_on_err() else {
-                    return Vec::new();
-                };
-                vec![ScanRequest { root, path }]
-            },
-            Some(ScanState::Scanning) => {
-                // We're now idle. Drain any buffered events through the normal path.
-                match self.buffered.remove(&root) {
-                    Some(buffered) => self.apply_watcher_events(db, buffered, editor_owned),
-                    None => Vec::new(),
+                // A rescan was queued mid-scan. Resolve its path before
+                // re-marking the root `Scanning`: a path we can't resolve must
+                // not leave the root `Scanning` with no scan in flight, or it
+                // would stay pending forever. On success the buffer rides along
+                // and replays when the requeued scan finishes. On failure we
+                // fall back to the idle drain.
+                match root.path(db).to_file_path().warn_on_err() {
+                    Some(path) => {
+                        self.state.insert(root, ScanState::Scanning);
+                        vec![ScanRequest { root, path }]
+                    },
+                    None => self.drain_buffered(db, root, editor_owned),
                 }
             },
+            // We're now idle. Drain any buffered events through the normal path.
+            Some(ScanState::Scanning) => self.drain_buffered(db, root, editor_owned),
             None => {
                 // A completion for a root we weren't tracking as scanning.
                 // Every dispatched scan marks its root `Scanning`, so reaching
@@ -366,6 +379,21 @@ impl ScanScheduler {
                 );
                 Vec::new()
             },
+        }
+    }
+
+    /// Replay the watcher events buffered for `root` while its scan was in
+    /// flight, now that the root is idle. Routes them through
+    /// [`Self::apply_watcher_events`], which may itself return fresh requests.
+    fn drain_buffered<DB: Db + DbInputs>(
+        &mut self,
+        db: &mut DB,
+        root: Root,
+        editor_owned: &HashSet<UrlId>,
+    ) -> Vec<ScanRequest> {
+        match self.buffered.remove(&root) {
+            Some(buffered) => self.apply_watcher_events(db, buffered, editor_owned),
+            None => Vec::new(),
         }
     }
 
@@ -418,15 +446,38 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
         .collect()
 }
 
-fn apply_one_event_surgically<DB: Db + DbInputs>(db: &mut DB, event: FileEvent) {
-    let Ok(path) = event.url.to_file_path() else {
-        return;
-    };
-    match event.kind {
-        FileEventKind::Created | FileEventKind::Changed => match std::fs::read_to_string(&path) {
-            Ok(contents) => add_watched_file(db, event.url, contents),
-            Err(err) => log::warn!("Skipped watched file {}: {err:?}", path.display()),
-        },
-        FileEventKind::Deleted => remove_watched_file(db, event.url),
+#[cfg(test)]
+mod tests {
+    use oak_db::OakDatabase;
+
+    use super::*;
+
+    /// A root whose URL has no filesystem path (e.g. an `untitled:` buffer)
+    /// can't produce a `ScanRequest`. When such a root is
+    /// `ScanningWithRescanQueued` and its scan completes, the scheduler must
+    /// not leave it `Scanning` with nothing in flight, or it would stay pending
+    /// forever. This state is unreachable through the public API (workspace
+    /// roots always come from `from_file_path`), so we build it by hand.
+    #[test]
+    fn test_unresolvable_rescan_path_does_not_strand_root_scanning() {
+        let mut db = OakDatabase::new();
+        let url = UrlId::parse("untitled:Untitled-1").unwrap();
+        let root = Root::new(&db, url, RootKind::Workspace, Vec::new(), Vec::new());
+        db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+        let mut scheduler = ScanScheduler::new();
+        scheduler
+            .state
+            .insert(root, ScanState::ScanningWithRescanQueued);
+
+        let result = ScanCompleted {
+            root,
+            packages: Vec::new(),
+            scripts: Vec::new(),
+        };
+        let requests = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+
+        assert!(requests.is_empty());
+        assert!(!scheduler.has_pending_scans());
     }
 }
