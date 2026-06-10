@@ -17,7 +17,7 @@
 //!   tangled for a one-file update.
 //!
 //! - R file events route through [`add_watched_file`] (Created / Changed) or
-//!   [`remove_watched_file`] (Deleted). The `skip` set lets the driver hold
+//!   [`remove_watched_file`] (Deleted). The `editor_owned` set lets the driver hold
 //!   back URLs whose contents it owns (the LSP uses this for files
 //!   the editor has open).
 
@@ -59,13 +59,13 @@ pub enum FileEventKind {
 ///
 /// DESCRIPTION events are deduped to one rescan per containing root.
 /// R-file events route through [`add_watched_file`] / [`remove_watched_file`]. URLs
-/// in `skip` are not touched even if their event is for an R file;
+/// in `editor_owned` are not touched even if their event is for an R file;
 /// callers use this to defer to an in-memory source of truth (e.g.
 /// the LSP's editor buffers).
 pub(crate) fn apply_watcher_events<DB: Db + DbInputs>(
     db: &mut DB,
     events: Vec<FileEvent>,
-    skip: &HashSet<UrlId>,
+    editor_owned: &HashSet<UrlId>,
 ) {
     let roots = workspace_root_paths(db);
     let mut stale_roots: HashSet<Root> = HashSet::new();
@@ -86,7 +86,7 @@ pub(crate) fn apply_watcher_events<DB: Db + DbInputs>(
             continue;
         }
 
-        if skip.contains(&event.url) {
+        if editor_owned.contains(&event.url) {
             continue;
         }
 

@@ -135,10 +135,10 @@ pub trait DbScan: Db + DbInputs {
 
     /// Apply a batch of file-watcher events. Routes DESCRIPTION events to a
     /// coarse rescan of the containing workspace root (deduped within the
-    /// batch), and R-file events to per-file add / remove. URLs in `skip` are
+    /// batch), and R-file events to per-file add / remove. URLs in `editor_owned` are
     /// left alone, so callers can defer to an in-memory source of truth (e.g.
     /// the editor's open buffers).
-    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, skip: &HashSet<UrlId>);
+    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, editor_owned: &HashSet<UrlId>);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -206,8 +206,8 @@ impl<DB: Db + DbInputs> DbScan for DB {
         watch::remove_watched_file(self, url);
     }
 
-    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, skip: &HashSet<UrlId>) {
-        watch::apply_watcher_events(self, events, skip);
+    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, editor_owned: &HashSet<UrlId>) {
+        watch::apply_watcher_events(self, events, editor_owned);
     }
 }
 
