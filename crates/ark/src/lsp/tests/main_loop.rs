@@ -1,77 +1,105 @@
-//! End-to-end smoke test of the async workspace scan path.
+//! Integration test that drives the real [`GlobalState`] event loop.
 //!
-//! Exercises the real tokio plumbing the LSP main loop relies on:
-//! [`dispatch_scan_requests`] spawning [`ScanRequest::run`] on a
-//! blocking task, the mpsc round-trip back as [`Event::OakScanCompleted`],
-//! and the main-loop apply step. The rest of the scheduler is unit
-//! tested without tokio in `oak_scan`; this test pins the wiring.
+//! Where the handler tests in [`super::state_handlers`] reconstruct the scan
+//! pump by hand, this one feeds an event through the production `handle_event`
+//! and lets the loop dispatch the scan, run it on a blocking task, route the
+//! [`Event::OakScanCompleted`] back, and apply it. So it pins the main loop's
+//! own wiring: which arm calls which handler, and the apply-and-redispatch
+//! step. The scheduler's policy is unit tested without tokio in `oak_scan`.
 
-use std::collections::HashSet;
-use std::fs;
-use std::time::Duration;
+use std::path::Path;
 
 use oak_db::DbInputs;
-use oak_db::OakDatabase;
-use oak_scan::ScanScheduler;
-use tokio::runtime::Runtime;
-use tokio::time::timeout;
+use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp::lsp_types::InitializeParams;
+use tower_lsp::lsp_types::InitializeResult;
+use tower_lsp::lsp_types::WorkspaceFolder;
+use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
+use tower_lsp::Client;
+use tower_lsp::LanguageServer;
+use tower_lsp::LspService;
+use url::Url;
 
-use crate::lsp::main_loop::dispatch_scan_requests;
+use crate::lsp::backend::LspMessage;
+use crate::lsp::backend::LspNotification;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
+use crate::lsp::main_loop::GlobalState;
 
-#[test]
-fn test_workspace_scan_round_trip_through_tokio() {
-    // `dispatch_scan_requests` routes through `lsp::spawn_blocking`, which
-    // hands the `JoinHandle` to the aux loop. Without an aux tx the spawn
-    // helper drops the panic-logging path; init a no-op aux for the test.
-    init_aux_for_test();
+/// Get a real `Client` without a live connection. `LspService::new` hands a
+/// `Client` to its init closure; we capture it and drop the service. The
+/// client's sends go nowhere, which is fine since the event paths under test
+/// never use it.
+fn test_client() -> Client {
+    struct Dummy;
 
-    let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("pkg/R")).unwrap();
-    fs::write(
-        tmp.path().join("pkg/DESCRIPTION"),
-        "Package: pkg\nVersion: 0.0.0\n",
+    #[tower_lsp::async_trait]
+    impl LanguageServer for Dummy {
+        async fn initialize(
+            &self,
+            _: InitializeParams,
+        ) -> tower_lsp::jsonrpc::Result<InitializeResult> {
+            Ok(InitializeResult::default())
+        }
+        async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
+            Ok(())
+        }
+    }
+
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = std::sync::Arc::clone(&captured);
+    let (_service, _socket) = LspService::new(move |client| {
+        *sink.lock().unwrap() = Some(client);
+        Dummy
+    });
+
+    // Bind first so the `MutexGuard` temporary drops at the `;`, not at the
+    // end of the block.
+    let client = captured.lock().unwrap().take();
+    client.unwrap()
+}
+
+fn write_package(dir: &Path, name: &str, basename: &str, contents: &str) {
+    std::fs::create_dir_all(dir.join("R")).unwrap();
+    std::fs::write(
+        dir.join("DESCRIPTION"),
+        format!("Package: {name}\nVersion: 0.0.0\n"),
     )
     .unwrap();
-    fs::write(tmp.path().join("pkg/R/a.R"), "x <- 1\n").unwrap();
+    std::fs::write(dir.join("R").join(basename), contents).unwrap();
+}
 
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async {
-        let mut db = OakDatabase::new();
-        let mut scheduler = ScanScheduler::new();
-        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+/// Drive `didChangeWorkspaceFolders` through the real `handle_event`, including
+/// the real `OakScanCompleted` arm, to check that the main loop wires scan
+/// dispatch and completion-apply together.
+#[tokio::test]
+async fn test_workspace_folder_scan_drives_through_main_loop() {
+    let _aux = init_aux_for_test();
+    let mut state = GlobalState::new_test(test_client());
 
-        // Kick off the scan as `did_change_workspace_folders` would.
-        let initial =
-            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-        assert_eq!(initial.len(), 1);
-        dispatch_scan_requests(&events_tx, initial);
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", "a.R", "x <- 1\n");
 
-        // Pump events until the scheduler stops issuing followups. Each
-        // iteration exercises the real spawn_blocking + mpsc + apply
-        // round-trip the main loop performs in production.
-        loop {
-            let event = timeout(Duration::from_secs(5), events_rx.recv())
-                .await
-                .expect("scan timed out")
-                .expect("event channel closed");
-            let Event::OakScanCompleted(scan) = event else {
-                panic!("unexpected event variant");
-            };
-            let followups = scheduler.apply_scan_completed(&mut db, scan, &HashSet::new());
-            if followups.is_empty() {
-                break;
-            }
-            dispatch_scan_requests(&events_tx, followups);
-        }
+    let params = DidChangeWorkspaceFoldersParams {
+        event: WorkspaceFoldersChangeEvent {
+            added: vec![WorkspaceFolder {
+                uri: Url::from_file_path(tmp.path()).unwrap(),
+                name: String::new(),
+            }],
+            removed: vec![],
+        },
+    };
+    state
+        .handle_event_to_quiescence(Event::Lsp(LspMessage::Notification(
+            LspNotification::DidChangeWorkspaceFolders(params),
+        )))
+        .await;
 
-        // Workspace state reflects the on-disk package.
-        let roots = db.workspace_roots().roots(&db).clone();
-        assert_eq!(roots.len(), 1);
-        let packages = roots[0].packages(&db).clone();
-        assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name(&db), "pkg");
-        assert_eq!(packages[0].files(&db).len(), 1);
-    });
+    let db = &state.world().db;
+    let roots = db.workspace_roots().roots(db).clone();
+    assert_eq!(roots.len(), 1);
+    let packages = roots[0].packages(db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(db), "pkg");
+    assert_eq!(packages[0].files(db).len(), 1);
 }
