@@ -647,21 +647,12 @@ fn send_auxiliary(event: AuxiliaryEvent) {
 ///
 /// Production wires the sender during `AuxiliaryState::start`. Tests don't
 /// run that path, so `with_auxiliary_tx` would panic. This sets a sender
-/// into the static and keeps the receiver alive in a process-lifetime
-/// `OnceLock` so sends don't error. Nobody drains the receiver: events
-/// accumulate for the test process, which is fine in practice.
-///
-/// Idempotent and parallel-test-safe: only the first caller initialises;
-/// the rest no-op.
+/// into the static and returns the receiver so tests can assert on events.
 #[cfg(test)]
-pub(crate) fn init_aux_for_test() {
-    use std::sync::OnceLock;
-    static RX_GUARD: OnceLock<TokioUnboundedReceiver<AuxiliaryEvent>> = OnceLock::new();
-    RX_GUARD.get_or_init(|| {
-        let (tx, rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
-        *AUXILIARY_EVENT_TX.write().unwrap() = Some(tx);
-        rx
-    });
+pub(crate) fn init_aux_for_test() -> TokioUnboundedReceiver<AuxiliaryEvent> {
+    let (tx, rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+    *AUXILIARY_EVENT_TX.write().unwrap() = Some(tx);
+    rx
 }
 
 /// Send a message to the LSP client. This is non-blocking and treated on a

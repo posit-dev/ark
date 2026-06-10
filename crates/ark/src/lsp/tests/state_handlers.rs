@@ -522,7 +522,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // to orphan, editor-owned) → close → file leaves orphan, lands in
     // stale. Without the `close_editor` hook in `did_close`, the file
     // would zombie in orphan with the editor's last content.
-    init_aux_for_test();
+    let _aux_rx = init_aux_for_test();
 
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
