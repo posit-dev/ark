@@ -33,7 +33,9 @@ if (length(path) == 0L) {
     quit(status = 1L)
 }
 
-# Make sure installed version matches the requested version
+# Make sure installed version matches the requested version.
+# Normalize both to `package_version`s to handle versions like sf's 1.1-1.
+version <- as.character(package_version(version))
 installed_version <- as.character(packageVersion(package))
 if (installed_version != version) {
     message(paste0(

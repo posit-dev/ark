@@ -126,21 +126,21 @@ impl SemanticIndex {
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
     /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn file_exports(&self) -> FxHashMap<&str, TextRange> {
+    pub fn exports(&self) -> FxHashMap<&str, &Definition> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
         let mut exports = FxHashMap::default();
         for (_id, def) in self.definitions[file_scope].iter() {
             let name = symbols.symbol(def.symbol()).name();
-            exports.insert(name, def.range());
+            exports.insert(name, def);
         }
 
         exports
     }
 
     /// Package names from `library()` / `require()` calls in this file.
-    pub fn file_attached_packages(&self) -> Vec<&str> {
+    pub fn attached_packages(&self) -> Vec<&str> {
         self.semantic_calls
             .iter()
             .filter_map(|c| match &c.kind {
@@ -161,7 +161,7 @@ impl SemanticIndex {
         // Start at the file scope
         let mut current = ScopeId::from(0);
         'outer: loop {
-            for child_id in self.child_scopes(current) {
+            for child_id in self.child_scope_ids(current) {
                 if self.scopes[child_id].range.contains(offset) {
                     current = child_id;
                     continue 'outer;
@@ -189,38 +189,98 @@ impl SemanticIndex {
     }
 
     /// Iterate direct child scopes of `scope`.
-    pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
-        let descendants = &self.scopes[scope].descendants;
-        ChildScopesIter {
+    pub fn child_scope_ids(&self, scope_id: ScopeId) -> ChildScopeIdsIter<'_> {
+        let descendants = &self.scopes[scope_id].descendants;
+        ChildScopeIdsIter {
             index: self,
             current: descendants.start,
             end: descendants.end,
         }
     }
 
+    /// Iterate over every scope in the file (source order, file scope first).
+    pub fn scope_ids(&self) -> impl Iterator<Item = ScopeId> + '_ {
+        self.scopes.iter().map(|(id, _)| id)
+    }
+
     /// Walk from `scope` up through ancestors to the file root. Note that
     /// `scope` itself is included in the ancestors.
-    pub fn ancestor_scopes(&self, scope: ScopeId) -> AncestorsIter<'_> {
-        AncestorsIter {
+    pub fn ancestor_scope_ids(&self, scope_id: ScopeId) -> AncestorScopeIdsIter<'_> {
+        AncestorScopeIdsIter {
             index: self,
-            current: Some(scope),
+            current: Some(scope_id),
         }
     }
 
     /// Resolve a name starting from `scope`, walking up the scope chain.
-    pub fn resolve_symbol(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, SymbolId)> {
-        for ancestor in self.ancestor_scopes(scope) {
-            if let Some(id) = self.symbol_tables[ancestor].id(name) {
-                if self.symbol_tables[ancestor]
-                    .symbol(id)
-                    .flags()
-                    .contains(SymbolFlags::IS_BOUND)
-                {
-                    return Some((ancestor, id));
-                }
+    /// Returns the scope that owns the binding, the `DefinitionId` of the
+    /// first matching [`Definition`] in that scope (source-order first),
+    /// and a borrow of the definition itself.
+    pub fn resolve(
+        &self,
+        name: &str,
+        scope: ScopeId,
+    ) -> Option<(ScopeId, DefinitionId, &Definition)> {
+        for ancestor in self.ancestor_scope_ids(scope) {
+            let Some(symbol_id) = self.symbol_tables[ancestor].id(name) else {
+                continue;
+            };
+            if !self.symbol_tables[ancestor]
+                .symbol(symbol_id)
+                .flags()
+                .contains(SymbolFlags::IS_BOUND)
+            {
+                continue;
             }
+
+            // `IS_BOUND` iff at least one `Definition` was recorded for
+            // this symbol. The builder maintains this in lockstep, so the
+            // panic below is unreachable.
+            let (def_id, def) = match self.definitions[ancestor]
+                .iter()
+                .find(|(_id, d)| d.symbol() == symbol_id)
+            {
+                Some(pair) => pair,
+                None => unreachable!(
+                    "IS_BOUND symbol {name:?} in scope {ancestor:?} has no \
+                    Definition: oak_semantic builder invariant violated"
+                ),
+            };
+            return Some((ancestor, def_id, def));
         }
+
         None
+    }
+
+    /// All definitions that could reach the use at `(scope, use_id)`.
+    ///
+    /// The local use-def bindings always count. The enclosing-scope snapshot
+    /// also counts when `may_be_unbound` is true. That happens when the local
+    /// binding doesn't cover every control-flow path, so execution can fall
+    /// through to the outer scope.
+    ///
+    /// When `may_be_unbound` is false we deliberately skip the enclosing scope.
+    /// Otherwise a shadowed inner use would also bind to the outer def of the
+    /// same name.
+    pub fn reaching_definitions(
+        &self,
+        scope_id: ScopeId,
+        use_id: UseId,
+    ) -> impl Iterator<Item = (ScopeId, DefinitionId)> + '_ {
+        let bindings = self.use_def_map(scope_id).bindings_at_use(use_id);
+        let local = bindings.definitions().iter().map(move |&d| (scope_id, d));
+
+        let enclosing = if bindings.may_be_unbound() {
+            let symbol_id = self.uses(scope_id)[use_id].symbol();
+            self.enclosing_bindings(scope_id, symbol_id)
+        } else {
+            None
+        };
+        let enclosing_iter = enclosing.into_iter().flat_map(|(scope, bindings)| {
+            bindings.definitions().iter().map(move |&def| (scope, def))
+        });
+
+        local.chain(enclosing_iter)
     }
 
     /// Resolve a free variable's bindings from the enclosing scope.
@@ -484,12 +544,6 @@ impl SymbolFlags {
 // definition without invalidating the definition's identity (file + scope +
 // place) or the UseDefMap.
 //
-// Definitions carry `file` and `scope` so they're self-contained when
-// passed around (e.g., through `DefinitionKind::Import` chains during
-// cross-file goto-definition). This mirrors ty's `Definition<'db>`, a
-// salsa tracked struct that carries file + scope + place for the same
-// reason.
-//
 // Type inference will eventually take a definition as input and inspect
 // the syntax node (via the kind) to determine the type.
 //
@@ -502,11 +556,6 @@ impl SymbolFlags {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
-    /// The file that owns this definition's index.
-    // TODO(salsa): Should become a File.
-    pub(crate) file: Url,
-    /// The scope within the file's index where this definition lives.
-    pub(crate) scope: ScopeId,
     // TODO(salsa): Should become a PlaceId (like ty's `ScopedPlaceId`).
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -538,14 +587,6 @@ impl Definition {
 
     pub fn range(&self) -> TextRange {
         self.range
-    }
-
-    pub fn file(&self) -> &Url {
-        &self.file
-    }
-
-    pub fn scope(&self) -> ScopeId {
-        self.scope
     }
 }
 
@@ -623,13 +664,13 @@ impl SemanticCall {
 
 // --- Iterators ---
 
-pub struct ChildScopesIter<'a> {
+pub struct ChildScopeIdsIter<'a> {
     index: &'a SemanticIndex,
     current: ScopeId,
     end: ScopeId,
 }
 
-impl<'a> Iterator for ChildScopesIter<'a> {
+impl<'a> Iterator for ChildScopeIdsIter<'a> {
     type Item = ScopeId;
 
     fn next(&mut self) -> Option<ScopeId> {
@@ -643,12 +684,12 @@ impl<'a> Iterator for ChildScopesIter<'a> {
     }
 }
 
-pub struct AncestorsIter<'a> {
+pub struct AncestorScopeIdsIter<'a> {
     index: &'a SemanticIndex,
     current: Option<ScopeId>,
 }
 
-impl<'a> Iterator for AncestorsIter<'a> {
+impl<'a> Iterator for AncestorScopeIdsIter<'a> {
     type Item = ScopeId;
 
     fn next(&mut self) -> Option<ScopeId> {

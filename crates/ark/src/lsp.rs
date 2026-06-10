@@ -19,7 +19,6 @@ pub mod document_context;
 pub mod events;
 pub mod folding_range;
 pub mod goto_definition;
-pub mod goto_definition_legacy;
 pub mod handler;
 pub mod handlers;
 pub mod help;
@@ -32,7 +31,8 @@ pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
 
-pub mod references;
+pub mod find_references;
+pub mod rename;
 pub mod selection_range;
 pub mod signature_help;
 pub mod state;
@@ -41,6 +41,9 @@ pub mod statement_range;
 pub mod symbols;
 pub mod traits;
 pub mod util;
+
+#[cfg(test)]
+mod tests;
 
 // These send LSP messages in a non-async and non-blocking way.
 // The LOG level is not timestamped so we're not using it.

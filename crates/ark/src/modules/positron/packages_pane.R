@@ -16,7 +16,7 @@
 # active project, so the same call works for pak/base/renv callers.
 #' @export
 .ps.rpc.pkg_list <- function(method = c("pak", "base", "renv")) {
-    ip <- utils::installed.packages()
+    ip <- utils::installed.packages(fields = "Description")
     name <- ip[, "Package"]
     version <- ip[, "Version"]
     id <- paste0(name, "-", version)
@@ -24,6 +24,16 @@
     # "loaded" here since loadedNamespaces() is a strict superset (a
     # package can be loaded as a dependency without being attached).
     attached <- paste0("package:", name) %in% search()
+    # DESCRIPTION wraps Description across lines; R's DCF parser preserves
+    # the embedded newlines and runs of spaces. Collapse all whitespace
+    # runs to a single space and strip the edges so the card renders as
+    # one flowing string. NA (missing field) becomes "".
+    description <- trimws(gsub(
+        "\\s+",
+        " ",
+        ifelse(is.na(ip[, "Description"]), "", ip[, "Description"]),
+        perl = TRUE
+    ))
     # `Map(list, id = ...)` would name the output list by `id`'s values
     # (mapply USE.NAMES semantics for a character first arg), and a named
     # list serializes to a JSON object instead of the array the frontend
@@ -34,7 +44,8 @@
         name = name,
         displayName = name,
         version = version,
-        attached = attached
+        attached = attached,
+        description = description
     ))
 }
 
@@ -87,13 +98,21 @@
     as.list(version)
 }
 
-# Return the list of outdated pacakages.
+# Return the list of outdated packages with their latest available versions.
+#
+# `utils::old.packages()` queries the user's configured repositories, so
+# `ReposVer` is the authoritative latest version for this session -- it reflects
+# what an upgrade would actually fetch, which P3M (a generic upstream mirror)
+# cannot guarantee.
 #' @export
 .ps.rpc.pkg_outdated <- function() {
     outdated <- utils::old.packages()
     if (is.null(outdated) || nrow(outdated) == 0) {
         return(list())
     }
-    # Return as list to ensure it serializes as an array
-    as.list(outdated[, "Package"])
+    unname(Map(
+        list,
+        name = outdated[, "Package"],
+        latestVersion = outdated[, "ReposVer"]
+    ))
 }

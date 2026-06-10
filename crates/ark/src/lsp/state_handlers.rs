@@ -5,6 +5,7 @@
 //
 //
 
+use aether_url::UrlId;
 use anyhow::anyhow;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
@@ -31,6 +32,7 @@ use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::OneOf;
 use tower_lsp::lsp_types::RenameFilesParams;
+use tower_lsp::lsp_types::RenameOptions;
 use tower_lsp::lsp_types::SelectionRangeProviderCapability;
 use tower_lsp::lsp_types::ServerCapabilities;
 use tower_lsp::lsp_types::ServerInfo;
@@ -58,7 +60,6 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
-use crate::url::UrlId;
 
 // Handlers that mutate the world state
 
@@ -164,6 +165,12 @@ pub(crate) fn initialize(
             type_definition_provider: None,
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             references_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            })),
             document_symbol_provider: Some(OneOf::Left(true)),
             folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
             workspace_symbol_provider: Some(OneOf::Left(true)),

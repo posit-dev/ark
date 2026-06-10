@@ -1,3 +1,572 @@
+use aether_parser::parse;
+use aether_parser::RParserOptions;
+use aether_syntax::RSyntaxNode;
+use biome_rowan::TextRange;
+use biome_rowan::TextSize;
+use oak_ide::goto_definition;
+use oak_ide::FilePosition;
+use oak_ide::NavigationTarget;
+use oak_semantic::build_index;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::NoopImportsResolver;
+use url::Url;
+
+fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let index = build_index(&parsed.tree(), NoopImportsResolver);
+    (root, index)
+}
+
+fn text_range(start: u32, end: u32) -> TextRange {
+    TextRange::new(TextSize::from(start), TextSize::from(end))
+}
+
+fn file_url(name: &str) -> Url {
+    Url::parse(&format!("file:///project/R/{name}")).unwrap()
+}
+
+fn offset(n: u32) -> TextSize {
+    TextSize::from(n)
+}
+
+fn pos(file: &Url, n: u32) -> FilePosition {
+    FilePosition {
+        file: file.clone(),
+        offset: offset(n),
+    }
+}
+
+// --- Local resolution ---
+
+#[test]
+fn test_local_simple() {
+    // "x <- 1\nx\n"
+    //  0123456 78
+    let source = "x <- 1\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+#[test]
+fn test_local_reassignment_shadows() {
+    // Straight-line reassignment: second def kills the first
+    let source = "x <- 1\nx <- 2\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(7, 8),
+        focus_range: text_range(7, 8),
+    }]);
+}
+
+#[test]
+fn test_local_conditional_returns_both() {
+    let source = "if (TRUE) x <- 1 else x <- 2\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let use_offset = source.rfind('x').unwrap() as u32;
+
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets, vec![
+        NavigationTarget {
+            file: file.clone(),
+            name: "x".to_string(),
+            full_range: text_range(10, 11),
+            focus_range: text_range(10, 11),
+        },
+        NavigationTarget {
+            file,
+            name: "x".to_string(),
+            full_range: text_range(22, 23),
+            focus_range: text_range(22, 23),
+        },
+    ]);
+}
+
+#[test]
+fn test_local_in_function() {
+    let source = "f <- function() {\n  x <- 1\n  x\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let use_offset = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(20, 21),
+        focus_range: text_range(20, 21),
+    }]);
+}
+
+#[test]
+fn test_local_parameter() {
+    let source = "f <- function(x) {\n  x\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let use_offset = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(14, 15),
+        focus_range: text_range(14, 15),
+    }]);
+}
+
+// --- Enclosing scope resolution ---
+
+#[test]
+fn test_enclosing_scope() {
+    let source = "x <- 1\nf <- function() {\n  x\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let use_offset = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+#[test]
+fn test_conditional_local_falls_through_to_enclosing() {
+    // Inside `f`, `x` is conditionally defined: bindings = {inner def}
+    // with `may_be_unbound = true`. At runtime the use of `x` reaches
+    // either the inner def (when the branch ran) or the outer def (when
+    // it didn't). Goto-def should return both.
+    //
+    //  "x <- 1\nf <- function(cond) {\n  if (cond) x <- 2\n  x\n}\n"
+    //   0      7                       30           42       49
+    let source = "x <- 1\nf <- function(cond) {\n  if (cond) x <- 2\n  x\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let outer_def = source.find("x <- 1").unwrap() as u32;
+    let inner_def = source.find("x <- 2").unwrap() as u32;
+    let use_offset = source.rfind('x').unwrap() as u32;
+
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    let ranges: Vec<_> = targets.into_iter().map(|t| t.full_range).collect();
+    assert!(ranges.contains(&text_range(outer_def, outer_def + 1)));
+    assert!(ranges.contains(&text_range(inner_def, inner_def + 1)));
+    assert_eq!(ranges.len(), 2);
+}
+
+// --- Member access (`$`) ---
+
+#[test]
+fn test_dollar_lhs_resolves() {
+    // Cursor on `foo` in `foo$bar` resolves to the definition of `foo`
+    let source = "foo <- list()\nfoo$bar\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // `foo` in `foo$bar` starts at offset 14
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "foo".to_string(),
+        full_range: text_range(0, 3),
+        focus_range: text_range(0, 3),
+    }]);
+}
+
+#[test]
+fn test_dollar_rhs_no_resolution() {
+    // Cursor on `bar` in `foo$bar`: member names are not tracked by the index
+    let source = "foo <- list()\nfoo$bar\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // `bar` starts at offset 18
+    let targets = goto_definition(&idx, &root, &pos(&file, 18));
+    assert!(targets.is_empty());
+}
+
+// --- No resolution ---
+
+#[test]
+fn test_no_use_at_offset() {
+    let source = "x <- 1\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 3));
+    assert!(targets.is_empty());
+}
+
+#[test]
+fn test_unresolved_symbol() {
+    let source = "foo\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
+    assert!(targets.is_empty());
+}
+
+// --- Definition site navigation ---
+
+#[test]
+fn test_definition_site_assignment() {
+    // Cursor on the `foo` in `foo <- 1` should navigate to itself
+    let source = "foo <- 1\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "foo".to_string(),
+        full_range: text_range(0, 3),
+        focus_range: text_range(0, 3),
+    }]);
+}
+
+#[test]
+fn test_definition_site_parameter() {
+    let source = "f <- function(x) { x }\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // Cursor on the `x` parameter name (offset 14)
+    let targets = goto_definition(&idx, &root, &pos(&file, 14));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(14, 15),
+        focus_range: text_range(14, 15),
+    }]);
+}
+
+#[test]
+fn test_definition_site_for_variable() {
+    let source = "for (i in 1:10) i\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // Cursor on the `i` in `for (i in ...)`
+    let targets = goto_definition(&idx, &root, &pos(&file, 5));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "i".to_string(),
+        full_range: text_range(5, 6),
+        focus_range: text_range(5, 6),
+    }]);
+}
+
+// --- Right assignment ---
+
+#[test]
+fn test_right_assignment_definition_site() {
+    // `1 -> x`: cursor on `x` (the definition target)
+    let source = "1 -> x\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 5));
+    assert_eq!(targets, vec![NavigationTarget {
+        file: file.clone(),
+        name: "x".to_string(),
+        full_range: text_range(5, 6),
+        focus_range: text_range(5, 6),
+    }]);
+}
+
+#[test]
+fn test_right_assignment_use_resolves() {
+    // `1 -> x` then use `x`
+    let source = "1 -> x\nx\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(5, 6),
+        focus_range: text_range(5, 6),
+    }]);
+}
+
+// --- Super assignment ---
+
+#[test]
+fn test_super_assignment_resolves_in_enclosing() {
+    // `x <<- 1` inside a function creates a definition in the file scope.
+    // A use of `x` in another function should resolve to it.
+    let source = "f <- function() x <<- 1\ng <- function() x\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // `x` use in `g` body
+    let use_offset = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+    assert_eq!(targets[0].file, file);
+}
+
+#[test]
+fn test_super_assignment_definition_site() {
+    // Cursor on `x` in `x <<- 1`
+    let source = "f <- function() {\n  x <<- 1\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // `x` at offset 20
+    let def_offset = source.find("x <<-").unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, def_offset));
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+}
+
+// --- String definitions ---
+
+#[test]
+fn test_string_definition() {
+    // `"foo" <- 1` is equivalent to `foo <- 1` in R
+    let source = "\"foo\" <- 1\nfoo\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // Use of `foo` at offset 11
+    let targets = goto_definition(&idx, &root, &pos(&file, 11));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "foo".to_string(),
+        // The definition range covers the string literal `"foo"`
+        full_range: text_range(0, 5),
+        focus_range: text_range(0, 5),
+    }]);
+}
+
+// --- Nested functions ---
+
+#[test]
+fn test_deeply_nested_function() {
+    // Free variable `z` resolves through two function scopes to file scope
+    let source = "z <- 1\nf <- function() {\n  g <- function() {\n    z\n  }\n}\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    let use_offset = source.rfind('z').unwrap() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, use_offset));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "z".to_string(),
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+// --- Use on RHS of assignment ---
+
+#[test]
+fn test_use_on_rhs_of_assignment() {
+    // `x <- x + 1`: the `x` on the RHS refers to the previous binding
+    let source = "x <- 1\nx <- x + 1\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // The `x` on the RHS of the second assignment. `x <- x + 1` starts at
+    // offset 7, the RHS `x` is at offset 12.
+    let rhs_offset = 7 + "x <- ".len() as u32;
+    let targets = goto_definition(&idx, &root, &pos(&file, rhs_offset));
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        // Resolves to the first definition
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+// --- Namespace access (`::`, `:::`) returns empty in the within-file handler ---
+
+#[test]
+fn test_namespace_access_returns_empty() {
+    let source = "dplyr::mutate\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+
+    // Cursor on `mutate` (offset 7)
+    let targets = goto_definition(&idx, &root, &pos(&file, 7));
+    assert!(targets.is_empty());
+
+    // Cursor on `dplyr` (offset 0)
+    let targets = goto_definition(&idx, &root, &pos(&file, 0));
+    assert!(targets.is_empty());
+}
+
+// --- Identifier::classify keeps recognizing `pkg::sym` ---
+
+#[test]
+fn test_namespace_classify() {
+    use oak_ide::Identifier;
+
+    let source = "dplyr::mutate\n";
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
+
+    // Cursor on `mutate` (offset 7)
+    let ident = Identifier::classify(&idx, &root, offset(7));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "dplyr".to_string(),
+            symbol: "mutate".to_string(),
+            internal: false,
+            package_range: text_range(0, 5),
+            symbol_range: text_range(7, 13),
+        })
+    );
+
+    // Cursor on `dplyr` (offset 2)
+    let ident = Identifier::classify(&idx, &root, offset(2));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "dplyr".to_string(),
+            symbol: "mutate".to_string(),
+            internal: false,
+            package_range: text_range(0, 5),
+            symbol_range: text_range(7, 13),
+        })
+    );
+}
+
+#[test]
+fn test_namespace_classify_triple_colon() {
+    use oak_ide::Identifier;
+
+    let source = "pkg:::sym\n";
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
+
+    let ident = Identifier::classify(&idx, &root, offset(6));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "pkg".to_string(),
+            symbol: "sym".to_string(),
+            internal: true,
+            package_range: text_range(0, 3),
+            symbol_range: text_range(6, 9),
+        })
+    );
+}
+
+#[test]
+fn test_namespace_classify_in_call() {
+    use oak_ide::Identifier;
+
+    // foo::bar()
+    // 0123456789
+    let source = "foo::bar()\n";
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
+
+    let ident = Identifier::classify(&idx, &root, offset(5));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "foo".to_string(),
+            symbol: "bar".to_string(),
+            internal: false,
+            package_range: text_range(0, 3),
+            symbol_range: text_range(5, 8),
+        })
+    );
+}
+
+#[test]
+fn test_namespace_classify_in_extract() {
+    use oak_ide::Identifier;
+
+    // foo::bar$baz
+    // 0123456789...
+    let source = "foo::bar$baz\n";
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
+
+    // Cursor on `bar` (offset 5) -- inside the RNamespaceExpression
+    let ident = Identifier::classify(&idx, &root, offset(5));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "foo".to_string(),
+            symbol: "bar".to_string(),
+            internal: false,
+            package_range: text_range(0, 3),
+            symbol_range: text_range(5, 8),
+        })
+    );
+
+    // Cursor on `baz` (offset 9) -- RHS of $, not a namespace access
+    let ident = Identifier::classify(&idx, &root, offset(9));
+    assert_eq!(ident, None);
+}
+
+#[test]
+fn test_namespace_classify_string_selectors() {
+    use oak_ide::Identifier;
+
+    // "foo"::"bar"
+    //  0123456789...
+    let source = "\"foo\"::\"bar\"\n";
+    let parsed = parse(source, RParserOptions::default());
+    let root = parsed.syntax();
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
+
+    let ident = Identifier::classify(&idx, &root, offset(7));
+    assert_eq!(
+        ident,
+        Some(Identifier::NamespaceAccess {
+            package: "foo".to_string(),
+            symbol: "bar".to_string(),
+            internal: false,
+            package_range: text_range(0, 5),
+            symbol_range: text_range(7, 12),
+        })
+    );
+}
+
+// Parked cross-file goto-definition tests pending the Salsa Oak wiring.
+//
+// Snapshot of the old `LegacyDb`-based suite, trimmed to the cross-file cases
+// that the within-file handler doesn't cover (`source()`, package collation,
+// `library()`, NAMESPACE imports, `pkg::sym` resolution). Intra-file tests live
+// in the active section above. `#[cfg(any())]` skips this block at compile time
+// so the references to deleted types (`LegacyDb`, `ExternalScope`,
+// `ScopeLayer`, ...) stay as the behavioural spec to re-implement on top of
+// `oak_db::File::resolve_at`.
+#[cfg(any())]
+#[rustfmt::skip]
+mod parked_salsa_tests {
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,14 +582,15 @@ use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
+use oak_semantic::build_index;
 use oak_semantic::library::Library;
 use oak_semantic::package::Package;
 use oak_semantic::scope_layer::file_layers;
 use oak_semantic::scope_layer::ScopeLayer;
-use oak_semantic::semantic_index;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::ImportsResolver;
+use oak_semantic::NoopImportsResolver;
 use oak_semantic::ScopeId;
 use oak_semantic::SourceResolution;
 use oak_sources::test::TestPackageCache;
@@ -30,8 +600,19 @@ use url::Url;
 fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let index = semantic_index(&parsed.tree(), &file_url("test.R"));
+    let index = build_index(&parsed.tree(), NoopImportsResolver);
     (root, index)
+}
+
+/// Cross-file resolver that returns the same resolution for any path. Used
+/// by the source()-resolution tests below; the path argument is irrelevant
+/// because each test wires a single sourced file.
+struct ConstResolver(SourceResolution);
+
+impl ImportsResolver for ConstResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        Some(self.0.clone())
+    }
 }
 
 struct TestDb {
@@ -44,7 +625,7 @@ impl LegacyDb for TestDb {
         // Rebuild from source for tests. We store the source instead.
         self.sources.get(file).map(|source| {
             let parsed = parse(source, RParserOptions::default());
-            semantic_index(&parsed.tree(), file)
+            build_index(&parsed.tree(), NoopImportsResolver)
         })
     }
     fn library(&self) -> &Library {
@@ -137,182 +718,6 @@ fn file_url(name: &str) -> Url {
 
 fn offset(n: u32) -> TextSize {
     TextSize::from(n)
-}
-
-// --- Local resolution ---
-
-#[test]
-fn test_local_simple() {
-    // "x <- 1\nx\n"
-    //  0123456 78
-    let source = "x <- 1\nx\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(7),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(0, 1),
-        focus_range: text_range(0, 1),
-    }]);
-}
-
-#[test]
-fn test_local_reassignment_shadows() {
-    // Straight-line reassignment: second def kills the first
-    let source = "x <- 1\nx <- 2\nx\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(14),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(7, 8),
-        focus_range: text_range(7, 8),
-    }]);
-}
-
-#[test]
-fn test_local_conditional_returns_both() {
-    let source = "if (TRUE) x <- 1 else x <- 2\nx\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let use_offset = source.rfind('x').unwrap() as u32;
-
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![
-        NavigationTarget {
-            file: file.clone(),
-            name: "x".to_string(),
-            full_range: text_range(10, 11),
-            focus_range: text_range(10, 11),
-        },
-        NavigationTarget {
-            file,
-            name: "x".to_string(),
-            full_range: text_range(22, 23),
-            focus_range: text_range(22, 23),
-        },
-    ]);
-}
-
-#[test]
-fn test_local_in_function() {
-    let source = "f <- function() {\n  x <- 1\n  x\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(20, 21),
-        focus_range: text_range(20, 21),
-    }]);
-}
-
-#[test]
-fn test_local_parameter() {
-    let source = "f <- function(x) {\n  x\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(14, 15),
-        focus_range: text_range(14, 15),
-    }]);
-}
-
-// --- Enclosing scope resolution ---
-
-#[test]
-fn test_enclosing_scope() {
-    let source = "x <- 1\nf <- function() {\n  x\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(0, 1),
-        focus_range: text_range(0, 1),
-    }]);
 }
 
 // --- External resolution: project file ---
@@ -412,59 +817,6 @@ fn test_external_import_from() {
     assert!(targets.is_empty());
 }
 
-// --- Member access (`$`) ---
-
-#[test]
-fn test_dollar_lhs_resolves() {
-    // Cursor on `foo` in `foo$bar` resolves to the definition of `foo`
-    let source = "foo <- list()\nfoo$bar\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // `foo` in `foo$bar` starts at offset 14
-    let targets = goto_definition(
-        &db,
-        offset(14),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "foo".to_string(),
-        full_range: text_range(0, 3),
-        focus_range: text_range(0, 3),
-    }]);
-}
-
-#[test]
-fn test_dollar_rhs_no_resolution() {
-    // Cursor on `bar` in `foo$bar`: member names are not tracked by the index
-    let source = "foo <- list()\nfoo$bar\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // `bar` starts at offset 18
-    let targets = goto_definition(
-        &db,
-        offset(18),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert!(targets.is_empty());
-}
-
 // --- Use inside function body with cross-file definition ---
 
 #[test]
@@ -506,50 +858,6 @@ fn test_use_in_function_body_resolves_via_external() {
         full_range: text_range(0, 7),
         focus_range: text_range(0, 7),
     }]);
-}
-
-// --- No resolution ---
-
-#[test]
-fn test_no_use_at_offset() {
-    let source = "x <- 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(3),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert!(targets.is_empty());
-}
-
-#[test]
-fn test_unresolved_symbol() {
-    let source = "foo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(0),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert!(targets.is_empty());
 }
 
 // --- Local takes precedence over external ---
@@ -625,293 +933,6 @@ fn test_conditional_definition_includes_external() {
             focus_range: text_range(0, 1),
         },
     ]);
-}
-
-// --- Definition site navigation ---
-
-#[test]
-fn test_definition_site_assignment() {
-    // Cursor on the `foo` in `foo <- 1` should navigate to itself
-    let source = "foo <- 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(0),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "foo".to_string(),
-        full_range: text_range(0, 3),
-        focus_range: text_range(0, 3),
-    }]);
-}
-
-#[test]
-fn test_definition_site_parameter() {
-    let source = "f <- function(x) { x }\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // Cursor on the `x` parameter name (offset 14)
-    let targets = goto_definition(
-        &db,
-        offset(14),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(14, 15),
-        focus_range: text_range(14, 15),
-    }]);
-}
-
-#[test]
-fn test_definition_site_for_variable() {
-    let source = "for (i in 1:10) i\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // Cursor on the `i` in `for (i in ...)`
-    let targets = goto_definition(
-        &db,
-        offset(5),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "i".to_string(),
-        full_range: text_range(5, 6),
-        focus_range: text_range(5, 6),
-    }]);
-}
-
-// --- Right assignment ---
-
-#[test]
-fn test_right_assignment_definition_site() {
-    // `1 -> x`: cursor on `x` (the definition target)
-    let source = "1 -> x\nx\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(5),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file: file.clone(),
-        name: "x".to_string(),
-        full_range: text_range(5, 6),
-        focus_range: text_range(5, 6),
-    }]);
-}
-
-#[test]
-fn test_right_assignment_use_resolves() {
-    // `1 -> x` then use `x`
-    let source = "1 -> x\nx\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let targets = goto_definition(
-        &db,
-        offset(7),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(5, 6),
-        focus_range: text_range(5, 6),
-    }]);
-}
-
-// --- Super assignment ---
-
-#[test]
-fn test_super_assignment_resolves_in_enclosing() {
-    // `x <<- 1` inside a function creates a definition in the file scope.
-    // A use of `x` in another function should resolve to it.
-    let source = "f <- function() x <<- 1\ng <- function() x\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // `x` use in `g` body
-    let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].name, "x");
-    assert_eq!(targets[0].file, file);
-}
-
-#[test]
-fn test_super_assignment_definition_site() {
-    // Cursor on `x` in `x <<- 1`
-    let source = "f <- function() {\n  x <<- 1\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // `x` at offset 20
-    let def_offset = source.find("x <<-").unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(def_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].name, "x");
-}
-
-// --- String definitions ---
-
-#[test]
-fn test_string_definition() {
-    // `"foo" <- 1` is equivalent to `foo <- 1` in R
-    let source = "\"foo\" <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // Use of `foo` at offset 11
-    let targets = goto_definition(
-        &db,
-        offset(11),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "foo".to_string(),
-        // The definition range covers the string literal `"foo"`
-        full_range: text_range(0, 5),
-        focus_range: text_range(0, 5),
-    }]);
-}
-
-// --- Nested functions ---
-
-#[test]
-fn test_deeply_nested_function() {
-    // Free variable `z` resolves through two function scopes to file scope
-    let source = "z <- 1\nf <- function() {\n  g <- function() {\n    z\n  }\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    let use_offset = source.rfind('z').unwrap() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(use_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "z".to_string(),
-        full_range: text_range(0, 1),
-        focus_range: text_range(0, 1),
-    }]);
-}
-
-// --- Use on RHS of assignment ---
-
-#[test]
-fn test_use_on_rhs_of_assignment() {
-    // `x <- x + 1`: the `x` on the RHS refers to the previous binding
-    let source = "x <- 1\nx <- x + 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-    let db = TestDb {
-        library: empty_library(),
-        sources: HashMap::new(),
-    };
-
-    // The `x` on the RHS of the second assignment. `x <- x + 1` starts at
-    // offset 7, the RHS `x` is at offset 12.
-    let rhs_offset = 7 + "x <- ".len() as u32;
-    let targets = goto_definition(
-        &db,
-        offset(rhs_offset),
-        &file,
-        &root,
-        &idx,
-        &ExternalScope::default(),
-    );
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        // Resolves to the first definition
-        full_range: text_range(0, 1),
-        focus_range: text_range(0, 1),
-    }]);
 }
 
 // --- library() directive in predecessor file ---
@@ -1156,64 +1177,6 @@ fn test_fixme_namespace_access_cursor_on_operator() {
 }
 
 #[test]
-fn test_namespace_classify() {
-    use oak_ide::Identifier;
-
-    let source = "dplyr::mutate\n";
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let idx = semantic_index(&parsed.tree(), &file_url("test.R"));
-
-    // Cursor on `mutate` (offset 7)
-    let ident = Identifier::classify(&root, &idx, offset(7));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "dplyr".to_string(),
-            symbol: "mutate".to_string(),
-            internal: false,
-            package_range: text_range(0, 5),
-            symbol_range: text_range(7, 13),
-        })
-    );
-
-    // Cursor on `dplyr` (offset 2)
-    let ident = Identifier::classify(&root, &idx, offset(2));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "dplyr".to_string(),
-            symbol: "mutate".to_string(),
-            internal: false,
-            package_range: text_range(0, 5),
-            symbol_range: text_range(7, 13),
-        })
-    );
-}
-
-#[test]
-fn test_namespace_classify_triple_colon() {
-    use oak_ide::Identifier;
-
-    let source = "pkg:::sym\n";
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let idx = semantic_index(&parsed.tree(), &file_url("test.R"));
-
-    let ident = Identifier::classify(&root, &idx, offset(6));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "pkg".to_string(),
-            symbol: "sym".to_string(),
-            internal: true,
-            package_range: text_range(0, 3),
-            symbol_range: text_range(6, 9),
-        })
-    );
-}
-
-#[test]
 fn test_namespace_access_in_call() {
     // foo::bar() — cursor on `bar`
     let source = "foo::bar()\n";
@@ -1269,83 +1232,6 @@ fn test_namespace_access_in_extract() {
     assert_eq!(target.name, "bar".to_string());
 }
 
-#[test]
-fn test_namespace_classify_in_call() {
-    use oak_ide::Identifier;
-
-    // foo::bar()
-    // 0123456789
-    let source = "foo::bar()\n";
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let idx = semantic_index(&parsed.tree(), &file_url("test.R"));
-
-    let ident = Identifier::classify(&root, &idx, offset(5));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "foo".to_string(),
-            symbol: "bar".to_string(),
-            internal: false,
-            package_range: text_range(0, 3),
-            symbol_range: text_range(5, 8),
-        })
-    );
-}
-
-#[test]
-fn test_namespace_classify_in_extract() {
-    use oak_ide::Identifier;
-
-    // foo::bar$baz
-    // 0123456789...
-    let source = "foo::bar$baz\n";
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let idx = semantic_index(&parsed.tree(), &file_url("test.R"));
-
-    // Cursor on `bar` (offset 5) — inside the RNamespaceExpression
-    let ident = Identifier::classify(&root, &idx, offset(5));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "foo".to_string(),
-            symbol: "bar".to_string(),
-            internal: false,
-            package_range: text_range(0, 3),
-            symbol_range: text_range(5, 8),
-        })
-    );
-
-    // Cursor on `baz` (offset 9) — RHS of $, not a namespace access
-    let ident = Identifier::classify(&root, &idx, offset(9));
-    assert_eq!(ident, None);
-}
-
-#[test]
-fn test_namespace_classify_string_selectors() {
-    use oak_ide::Identifier;
-
-    // "foo"::"bar"
-    //  0123456789...
-    let source = "\"foo\"::\"bar\"\n";
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let idx = semantic_index(&parsed.tree(), &file_url("test.R"));
-
-    let ident = Identifier::classify(&root, &idx, offset(7));
-    assert_eq!(
-        ident,
-        Some(Identifier::NamespaceAccess {
-            package: "foo".to_string(),
-            symbol: "bar".to_string(),
-            internal: false,
-            package_range: text_range(0, 5),
-            symbol_range: text_range(7, 12),
-        })
-    );
-}
-
 // --- source() directive ---
 
 #[test]
@@ -1361,22 +1247,19 @@ fn test_source_directive_resolves_to_sourced_file() {
     let script_url = file_url("script.R");
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
 
-    let helpers_url_clone = helpers_url.clone();
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
-    let script_idx =
-        semantic_index_with_source_resolver(&parsed.tree(), &script_url, move |_path| {
-            Some(SourceResolution {
-                file: helpers_url_clone.clone(),
-                names: helpers_names.clone(),
-                packages: Vec::new(),
-            })
-        });
+    let resolver = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: helpers_names,
+        packages: Vec::new(),
+    });
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1415,7 +1298,7 @@ fn test_source_directive_resolves_nested_library() {
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
@@ -1438,19 +1321,14 @@ fn test_source_directive_resolves_nested_library() {
         vec![],
     )]);
 
-    let helpers_url_clone = helpers_url.clone();
-    let names_clone = helpers_names.clone();
-    let packages_clone = helpers_packages.clone();
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
-    let script_idx =
-        semantic_index_with_source_resolver(&parsed.tree(), &script_url, move |_path| {
-            Some(SourceResolution {
-                file: helpers_url_clone.clone(),
-                names: names_clone.clone(),
-                packages: packages_clone.clone(),
-            })
-        });
+    let resolver = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: helpers_names.clone(),
+        packages: helpers_packages.clone(),
+    });
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1473,19 +1351,14 @@ fn test_source_directive_resolves_nested_library() {
     assert!(!targets.is_empty());
     let source_with_helper = "source(\"helpers.R\")\nhelper\n";
 
-    let helpers_url_clone = helpers_url.clone();
-    let names_clone = helpers_names.clone();
-    let packages_clone = helpers_packages.clone();
     let parsed2 = parse(source_with_helper, RParserOptions::default());
     let script_root2 = parsed2.syntax();
-    let script_idx2 =
-        semantic_index_with_source_resolver(&parsed2.tree(), &script_url, move |_path| {
-            Some(SourceResolution {
-                file: helpers_url_clone.clone(),
-                names: names_clone.clone(),
-                packages: packages_clone.clone(),
-            })
-        });
+    let resolver2 = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: helpers_names,
+        packages: helpers_packages,
+    });
+    let script_idx2 = build_index(&parsed2.tree(), resolver2);
 
     let dir_layers = script_idx2.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1532,23 +1405,20 @@ fn test_directive_not_visible_before_call_site() {
         vec![],
     )]);
 
-    let helpers_url_clone = helpers_url.clone();
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
-    let script_idx =
-        semantic_index_with_source_resolver(&parsed.tree(), &script_url, move |_path| {
-            Some(SourceResolution {
-                file: helpers_url_clone.clone(),
-                names: helpers_names.clone(),
-                packages: Vec::new(),
-            })
-        });
+    let resolver = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: helpers_names,
+        packages: Vec::new(),
+    });
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1696,23 +1566,20 @@ fn test_source_in_function_body_scoping() {
     let script_source = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
     let script_url = file_url("script.R");
 
-    let helpers_url_clone = helpers_url.clone();
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
-    let script_idx =
-        semantic_index_with_source_resolver(&parsed.tree(), &script_url, move |_path| {
-            Some(SourceResolution {
-                file: helpers_url_clone.clone(),
-                names: helpers_names.clone(),
-                packages: Vec::new(),
-            })
-        });
+    let resolver = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: helpers_names,
+        packages: Vec::new(),
+    });
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1775,13 +1642,12 @@ fn test_resolve_import_last_def_wins() {
     let script_source = "source(\"helpers.R\")\nfoo\n";
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
-    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), &script_url, |_path| {
-        Some(SourceResolution {
-            file: helpers_url.clone(),
-            names: vec!["foo".to_string()],
-            packages: Vec::new(),
-        })
+    let resolver = ConstResolver(SourceResolution {
+        url: helpers_url.clone(),
+        names: vec!["foo".to_string()],
+        packages: Vec::new(),
     });
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1803,4 +1669,5 @@ fn test_resolve_import_last_def_wins() {
         full_range: text_range(26, 29),
         focus_range: text_range(26, 29),
     }]);
+}
 }

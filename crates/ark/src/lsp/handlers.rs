@@ -26,13 +26,16 @@ use tower_lsp::lsp_types::HoverContents;
 use tower_lsp::lsp_types::HoverParams;
 use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::MessageType;
+use tower_lsp::lsp_types::PrepareRenameResponse;
 use tower_lsp::lsp_types::ReferenceParams;
 use tower_lsp::lsp_types::Registration;
+use tower_lsp::lsp_types::RenameParams;
 use tower_lsp::lsp_types::SelectionRange;
 use tower_lsp::lsp_types::SelectionRangeParams;
 use tower_lsp::lsp_types::SignatureHelp;
 use tower_lsp::lsp_types::SignatureHelpParams;
 use tower_lsp::lsp_types::SymbolInformation;
+use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tower_lsp::lsp_types::TextEdit;
 use tower_lsp::lsp_types::WorkspaceEdit;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
@@ -47,9 +50,9 @@ use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::find_references::find_references;
 use crate::lsp::folding_range::folding_range;
 use crate::lsp::goto_definition::goto_definition;
-use crate::lsp::goto_definition_legacy;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
@@ -58,7 +61,7 @@ use crate::lsp::indent::indent_edit;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::references::find_references;
+use crate::lsp::rename;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
 use crate::lsp::signature_help::r_signature_help;
@@ -279,13 +282,7 @@ pub(crate) fn handle_goto_definition(
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
 
-    if std::env::var("ARK_OAK_GOTO_DEF").is_ok() {
-        Ok(goto_definition(document, params, state).log_err().flatten())
-    } else {
-        Ok(goto_definition_legacy::goto_definition(document, params)
-            .log_err()
-            .flatten())
-    }
+    Ok(goto_definition(document, params).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -332,6 +329,24 @@ pub(crate) fn handle_references(
     } else {
         Ok(Some(locations))
     }
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_prepare_rename(
+    params: TextDocumentPositionParams,
+    state: &WorldState,
+) -> LspResult<Option<PrepareRenameResponse>> {
+    Ok(rename::prepare_rename(params, state)?)
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_rename(
+    params: RenameParams,
+    state: &WorldState,
+) -> LspResult<Option<WorkspaceEdit>> {
+    // Propagate error to the frontend to give actionable feedback to the user.
+    // All errors thrown by `rename()` must be informative for users.
+    Ok(rename::rename(params, state)?)
 }
 
 #[tracing::instrument(level = "info", skip_all)]

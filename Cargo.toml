@@ -29,6 +29,7 @@ aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_fa
 aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_url = { path = "crates/aether_url" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
@@ -92,6 +93,7 @@ reqwest-retry = "0.9.1"
 rust-embed = "8.11.0"
 rustc-hash = "2.1.2"
 salsa = { version = "0.26.2", features = ["compact_str"] }
+salsa-macros = "0.26.2"
 scraper = "0.26.0"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }

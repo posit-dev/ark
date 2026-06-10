@@ -20,30 +20,26 @@ use crate::sys::command::COMMAND_R_NAMES;
 /// - For unix, this look at `R`
 /// - For Windows, this looks at `R.exe` and `R.bat` (for rig compatibility)
 ///
-/// The executable name is joined to the path in `R_HOME`. If not set, this is a
-/// panic. Use `r_home_setup()` to set `R_HOME` from the R on the `PATH` or use
-/// `r_command_from_path()` to exectute R from `PATH` directly.
+/// The executable name is joined to the path in `r_home`. Use `r_home_setup()` to
+/// retrieve this.
 ///
 /// Returns the `Ok()` value of the first success, or the `Err()` value of the
 /// last failure if all locations fail.
-pub fn r_command<F>(build: F) -> io::Result<Output>
+pub fn r_command<F>(r_home: &Path, build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),
 {
     assert!(!COMMAND_R_NAMES.is_empty());
 
-    // Safety: Caller must ensure `R_HOME` is defined. That's usually the case
-    // once Ark has properly started.
-    let r_home = std::env::var("R_HOME").unwrap();
-
     let locations: Vec<PathBuf> = COMMAND_R_NAMES
-        .map(|loc| std::path::Path::new(&r_home).join("bin").join(loc))
+        .map(|loc| r_home.join("bin").join(loc))
         .into();
 
     r_command_from_locs(locations, build)
 }
 
-/// Use this before calling `r_command()` to ensure that `R_HOME` is set consistently
+/// Ensures that `R_HOME` is set consistently (for `R_HomeDir()`) and returns the active
+/// `r_home` path
 pub fn r_home_setup() -> anyhow::Result<PathBuf> {
     // Determine candidate path and the string form to set (we will overwrite
     // R_HOME in the environment after validation, even if it was already set).
@@ -69,13 +65,12 @@ pub fn r_home_setup() -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(home.clone());
     match path.try_exists() {
         Ok(true) => {
-            // Ensure `R_HOME` is set in the environment after validation. From
-            // now on, `r_command()` can be used to run exactly the same R as is
-            // running in Ark.
+            // Ensure `R_HOME` is set in the environment after validation, mostly
+            // for `R_HomeDir()` to ensure we are in sync with R
             unsafe { std::env::set_var("R_HOME", &home) };
 
             // Check that `R` can be called
-            r_command(|command| {
+            r_command(&path, |command| {
                 command.arg("RHOME");
             })
             .map_err(|err| anyhow!("Can't run R: {err}"))?;
@@ -110,9 +105,8 @@ pub fn r_executable(r_home: &Path) -> Option<PathBuf> {
 
 /// Execute a `Command` for R found on the `PATH`
 ///
-/// This is like `r_command()` but doesn't assume `R_HOME` is defined.
-/// Instead, the R executable is executed as a bare name and the shell
-/// executes it from `PATH`.
+/// This is like `r_command()` but the R executable is executed as a bare name and the
+/// shell executes it from `PATH`.
 pub fn r_command_from_path<F>(build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),

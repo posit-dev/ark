@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
@@ -20,8 +19,6 @@ use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_semantic::library::Library;
-use oak_sources::PackageCache;
-use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -189,7 +186,7 @@ impl GlobalState {
     ///   and auxiliary loop.
     pub(crate) fn new(
         client: Client,
-        r_home: PathBuf,
+        _r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
         // Transmission channel for the main loop events. Shared with the
@@ -219,12 +216,7 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
-        let r = harp::command::r_executable(&r_home);
-        let package_sources = r
-            .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
-            .map(|cache| Arc::new(cache) as Arc<dyn oak_sources::PackageSources>);
-
-        let library = Library::new(library_paths, package_sources);
+        let library = Library::new(library_paths);
 
         Self {
             world: WorldState::new(library),
@@ -379,6 +371,12 @@ impl GlobalState {
                         LspRequest::References(params) => {
                             respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?;
                         },
+                        LspRequest::PrepareRename(params) => {
+                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?;
+                        },
+                        LspRequest::Rename(params) => {
+                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?;
+                        },
                         LspRequest::StatementRange(params) => {
                             respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?;
                         },
@@ -499,7 +497,12 @@ fn respond<T>(
     let out = match response {
         RequestResponse::Result(Ok(_)) => Ok(()),
         RequestResponse::Result(Err(ref error)) => {
-            Err(anyhow!("Error while handling request:\n{error:?}"))
+            // The error has already been sent to the client on `response_tx`
+            // as a jsonrpc error, so the user sees the popup. Log here at
+            // info level (with `{:?}` for the full debug format including a
+            // backtrace) so server logs keep diagnostic context.
+            lsp::log_info!("Error while handling request:\n{error:?}");
+            Ok(())
         },
         RequestResponse::Crashed(ref error) => {
             Err(anyhow!("Crashed while handling request:\n{error:?}"))

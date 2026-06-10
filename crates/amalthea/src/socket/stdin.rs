@@ -79,6 +79,10 @@ impl Stdin {
             // don't need to listen to interrupts at this stage so we'd
             // only subscribe after receiving an input request, and the
             // loop/select below could be removed.
+            //
+            // If any of the channels disconnects, all senders have been
+            // dropped, which signals shutdown. Exit cleanly rather than
+            // spinning on the disconnected channel.
             let req: StdInRequest;
             loop {
                 select! {
@@ -89,12 +93,16 @@ impl Stdin {
                                 break;
                             },
                             Err(err) => {
-                                log::error!("Could not read input request: {}", err);
-                                continue;
+                                log::trace!("StdIn shutting down: request channel disconnected: {err:?}");
+                                return;
                             }
                         }
                     },
-                    recv(interrupt_rx) -> _ => {
+                    recv(interrupt_rx) -> msg => {
+                        if let Err(err) = msg {
+                            log::trace!("StdIn shutting down: interrupt channel disconnected: {err:?}");
+                            return;
+                        }
                         continue;
                     }
                 };
@@ -131,19 +139,19 @@ impl Stdin {
                 recv(self.inbound_rx) -> msg => match msg {
                     Ok(m) => m,
                     Err(err) => {
-                        log::error!("Could not read message from stdin socket: {err:?}");
-                        continue;
+                        log::trace!("StdIn shutting down: inbound socket disconnected: {err:?}");
+                        return;
                     }
                 },
                 // Cancel current iteration if an interrupt is
                 // signaled. We're no longer waiting for an `input_reply`
                 // but for an `input_request`.
                 recv(interrupt_rx) -> msg => {
-                    log::trace!("Received interrupt signal in StdIn");
-
                     if let Err(err) = msg {
-                        log::error!("Could not read interrupt message: {err:?}");
+                        log::trace!("StdIn shutting down: interrupt channel disconnected: {err:?}");
+                        return;
                     }
+                    log::trace!("Received interrupt signal in StdIn");
 
                     match reply_tx {
                         StdInReplySender::Input(_tx) => {

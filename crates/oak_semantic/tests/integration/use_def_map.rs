@@ -1,18 +1,16 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
-use oak_semantic::semantic_index;
+use oak_semantic::build_index;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::UseId;
+use oak_semantic::NoopImportsResolver;
 use stdext::assert_not;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    semantic_index(
-        &parsed.tree(),
-        &url::Url::parse("file:///test/test.R").unwrap(),
-    )
+    build_index(&parsed.tree(), NoopImportsResolver)
 }
 
 // --- Straight-line code ---

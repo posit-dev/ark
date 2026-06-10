@@ -1,11 +1,21 @@
+use salsa::Setter;
+
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
 use crate::File;
 
+/// File entities are created directly with `File::new` so these tests
+/// stay focused on per-query behavior (caching, backdating) without
+/// touching the orphan/workspace bucketing logic that's exercised in
+/// `oak_storage/tests/`.
+fn new_file(db: &mut TestDb, name: &str, contents: &str) -> File {
+    File::new(db, file_url(name), contents.to_string(), None)
+}
+
 #[test]
-fn parse_is_cached_across_calls() {
-    let db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+fn test_parse_is_cached_across_calls() {
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
 
     let _ = file.parse(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -15,9 +25,9 @@ fn parse_is_cached_across_calls() {
 }
 
 #[test]
-fn semantic_index_is_cached_across_calls() {
-    let db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+fn test_semantic_index_is_cached_across_calls() {
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
 
     let _ = file.semantic_index(&db);
     let _ = file.semantic_index(&db);
@@ -26,11 +36,9 @@ fn semantic_index_is_cached_across_calls() {
 }
 
 #[test]
-fn changing_contents_reparses() {
-    use salsa::Setter;
-
+fn test_changing_contents_reparses() {
     let mut db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
 
     let _ = file.semantic_index(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -44,26 +52,24 @@ fn changing_contents_reparses() {
 }
 
 #[test]
-fn semantic_index_matches_oak_semantic() {
+fn test_semantic_index_matches_oak_semantic() {
     let db = TestDb::new();
     let source = "x <- 1\nx\n";
     let url = file_url("a.R");
-    let file = File::new(&db, url.clone(), source.to_string());
+    let file = File::new(&db, url.clone(), source.to_string(), None);
 
     let via_salsa = file.semantic_index(&db);
 
     let parse = aether_parser::parse(source, aether_parser::RParserOptions::default());
-    let direct = oak_semantic::semantic_index(&parse.tree(), &url);
+    let direct = oak_semantic::build_index(&parse.tree(), oak_semantic::NoopImportsResolver);
 
     assert_eq!(via_salsa, &direct);
 }
 
 #[test]
-fn semantic_index_backdates_on_equivalent_reparse() {
-    use salsa::Setter;
-
+fn test_semantic_index_backdates_on_equivalent_reparse() {
     let mut db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let file = new_file(&mut db, "a.R", "x <- 1\n");
 
     let _ = file.semantic_index(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -81,12 +87,10 @@ fn semantic_index_backdates_on_equivalent_reparse() {
 }
 
 #[test]
-fn editing_one_file_does_not_invalidate_another() {
-    use salsa::Setter;
-
+fn test_editing_one_file_does_not_invalidate_another() {
     let mut db = TestDb::new();
-    let file_a = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
-    let file_b = File::new(&db, file_url("b.R"), "y <- 2\n".to_string());
+    let file_a = new_file(&mut db, "a.R", "x <- 1\n");
+    let file_b = new_file(&mut db, "b.R", "y <- 2\n");
 
     let _ = file_a.semantic_index(&db);
     let _ = file_b.semantic_index(&db);
@@ -108,20 +112,21 @@ fn editing_one_file_does_not_invalidate_another() {
 }
 
 #[test]
-fn distinct_files_have_distinct_semantic_indexes() {
-    let db = TestDb::new();
-    let file_a = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
-    let file_b = File::new(&db, file_url("b.R"), "x <- 1\n".to_string());
+fn test_distinct_files_each_get_their_own_cache_entry() {
+    let mut db = TestDb::new();
+    let file_a = new_file(&mut db, "a.R", "x <- 1\n");
+    let file_b = new_file(&mut db, "b.R", "x <- 1\n");
 
-    // Same contents, different `File` inputs: separate cache entries.
+    // Different `File` inputs are distinct salsa entities.
     assert!(file_a != file_b);
 
     let idx_a = file_a.semantic_index(&db);
     let idx_b = file_b.semantic_index(&db);
 
-    // Each index records its own file URL, so they are not structurally
-    // equal even though the source text matches.
-    assert_ne!(*idx_a, *idx_b);
+    // Same contents produce structurally equal indexes (the index doesn't
+    // carry the file URL anymore). Salsa still keys cache entries on the
+    // `File` entity, so both queries actually ran.
+    assert_eq!(*idx_a, *idx_b);
     assert_eq!(db.executions("parse"), 2);
     assert_eq!(db.executions("semantic_index"), 2);
 }
