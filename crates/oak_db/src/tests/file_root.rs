@@ -45,21 +45,23 @@ fn test_root_returns_longest_prefix_for_orphan_file() {
 
 #[test]
 fn test_root_dispatches_through_library_package_when_set() {
-    let db = OakDatabase::new();
+    let mut db = OakDatabase::new();
     let pkg_root = library_root(&db, "libs/mypkg");
     let pkg = Package::new(
         &db,
-        pkg_root,
+        file_url("libs/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
         Some("1.0.0".to_string()),
         Namespace::default(),
         Vec::new(),
         None,
     );
+    pkg_root.set_packages(&mut db).to(vec![pkg]);
+    db.library_roots().set_roots(&mut db).to(vec![pkg_root]);
 
     // File created with package back-pointer set. `root()` dispatches
-    // through `Package.root` rather than falling back to the URL-prefix
-    // walk against workspace roots.
+    // through `Db::root_by_package` rather than falling back to the URL-
+    // prefix walk against workspace roots.
     let file = File::new(
         &db,
         file_url("libs/mypkg/R/foo.R"),
@@ -71,20 +73,22 @@ fn test_root_dispatches_through_library_package_when_set() {
 
 #[test]
 fn test_root_dispatches_through_workspace_package_when_set() {
-    // Same dispatch as the library case, but the package's `root` is a
-    // `Workspace` kind. The url-prefix fallback is *not* consulted here
+    // Same dispatch as the library case, but the owning root is a
+    // `Workspace` kind. The URL-prefix fallback is *not* consulted here
     // because `package` is set.
-    let db = OakDatabase::new();
+    let mut db = OakDatabase::new();
     let pkg_root = workspace_root(&db, "proj");
     let pkg = Package::new(
         &db,
-        pkg_root,
+        file_url("proj/DESCRIPTION"),
         "mypkg".to_string(),
         None,
         Namespace::default(),
         Vec::new(),
         None,
     );
+    pkg_root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![pkg_root]);
 
     let file = File::new(&db, file_url("proj/R/foo.R"), String::new(), Some(pkg));
     assert_eq!(file.root(&db), Some(pkg_root));

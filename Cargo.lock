@@ -2623,6 +2623,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_scan"
+version = "0.1.0"
+dependencies = [
+ "aether_url",
+ "log",
+ "oak_core",
+ "oak_db",
+ "oak_package_metadata",
+ "rustc-hash",
+ "salsa",
+ "stdext",
+ "tempfile",
+ "url",
+ "walkdir",
+]
+
+[[package]]
 name = "oak_semantic"
 version = "0.1.0"
 dependencies = [

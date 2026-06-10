@@ -1,0 +1,31 @@
+[package]
+name = "oak_scan"
+version = "0.1.0"
+description = """
+Scanners and update helpers for `oak_db`. Owns every input mutation that
+crosses a single salsa setter (placement of files in buckets, atomic
+package replacement, etc.). Read-only callers stay in `oak_db`.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_url.workspace = true
+log.workspace = true
+oak_core.workspace = true
+oak_db.workspace = true
+oak_package_metadata.workspace = true
+rustc-hash.workspace = true
+salsa.workspace = true
+stdext.workspace = true
+url.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
