@@ -315,6 +315,8 @@ impl ScanScheduler {
     ///   `apply_watcher_events()` (which may itself return new requests).
     /// - `ScanningWithRescanQueued`: fresh `ScanRequest` returned, state stays
     ///   `Scanning`, buffer preserved for the next round.
+    /// - Untracked (`None`): unexpected, since dispatch always marks the root
+    ///   `Scanning`. Logged as a warning, the result is still applied.
     pub fn apply_scan_completed<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
@@ -345,14 +347,24 @@ impl ScanScheduler {
                 };
                 vec![ScanRequest { root, path }]
             },
-            Some(ScanState::Scanning) | None => {
-                // We're now idle. Drain buffered events through the normal path.
-                let buffered = self.buffered.remove(&root).unwrap_or_default();
-                if buffered.is_empty() {
-                    Vec::new()
-                } else {
-                    self.apply_watcher_events(db, buffered, editor_owned)
+            Some(ScanState::Scanning) => {
+                // We're now idle. Drain any buffered events through the normal path.
+                match self.buffered.remove(&root) {
+                    Some(buffered) => self.apply_watcher_events(db, buffered, editor_owned),
+                    None => Vec::new(),
                 }
+            },
+            None => {
+                // A completion for a root we weren't tracking as scanning.
+                // Every dispatched scan marks its root `Scanning`, so reaching
+                // here means our state diverged from the in-flight work. The
+                // result is already applied. Since buffered events only
+                // accumulate against a tracked root, there's nothing to drain.
+                log::warn!(
+                    "Applied a `ScanCompleted` for an untracked root: {path:?}",
+                    path = root.path(db)
+                );
+                Vec::new()
             },
         }
     }
