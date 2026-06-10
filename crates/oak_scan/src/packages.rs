@@ -45,18 +45,18 @@ pub(crate) struct PackageEntry {
 /// Read a candidate package directory. Returns `None` if `DESCRIPTION`
 /// is missing or malformed. Populates `files` (R/*.R) only; `scripts`
 /// is filled by [`scan_workspace`] for workspace packages.
-pub(crate) fn read_package(dir: &Path) -> Option<PackageEntry> {
-    let description_path = dir.join("DESCRIPTION");
+pub(crate) fn read_package(package_dir: &Path) -> Option<PackageEntry> {
+    let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
     let description_url = UrlId::from_file_path(&description_path).ok()?;
 
-    let namespace = fs::read_to_string(dir.join("NAMESPACE"))
+    let namespace = fs::read_to_string(package_dir.join("NAMESPACE"))
         .ok()
         .and_then(|text| Namespace::parse(&text).log_err())
         .unwrap_or_default();
 
-    let files = scan_r_files(&dir.join("R"));
+    let files = scan_r_files(&package_dir.join("R"));
     let collation = description.collate();
 
     Some(PackageEntry {
@@ -121,11 +121,11 @@ pub(crate) fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
 }
 
-/// Read just the package name from `dir/DESCRIPTION`. Cheaper than
+/// Read just the package name from `package_dir/DESCRIPTION`. Cheaper than
 /// [`read_package`] when the caller only needs to look up an existing
 /// `Package` by name.
-pub(crate) fn read_description_name(dir: &Path) -> Option<String> {
-    let text = fs::read_to_string(dir.join("DESCRIPTION")).ok()?;
+pub(crate) fn read_description_name(package_dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(package_dir.join("DESCRIPTION")).ok()?;
     Description::parse(&text).log_err().map(|d| d.name)
 }
 
