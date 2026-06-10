@@ -75,11 +75,11 @@ pub(crate) fn apply_watcher_events<DB: Db + DbInputs>(
             continue;
         };
 
-        if path.file_name().is_some_and(|n| n == "DESCRIPTION") {
+        if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
             if let Some(root) = roots
                 .iter()
-                .find(|(p, _)| path.starts_with(p))
-                .map(|(_, r)| *r)
+                .find(|(root_path, _)| path.starts_with(root_path))
+                .map(|(_, root)| *root)
             {
                 stale_roots.insert(root);
             }
@@ -109,8 +109,8 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
     db.workspace_roots()
         .roots(db)
         .iter()
-        .filter_map(|r| match r.path(db).to_file_path() {
-            Ok(p) => Some((p, *r)),
+        .filter_map(|root| match root.path(db).to_file_path() {
+            Ok(path) => Some((path, *root)),
             Err(err) => {
                 log::warn!("Skipping workspace root: {err}");
                 None
@@ -244,8 +244,8 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
     let pkg_dir = path
         .ancestors()
         .skip(1)
-        .take_while(|p| p.starts_with(&root_path))
-        .find(|p| p.join("DESCRIPTION").is_file());
+        .take_while(|path| path.starts_with(&root_path))
+        .find(|path| path.join("DESCRIPTION").is_file());
 
     let Some(pkg_dir) = pkg_dir else {
         return Some(Placement::Script(root));
@@ -255,7 +255,7 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
     let pkg = root
         .packages(db)
         .iter()
-        .find(|p| p.name(db) == &pkg_name)
+        .find(|pkg| pkg.name(db) == &pkg_name)
         .copied()?;
 
     let r_dir = pkg_dir.join("R");
@@ -275,8 +275,8 @@ fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<
     db.workspace_roots()
         .roots(db)
         .iter()
-        .find(|r| match r.path(db).to_file_path() {
-            Ok(p) => path.starts_with(&p),
+        .find(|root| match root.path(db).to_file_path() {
+            Ok(root_path) => path.starts_with(&root_path),
             Err(_) => false,
         })
         .copied()
