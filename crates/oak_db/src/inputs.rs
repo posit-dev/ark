@@ -211,12 +211,11 @@ pub struct Package {
     /// the back-pointer and the container in sync.
     #[returns(ref)]
     pub files: Vec<File>,
-    /// Other R files inside the package directory that aren't part of
-    /// the loadable namespace: `tests/`, `inst/`, `vignettes/`,
-    /// `data-raw/`, etc. These get LSP analysis (parse, semantic index)
-    /// but aren't loaded with the package, so name resolution treats
-    /// them as standalone scripts that just happen to live next to the
-    /// package's code.
+    /// Other R files inside the package directory that aren't part of the
+    /// loadable namespace: `tests/`, `inst/`, `data-raw/`, etc. These get LSP
+    /// analysis (parse, semantic index) but aren't loaded with the package, so
+    /// name resolution treats them as standalone scripts that just happen to
+    /// live next to the package's code.
     ///
     /// **Placement invariant.** Same as [`Self::files`]: backpointer
     /// stays `Some(self)`, file lives in one of the two containers.
