@@ -169,6 +169,11 @@ impl ScanScheduler {
         Self::default()
     }
 
+    /// Whether any scan is currently in flight.
+    pub fn has_pending_scans(&self) -> bool {
+        !self.state.is_empty()
+    }
+
     /// Reconcile `WorkspaceRoots` to exactly `paths`. Returns one
     /// [`ScanRequest`] per newly-added path; unchanged paths skip the
     /// rescan, removed paths are evicted via

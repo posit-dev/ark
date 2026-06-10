@@ -313,15 +313,13 @@ impl GlobalState {
                             handlers::handle_initialized(&self.client, &self.lsp_state).await?;
                         },
                         LspNotification::DidChangeWorkspaceFolders(params) => {
-                            let pending = state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state)?;
-                            dispatch_scan_requests(&self.events_tx, pending);
+                            state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
                         },
                         LspNotification::DidChangeWatchedFiles(params) => {
-                            let pending = state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state)?;
-                            dispatch_scan_requests(&self.events_tx, pending);
+                            state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
                             state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
@@ -352,8 +350,7 @@ impl GlobalState {
 
                     match request {
                         LspRequest::Initialize(params) => {
-                            let pending = respond_with(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
-                            dispatch_scan_requests(&self.events_tx, pending);
+                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?;
                         },
                         LspRequest::WorkspaceSymbol(params) => {
                             respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
@@ -529,28 +526,9 @@ fn respond<T>(
     response: impl FnOnce() -> LspResult<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
-    respond_with(
-        response_tx,
-        || response().map(|t| (t, ())),
-        into_lsp_response,
-    )
-}
-
-/// Variant of [`respond`] for handlers that produce a side output alongside
-/// their LSP response. The `S` value is returned to the caller on success;
-/// on handler error or panic the side output is `S::default()` (the caller
-/// gets the "do nothing" value, while the error response still flows to
-/// the client through `response_tx`). Used by `Initialize` to ship the
-/// scheduler's pending `ScanRequest`s back to the main loop without an
-/// out-parameter.
-fn respond_with<T, S: Default>(
-    response_tx: TokioUnboundedSender<RequestResponse>,
-    response: impl FnOnce() -> LspResult<(T, S)>,
-    into_lsp_response: impl FnOnce(T) -> LspResponse,
-) -> anyhow::Result<S> {
-    let (response, side) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
-        Ok(Ok((t, s))) => (RequestResponse::Result(Ok(into_lsp_response(t))), s),
-        Ok(Err(e)) => (RequestResponse::Result(Err(e)), S::default()),
+    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
+        Ok(Ok(t)) => RequestResponse::Result(Ok(into_lsp_response(t))),
+        Ok(Err(e)) => RequestResponse::Result(Err(e)),
         Err(err) => {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
@@ -566,22 +544,19 @@ fn respond_with<T, S: Default>(
             // This creates an uninformative backtrace that is reported in the
             // LSP logs. Note that the relevant backtrace is the one created by
             // our panic hook and reported via the _kernel_ logs.
-            (
-                RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}")),
-                S::default(),
-            )
+            RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}"))
         },
     };
 
     let out = match response {
-        RequestResponse::Result(Ok(_)) => Ok(side),
+        RequestResponse::Result(Ok(_)) => Ok(()),
         RequestResponse::Result(Err(ref error)) => {
             // The error has already been sent to the client on `response_tx`
             // as a jsonrpc error, so the user sees the popup. Log here at
             // info level (with `{:?}` for the full debug format including a
             // backtrace) so server logs keep diagnostic context.
             lsp::log_info!("Error while handling request:\n{error:?}");
-            Ok(side)
+            Ok(())
         },
         RequestResponse::Crashed(ref error) => {
             Err(anyhow!("Crashed while handling request:\n{error:?}"))

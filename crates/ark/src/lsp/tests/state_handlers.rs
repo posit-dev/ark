@@ -29,9 +29,12 @@ use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::document::Document;
+use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
@@ -69,16 +72,9 @@ fn did_change_watched_files(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let mut lsp_state = test_lsp_state();
-    let pending =
-        crate::lsp::state_handlers::did_change_watched_files(params, state, &mut lsp_state)?;
-    let editor_owned = editor_owned_of(state);
-    drain(
-        &mut state.db,
-        &mut lsp_state.oak_scheduler,
-        pending,
-        &editor_owned,
-    );
-    Ok(())
+    run_handler_to_quiescence(state, &mut lsp_state, |state, lsp_state, events_tx| {
+        crate::lsp::state_handlers::did_change_watched_files(params, state, lsp_state, events_tx)
+    })
 }
 
 fn did_change_workspace_folders(
@@ -86,16 +82,48 @@ fn did_change_workspace_folders(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let mut lsp_state = test_lsp_state();
-    let pending =
-        crate::lsp::state_handlers::did_change_workspace_folders(params, state, &mut lsp_state)?;
-    let editor_owned = editor_owned_of(state);
-    drain(
-        &mut state.db,
-        &mut lsp_state.oak_scheduler,
-        pending,
-        &editor_owned,
-    );
-    Ok(())
+    run_handler_to_quiescence(state, &mut lsp_state, |state, lsp_state, events_tx| {
+        crate::lsp::state_handlers::did_change_workspace_folders(
+            params, state, lsp_state, events_tx,
+        )
+    })
+}
+
+/// Drive a production handler that dispatches its scans through `events_tx`,
+/// then pump the resulting `OakScanCompleted` events to quiescence on a local
+/// runtime. Production does this pumping in the main loop's event handler;
+/// the tests have to stand up the same machinery (tokio runtime so
+/// `spawn_blocking` works, aux channel so `send_auxiliary` doesn't panic, an
+/// events channel to receive completions).
+fn run_handler_to_quiescence<F>(
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    handler: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(&mut WorldState, &mut LspState, &TokioUnboundedSender<Event>) -> anyhow::Result<()>,
+{
+    let _aux = init_aux_for_test();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+
+    rt.block_on(async {
+        handler(state, lsp_state, &events_tx)?;
+        let editor_owned = editor_owned_of(state);
+        while lsp_state.oak_scheduler.has_pending_scans() {
+            let Some(Event::OakScanCompleted(scan)) = events_rx.recv().await else {
+                break;
+            };
+            let followups =
+                lsp_state
+                    .oak_scheduler
+                    .apply_scan_completed(&mut state.db, scan, &editor_owned);
+            dispatch_scan_requests(&events_tx, followups);
+        }
+        Ok(())
+    })
 }
 
 fn test_lsp_state() -> LspState {
@@ -610,8 +638,6 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // to orphan, editor-owned) → close → file leaves orphan, lands in
     // stale. Without the `close_editor` hook in `did_close`, the file
     // would zombie in orphan with the editor's last content.
-    let mut aux_rx = init_aux_for_test();
-
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
@@ -641,6 +667,11 @@ fn test_did_close_releases_orphan_file_to_stale() {
     .unwrap();
     let file = state.db.file_by_url(&url_id).unwrap();
     assert!(state.db.orphan_root().files(&state.db).contains(&file));
+
+    // Init the aux channel here, after the workspace-folders churn: the
+    // handler wrapper resets the channel each call (it stands up its own to
+    // satisfy `spawn_blocking`), so grab the receiver only once that's done.
+    let mut aux_rx = init_aux_for_test();
 
     // Now close the buffer. File should move from orphan to stale.
     let params = DidCloseTextDocumentParams {

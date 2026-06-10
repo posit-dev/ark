@@ -13,7 +13,6 @@ use anyhow::anyhow;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
-use oak_scan::ScanRequest;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
@@ -65,9 +64,12 @@ use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
 
@@ -95,7 +97,8 @@ pub(crate) fn initialize(
     params: InitializeParams,
     lsp_state: &mut LspState,
     state: &mut WorldState,
-) -> LspResult<(InitializeResult, Vec<ScanRequest>)> {
+    events_tx: &TokioUnboundedSender<Event>,
+) -> LspResult<InitializeResult> {
     let workspace_uris = effective_workspace_uris(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
@@ -152,6 +155,7 @@ pub(crate) fn initialize(
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
+    dispatch_scan_requests(events_tx, pending);
     lsp::main_loop::index_start(folders, state.clone());
 
     let result = InitializeResult {
@@ -238,7 +242,7 @@ pub(crate) fn initialize(
         },
     };
 
-    Ok((result, pending))
+    Ok(result)
 }
 
 /// Resolve the effective workspace folders from `InitializeParams`.
@@ -404,7 +408,8 @@ pub(crate) fn did_change_watched_files(
     params: DidChangeWatchedFilesParams,
     state: &mut WorldState,
     lsp_state: &mut LspState,
-) -> anyhow::Result<Vec<ScanRequest>> {
+    events_tx: &TokioUnboundedSender<Event>,
+) -> anyhow::Result<()> {
     // Editor owns the contents of files it has open: Oak should ignore
     // disk-side events for those URLs.
     let editor_owned: HashSet<UrlId> = state
@@ -434,7 +439,8 @@ pub(crate) fn did_change_watched_files(
         lsp_state
             .oak_scheduler
             .apply_watcher_events(&mut state.db, events, &editor_owned);
-    Ok(pending)
+    dispatch_scan_requests(events_tx, pending);
+    Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -442,7 +448,8 @@ pub(crate) fn did_change_workspace_folders(
     params: DidChangeWorkspaceFoldersParams,
     state: &mut WorldState,
     lsp_state: &mut LspState,
-) -> anyhow::Result<Vec<ScanRequest>> {
+    events_tx: &TokioUnboundedSender<Event>,
+) -> anyhow::Result<()> {
     let removed: HashSet<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
     state.workspace.folders.retain(|uri| !removed.contains(uri));
 
@@ -472,7 +479,8 @@ pub(crate) fn did_change_workspace_folders(
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
-    Ok(pending)
+    dispatch_scan_requests(events_tx, pending);
+    Ok(())
 }
 
 fn parse_uri_or_none(uri: &str) -> Option<url::Url> {
