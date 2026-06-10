@@ -36,8 +36,10 @@ use salsa::Setter;
 use crate::inputs::remove_from_pkg_files;
 use crate::inputs::upsert_root_file;
 use crate::inputs::FileEntry;
+use crate::packages::classify_in_package;
 use crate::packages::is_r_file;
 use crate::packages::read_description_name;
+use crate::packages::PackagePlacement;
 
 /// Driver-neutral file event. Drivers (the LSP, tests, ...) translate
 /// their native event type into this shape.
@@ -258,17 +260,11 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
         .find(|pkg| pkg.name(db) == &pkg_name)
         .copied()?;
 
-    let r_dir = pkg_dir.join("R");
-    if path.parent() == Some(&r_dir) {
-        return Some(Placement::PackageFile(pkg));
+    match classify_in_package(pkg_dir, path) {
+        PackagePlacement::File => Some(Placement::PackageFile(pkg)),
+        PackagePlacement::Script => Some(Placement::PackageScript(pkg)),
+        PackagePlacement::Skip => None,
     }
-    if path.starts_with(&r_dir) {
-        // Nested below `<pkg>/R/`. The bulk scanner's `scan_r_files`
-        // reads only direct children of `R/`, and `scan_package_scripts`
-        // excludes anything under `R/`. The watcher matches that.
-        return None;
-    }
-    Some(Placement::PackageScript(pkg))
 }
 
 fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Root> {

@@ -121,6 +121,35 @@ pub(crate) fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
 }
 
+/// Where an R file inside a package directory belongs.
+///
+/// `R/*.R` (direct children of `R/`) are the package's loadable namespace.
+/// Files nested deeper under `R/` are skipped: R loads `R/` as a flat
+/// directory, so `R/sub/foo.R` isn't part of the namespace and nothing else
+/// reads it. Everything else under the package (tests/, inst/, vignettes/,
+/// data-raw/, ...) is a script: analysed but not loaded.
+///
+/// This is the single definition of the rule. The bulk scanner
+/// ([`scan_package_scripts()`]) and the file watcher (`crate::watch::classify()`)
+/// both route through it so the two can't drift on where a file lands.
+#[derive(Debug, PartialEq)]
+pub(crate) enum PackagePlacement {
+    File,
+    Script,
+    Skip,
+}
+
+pub(crate) fn classify_in_package(package_dir: &Path, path: &Path) -> PackagePlacement {
+    let r_dir = package_dir.join("R");
+    if path.parent() == Some(r_dir.as_path()) {
+        PackagePlacement::File
+    } else if path.starts_with(&r_dir) {
+        PackagePlacement::Skip
+    } else {
+        PackagePlacement::Script
+    }
+}
+
 /// Read just the package name from `package_dir/DESCRIPTION`. Cheaper than
 /// [`read_package`] when the caller only needs to look up an existing
 /// `Package` by name.
@@ -178,13 +207,12 @@ pub(crate) fn scan_workspace_scripts(root: &Path) -> Vec<FileEntry> {
 /// everything else (tests/, inst/, vignettes/, data-raw/) lands here.
 fn scan_package_scripts(pkg_dir: &Path) -> Vec<FileEntry> {
     let mut scripts = Vec::new();
-    let r_dir = pkg_dir.join("R");
     for entry in workspace_walker(pkg_dir).flatten() {
         let path = entry.path();
         if !is_r_file(path) {
             continue;
         }
-        if path.starts_with(&r_dir) {
+        if classify_in_package(pkg_dir, path) != PackagePlacement::Script {
             continue;
         }
         let Ok(contents) = fs::read_to_string(path) else {
@@ -289,4 +317,43 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
 /// hardcoded exclusion list.
 fn workspace_walker(root: &Path) -> ignore::Walk {
     WalkBuilder::new(root).build()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::classify_in_package;
+    use super::PackagePlacement;
+
+    #[test]
+    fn classify_in_package_rule() {
+        let pkg = Path::new("/ws/pkg");
+
+        // Direct children of `R/` are the loadable namespace.
+        assert_eq!(
+            classify_in_package(pkg, Path::new("/ws/pkg/R/a.R")),
+            PackagePlacement::File
+        );
+
+        // Nested under `R/` is excluded: R loads `R/` flat.
+        assert_eq!(
+            classify_in_package(pkg, Path::new("/ws/pkg/R/sub/b.R")),
+            PackagePlacement::Skip
+        );
+
+        // Everything else under the package is a script.
+        assert_eq!(
+            classify_in_package(pkg, Path::new("/ws/pkg/tests/testthat/test-a.R")),
+            PackagePlacement::Script
+        );
+        assert_eq!(
+            classify_in_package(pkg, Path::new("/ws/pkg/inst/foo.R")),
+            PackagePlacement::Script
+        );
+        assert_eq!(
+            classify_in_package(pkg, Path::new("/ws/pkg/data-raw/prep.R")),
+            PackagePlacement::Script
+        );
+    }
 }
