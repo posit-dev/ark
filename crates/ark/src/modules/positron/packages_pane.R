@@ -38,11 +38,7 @@
     # whitespace; the first is conventionally the package's canonical website.
     # Surface it as the single best URL (Positron validates the scheme before
     # opening). Drop everything from the first separator on; "" when absent.
-    url <- sub(
-        "[[:space:],].*$",
-        "",
-        trimws(ifelse(is.na(ip[, "URL"]), "", ip[, "URL"]))
-    )
+    url <- sub("[[:space:],].*$", "", trimws(ip[, "URL"]))
     # Build each package as a list so `url` can be omitted entirely when a
     # package advertises none -- a vectorized `Map(list, url = url)` forces the
     # key onto every package (serializing "" rather than leaving it absent).
