@@ -112,7 +112,7 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
         .filter_map(|root| match root.path(db).to_file_path() {
             Ok(path) => Some((path, *root)),
             Err(err) => {
-                log::warn!("Skipping workspace root: {err}");
+                log::warn!("Can't get file path of workspace root, skipping: {err:?}");
                 None
             },
         })

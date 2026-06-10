@@ -413,9 +413,10 @@ fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
 
 fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
-    let mut files = orphan.files(db).clone();
-    if !files.contains(&file) {
-        files.push(file);
-        orphan.set_files(db).to(files);
+    if orphan.files(db).contains(&file) {
+        return;
     }
+    let mut files = orphan.files(db).clone();
+    files.push(file);
+    orphan.set_files(db).to(files);
 }
