@@ -54,9 +54,7 @@
                 attached = attached,
                 description = description
             )
-            if (nzchar(url)) {
-                entry$url <- url
-            }
+            entry$url <- if (!is.na(url)) url
             entry
         },
         id,
