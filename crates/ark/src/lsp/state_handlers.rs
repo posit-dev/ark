@@ -239,17 +239,15 @@ pub(crate) fn initialize(
 
 /// Resolve the effective workspace folders from `InitializeParams`.
 ///
-/// `workspaceFolders` takes precedence when present and non-empty.
-/// Falls back to the legacy `rootUri` for clients that don't send
-/// multi-root workspaces. The returned vector is empty when neither
-/// produces a folder, i.e. the server is running in single-file mode.
+/// We read only `workspaceFolders`, the modern field , without falling back to
+/// the deprecated `rootUri`. An empty or absent list means single-file mode.
 pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
-    if let Some(folders) = params.workspace_folders.as_ref() {
-        if !folders.is_empty() {
-            return folders.iter().map(|f| f.uri.clone()).collect();
-        }
-    }
-    params.root_uri.iter().cloned().collect()
+    params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .map(|folder| folder.uri.clone())
+        .collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]

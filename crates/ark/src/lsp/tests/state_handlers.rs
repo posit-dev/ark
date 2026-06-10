@@ -311,10 +311,9 @@ fn folder(uri: &str) -> WorkspaceFolder {
 }
 
 #[test]
-fn test_effective_workspace_uris_prefers_workspace_folders() {
+fn test_effective_workspace_uris_reads_workspace_folders() {
     let params = InitializeParams {
         workspace_folders: Some(vec![folder("file:///a"), folder("file:///b")]),
-        root_uri: Some(Url::parse("file:///legacy").unwrap()),
         ..Default::default()
     };
     let uris = effective_workspace_uris(&params);
@@ -324,30 +323,23 @@ fn test_effective_workspace_uris_prefers_workspace_folders() {
 }
 
 #[test]
-fn test_effective_workspace_uris_falls_back_to_root_uri() {
-    let params = InitializeParams {
+fn test_effective_workspace_uris_ignores_legacy_root_uri() {
+    // We dropped the `root_uri` fallback, so a client sending only the
+    // deprecated field gets single-file mode (empty), whether
+    // `workspace_folders` is absent or an empty list.
+    let absent = InitializeParams {
         workspace_folders: None,
         root_uri: Some(Url::parse("file:///legacy").unwrap()),
         ..Default::default()
     };
-    let uris = effective_workspace_uris(&params);
-    assert_eq!(uris.len(), 1);
-    assert_eq!(uris[0].as_str(), "file:///legacy");
-}
+    assert!(effective_workspace_uris(&absent).is_empty());
 
-#[test]
-fn test_effective_workspace_uris_falls_back_when_workspace_folders_empty() {
-    // Some clients send an empty `workspace_folders` list alongside a
-    // legacy `root_uri`. Treat the empty list as "no folders" and use
-    // the legacy field, rather than init-ing with zero workspaces.
-    let params = InitializeParams {
+    let empty = InitializeParams {
         workspace_folders: Some(vec![]),
         root_uri: Some(Url::parse("file:///legacy").unwrap()),
         ..Default::default()
     };
-    let uris = effective_workspace_uris(&params);
-    assert_eq!(uris.len(), 1);
-    assert_eq!(uris[0].as_str(), "file:///legacy");
+    assert!(effective_workspace_uris(&empty).is_empty());
 }
 
 #[test]
