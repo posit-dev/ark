@@ -2628,6 +2628,7 @@ version = "0.1.0"
 dependencies = [
  "aether_url",
  "log",
+ "oak_core",
  "oak_db",
  "oak_package_metadata",
  "salsa",

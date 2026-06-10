@@ -107,11 +107,5 @@ fn scan_r_files(r_dir: &Path) -> Vec<FileEntry> {
 }
 
 fn is_r_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let Some(ext) = path.extension() else {
-        return false;
-    };
-    ext.eq_ignore_ascii_case("r")
+    path.is_file() && oak_core::is_r_file(path)
 }
