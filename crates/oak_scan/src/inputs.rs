@@ -104,10 +104,7 @@ pub trait DbScan: Db + DbInputs {
     /// the same `File` input entity in the Salsa cache.
     ///
     /// If no `File` exists at all, one is created in `orphan_root().files`.
-    /// It stays there until another handler reclassifies it. Untitled
-    /// buffers and files outside every workspace stay orphan for the
-    /// session. Files inside a workspace folder get reclassified the next
-    /// time the workspace scanner runs.
+    /// It stays there until another handler reclassifies it.
     fn upsert_editor(&mut self, url: UrlId, contents: String) -> File;
 
     /// Mark the editor as no longer holding a buffer for this URL.
