@@ -151,11 +151,11 @@ pub(crate) fn initialize(
         .keys()
         .map(|url| UrlId::from_url(url.clone()))
         .collect();
-    let pending =
+    let requests =
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
-    dispatch_scan_requests(events_tx, pending);
+    dispatch_scan_requests(events_tx, requests);
     lsp::main_loop::index_start(folders, state.clone());
 
     let result = InitializeResult {
@@ -435,11 +435,11 @@ pub(crate) fn did_change_watched_files(
         })
         .collect();
 
-    let pending =
+    let requests =
         lsp_state
             .oak_scheduler
             .apply_watcher_events(&mut state.db, events, &editor_owned);
-    dispatch_scan_requests(events_tx, pending);
+    dispatch_scan_requests(events_tx, requests);
     Ok(())
 }
 
@@ -475,11 +475,11 @@ pub(crate) fn did_change_workspace_folders(
         .map(|url| UrlId::from_url(url.clone()))
         .collect();
 
-    let pending =
+    let requests =
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
-    dispatch_scan_requests(events_tx, pending);
+    dispatch_scan_requests(events_tx, requests);
     Ok(())
 }
 
