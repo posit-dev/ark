@@ -20,7 +20,7 @@ use crate::inputs::FileEntry;
 /// plus the R files under `R/`, plus any package-internal R files in
 /// `tests/`, `inst/`, etc. (populated only by the workspace scanner).
 #[derive(Debug)]
-pub(crate) struct PackageDescriptor {
+pub(crate) struct PackageEntry {
     /// URL of the `DESCRIPTION` file. This is the identity key for the
     /// `Package` entity: the same path produces the same entity across
     /// rescans, even when the package's version or files change. So a
@@ -45,7 +45,7 @@ pub(crate) struct PackageDescriptor {
 /// Read a candidate package directory. Returns `None` if `DESCRIPTION`
 /// is missing or malformed. Populates `files` (R/*.R) only; `scripts`
 /// is filled by [`scan_workspace`] for workspace packages.
-pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
+pub(crate) fn read_package(dir: &Path) -> Option<PackageEntry> {
     let description_path = dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
@@ -59,7 +59,7 @@ pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
     let files = scan_r_files(&dir.join("R"));
     let collation = description.collate();
 
-    Some(PackageDescriptor {
+    Some(PackageEntry {
         description_url,
         name: description.name,
         version: Some(description.version),
@@ -143,11 +143,11 @@ pub(crate) fn read_description_name(dir: &Path) -> Option<String> {
 /// If two `DESCRIPTION` files in the workspace declare the same `Package:`
 /// name, the one whose directory sorts first wins and the rest are dropped with
 /// a warn log. See [`dedup_packages_by_name`] for the rationale.
-pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageDescriptor>, Vec<FileEntry>) {
+pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageEntry>, Vec<FileEntry>) {
     let mut description_dirs = collect_description_dirs(root);
     description_dirs.sort();
 
-    let pairs: Vec<(PathBuf, PackageDescriptor)> = description_dirs
+    let pairs: Vec<(PathBuf, PackageEntry)> = description_dirs
         .iter()
         .filter_map(|dir| {
             read_package(dir).map(|mut pkg| {
@@ -164,7 +164,7 @@ pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageDescriptor>, Vec<FileEn
 }
 
 /// Walk a package directory, returning every `.R` file inside it that's
-/// not in `pkg_dir/R/`. R/ files are owned by [`PackageDescriptor::files`];
+/// not in `pkg_dir/R/`. R/ files are owned by [`PackageEntry::files`];
 /// everything else (tests/, inst/, vignettes/, data-raw/) lands here.
 fn scan_package_scripts(pkg_dir: &Path) -> Vec<FileEntry> {
     let mut scripts = Vec::new();
@@ -196,9 +196,9 @@ fn scan_package_scripts(pkg_dir: &Path) -> Vec<FileEntry> {
 /// entity with the loser's files clobbering the winner's and the duplicate
 /// appearing twice in `root.packages`. First-wins gives a stable, predictable
 /// outcome at the cost of ignoring one of the two.
-fn dedup_packages_by_name(pairs: Vec<(PathBuf, PackageDescriptor)>) -> Vec<PackageDescriptor> {
+fn dedup_packages_by_name(pairs: Vec<(PathBuf, PackageEntry)>) -> Vec<PackageEntry> {
     let mut winners: HashMap<String, PathBuf> = HashMap::new();
-    let mut packages: Vec<PackageDescriptor> = Vec::with_capacity(pairs.len());
+    let mut packages: Vec<PackageEntry> = Vec::with_capacity(pairs.len());
 
     for (dir, pkg) in pairs {
         if let Some(existing) = winners.get(&pkg.name) {
