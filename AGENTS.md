@@ -67,6 +67,10 @@ just test <test_name>
 just test -p ark
 ```
 
+### Placing Integration Tests
+
+Put integration tests under `crates/<crate>/tests/integration/`, with a `main.rs` that declares each test file as a module (`mod library;`). Don't add loose `*.rs` files directly under `tests/`. Each top-level file there compiles as its own test binary, so consolidating them into one `integration` binary keeps build and link times down and saves on disk space.
+
 ### Running Clippy
 
 ```sh
