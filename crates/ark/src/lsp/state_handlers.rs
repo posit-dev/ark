@@ -18,8 +18,6 @@ use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
-use tower_lsp::lsp_types::CreateFilesParams;
-use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
@@ -29,10 +27,6 @@ use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
 use tower_lsp::lsp_types::FileChangeType;
-use tower_lsp::lsp_types::FileOperationFilter;
-use tower_lsp::lsp_types::FileOperationPattern;
-use tower_lsp::lsp_types::FileOperationPatternKind;
-use tower_lsp::lsp_types::FileOperationRegistrationOptions;
 use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
@@ -40,7 +34,6 @@ use tower_lsp::lsp_types::ImplementationProviderCapability;
 use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::OneOf;
-use tower_lsp::lsp_types::RenameFilesParams;
 use tower_lsp::lsp_types::RenameOptions;
 use tower_lsp::lsp_types::SelectionRangeProviderCapability;
 use tower_lsp::lsp_types::ServerCapabilities;
@@ -200,28 +193,11 @@ pub(crate) fn initialize(
                     supported: Some(true),
                     change_notifications: Some(OneOf::Left(true)),
                 }),
-                file_operations: {
-                    let r_file_filter = FileOperationFilter {
-                        scheme: Some(String::from("file")),
-                        pattern: FileOperationPattern {
-                            glob: String::from("**/*.{r,R}"),
-                            matches: Some(FileOperationPatternKind::File),
-                            options: None,
-                        },
-                    };
-                    Some(lsp_types::WorkspaceFileOperationsServerCapabilities {
-                        did_create: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_delete: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_rename: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter],
-                        }),
-                        ..Default::default()
-                    })
-                },
+                // We don't register `file_operations`. Disk changes reach us
+                // through `didChangeWatchedFiles` from every source (editor, git,
+                // terminal), so it's the single channel that keeps the index
+                // current. A rename arrives there as delete + create.
+                file_operations: None,
             }),
             document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                 first_trigger_character: String::from("\n"),
@@ -337,53 +313,23 @@ pub(crate) fn did_close(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_create_files(
-    _params: CreateFilesParams,
-    _state: &WorldState,
-) -> anyhow::Result<()> {
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_delete_files(
-    _params: DeleteFilesParams,
-    _state: &WorldState,
-) -> anyhow::Result<()> {
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_rename_files(
-    _params: RenameFilesParams,
-    _state: &mut WorldState,
-) -> anyhow::Result<()> {
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_change_watched_files(
     params: DidChangeWatchedFilesParams,
     state: &mut WorldState,
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    // Editor owns the contents of files it has open: Oak should ignore
-    // disk-side events for those URLs.
+    // Editor owns the contents of files it has open: ignore disk-side events
+    // for those URLs. Their content comes from `did_open` / `did_change`.
     let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
 
     let events: Vec<FileEvent> = params
         .changes
-        .into_iter()
-        .filter_map(|e| {
-            let kind = match e.typ {
-                FileChangeType::CREATED => FileEventKind::Created,
-                FileChangeType::CHANGED => FileEventKind::Changed,
-                FileChangeType::DELETED => FileEventKind::Deleted,
-                _ => return None,
-            };
+        .iter()
+        .filter_map(|change| {
             Some(FileEvent {
-                path: FilePath::from_url(&e.uri),
-                kind,
+                path: FilePath::from_url(&change.uri),
+                kind: file_event_kind(change.typ)?,
             })
         })
         .collect();
@@ -393,7 +339,17 @@ pub(crate) fn did_change_watched_files(
             .oak_scheduler
             .apply_watcher_events(&mut state.db, events, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
+
     Ok(())
+}
+
+fn file_event_kind(kind: FileChangeType) -> Option<FileEventKind> {
+    match kind {
+        FileChangeType::CREATED => Some(FileEventKind::Created),
+        FileChangeType::CHANGED => Some(FileEventKind::Changed),
+        FileChangeType::DELETED => Some(FileEventKind::Deleted),
+        _ => None,
+    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]

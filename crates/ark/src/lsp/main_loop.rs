@@ -358,15 +358,6 @@ impl GlobalState {
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.lsp_state, &mut self.world)?;
                         },
-                        LspNotification::DidCreateFiles(params) => {
-                            state_handlers::did_create_files(params, &self.world)?;
-                        },
-                        LspNotification::DidDeleteFiles(params) => {
-                            state_handlers::did_delete_files(params, &self.world)?;
-                        },
-                        LspNotification::DidRenameFiles(params) => {
-                            state_handlers::did_rename_files(params, &mut self.world)?;
-                        },
                     }
                 },
 
