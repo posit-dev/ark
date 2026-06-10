@@ -27,6 +27,7 @@ use url::Url;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::document::Document;
 use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_watched_files;
@@ -522,7 +523,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // to orphan, editor-owned) → close → file leaves orphan, lands in
     // stale. Without the `close_editor` hook in `did_close`, the file
     // would zombie in orphan with the editor's last content.
-    let _aux_rx = init_aux_for_test();
+    let mut aux_rx = init_aux_for_test();
 
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
@@ -566,4 +567,11 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     assert!(!state.db.orphan_root().files(&state.db).contains(&file));
     assert!(state.db.stale_root().files(&state.db).contains(&file));
+
+    // did_close() clears diagnostics for the closed file.
+    let event = aux_rx.try_recv().unwrap();
+    assert!(matches!(
+        event,
+        AuxiliaryEvent::PublishDiagnostics(u, diags, _) if u == url && diags.is_empty()
+    ));
 }
