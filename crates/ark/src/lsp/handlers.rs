@@ -97,9 +97,9 @@ pub(crate) async fn handle_initialized(
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
-    // Watch R files and DESCRIPTION across the workspace. The client
-    // sends `workspace/didChangeWatchedFiles` on disk changes that the
-    // editor itself didn't make (git checkouts, external edits, etc.).
+    // Watch R files and DESCRIPTION. We get notified on any disk change;
+    // the handler skips editor-owned URLs since those are tracked via
+    // `textDocument/did*` instead.
     let watchers = vec![
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
