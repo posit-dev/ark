@@ -65,9 +65,12 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         file.set_package(db).to(None);
     }
 
-    let (to_orphan, to_stale): (Vec<File>, Vec<File>) = all_files
-        .into_iter()
-        .partition(|f| editor_owned.is_some_and(|owned| owned.contains(f.url(db))));
+    let (to_orphan, to_stale): (Vec<File>, Vec<File>) = match editor_owned {
+        Some(owned) => all_files
+            .into_iter()
+            .partition(|f| owned.contains(f.url(db))),
+        None => (Vec::new(), all_files),
+    };
 
     if !to_orphan.is_empty() {
         let orphan = db.orphan_root();
