@@ -36,8 +36,8 @@ use salsa::Setter;
 use crate::inputs::remove_from_orphan;
 use crate::inputs::remove_from_pkg_files;
 use crate::inputs::upsert_root_file;
-use crate::inputs::with_appended;
-use crate::inputs::with_removed;
+use crate::inputs::with_cow_filter;
+use crate::inputs::with_cow_push;
 use crate::inputs::FileEntry;
 use crate::packages::classify_in_package;
 use crate::packages::is_r_file;
@@ -159,17 +159,17 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId, conte
 fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Placement) {
     match placement {
         Placement::Script(root) => {
-            if let Some(scripts) = with_appended(root.scripts(db), file) {
+            if let Some(scripts) = with_cow_push(root.scripts(db), file) {
                 root.set_scripts(db).to(scripts);
             }
         },
         Placement::PackageFile(pkg) => {
-            if let Some(files) = with_appended(pkg.files(db), file) {
+            if let Some(files) = with_cow_push(pkg.files(db), file) {
                 pkg.set_files(db).to(files);
             }
         },
         Placement::PackageScript(pkg) => {
-            if let Some(scripts) = with_appended(pkg.scripts(db), file) {
+            if let Some(scripts) = with_cow_push(pkg.scripts(db), file) {
                 pkg.set_scripts(db).to(scripts);
             }
         },
@@ -192,7 +192,7 @@ pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: UrlId) {
     }
 
     for &root in &db.workspace_roots().roots(db).clone() {
-        if let Some(scripts) = with_removed(root.scripts(db), file) {
+        if let Some(scripts) = with_cow_filter(root.scripts(db), file) {
             root.set_scripts(db).to(scripts);
             return;
         }

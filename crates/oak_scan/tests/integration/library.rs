@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -378,7 +379,9 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     // Editor opens the file before any scan -> orphan.
     let r_url = file_url("/lib/pkg/R/a.R");
     let file = File::new(&db, r_url.clone(), "editor content".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![file]);
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([file]));
     assert_eq!(file.package(&db), None);
 
     // Now a library scan picks up the same URL as part of a package.

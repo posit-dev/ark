@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCallKind;
@@ -350,7 +352,9 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
         None,
     );
     let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([a, b]));
 
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));
@@ -368,7 +372,9 @@ fn test_source_path_with_parent_dir_segments() {
         None,
     );
     let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([a, b]));
 
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));

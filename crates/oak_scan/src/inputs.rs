@@ -17,6 +17,7 @@
 //! input structs.
 
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::path::PathBuf;
 
 use aether_url::UrlId;
@@ -178,7 +179,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
         };
 
         let orphan = self.orphan_root();
-        let Some(orphan_files) = with_removed(orphan.files(self), file) else {
+        let Some(orphan_files) = with_cow_remove(orphan.files(self), file) else {
             // A workspace or library root holds it, nothing to do.
             return;
         };
@@ -187,7 +188,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
         orphan.set_files(self).to(orphan_files);
 
         let stale = self.stale_root();
-        if let Some(stale_files) = with_appended(stale.files(self), file) {
+        if let Some(stale_files) = with_cow_insert(stale.files(self), file) {
             stale.set_files(self).to(stale_files);
         }
     }
@@ -384,36 +385,37 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 /// entry. Also used by [`watch::remove_watched_file`] when a file
 /// disappears from disk.
 pub(crate) fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
-    if let Some(files) = with_removed(pkg.files(db), file) {
+    if let Some(files) = with_cow_filter(pkg.files(db), file) {
         pkg.set_files(db).to(files);
         return;
     }
-    if let Some(scripts) = with_removed(pkg.scripts(db), file) {
+    if let Some(scripts) = with_cow_filter(pkg.scripts(db), file) {
         pkg.set_scripts(db).to(scripts);
     }
 }
 
 pub(crate) fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
-    if let Some(files) = with_removed(orphan.files(db), file) {
+    if let Some(files) = with_cow_remove(orphan.files(db), file) {
         orphan.set_files(db).to(files);
     }
 }
 
 fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
-    if let Some(files) = with_appended(orphan.files(db), file) {
+    if let Some(files) = with_cow_insert(orphan.files(db), file) {
         orphan.set_files(db).to(files);
     }
 }
 
-/// The container with `file` appended, or `None` if it's already there.
+/// The ordered container with `file` appended, or `None` if it's already there.
 ///
 /// `None` means nothing would change, so the caller skips the salsa write and
-/// the clone. This keeps the "clone only when the field actually changes"
-/// rule in one place, shared by every container update on `Root` / `Package` /
-/// `OrphanRoot`.
-pub(crate) fn with_appended<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
+/// the clone. This keeps the "clone only when the field actually changes" rule
+/// in one place, shared by the ordered container updates on `Root` and
+/// `Package`. See [`with_inserted`] / [`with_discarded`] for the unordered
+/// `OrphanRoot` / `StaleRoot` sets.
+pub(crate) fn with_cow_push<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
     if files.contains(&file) {
         return None;
     }
@@ -422,11 +424,40 @@ pub(crate) fn with_appended<T: Clone + PartialEq>(files: &[T], file: T) -> Optio
     Some(updated)
 }
 
-/// The container with `file` removed, or `None` if it wasn't there. `None`
-/// means nothing would change, see [`with_file_appended`].
-pub(crate) fn with_removed<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
+/// The ordered container with `file` removed, or `None` if it wasn't there.
+/// `None` means nothing would change, see [`with_appended`].
+pub(crate) fn with_cow_filter<T: Clone + PartialEq>(files: &[T], file: T) -> Option<Vec<T>> {
     if !files.contains(&file) {
         return None;
     }
     Some(files.iter().filter(|f| **f != file).cloned().collect())
+}
+
+/// The set with `item` inserted, or `None` if it's already present. The
+/// unordered counterpart of [`with_appended`], used for the `OrphanRoot` /
+/// `StaleRoot` sets where membership is all that matters.
+pub(crate) fn with_cow_insert<T: Clone + Eq + Hash>(
+    set: &HashSet<T>,
+    item: T,
+) -> Option<HashSet<T>> {
+    if set.contains(&item) {
+        return None;
+    }
+    let mut updated = set.clone();
+    updated.insert(item);
+    Some(updated)
+}
+
+/// The set with `item` removed, or `None` if it wasn't present. The unordered
+/// counterpart of [`with_removed`].
+pub(crate) fn with_cow_remove<T: Clone + Eq + Hash>(
+    set: &HashSet<T>,
+    item: T,
+) -> Option<HashSet<T>> {
+    if !set.contains(&item) {
+        return None;
+    }
+    let mut updated = set.clone();
+    updated.remove(&item);
+    Some(updated)
 }

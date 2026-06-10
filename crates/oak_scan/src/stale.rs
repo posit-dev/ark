@@ -35,6 +35,9 @@ use oak_db::Root;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
 
+use crate::inputs::with_cow_filter;
+use crate::inputs::with_cow_remove;
+
 /// Drop `root` from its live container, rehoming files and packages to
 /// `OrphanRoot` / `StaleRoot` as described in the module doc.
 ///
@@ -77,22 +80,14 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     if !to_orphan.is_empty() {
         let orphan = db.orphan_root();
         let mut files = orphan.files(db).clone();
-        for file in to_orphan {
-            if !files.contains(&file) {
-                files.push(file);
-            }
-        }
+        files.extend(to_orphan);
         orphan.set_files(db).to(files);
     }
 
     let stale = db.stale_root();
     if !to_stale.is_empty() {
         let mut files = stale.files(db).clone();
-        for file in to_stale {
-            if !files.contains(&file) {
-                files.push(file);
-            }
-        }
+        files.extend(to_stale);
         stale.set_files(db).to(files);
     }
 
@@ -120,22 +115,16 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
 
 pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let stale = db.stale_root();
-    if !stale.files(db).contains(&file) {
-        return;
+    if let Some(files) = with_cow_remove(stale.files(db), file) {
+        stale.set_files(db).to(files);
     }
-    let mut files = stale.files(db).clone();
-    files.retain(|f| *f != file);
-    stale.set_files(db).to(files);
 }
 
 pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Package) {
     let stale = db.stale_root();
-    if !stale.packages(db).contains(&pkg) {
-        return;
+    if let Some(packages) = with_cow_filter(stale.packages(db), pkg) {
+        stale.set_packages(db).to(packages);
     }
-    let mut packages = stale.packages(db).clone();
-    packages.retain(|p| *p != pkg);
-    stale.set_packages(db).to(packages);
 }
 
 /// Look up a stale `File` by URL. The scanner's upsert helpers call this to
