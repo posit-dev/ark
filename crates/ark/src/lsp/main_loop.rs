@@ -218,13 +218,13 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
-        let mut oak = OakDatabase::new();
-        oak.set_library_paths(&library_paths);
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&library_paths);
 
         let library = Library::new(library_paths);
 
         Self {
-            world: WorldState::new(library, oak),
+            world: WorldState::new(db, library),
             lsp_state,
             client,
             events_tx,

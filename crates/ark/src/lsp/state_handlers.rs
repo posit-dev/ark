@@ -148,7 +148,7 @@ pub(crate) fn initialize(
         .map(|url| UrlId::from_url(url.clone()))
         .collect();
     state
-        .oak
+        .db
         .set_workspace_paths(&workspace_paths, &editor_owned);
     lsp::main_loop::index_start(folders, state.clone());
 
@@ -271,7 +271,7 @@ pub(crate) fn did_open(
     state.documents.insert(uri.clone(), document.clone());
 
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.upsert_editor(url_id, contents.to_string());
+    state.db.upsert_editor(url_id, contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -299,7 +299,7 @@ pub(crate) fn did_change(
 
     let new_contents = document.contents.to_string();
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.upsert_editor(url_id, new_contents);
+    state.db.upsert_editor(url_id, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -336,7 +336,7 @@ pub(crate) fn did_close(
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.close_editor(&url_id);
+    state.db.close_editor(&url_id);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
@@ -424,7 +424,7 @@ pub(crate) fn did_change_watched_files(
         })
         .collect();
 
-    state.oak.apply_watcher_events(events, &editor_owned);
+    state.db.apply_watcher_events(events, &editor_owned);
     Ok(())
 }
 
@@ -459,7 +459,7 @@ pub(crate) fn did_change_workspace_folders(
         .collect();
 
     state
-        .oak
+        .db
         .set_workspace_paths(&workspace_paths, &editor_owned);
     Ok(())
 }

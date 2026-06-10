@@ -15,6 +15,9 @@ use crate::lsp::inputs::source_root::SourceRoot;
 /// code. This is a pure value. There is no interior mutability in this data
 /// structure. It can be cloned and safely sent to other threads.
 pub(crate) struct WorldState {
+    /// Salsa input tree for Oak queries.
+    pub(crate) db: OakDatabase,
+
     /// Watched documents
     pub(crate) documents: HashMap<Url, Document>,
 
@@ -58,9 +61,6 @@ pub(crate) struct WorldState {
     /// libraries. Lazily populated.
     pub(crate) library: Library,
 
-    /// Salsa input tree for Oak queries.
-    pub(crate) oak: OakDatabase,
-
     pub(crate) config: LspConfig,
 }
 
@@ -70,10 +70,10 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(library: Library, oak: OakDatabase) -> Self {
+    pub(crate) fn new(db: OakDatabase, library: Library) -> Self {
         Self {
+            db,
             library,
-            oak,
             ..Default::default()
         }
     }
