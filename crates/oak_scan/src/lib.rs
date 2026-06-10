@@ -30,6 +30,6 @@ mod stale;
 #[cfg(test)]
 mod tests;
 
-pub use inputs::DbExt;
+pub use inputs::DbScan;
 pub use inputs::FileEntry;
 pub use inputs::RootExt;

@@ -10,7 +10,7 @@ use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_package_metadata::namespace::Namespace;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use oak_scan::RootExt;
 use salsa::Setter;
 use url::Url;

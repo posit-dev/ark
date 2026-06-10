@@ -48,7 +48,7 @@ pub struct FileEntry {
 
 /// Extension methods on the database for scanner orchestration and
 /// placement-aware updates that don't have a natural `Root` receiver.
-pub trait DbExt: Db + DbInputs {
+pub trait DbScan: Db + DbInputs {
     /// Reconcile `LibraryRoots` to exactly `paths`.
     ///
     /// - Paths already present as a `Root`: untouched. No fs walk, no
@@ -64,7 +64,7 @@ pub trait DbExt: Db + DbInputs {
     fn set_library_paths(&mut self, paths: &[PathBuf]);
 }
 
-impl<DB: Db + DbInputs> DbExt for DB {
+impl<DB: Db + DbInputs> DbScan for DB {
     fn set_library_paths(&mut self, paths: &[PathBuf]) {
         crate::library::set_library_paths(self, paths);
     }
