@@ -19,9 +19,9 @@
 }
 
 # Notebook / background path: render the widget to a single self-contained
-# HTML document, with each JS/CSS dependency inlined as a `data:` URI, then
-# emit it as a `display_data` IOPub message. The notebook saves the payload
-# verbatim, so it must not reference temp files on disk.
+# HTML document, with each JS/CSS dependency inlined into a `<script>`/`<style>`
+# block, then emit it as a `display_data` IOPub message. The notebook saves the
+# payload verbatim, so it must not reference temp files on disk.
 view_html_widget_inline <- function(x) {
     rendered <- htmltools::renderTags(x)
     html <- embed_tags(rendered)
@@ -51,9 +51,9 @@ view_html_widget_viewer <- function(x) {
 }
 
 # Build a self-contained `<!DOCTYPE html>` document from a `renderTags()`
-# result. Each dependency is inlined as base64 `data:` URIs so that the
-# returned string can be saved into a Jupyter notebook and reopened without
-# any external file references.
+# result. Each dependency's JS/CSS is inlined directly into `<script>`/`<style>`
+# blocks so that the returned string can be saved into a Jupyter notebook and
+# reopened without any external file references.
 embed_tags <- function(rendered) {
     deps <- filter_seen_deps(rendered$dependencies)
     dep_html <- vapply(deps, render_dep_inline, character(1))
@@ -67,6 +67,7 @@ embed_tags <- function(rendered) {
 
     head_parts <- c(
         '<meta charset="utf-8"/>',
+        AMD_GUARD_OPEN,
         dep_html,
         rendered$head
     )
@@ -79,18 +80,43 @@ embed_tags <- function(rendered) {
         "\n</head>\n",
         "<body>\n",
         rendered$html,
+        "\n",
+        AMD_GUARD_CLOSE,
+        "\n",
+        HTMLWIDGETS_RENDER,
         "\n</body>\n",
         "</html>\n"
     )
 }
+
+# htmlwidget JS dependencies are UMD bundles. When a global AMD `define` is
+# present -- as it is inside Positron's and VS Code's output webviews -- these
+# bundles take the AMD branch and register with the loader instead of attaching
+# to the window. Leaflet, for instance, then never sets `window.L`, and the
+# next dependency throws (`Cannot read properties of undefined (reading
+# 'Proj')`) so the widget renders blank. We bracket the dependency and widget
+# scripts to remove `define` for their (synchronous) duration, forcing the
+# browser-global code path, then restore it. This mirrors the guard IRkernel
+# uses for the same reason.
+AMD_GUARD_OPEN <- "<script>window.__ark_define__ = window.define; window.define = undefined;</script>"
+AMD_GUARD_CLOSE <- "<script>window.define = window.__ark_define__; try { delete window.__ark_define__; } catch (e) {}</script>"
+
+# htmlwidgets initializes its widgets from the page's `DOMContentLoaded` event.
+# When our output is inserted into an already-loaded document -- e.g. a notebook
+# output webview that rehydrates the output's scripts long after the page itself
+# loaded -- that event has already fired, so the widget would never render (it
+# stays blank with no error). Trigger a render explicitly. `staticRender()` is
+# idempotent (it skips elements already marked `html-widget-static-bound`), so
+# in a freshly parsed document the later `DOMContentLoaded` render is a no-op.
+HTMLWIDGETS_RENDER <- "<script>if (window.HTMLWidgets && window.HTMLWidgets.staticRender) { window.HTMLWidgets.staticRender(); }</script>"
 
 # An `htmlDependency` (from htmltools) describes the front-end assets a widget
 # needs: a name and version, a source location (either `src$file` on disk or a
 # `src$href` URL), and `script`/`stylesheet` files given relative to that
 # source. `renderTags()` returns these alongside the widget's HTML.
 #
-# Render one such dependency as the `<link>`/`<script>` block to embed in
-# `<head>`. Local files (`src$file`) are base64-inlined; CDN-only deps
+# Render one such dependency as the `<style>`/`<script>` block to embed in
+# `<head>`. Local files (`src$file`) are inlined directly; CDN-only deps
 # (`src$href`) fall back to a remote reference, which is best-effort
 # self-containment but at least keeps the widget functional online.
 render_dep_inline <- function(dep) {
@@ -105,8 +131,8 @@ render_dep_inline <- function(dep) {
             parts <- c(
                 parts,
                 sprintf(
-                    '<link rel="stylesheet" href="%s"/>',
-                    file_to_data_uri(file.path(file_base, css), "text/css")
+                    "<style>\n%s\n</style>",
+                    read_dep_file(file.path(file_base, css), "style")
                 )
             )
         } else if (!is.null(href_base)) {
@@ -130,11 +156,8 @@ render_dep_inline <- function(dep) {
             parts <- c(
                 parts,
                 sprintf(
-                    '<script src="%s"></script>',
-                    file_to_data_uri(
-                        file.path(file_base, js),
-                        "application/javascript"
-                    )
+                    "<script>\n%s\n</script>",
+                    read_dep_file(file.path(file_base, js), "script")
                 )
             )
         } else if (!is.null(href_base)) {
@@ -179,20 +202,24 @@ as_named_resource <- function(x) {
     )
 }
 
-# Read a file and return a `data:<mime>;base64,...` URI. Used for inlining
-# JS/CSS dependencies. The mime types we pass in are static; charset for CSS
-# is set explicitly so non-ASCII glyphs in fonts.css etc. render correctly.
-# (base64enc is a hard dependency of htmltools, so it's guaranteed to be
-# available wherever this code path runs.)
-file_to_data_uri <- function(path, mime) {
+# Read a JS/CSS dependency file and return its text, ready to drop straight
+# into a `<script>`/`<style>` block. We inline the literal source rather than a
+# base64 `data:` URI because `data:`-`src` scripts are loaded asynchronously by
+# some notebook renderers (e.g. VS Code's, which rehydrates output scripts via
+# `domEval`); that breaks load ordering and defeats the surrounding AMD guard,
+# whereas inline scripts always run synchronously in source order. `tag` is
+# "script" or "style" so we can neutralize any closing tag the content happens
+# to contain.
+read_dep_file <- function(path, tag) {
     bytes <- readBin(path, what = "raw", n = file.info(path)$size)
-    encoded <- base64enc::base64encode(bytes)
-    mime_with_charset <- if (identical(mime, "text/css")) {
-        "text/css;charset=utf-8"
-    } else {
-        mime
-    }
-    paste0("data:", mime_with_charset, ";base64,", encoded)
+    text <- rawToChar(bytes)
+    Encoding(text) <- "UTF-8"
+
+    # Inline content may legitimately contain "</script>" or "</style>" inside
+    # a string or comment, which would close the element early. Break the match
+    # without changing the value the JS/CSS engine sees (`<\/script>` is the
+    # same string as `</script>`).
+    gsub(paste0("</", tag), paste0("<\\/", tag), text, fixed = TRUE)
 }
 
 # Per-session dedup: when enabled, each `htmlDependency` keyed by

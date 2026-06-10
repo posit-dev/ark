@@ -55,7 +55,11 @@ fn test_html_widget_emits_self_contained_html() {
     let html = execute_and_get_html(&frontend, &code);
 
     assert!(html.contains("<!DOCTYPE html>"));
-    assert!(html.contains("data:application/javascript;base64,"));
+    // Dependency JS is inlined literally into a `<script>` block, not referenced
+    // as a base64 `data:` URI (which some notebook renderers load asynchronously,
+    // breaking load order and the AMD guard).
+    assert!(html.contains("/* marker-A */"));
+    assert!(!html.contains("data:application/javascript;base64,"));
     assert!(html.contains("widget body"));
 
     // No raw tempdir references — the whole point of self-containment is that
@@ -86,8 +90,8 @@ fn test_html_widget_does_not_dedupe_by_default() {
     let first_html = execute_and_get_html(&frontend, &first);
     let second_html = execute_and_get_html(&frontend, &second);
 
-    assert!(first_html.contains("data:application/javascript;base64,"));
-    assert!(second_html.contains("data:application/javascript;base64,"));
+    assert!(first_html.contains("/* marker-first */"));
+    assert!(second_html.contains("/* marker-second */"));
 }
 
 #[test]
@@ -119,9 +123,9 @@ fn test_html_widget_dedupe_can_be_enabled() {
     let second_html = execute_and_get_html(&frontend, &second);
 
     // First cell inlines the dep.
-    assert!(first_html.contains("data:application/javascript;base64,"));
+    assert!(first_html.contains("/* marker-first */"));
     // Second cell sees `fakedep@1.0` as already inlined and skips it.
-    assert!(!second_html.contains("data:application/javascript;base64,"));
+    assert!(!second_html.contains("/* marker-second */"));
     // Widget body still rendered both times.
     assert!(second_html.contains("widget body"));
 }
@@ -157,5 +161,5 @@ fn test_html_widget_auto_print_emits_only_display_data() {
     let html = execute_and_get_html(&frontend, &code);
 
     assert!(html.contains("widget body"));
-    assert!(html.contains("data:application/javascript;base64,"));
+    assert!(html.contains("/* marker-autoprint */"));
 }
