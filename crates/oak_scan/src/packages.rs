@@ -42,10 +42,15 @@ pub(crate) struct PackageEntry {
     pub collation: Option<Vec<String>>,
 }
 
-/// Read a candidate package directory. Returns `None` if `DESCRIPTION`
-/// is missing or malformed. Populates `files` (R/*.R) only; `scripts`
-/// is filled by [`scan_workspace_packages`] for workspace packages.
-pub(crate) fn read_package(package_dir: &Path) -> Option<PackageEntry> {
+/// Read a package's `DESCRIPTION` / `NAMESPACE` metadata. Returns `None` if
+/// `DESCRIPTION` is missing or malformed. The returned entry has empty `files`
+/// and `scripts`; callers fill those separately.
+///
+/// The library scanner uses this directly: installed packages have no `.R`
+/// sources under `R/` (it holds the lazy-load db), so their `files` come from
+/// a cache later, not from a directory scan. The workspace scanner wraps this
+/// in [`read_workspace_package`], which discovers sources by walking the tree.
+pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> {
     let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
@@ -56,7 +61,6 @@ pub(crate) fn read_package(package_dir: &Path) -> Option<PackageEntry> {
         .and_then(|text| Namespace::parse(&text).log_err())
         .unwrap_or_default();
 
-    let files = scan_r_files(&package_dir.join("R"));
     let collation = description.collate();
 
     Some(PackageEntry {
@@ -64,57 +68,10 @@ pub(crate) fn read_package(package_dir: &Path) -> Option<PackageEntry> {
         name: description.name,
         version: Some(description.version),
         namespace,
-        files,
+        files: Vec::new(),
         scripts: Vec::new(),
         collation,
     })
-}
-
-/// Read every `*.R` / `*.r` file directly under `r_dir`, in alphabetical
-/// order by basename. Subdirectories are skipped (the standard R package
-/// layout is flat). R files that fail to read are logged at warn level
-/// and skipped. Symlinks resolving to non-files (the `is_r_file` check)
-/// are skipped quietly.
-///
-/// Returns empty for installed (library) packages: their `R/` holds the
-/// lazy-load db (`<pkg>`, `<pkg>.rdb`, `<pkg>.rdx`), not `.R` sources. Only
-/// source packages (the workspace scanner's input) have `R/*.R` to read.
-fn scan_r_files(r_dir: &Path) -> Vec<FileEntry> {
-    let mut entries: Vec<(PathBuf, String)> = Vec::new();
-    let Ok(read_dir) = fs::read_dir(r_dir) else {
-        // Normal for packages without an `R/` directory (data-only,
-        // header-only). Don't log.
-        return Vec::new();
-    };
-
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if !is_r_file(&path) {
-            continue;
-        }
-        let contents = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(err) => {
-                log::warn!("Failed to read R file {}: {err}", path.display());
-                continue;
-            },
-        };
-        entries.push((path, contents));
-    }
-
-    entries.sort_by(|a, b| {
-        let a_name = a.0.file_name().map(|n| n.to_ascii_lowercase());
-        let b_name = b.0.file_name().map(|n| n.to_ascii_lowercase());
-        a_name.cmp(&b_name)
-    });
-
-    entries
-        .into_iter()
-        .filter_map(|(path, contents)| {
-            let url = UrlId::from_file_path(&path).ok()?;
-            Some(FileEntry { url, contents })
-        })
-        .collect()
 }
 
 pub(crate) fn is_r_file(path: &Path) -> bool {
@@ -130,7 +87,7 @@ pub(crate) fn is_r_file(path: &Path) -> bool {
 /// data-raw/, ...) is a script: analysed but not loaded.
 ///
 /// This is the single definition of the rule. The bulk scanner
-/// ([`scan_package_scripts()`]) and the file watcher (`crate::watch::classify()`)
+/// ([`read_workspace_package()`]) and the file watcher (`crate::watch::classify()`)
 /// both route through it so the two can't drift on where a file lands.
 #[derive(Debug, PartialEq)]
 pub(crate) enum PackagePlacement {
@@ -151,7 +108,7 @@ pub(crate) fn classify_in_package(package_dir: &Path, path: &Path) -> PackagePla
 }
 
 /// Read just the package name from `package_dir/DESCRIPTION`. Cheaper than
-/// [`read_package`] when the caller only needs to look up an existing
+/// [`read_package_metadata`] when the caller only needs to look up an existing
 /// `Package` by name.
 pub(crate) fn read_description_name(package_dir: &Path) -> Option<String> {
     let text = fs::read_to_string(package_dir.join("DESCRIPTION")).ok()?;
@@ -175,15 +132,73 @@ pub(crate) fn scan_workspace_packages(root: &Path) -> Vec<PackageEntry> {
 
     let pairs: Vec<(PathBuf, PackageEntry)> = description_dirs
         .iter()
-        .filter_map(|dir| {
-            read_package(dir).map(|mut pkg| {
-                pkg.scripts = scan_package_scripts(dir);
-                (dir.clone(), pkg)
-            })
-        })
+        .filter_map(|dir| read_workspace_package(dir).map(|pkg| (dir.clone(), pkg)))
         .collect();
 
     dedup_packages_by_name(pairs)
+}
+
+/// Read a workspace package: metadata plus a single gitignore-aware walk of
+/// `package_dir` that classifies every `.R` file through [`classify_in_package`].
+///
+/// `R/*.R` lands in `files` (sorted by basename, the order R loads a flat `R/`
+/// in), everything else under the package lands in `scripts`, and files nested
+/// below `R/` are dropped. Honouring `.gitignore` here is what keeps `R/` files
+/// and scripts consistent: both come out of the same walk, so a gitignored R
+/// file is excluded either way.
+fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
+    let mut package = read_package_metadata(package_dir)?;
+
+    let mut files: Vec<(PathBuf, FileEntry)> = Vec::new();
+    let mut scripts: Vec<FileEntry> = Vec::new();
+
+    for entry in workspace_walker(package_dir).flatten() {
+        let path = entry.path();
+        if !is_r_file(path) {
+            continue;
+        }
+        let placement = classify_in_package(package_dir, path);
+        if placement == PackagePlacement::Skip {
+            continue;
+        }
+
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(err) => {
+                log::warn!("Failed to read R file {}: {err}", path.display());
+                continue;
+            },
+        };
+        let Ok(url) = UrlId::from_file_path(path) else {
+            log::warn!("Skipping R file, can't build a URL: {}", path.display());
+            continue;
+        };
+        let file = FileEntry { url, contents };
+
+        if placement == PackagePlacement::File {
+            files.push((path.to_path_buf(), file));
+        } else {
+            scripts.push(file);
+        }
+    }
+
+    // The basename order is currently needed, not cosmetic. `file_imports()` in
+    // `oak_db` reads `package.files` order as the collation chain, so a file
+    // only sees the files ordered before it. Alphabetical is R's default load
+    // order when `DESCRIPTION` has no `Collate` field.
+    //
+    // TODO(scan): honour the `Collate` field when present, falling back to this
+    // alphabetical order. The `collation` field is already parsed but unused.
+    files.sort_by(|a, b| {
+        let a_name = a.0.file_name().map(|n| n.to_ascii_lowercase());
+        let b_name = b.0.file_name().map(|n| n.to_ascii_lowercase());
+        a_name.cmp(&b_name)
+    });
+
+    package.files = files.into_iter().map(|(_, file)| file).collect();
+    package.scripts = scripts;
+
+    Some(package)
 }
 
 /// Walk a workspace root for its top-level scripts: every `.R` file that isn't
@@ -200,30 +215,6 @@ pub(crate) fn scan_workspace_packages(root: &Path) -> Vec<PackageEntry> {
 pub(crate) fn scan_workspace_scripts(root: &Path) -> Vec<FileEntry> {
     let package_dirs = collect_description_dirs(root);
     collect_scripts(root, &package_dirs)
-}
-
-/// Walk a package directory, returning every `.R` file inside it that's
-/// not in `pkg_dir/R/`. R/ files are owned by [`PackageEntry::files`];
-/// everything else (tests/, inst/, vignettes/, data-raw/) lands here.
-fn scan_package_scripts(pkg_dir: &Path) -> Vec<FileEntry> {
-    let mut scripts = Vec::new();
-    for entry in workspace_walker(pkg_dir).flatten() {
-        let path = entry.path();
-        if !is_r_file(path) {
-            continue;
-        }
-        if classify_in_package(pkg_dir, path) != PackagePlacement::Script {
-            continue;
-        }
-        let Ok(contents) = fs::read_to_string(path) else {
-            continue;
-        };
-        let Ok(url) = UrlId::from_file_path(path) else {
-            continue;
-        };
-        scripts.push(FileEntry { url, contents });
-    }
-    scripts
 }
 
 /// Keep the first occurrence of each `Package:` name, dropping duplicates with

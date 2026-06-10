@@ -5,9 +5,25 @@ use std::path::PathBuf;
 use aether_url::UrlId;
 use oak_db::Db;
 use oak_db::DbInputs;
+use oak_db::File;
 use oak_db::OakDatabase;
 use oak_db::RootKind;
 use oak_scan::DbScan;
+
+fn basenames(db: &OakDatabase, files: &[File]) -> Vec<String> {
+    files
+        .iter()
+        .map(|f| {
+            f.url(db)
+                .as_url()
+                .path()
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     fs::create_dir_all(dir.join("R")).unwrap();
@@ -225,6 +241,31 @@ fn test_scan_workspace_honors_gitignore() {
         })
         .collect();
     assert_eq!(basenames, vec!["visible.R"]);
+}
+
+#[test]
+fn test_scan_workspace_honors_gitignore_for_package_files_and_scripts() {
+    // Gitignored files under a package are excluded from both `pkg.files`
+    // (`<pkg>/R/`) and `pkg.scripts` (`<pkg>/tests/`, etc.). Both come out of
+    // one gitignore-aware walk, so they can't diverge.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    fs::write(tmp.path().join(".gitignore"), "generated.R\nignored.R\n").unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    fs::write(tmp.path().join("pkg/R/generated.R"), "auto <- 1\n").unwrap();
+    fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
+    fs::write(tmp.path().join("pkg/tests/keep.R"), "test code\n").unwrap();
+    fs::write(tmp.path().join("pkg/tests/ignored.R"), "skip me\n").unwrap();
+    let mut db = OakDatabase::new();
+
+    db.set_workspace_paths(
+        &[tmp.path().to_path_buf()],
+        &std::collections::HashSet::new(),
+    );
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(basenames(&db, pkg.files(&db)), vec!["a.R"]);
+    assert_eq!(basenames(&db, pkg.scripts(&db)), vec!["keep.R"]);
 }
 
 #[test]
@@ -487,8 +528,9 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
 #[test]
 fn test_set_workspace_paths_unchanged_path_preserves_root_and_package_identity() {
     // Repeated calls with the same paths don't churn entities: the existing
-    // `Root` is reused (no fs walk), and any `Package` salsa caches stay
-    // warm. The watcher is the path for in-folder updates.
+    // `Root` is reused (no fs walk), and the `Package` and `File` entities keep
+    // their ids so salsa caches stay warm. The watcher is the path for
+    // in-folder updates.
     use std::collections::HashSet;
 
     use salsa::plumbing::AsId;
@@ -500,11 +542,81 @@ fn test_set_workspace_paths_unchanged_path_preserves_root_and_package_identity()
     db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
     let root_id_before = db.workspace_roots().roots(&db)[0].as_id();
     let pkg_id_before = db.workspace_roots().roots(&db)[0].packages(&db)[0].as_id();
+    let file_id_before = db.workspace_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
 
     db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
     let root_id_after = db.workspace_roots().roots(&db)[0].as_id();
     let pkg_id_after = db.workspace_roots().roots(&db)[0].packages(&db)[0].as_id();
+    let file_id_after = db.workspace_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
 
     assert_eq!(root_id_before, root_id_after);
     assert_eq!(pkg_id_before, pkg_id_after);
+    assert_eq!(file_id_before, file_id_after);
+}
+
+#[test]
+fn test_scan_workspace_package_files_sorted_by_basename() {
+    // `pkg.files` is ordered alphabetically by basename, the order R loads a
+    // flat `R/` in.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[
+        ("select.R", "select <- function(x) x\n"),
+        ("mutate.R", "mutate <- function(x) x\n"),
+    ]);
+    let mut db = OakDatabase::new();
+
+    db.set_workspace_paths(
+        &[tmp.path().to_path_buf()],
+        &std::collections::HashSet::new(),
+    );
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    let files = pkg.files(&db).clone();
+    assert_eq!(files.len(), 2);
+    assert!(files[0].url(&db).as_url().path().ends_with("mutate.R"));
+    assert!(files[1].url(&db).as_url().path().ends_with("select.R"));
+}
+
+#[test]
+fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
+    // Eviction to stale doesn't snapshot disk contents. When the folder is
+    // re-added, the resurrected file reflects current disk, not whatever it
+    // held when evicted.
+    use std::collections::HashSet;
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "v1\n")]);
+    let mut db = OakDatabase::new();
+
+    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    db.set_workspace_paths(&[], &HashSet::new());
+
+    let r_path = tmp.path().join("pkg/R/a.R");
+    fs::write(&r_path, "v2\n").unwrap();
+
+    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    let url = UrlId::from_file_path(&r_path).unwrap();
+    let file = db.file_by_url(&url).unwrap();
+    assert_eq!(file.contents(&db), "v2\n");
+}
+
+#[test]
+fn test_set_workspace_paths_stale_no_duplicates_across_cycles() {
+    // Repeated add/remove must not duplicate entities in stale: on re-add the
+    // entity comes back out of stale, so by the time we remove it again
+    // there's only one copy to push back in.
+    use std::collections::HashSet;
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+
+    for _ in 0..3 {
+        db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+        db.set_workspace_paths(&[], &HashSet::new());
+    }
+
+    let stale = db.stale_root();
+    assert_eq!(stale.files(&db).len(), 1);
+    assert_eq!(stale.packages(&db).len(), 1);
 }
