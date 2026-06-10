@@ -100,12 +100,11 @@ impl ScanRequest {
     }
 }
 
-/// Output of [`ScanRequest::run`]. Opaque payload from the scan to
-/// [`ScanScheduler::apply_scan_completed`]; the only field callers inspect is
-/// [`ScanCompleted::root`] (e.g. for logging which scan just finished).
+/// Output of [`ScanRequest::run`]. Opaque payload carried from the scan back
+/// to [`ScanScheduler::apply_scan_completed`].
 #[derive(Debug)]
 pub struct ScanCompleted {
-    pub root: Root,
+    root: Root,
     packages: Vec<PackageEntry>,
     scripts: Vec<FileEntry>,
 }
@@ -119,7 +118,7 @@ impl ScanCompleted {
     /// [`RootExt::set_workspace_scripts`]), so a rescan that doesn't
     /// actually change anything is a no-op as far as downstream salsa
     /// caches are concerned.
-    pub(crate) fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
+    fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
         let ScanCompleted {
             root,
             packages,
