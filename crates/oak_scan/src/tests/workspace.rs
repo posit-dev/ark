@@ -246,7 +246,8 @@ fn test_scan_workspace_honors_gitignore_for_package_files_and_scripts() {
     fs::write(tmp.path().join("pkg/tests/ignored.R"), "skip me\n").unwrap();
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
+    set_workspace_paths(
+        &mut db,
         &[tmp.path().to_path_buf()],
         &std::collections::HashSet::new(),
     );
@@ -535,7 +536,8 @@ fn test_scan_workspace_package_files_sorted_by_basename() {
     ]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(
+    set_workspace_paths(
+        &mut db,
         &[tmp.path().to_path_buf()],
         &std::collections::HashSet::new(),
     );
@@ -558,13 +560,13 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "v1\n")]);
     let mut db = OakDatabase::new();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
-    db.set_workspace_paths(&[], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[], &HashSet::new());
 
     let r_path = tmp.path().join("pkg/R/a.R");
     fs::write(&r_path, "v2\n").unwrap();
 
-    db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let url = UrlId::from_file_path(&r_path).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert_eq!(file.contents(&db), "v2\n");
@@ -582,8 +584,8 @@ fn test_set_workspace_paths_stale_no_duplicates_across_cycles() {
     let mut db = OakDatabase::new();
 
     for _ in 0..3 {
-        db.set_workspace_paths(&[tmp.path().to_path_buf()], &HashSet::new());
-        db.set_workspace_paths(&[], &HashSet::new());
+        set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        set_workspace_paths(&mut db, &[], &HashSet::new());
     }
 
     let stale = db.stale_root();

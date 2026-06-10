@@ -111,7 +111,7 @@ impl WorldState {
     /// from oak-querying code.
     pub(crate) fn legacy_snapshot(&self) -> WorldState {
         WorldState {
-            oak: OakDatabase::new(),
+            db: OakDatabase::new(),
             ..self.clone()
         }
     }
@@ -163,7 +163,7 @@ mod tests {
     use std::time::Duration;
 
     use oak_db::OakDatabase;
-    use oak_scan::DbExt;
+    use oak_scan::DbScan;
     use oak_semantic::library::Library;
 
     use super::WorldState;
@@ -180,7 +180,7 @@ mod tests {
     /// no query running and asserts a setter on the owner still completes.
     #[test]
     fn legacy_snapshot_does_not_pin_oak_against_mutation() {
-        let mut state = WorldState::new(Library::new(vec![]), OakDatabase::new());
+        let mut state = WorldState::new(OakDatabase::new(), Library::new(vec![]));
 
         let snapshot = state.legacy_snapshot();
 
@@ -197,7 +197,7 @@ mod tests {
 
         let (tx, rx) = mpsc::channel();
         let mutator = std::thread::spawn(move || {
-            state.oak.set_library_paths(&[]);
+            state.db.set_library_paths(&[]);
             let _ = tx.send(());
         });
 
