@@ -22,7 +22,8 @@ use oak_db::RootKind;
 use salsa::Setter;
 
 use crate::inputs::RootExt;
-use crate::packages::scan_workspace;
+use crate::packages::scan_workspace_packages;
+use crate::packages::scan_workspace_scripts;
 
 /// Reconcile `WorkspaceRoots` to exactly `paths`. Called through
 /// [`crate::DbScan::set_workspace_paths`].
@@ -90,7 +91,8 @@ pub(crate) fn rescan_workspace_root<DB: Db + DbInputs>(db: &mut DB, root: Root) 
 }
 
 fn rescan_into<DB: Db + DbInputs>(db: &mut DB, root: Root, path: &Path) {
-    let (packages, scripts) = scan_workspace(path);
+    let packages = scan_workspace_packages(path);
+    let scripts = scan_workspace_scripts(path);
 
     let package_entities: Vec<Package> = packages
         .into_iter()

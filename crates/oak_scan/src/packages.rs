@@ -44,7 +44,7 @@ pub(crate) struct PackageEntry {
 
 /// Read a candidate package directory. Returns `None` if `DESCRIPTION`
 /// is missing or malformed. Populates `files` (R/*.R) only; `scripts`
-/// is filled by [`scan_workspace`] for workspace packages.
+/// is filled by [`scan_workspace_packages`] for workspace packages.
 pub(crate) fn read_package(package_dir: &Path) -> Option<PackageEntry> {
     let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
@@ -129,21 +129,18 @@ pub(crate) fn read_description_name(package_dir: &Path) -> Option<String> {
     Description::parse(&text).log_err().map(|d| d.name)
 }
 
-/// Walk a workspace root, returning every discovered package and every
-/// top-level R script that isn't inside a package directory.
+/// Walk a workspace root for its packages: every directory that contains a
+/// `DESCRIPTION`, at any depth.
 ///
 /// For each package:
 /// - `pkg.files` is `{pkg_dir}/R/*.R` (the loadable namespace).
 /// - `pkg.scripts` is every other `.R` file under `pkg_dir/` (tests/,
 ///   inst/, vignettes/, data-raw/, etc.).
 ///
-/// Everything else with an `.R` extension becomes a top-level script on
-/// the workspace root.
-///
 /// If two `DESCRIPTION` files in the workspace declare the same `Package:`
 /// name, the one whose directory sorts first wins and the rest are dropped with
 /// a warn log. See [`dedup_packages_by_name`] for the rationale.
-pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageEntry>, Vec<FileEntry>) {
+pub(crate) fn scan_workspace_packages(root: &Path) -> Vec<PackageEntry> {
     let mut description_dirs = collect_description_dirs(root);
     description_dirs.sort();
 
@@ -157,10 +154,23 @@ pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageEntry>, Vec<FileEntry>)
         })
         .collect();
 
-    let packages = dedup_packages_by_name(pairs);
-    let scripts = collect_scripts(root, &description_dirs);
+    dedup_packages_by_name(pairs)
+}
 
-    (packages, scripts)
+/// Walk a workspace root for its top-level scripts: every `.R` file that isn't
+/// inside a package directory.
+///
+/// Package-internal files belong to their package (`R/*.R` as `files`, the rest
+/// as `scripts`), so we skip any `.R` file under a directory that has a
+/// `DESCRIPTION`. We re-derive those directories here rather than taking them
+/// from [`scan_workspace_packages`]: that keeps the two scans independent, and
+/// it excludes the losing side of a same-name package duplicate too. That loser
+/// is dropped by `scan_workspace_packages`, but its files are still package
+/// internals, not loose scripts. The walk is filename-only, so it's cheap next
+/// to reading every script's contents.
+pub(crate) fn scan_workspace_scripts(root: &Path) -> Vec<FileEntry> {
+    let package_dirs = collect_description_dirs(root);
+    collect_scripts(root, &package_dirs)
 }
 
 /// Walk a package directory, returning every `.R` file inside it that's
