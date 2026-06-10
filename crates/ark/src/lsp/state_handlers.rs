@@ -139,17 +139,11 @@ pub(crate) fn initialize(
         }
     }
 
-    // Start first round of indexing. `state.documents` is empty at init since
-    // no `didOpen` has fired yet, but build the set through the same shape we
-    // use elsewhere so the call site reads consistently.
-    let editor_owned: HashSet<UrlId> = state
-        .documents
-        .keys()
-        .map(|url| UrlId::from_url(url.clone()))
-        .collect();
+    // Start first round of indexing. We are initializing, so no documents have
+    // been opened yet and nothing is editor-owned.
     state
         .db
-        .set_workspace_paths(&workspace_paths, &editor_owned);
+        .set_workspace_paths(&workspace_paths, &HashSet::new());
     lsp::main_loop::index_start(folders, state.clone());
 
     Ok(InitializeResult {
