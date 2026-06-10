@@ -32,6 +32,7 @@ use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::Package;
 use oak_db::Root;
+use rustc_hash::FxHashMap;
 use salsa::Setter;
 
 /// Drop `root` from its live container, rehoming files and packages to
@@ -113,4 +114,56 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         pkg.set_files(db).to(Vec::new());
     }
     root.set_packages(db).to(Vec::new());
+}
+
+pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
+    let stale = db.stale_root();
+    if !stale.files(db).contains(&file) {
+        return;
+    }
+    let mut files = stale.files(db).clone();
+    files.retain(|f| *f != file);
+    stale.set_files(db).to(files);
+}
+
+pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Package) {
+    let stale = db.stale_root();
+    if !stale.packages(db).contains(&pkg) {
+        return;
+    }
+    let mut packages = stale.packages(db).clone();
+    packages.retain(|p| *p != pkg);
+    stale.set_packages(db).to(packages);
+}
+
+/// Look up a stale `File` by URL. The scanner's upsert helpers call this to
+/// fall back to the eviction bucket after `oak_db::Db::file_by_url` misses,
+/// reusing the evicted entity instead of minting a new one.
+pub(crate) fn stale_file_by_url(db: &dyn Db, url: &UrlId) -> Option<File> {
+    stale_url_index(db).get(url).copied()
+}
+
+/// Stale file URL -> File index. Reads only `stale_root().files`. Analysis is
+/// stale-blind by design (`oak_db::Db::file_by_url` never consults this), so
+/// the scanner is the only reader, via [`stale_file_by_url`] when re-adding a
+/// path.
+#[salsa::tracked(returns(ref))]
+fn stale_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
+    let mut map = FxHashMap::default();
+    for &file in db.stale_root().files(db) {
+        map.insert(file.url(db).clone(), file);
+    }
+    map
+}
+
+/// Stale DESCRIPTION URL -> Package index. The eviction-bucket counterpart to
+/// the live per-root `root_package_url_index`; consulted by `package_by_url`
+/// as its stale fallback.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn stale_package_url_index(db: &dyn Db) -> FxHashMap<UrlId, Package> {
+    let mut map = FxHashMap::default();
+    for &pkg in db.stale_root().packages(db) {
+        map.insert(pkg.description_url(db).clone(), pkg);
+    }
+    map
 }

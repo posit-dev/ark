@@ -2631,6 +2631,7 @@ dependencies = [
  "oak_core",
  "oak_db",
  "oak_package_metadata",
+ "rustc-hash",
  "salsa",
  "stdext",
  "tempfile",

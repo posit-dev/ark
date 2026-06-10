@@ -13,7 +13,6 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-pub use db::stale_file_by_url;
 pub use db::Db;
 pub use db::DbInputs;
 pub use definition::Definition;

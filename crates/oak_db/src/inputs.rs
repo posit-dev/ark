@@ -150,9 +150,9 @@ impl OrphanRoot {
 /// completions, goto-def, etc. — they correspond to folders the user
 /// has explicitly removed.
 ///
-/// **Consulted by scanners.** `Db::package_by_url` walks live roots
-/// then falls back to stale. Scanner upsert helpers do the same for
-/// files. On reuse, the entity is moved out of stale back into a live
+/// **Consulted by scanners.** The scanner's package-by-URL lookup walks
+/// live roots then falls back to stale. Scanner upsert helpers do the same
+/// for files. On reuse, the entity is moved out of stale back into a live
 /// container.
 ///
 /// Singleton like `OrphanRoot`. The `files` and `packages` fields are
@@ -177,9 +177,9 @@ impl StaleRoot {
 pub struct Package {
     /// URL of the package's `DESCRIPTION` file. Stable identity across
     /// rescans and workspace / library churn: scanners look up an
-    /// existing `Package` by this URL before creating a new one (see
-    /// [`Db::package_by_url`]). Two packages with the same `Package:`
-    /// name can coexist on disk and the URL distinguishes them.
+    /// existing `Package` by this URL before creating a new one. Two
+    /// packages with the same `Package:` name can coexist on disk and the
+    /// URL distinguishes them.
     ///
     /// The package's owning [`Root`] is not stored as a field. It is
     /// derived from live-graph containment via [`Db::root_by_package`]: a

@@ -21,6 +21,7 @@ log.workspace = true
 oak_core.workspace = true
 oak_db.workspace = true
 oak_package_metadata.workspace = true
+rustc-hash.workspace = true
 salsa.workspace = true
 stdext.workspace = true
 url.workspace = true

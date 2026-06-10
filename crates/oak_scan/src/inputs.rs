@@ -20,7 +20,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use aether_url::UrlId;
-use oak_db::stale_file_by_url;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -28,6 +27,11 @@ use oak_db::Package;
 use oak_db::Root;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
+
+use crate::lookup::package_by_url;
+use crate::stale::remove_from_stale_files;
+use crate::stale::remove_from_stale_packages;
+use crate::stale::stale_file_by_url;
 
 /// Description of one R file the scanner wants to register.
 ///
@@ -132,7 +136,7 @@ impl RootExt for Root {
         // in `self.packages` (rescan, common path) or in
         // `stale_root.packages` (resurrection after a previous eviction).
         // Either way we reuse the entity and refresh its metadata fields.
-        let pkg = match db.package_by_url(&description_url) {
+        let pkg = match package_by_url(db, &description_url) {
             Some(p) => {
                 p.set_name(db).to(name);
                 p.set_version(db).to(version);
@@ -221,24 +225,4 @@ fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let mut files = orphan.files(db).clone();
     files.retain(|f| *f != file);
     orphan.set_files(db).to(files);
-}
-
-fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
-    let stale = db.stale_root();
-    if !stale.files(db).contains(&file) {
-        return;
-    }
-    let mut files = stale.files(db).clone();
-    files.retain(|f| *f != file);
-    stale.set_files(db).to(files);
-}
-
-fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Package) {
-    let stale = db.stale_root();
-    if !stale.packages(db).contains(&pkg) {
-        return;
-    }
-    let mut packages = stale.packages(db).clone();
-    packages.retain(|p| *p != pkg);
-    stale.set_packages(db).to(packages);
 }
