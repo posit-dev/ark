@@ -356,7 +356,7 @@ fn install_package(
     };
     let root = Root::new(
         db,
-        file_url(&format!("{prefix}/{name}")),
+        file_path(&format!("{prefix}/{name}")),
         kind,
         vec![],
         vec![],
@@ -367,7 +367,7 @@ fn install_package(
     };
     let pkg = Package::new(
         db,
-        file_url(&format!("{prefix}/{name}/DESCRIPTION")),
+        file_path(&format!("{prefix}/{name}/DESCRIPTION")),
         name.to_string(),
         version,
         namespace,
@@ -377,7 +377,7 @@ fn install_package(
     );
     let pkg_files: Vec<File> = files
         .iter()
-        .map(|(path, contents)| File::new(db, file_url(path), contents.to_string(), Some(pkg)))
+        .map(|(path, contents)| File::new(db, file_path(path), contents.to_string(), Some(pkg)))
         .collect();
     pkg.set_files(db).to(pkg_files);
     root.set_packages(db).to(vec![pkg]);
@@ -461,7 +461,7 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
     };
     let ws_pkg = Package::new(
         &db,
-        file_url("workspace/mypkg/DESCRIPTION"),
+        file_path("workspace/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
         None,
         ns,
@@ -472,7 +472,7 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
     let source = "bar\n";
     let ws_file = File::new(
         &db,
-        file_url("workspace/mypkg/R/a.R"),
+        file_path("workspace/mypkg/R/a.R"),
         source.to_string(),
         Some(ws_pkg),
     );
@@ -512,7 +512,7 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
     };
     let ws_pkg = Package::new(
         &db,
-        file_url("workspace/mypkg/DESCRIPTION"),
+        file_path("workspace/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
         None,
         ns,
@@ -522,7 +522,7 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
     );
     let ws_file = File::new(
         &db,
-        file_url("workspace/mypkg/R/a.R"),
+        file_path("workspace/mypkg/R/a.R"),
         "baz\n".to_string(),
         Some(ws_pkg),
     );

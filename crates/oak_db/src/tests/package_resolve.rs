@@ -2,7 +2,7 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 use stdext::SortedVec;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -27,7 +27,7 @@ fn setup_package(
     };
     let pkg = Package::new(
         db,
-        file_url(&format!("workspace/{pkg_name}/DESCRIPTION")),
+        file_path(&format!("workspace/{pkg_name}/DESCRIPTION")),
         pkg_name.to_string(),
         None,
         namespace,
@@ -38,7 +38,7 @@ fn setup_package(
 
     let file_entities: Vec<File> = files
         .iter()
-        .map(|(path, contents)| File::new(db, file_url(path), contents.to_string(), Some(pkg)))
+        .map(|(path, contents)| File::new(db, file_path(path), contents.to_string(), Some(pkg)))
         .collect();
     pkg.set_files(db).to(file_entities.clone());
     root.set_packages(db).to(vec![pkg]);
