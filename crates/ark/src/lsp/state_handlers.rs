@@ -148,11 +148,10 @@ pub(crate) fn initialize(
         .keys()
         .map(|url| UrlId::from_url(url.clone()))
         .collect();
-    let pending = lsp_state.oak_scheduler.set_workspace_paths(
-        &mut state.db,
-        &workspace_paths,
-        &editor_owned,
-    );
+    let pending =
+        lsp_state
+            .oak_scheduler
+            .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     lsp::main_loop::index_start(folders, state.clone());
 
     let result = InitializeResult {
@@ -469,11 +468,10 @@ pub(crate) fn did_change_workspace_folders(
         .map(|url| UrlId::from_url(url.clone()))
         .collect();
 
-    let pending = lsp_state.oak_scheduler.set_workspace_paths(
-        &mut state.db,
-        &workspace_paths,
-        &editor_owned,
-    );
+    let pending =
+        lsp_state
+            .oak_scheduler
+            .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     Ok(pending)
 }
 
