@@ -1,7 +1,7 @@
-//! Filesystem-level R package discovery. Pure I/O, no salsa access.
-//! Reused by both the library scanner (which walks depth-1 over a
-//! library directory) and the workspace scanner (which walks the
-//! workspace tree looking for `DESCRIPTION` files at any depth).
+//! Filesystem-level R package discovery. Pure I/O, no salsa access. Reused by
+//! both the library scanner (which walks the package folders of a library
+//! directory) and the workspace scanner (which walks the workspace tree looking
+//! for `DESCRIPTION` files at any depth).
 
 use std::fs;
 use std::path::Path;
@@ -18,9 +18,12 @@ use crate::inputs::FileEntry;
 /// plus the R files under `R/`.
 #[derive(Debug)]
 pub(crate) struct PackageDescriptor {
-    /// URL of the `DESCRIPTION` file. Stable identity for the `Package`
-    /// entity across rescans (see `Package::description_url`). The `name`
-    /// is *not* stable identity because two packages can declare the
+    /// URL of the `DESCRIPTION` file. This is the identity key for the
+    /// `Package` entity: the same path produces the same entity across
+    /// rescans, even when the package's version or files change. So a
+    /// version bump updates the existing entity in place rather than
+    /// minting a new one (see `Package::description_url`). The `name`
+    /// can't serve as identity because two packages can declare the
     /// same `Package:` field, and dedup picks one of them per root.
     pub description_url: UrlId,
     pub name: String,
@@ -61,6 +64,10 @@ pub(crate) fn read_package(dir: &Path) -> Option<PackageDescriptor> {
 /// layout is flat). R files that fail to read are logged at warn level
 /// and skipped. Symlinks resolving to non-files (the `is_r_file` check)
 /// are skipped quietly.
+///
+/// Returns empty for installed (library) packages: their `R/` holds the
+/// lazy-load db (`<pkg>`, `<pkg>.rdb`, `<pkg>.rdx`), not `.R` sources. Only
+/// source packages (the workspace scanner's input) have `R/*.R` to read.
 fn scan_r_files(r_dir: &Path) -> Vec<FileEntry> {
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
     let Ok(read_dir) = fs::read_dir(r_dir) else {

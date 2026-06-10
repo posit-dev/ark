@@ -68,8 +68,9 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
     db.library_roots().set_roots(db).to(new_roots);
 }
 
-/// Initial scan of a path that wasn't previously a library root. Walks depth-1,
-/// calls `set_package` per package directory, returns the freshly-built `Root`.
+/// Initial scan of a path that wasn't previously a library root. Walks only the
+/// package directories, not the package directory contents. Calls `set_package()`
+/// per package directory, returns the freshly-built `Root`.
 fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId) -> Root {
     let root = Root::new(db, url, RootKind::Library, Vec::new(), Vec::new());
 
