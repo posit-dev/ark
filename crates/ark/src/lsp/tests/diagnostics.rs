@@ -1,5 +1,5 @@
 use aether_path::FilePath;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use url::Url;
 
 use crate::lsp::diagnostics::generate_diagnostics;

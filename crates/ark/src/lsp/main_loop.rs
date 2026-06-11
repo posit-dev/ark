@@ -1210,7 +1210,7 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
 #[cfg(test)]
 mod tests {
     use aether_path::FilePath;
-    use oak_scan::DbExt;
+    use oak_scan::DbScan;
     use salsa::Database;
     use url::Url;
 

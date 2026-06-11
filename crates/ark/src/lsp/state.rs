@@ -126,7 +126,7 @@ impl WorldState {
     pub(crate) fn ark_file(&self, uri: &Url) -> anyhow::Result<ArkFile> {
         let key = FilePath::from_url(uri);
         let document = self.get_document(&key)?;
-        let Some(file) = self.db.file_by_url(&key) else {
+        let Some(file) = self.db.file_by_path(&key) else {
             return Err(anyhow!("No `oak_db` file for URI {uri}"));
         };
         Ok(ArkFile {
