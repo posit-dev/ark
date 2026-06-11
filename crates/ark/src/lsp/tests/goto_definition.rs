@@ -23,7 +23,7 @@ fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinition
 }
 
 /// A state with several open files, each mirrored into `oak` like `did_open`
-/// does, so `source()` targets resolve through `file_by_url`.
+/// does, so `source()` targets resolve through `file_by_path`.
 fn make_state_with(files: &[(&Url, &str)]) -> WorldState {
     let mut state = WorldState::default();
     for (uri, code) in files {
