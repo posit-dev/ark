@@ -5,24 +5,20 @@
 //
 //
 
-use std::collections::HashMap;
 use std::result::Result::Ok;
-use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::Mutex;
 
-use aether_lsp_utils::proto::PositionEncoding;
+use oak_db::File;
 use regex::Regex;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 use url::Url;
 
 use crate::lsp;
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -30,28 +26,7 @@ use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
 use crate::url::ExtUrl;
 
-/// FileId represents a unique identifier for a file in the workspace index
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct FileId {
-    /// The URL representing the file
-    uri: Url,
-}
-
-impl FileId {
-    pub fn from_uri(uri: Url) -> Self {
-        Self { uri }
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.uri.as_str()
-    }
-
-    pub fn as_uri(&self) -> &Url {
-        &self.uri
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
 pub enum IndexEntryData {
     Variable {
         name: String,
@@ -70,103 +45,101 @@ pub enum IndexEntryData {
     },
 }
 
-#[derive(Clone, Debug)]
+/// A position in a file as a tree-sitter point: zero-based row, and column in
+/// bytes within that row. Encoding-free, so the per-file index stays a pure
+/// salsa query. Consumers that need an LSP position convert via the file's
+/// line index and the session encoding (see `symbols.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+pub struct IndexPoint {
+    pub row: u32,
+    pub column: u32,
+}
+
+impl From<tree_sitter::Point> for IndexPoint {
+    fn from(point: tree_sitter::Point) -> Self {
+        Self {
+            row: point.row as u32,
+            column: point.column as u32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+pub struct IndexRange {
+    pub start: IndexPoint,
+    pub end: IndexPoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
 pub struct IndexEntry {
     pub key: String,
-    pub range: Range,
+    pub range: IndexRange,
     pub data: IndexEntryData,
 }
 
-type DocumentSymbol = String;
-type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
-type WorkspaceIndex = Arc<Mutex<HashMap<FileId, DocumentSymbolIndex>>>;
-
-static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(Default::default);
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
-/// Search the workspace files and return the first symbol match
-pub fn find(symbol: &str) -> Option<(FileId, IndexEntry)> {
-    let index = WORKSPACE_INDEX.lock().unwrap();
+/// One file's workspace symbols, keyed by symbol name. Built by [`file_index`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, salsa::Update)]
+pub(crate) struct FileIndex {
+    pub(crate) symbols: rustc_hash::FxHashMap<String, IndexEntry>,
+}
 
-    for (file_id, index) in index.iter() {
-        if let Some(entry) = index.get(symbol) {
-            return Some((file_id.clone(), entry.clone()));
+/// Find the first workspace symbol matching `symbol`, scanning files in
+/// `workspace_files` order. `ark://` virtual docs are skipped: they show
+/// foreign code the user can't edit.
+pub(crate) fn find(db: &dyn ArkDb, symbol: &str) -> Option<IndexEntry> {
+    for &file in oak_db::workspace_files(db) {
+        let url = file.path(db).to_url();
+        if !ExtUrl::is_indexable(&url) {
+            continue;
+        }
+        if let Some(entry) = file_index(db, file).symbols.get(symbol) {
+            return Some(entry.clone());
         }
     }
-
     None
 }
 
-/// Search a specific workspace file for a symbol
-pub fn find_in_file(symbol: &str, uri: &Url) -> Option<(FileId, IndexEntry)> {
-    let index = WORKSPACE_INDEX.lock().unwrap();
+/// Extract a file's workspace symbols.
+#[salsa::tracked(returns(ref))]
+fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
+    let tree = file.tree_sitter(db);
+    let contents = file.contents(db).as_str();
 
-    let file_id = FileId::from_uri(uri.clone());
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    let mut entries = Vec::new();
 
-    if let Some(symbol_index) = index.get(&file_id) {
-        if let Some(entry) = symbol_index.get(symbol) {
-            return Some((file_id, entry.clone()));
+    for node in root.children(&mut cursor) {
+        if let Err(err) = index_node(contents, &node, &mut entries) {
+            lsp::log_error!("Can't index document: {err:?}");
         }
     }
 
-    None
+    let mut symbols = rustc_hash::FxHashMap::default();
+    for entry in entries {
+        index_insert(&mut symbols, entry);
+    }
+
+    FileIndex { symbols }
 }
 
-pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
-    let index = WORKSPACE_INDEX.lock().unwrap();
-
-    for (file_id, symbol_index) in index.iter() {
-        let uri = file_id.as_uri();
-        for (symbol, entry) in symbol_index.iter() {
-            callback(uri, symbol, entry);
+/// Visit every workspace symbol across all indexable files.
+pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(&Url, &str, &IndexEntry)) {
+    for &file in oak_db::workspace_files(db) {
+        let url = file.path(db).to_url();
+        if !ExtUrl::is_indexable(&url) {
+            continue;
+        }
+        for (symbol, entry) in file_index(db, file).symbols.iter() {
+            callback(&url, symbol, entry);
         }
     }
 }
 
-/// Index a single `oak_db` file, replacing any existing entries for its URL.
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn index_file(
-    db: &dyn ArkDb,
-    file: oak_db::File,
-    encoding: PositionEncoding,
-) -> anyhow::Result<()> {
-    let url = file.path(db).to_url();
-
-    // Defensive, callers are expected to filter virtual doc URIs before queuing
-    if !ExtUrl::is_indexable(&url) {
-        return Ok(());
-    }
-
-    // Build an `ArkFile` directly from the `oak_db::File` rather than go through
-    // `WorldState::ark_file()`, which requires a stored editor `Document`.
-    // Scanned workspace files have no `Document`, so we synthesize a minimal
-    // `ArkFile` that carries only what the extraction reads (tree, contents,
-    // line index).
-    let file = ArkFile {
-        file,
-        version: None,
-        config: Default::default(),
-        url: url.clone(),
-        encoding,
-    };
-
-    delete(&url)?;
-    index_document(db, &file, &url);
-    Ok(())
-}
-
-fn insert(uri: &Url, entry: IndexEntry) -> anyhow::Result<()> {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let file_id = FileId::from_uri(uri.clone());
-
-    let file_index = index.entry(file_id).or_default();
-    index_insert(file_index, entry);
-
-    Ok(())
-}
-
-fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
+fn index_insert(index: &mut rustc_hash::FxHashMap<String, IndexEntry>, entry: IndexEntry) {
     // We generally retain only the first occurrence in the index. In the
     // future we'll track every occurrences and their scopes but for now we
     // only track the first definition of an object (in a way, its
@@ -182,84 +155,14 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
     }
 }
 
-#[tracing::instrument(level = "trace")]
-pub(crate) fn delete(uri: &Url) -> anyhow::Result<()> {
-    let file_id = FileId::from_uri(uri.clone());
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-
-    // Only clears if the key exists
-    index.entry(file_id).and_modify(|index| {
-        index.clear();
-    });
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "trace")]
-pub(crate) fn rename(old_uri: &Url, new_uri: &Url) -> anyhow::Result<()> {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-
-    let old_file_id = FileId::from_uri(old_uri.clone());
-    let new_file_id = FileId::from_uri(new_uri.clone());
-
-    if let Some(entries) = index.remove(&old_file_id) {
-        index.insert(new_file_id, entries);
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn indexer_clear() {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-    index.clear();
-}
-
-/// RAII guard that clears `WORKSPACE_INDEX` when dropped.
-/// Useful for ensuring a clean index state in tests.
-#[cfg(test)]
-pub(crate) struct ResetIndexerGuard;
-
-#[cfg(test)]
-impl Drop for ResetIndexerGuard {
-    fn drop(&mut self) {
-        indexer_clear();
-    }
-}
-
-fn index_document(db: &dyn ArkDb, file: &ArkFile, uri: &Url) {
-    let ast = file.tree_sitter(db);
-    let root = ast.root_node();
-    let mut cursor = root.walk();
-    let mut entries = Vec::new();
-
-    for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(db, file, &node, &mut entries) {
-            lsp::log_error!("Can't index document: {err:?}");
-        }
-    }
-
-    for entry in entries {
-        if let Err(err) = insert(uri, entry) {
-            lsp::log_error!("Can't insert index entry: {err:?}");
-        }
-    }
-}
-
-fn index_node(
-    db: &dyn ArkDb,
-    file: &ArkFile,
-    node: &Node,
-    entries: &mut Vec<IndexEntry>,
-) -> anyhow::Result<()> {
-    index_assignment(db, file, node, entries)?;
-    index_comment(db, file, node, entries)?;
+fn index_node(contents: &str, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
+    index_assignment(contents, node, entries)?;
+    index_comment(contents, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
-    db: &dyn ArkDb,
-    file: &ArkFile,
+    contents: &str,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -280,12 +183,10 @@ fn index_assignment(
         return Ok(());
     };
 
-    let contents = file.contents(db);
-
     if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
         crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class_methods(db, file, &rhs, entries)?;
+        index_r6_class_methods(contents, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
@@ -317,12 +218,12 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = file.lsp_position_from_tree_sitter_point(db, lhs.start_position())?;
-        let end = file.lsp_position_from_tree_sitter_point(db, lhs.end_position())?;
-
         entries.push(IndexEntry {
             key: lhs_text.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: lhs.start_position().into(),
+                end: lhs.end_position().into(),
+            },
             data: IndexEntryData::Function {
                 name: lhs_text,
                 arguments,
@@ -330,11 +231,12 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = file.lsp_position_from_tree_sitter_point(db, lhs.start_position())?;
-        let end = file.lsp_position_from_tree_sitter_point(db, lhs.end_position())?;
         entries.push(IndexEntry {
             key: lhs_text.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: lhs.start_position().into(),
+                end: lhs.end_position().into(),
+            },
             data: IndexEntryData::Variable { name: lhs_text },
         });
     }
@@ -343,8 +245,7 @@ fn index_assignment(
 }
 
 fn index_r6_class_methods(
-    db: &dyn ArkDb,
-    file: &ArkFile,
+    contents: &str,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -371,16 +272,15 @@ fn index_r6_class_methods(
     });
     let mut ts_query = TsQuery::from_query(&R6_METHODS_QUERY);
 
-    let contents = file.contents(db);
-
     for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
         let name = method_node.node_to_string(contents)?;
-        let start = file.lsp_position_from_tree_sitter_point(db, method_node.start_position())?;
-        let end = file.lsp_position_from_tree_sitter_point(db, method_node.end_position())?;
 
         entries.push(IndexEntry {
             key: name.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: method_node.start_position().into(),
+                end: method_node.end_position().into(),
+            },
             data: IndexEntryData::Method { name },
         });
     }
@@ -388,19 +288,14 @@ fn index_r6_class_methods(
     Ok(())
 }
 
-fn index_comment(
-    db: &dyn ArkDb,
-    file: &ArkFile,
-    node: &Node,
-    entries: &mut Vec<IndexEntry>,
-) -> anyhow::Result<()> {
+fn index_comment(contents: &str, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
     // check for comment
     if !node.is_comment() {
         return Ok(());
     }
 
     // see if it looks like a section
-    let comment = node.node_as_str(file.contents(db))?;
+    let comment = node.node_as_str(contents)?;
     let matches = match RE_COMMENT_SECTION.captures(comment) {
         Some(m) => m,
         None => return Ok(()),
@@ -417,12 +312,12 @@ fn index_comment(
         return Ok(());
     }
 
-    let start = file.lsp_position_from_tree_sitter_point(db, node.start_position())?;
-    let end = file.lsp_position_from_tree_sitter_point(db, node.end_position())?;
-
     entries.push(IndexEntry {
         key: title.clone(),
-        range: Range::new(start, end),
+        range: IndexRange {
+            start: node.start_position().into(),
+            end: node.end_position().into(),
+        },
         data: IndexEntryData::Section { level, title },
     });
 
@@ -433,25 +328,23 @@ fn index_comment(
 mod tests {
 
     use assert_matches::assert_matches;
-    use biome_line_index::WideEncoding;
     use insta::assert_debug_snapshot;
-    use tower_lsp::lsp_types;
+    use oak_scan::DbScan;
 
     use super::*;
     use crate::lsp::ark_file::test_ark_file;
-
-    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
 
     macro_rules! test_index {
         ($code:expr) => {
             let (db, file) = test_ark_file($code);
             let tree = file.tree_sitter(&db);
+            let contents = file.contents(&db);
             let root = tree.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(&db, &file, &node, &mut entries);
+                let _ = index_node(contents, &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };
@@ -571,14 +464,14 @@ class <- R6::R6Class(
 
     #[test]
     fn test_index_insert_priority() {
-        let mut index = HashMap::new();
+        let mut index = rustc_hash::FxHashMap::default();
 
         let section_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(0, 0),
-                lsp_types::Position::new(0, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 0, column: 0 },
+                end: IndexPoint { row: 0, column: 3 },
+            },
             data: IndexEntryData::Section {
                 level: 1,
                 title: "foo".to_string(),
@@ -587,10 +480,10 @@ class <- R6::R6Class(
 
         let variable_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(1, 0),
-                lsp_types::Position::new(1, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 1, column: 0 },
+                end: IndexPoint { row: 1, column: 3 },
+            },
             data: IndexEntryData::Variable {
                 name: "foo".to_string(),
             },
@@ -613,10 +506,10 @@ class <- R6::R6Class(
 
         let function_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(2, 0),
-                lsp_types::Position::new(2, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 2, column: 0 },
+                end: IndexPoint { row: 2, column: 3 },
+            },
             data: IndexEntryData::Function {
                 name: "foo".to_string(),
                 arguments: vec!["a".to_string()],
@@ -632,29 +525,21 @@ class <- R6::R6Class(
         );
     }
 
-    fn index_file_for_test(uri: &str, contents: &str) {
-        use aether_path::FilePath;
-
-        let db = oak_db::OakDatabase::new();
-        let url = Url::parse(uri).unwrap();
-        let key = FilePath::from_url(&url);
-        let file = oak_db::File::new(&db, key, contents.to_string(), None);
-        index_file(&db, file, ENCODING).unwrap();
-    }
-
     #[test]
     fn test_index_skips_ark_virtual_doc() {
-        let _guard = ResetIndexerGuard;
-
-        index_file_for_test("ark://namespace/test.R", "foo <- 1");
-        assert!(find("foo").is_none());
+        use aether_path::FilePath;
+        let mut db = oak_db::OakDatabase::new();
+        let url = Url::parse("ark://namespace/test.R").unwrap();
+        db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
+        assert!(find(&db, "foo").is_none());
     }
 
     #[test]
     fn test_index_indexes_git_uri() {
-        let _guard = ResetIndexerGuard;
-
-        index_file_for_test("git:///home/user/test.R?ref=HEAD", "foo <- 1");
-        assert!(find("foo").is_some());
+        use aether_path::FilePath;
+        let mut db = oak_db::OakDatabase::new();
+        let url = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
+        assert!(find(&db, "foo").is_some());
     }
 }

@@ -5,14 +5,14 @@ expression: entries
 [
     IndexEntry {
         key: "Class",
-        range: Range {
-            start: Position {
-                line: 1,
-                character: 0,
+        range: IndexRange {
+            start: IndexPoint {
+                row: 1,
+                column: 0,
             },
-            end: Position {
-                line: 1,
-                character: 5,
+            end: IndexPoint {
+                row: 1,
+                column: 5,
             },
         },
         data: Variable {
@@ -21,14 +21,14 @@ expression: entries
     },
     IndexEntry {
         key: "generic",
-        range: Range {
-            start: Position {
-                line: 2,
-                character: 0,
+        range: IndexRange {
+            start: IndexPoint {
+                row: 2,
+                column: 0,
             },
-            end: Position {
-                line: 2,
-                character: 7,
+            end: IndexPoint {
+                row: 2,
+                column: 7,
             },
         },
         data: Variable {
@@ -37,14 +37,14 @@ expression: entries
     },
     IndexEntry {
         key: "method(generic, Class)",
-        range: Range {
-            start: Position {
-                line: 7,
-                character: 0,
+        range: IndexRange {
+            start: IndexPoint {
+                row: 7,
+                column: 0,
             },
-            end: Position {
-                line: 7,
-                character: 22,
+            end: IndexPoint {
+                row: 7,
+                column: 22,
             },
         },
         data: Function {

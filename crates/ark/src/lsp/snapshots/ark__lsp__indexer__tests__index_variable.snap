@@ -5,14 +5,14 @@ expression: entries
 [
     IndexEntry {
         key: "x",
-        range: Range {
-            start: Position {
-                line: 1,
-                character: 0,
+        range: IndexRange {
+            start: IndexPoint {
+                row: 1,
+                column: 0,
             },
-            end: Position {
-                line: 1,
-                character: 1,
+            end: IndexPoint {
+                row: 1,
+                column: 1,
             },
         },
         data: Variable {
@@ -21,14 +21,14 @@ expression: entries
     },
     IndexEntry {
         key: "y",
-        range: Range {
-            start: Position {
-                line: 2,
-                character: 0,
+        range: IndexRange {
+            start: IndexPoint {
+                row: 2,
+                column: 0,
             },
-            end: Position {
-                line: 2,
-                character: 1,
+            end: IndexPoint {
+                row: 2,
+                column: 1,
             },
         },
         data: Variable {

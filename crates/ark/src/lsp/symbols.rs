@@ -9,6 +9,9 @@
 
 use std::result::Result::Ok;
 
+use aether_lsp_utils::proto::to_proto;
+use aether_lsp_utils::proto::PositionEncoding;
+use aether_path::FilePath;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
 use tower_lsp::lsp_types::DocumentSymbolParams;
@@ -18,6 +21,7 @@ use tower_lsp::lsp_types::SymbolInformation;
 use tower_lsp::lsp_types::SymbolKind;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
+use url::Url;
 
 use crate::lsp::ark_file::ArkFile;
 use crate::lsp::db::ArkDb;
@@ -60,12 +64,18 @@ pub(crate) fn symbols(
     state: &WorldState,
 ) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
-    indexer::map(|uri, symbol, entry| {
+    indexer::map(db, |uri, symbol, entry| {
         if !symbol.fuzzy_matches(query) {
             return;
         }
+
+        let Some(range) = index_range_to_lsp_range(db, uri, entry.range, encoding) else {
+            return;
+        };
 
         match &entry.data {
             IndexEntryData::Function { name, arguments: _ } => {
@@ -74,7 +84,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::FUNCTION,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -89,7 +99,7 @@ pub(crate) fn symbols(
                         kind: SymbolKind::STRING,
                         location: Location {
                             uri: uri.clone(),
-                            range: entry.range,
+                            range,
                         },
                         tags: None,
                         deprecated: None,
@@ -104,7 +114,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::VARIABLE,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -118,7 +128,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::METHOD,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -129,6 +139,37 @@ pub(crate) fn symbols(
     });
 
     Ok(info)
+}
+
+/// Convert an index entry's tree-sitter point range to an LSP range, resolving
+/// the file's line index from the db. Returns `None` if the file is no longer
+/// in the db or the points fall outside it, in which case the symbol is
+/// dropped from the results.
+fn index_range_to_lsp_range(
+    db: &dyn ArkDb,
+    uri: &Url,
+    range: indexer::IndexRange,
+    encoding: PositionEncoding,
+) -> Option<Range> {
+    let file = db.file_by_path(&FilePath::from_url(uri))?;
+    let line_index = file.line_index(db);
+
+    let to_position = |point: indexer::IndexPoint| {
+        to_proto::position_from_line_col(
+            biome_line_index::LineCol {
+                line: point.row,
+                col: point.column,
+            },
+            line_index,
+            encoding,
+        )
+        .ok()
+    };
+
+    Some(Range::new(
+        to_position(range.start)?,
+        to_position(range.end)?,
+    ))
 }
 
 /// Represents a section in the document with its title, level, range, and children
@@ -778,12 +819,12 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 
 #[cfg(test)]
 mod tests {
+    use oak_scan::DbScan;
     use tower_lsp::lsp_types::Position;
 
     use super::*;
     use crate::lsp::config::LspConfig;
     use crate::lsp::config::WorkspaceSymbolsConfig;
-    use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::util::test_path;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
@@ -1166,8 +1207,6 @@ outer <- 4
     #[test]
     fn test_workspace_symbols_include_comment_sections() {
         fn run(include_comment_sections: bool) -> Vec<String> {
-            let _guard = ResetIndexerGuard;
-
             let code = "# Section ----\nfoo <- 1";
 
             let config = LspConfig {
@@ -1176,20 +1215,15 @@ outer <- 4
                 },
                 ..Default::default()
             };
-            let state = WorldState {
+            let mut state = WorldState {
                 config,
                 ..Default::default()
             };
-
-            // Index the file off an `oak_db::File`, the same entry point the
-            // scan and editor paths use.
-            let db = oak_db::OakDatabase::new();
             let uri = test_path("test.R");
-            let key = aether_path::FilePath::from_url(&uri);
-            let file = oak_db::File::new(&db, key, code.to_string(), None);
-            indexer::index_file(&db, file, crate::fixtures::TEST_ENCODING).unwrap();
+            state
+                .db
+                .upsert_editor(aether_path::FilePath::from_url(&uri), code.to_string());
 
-            // Query for all symbols
             let params = WorkspaceSymbolParams {
                 query: "Section".to_string(),
                 ..Default::default()

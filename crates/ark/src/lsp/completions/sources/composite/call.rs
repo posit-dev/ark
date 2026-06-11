@@ -21,6 +21,7 @@ use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::db::ArkDb;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
@@ -93,7 +94,7 @@ fn completions_from_call(
         },
     };
 
-    completions_from_arguments(document_context, callee, object)
+    completions_from_arguments(&context.state.db, document_context, callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
@@ -156,6 +157,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
 }
 
 fn completions_from_arguments(
+    db: &dyn ArkDb,
     context: &DocumentContext,
     callable: &str,
     object: RObject,
@@ -168,7 +170,7 @@ fn completions_from_arguments(
         return Ok(Some(completions));
     }
 
-    if let Some(completions) = completions_from_workspace_arguments(context, callable)? {
+    if let Some(completions) = completions_from_workspace_arguments(db, callable, context)? {
         return Ok(Some(completions));
     }
 
@@ -234,14 +236,15 @@ fn completions_from_session_arguments(
 }
 
 fn completions_from_workspace_arguments(
-    context: &DocumentContext,
+    db: &dyn ArkDb,
     callable: &str,
+    context: &DocumentContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_workspace_arguments({callable:?})");
 
     // Try to find the `callable` in the workspace and use its arguments
     // if we can
-    let Some((_path, entry)) = indexer::find(callable) else {
+    let Some(entry) = indexer::find(db, callable) else {
         // Didn't find any workspace object with this name
         return Ok(None);
     };

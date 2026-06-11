@@ -16,11 +16,9 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
-use aether_lsp_utils::proto::PositionEncoding;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use futures::StreamExt;
-use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
@@ -49,7 +47,6 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
-use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -95,10 +92,6 @@ pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
-    /// Re-run a workspace root's index pass. Emitted when a concurrent oak
-    /// write cancelled the pass partway, so the cancelled pass isn't silently
-    /// dropped (see [`index_root_files`]).
-    ReindexRoot(oak_db::Root),
 }
 
 #[derive(Debug)]
@@ -476,57 +469,19 @@ impl GlobalState {
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.documents.keys().cloned().collect();
-                let root = scan.root();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
                     &mut self.world.db,
                     scan,
                     &editor_owned,
                 );
                 if followups.is_empty() {
-                    // Wait until the root is idle (no more follow-up scans
-                    // queued) before feeding the legacy index and refreshing
-                    // diagnostics, so we don't index a scan that's about to be
-                    // superseded.
-                    if root.kind(&self.world.db) == oak_db::RootKind::Workspace {
-                        // Index the root's files into the legacy index that
-                        // powers completions, workspace symbols, and
-                        // diagnostics. The pass refreshes diagnostics once it
-                        // finishes (see `index_root_files`), so they read a
-                        // fully-built index instead of racing it.
-                        let files = root_files(&self.world.db, root);
-                        index_scanned_files(
-                            root,
-                            files,
-                            editor_owned,
-                            self.world.clone(),
-                            self.events_tx.clone(),
-                        );
-                    } else {
-                        // Library roots don't feed the legacy index, but
-                        // `apply_scan_completed()` changed the oak imports and
-                        // exports diagnostics resolve against. There's no index
-                        // pass to wait on, so refresh directly.
-                        diagnostics_refresh_all(&self.world);
-                    }
+                    // The scan settled (no more follow-ups). `apply_scan_completed()`
+                    // is an oak write that changed the workspace symbols diagnostics
+                    // resolve against, so recompute diagnostics for the open files.
+                    diagnostics_refresh_all(&self.world);
                 } else {
                     dispatch_scan_requests(&self.events_tx, followups);
                 }
-            },
-
-            Event::ReindexRoot(root) => {
-                // Recompute editor-owned files at apply time, same as
-                // `OakScanCompleted`: buffers may have opened or closed since
-                // the cancelled pass kicked off.
-                let editor_owned: HashSet<FilePath> =
-                    self.world.documents.keys().cloned().collect();
-                let files = root_files(&self.world.db, root);
-                index_scanned_files(
-                    root,
-                    files,
-                    editor_owned,
-                    self.world.clone(),
-                    self.events_tx.clone(),
-                );
             },
         }
 
@@ -895,29 +850,6 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 }
 
 #[derive(Debug)]
-#[expect(clippy::large_enum_variant)]
-pub(crate) enum IndexerQueueTask {
-    Indexer(IndexerTask),
-    Diagnostics(RefreshDiagnosticsTask),
-}
-
-#[derive(Debug)]
-pub(crate) enum IndexerTask {
-    Index {
-        uri: Url,
-        db: OakDatabase,
-        encoding: PositionEncoding,
-    },
-    Delete {
-        uri: Url,
-    },
-    Rename {
-        uri: Url,
-        new: Url,
-    },
-}
-
-#[derive(Debug)]
 pub(crate) struct RefreshDiagnosticsTask {
     /// Snapshot carrying the live oak plus the session context the diagnostics
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
@@ -933,133 +865,25 @@ struct RefreshDiagnosticsResult {
     version: Option<i32>,
 }
 
-fn summarize_indexer_task(batch: &[IndexerTask]) -> String {
-    let mut counts = std::collections::HashMap::new();
-    for task in batch {
-        let type_name = match task {
-            IndexerTask::Index { .. } => "Index",
-            IndexerTask::Delete { .. } => "Delete",
-            IndexerTask::Rename { .. } => "Rename",
-        };
-        *counts.entry(type_name).or_insert(0) += 1;
-    }
-
-    let mut summary = String::new();
-    for (task_type, count) in counts.iter() {
-        use std::fmt::Write;
-        let _ = write!(summary, "{task_type}: {count} ");
-    }
-
-    summary.trim_end().to_string()
-}
-
-static INDEXER_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<IndexerQueueTask>> =
+static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDiagnosticsTask>> =
     LazyLock::new(|| {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(process_indexer_queue(rx));
+        tokio::spawn(process_diagnostics_queue(rx));
         tx
     });
 
-/// Process indexer and diagnostics tasks
+/// Process diagnostics refresh tasks.
 ///
-/// Diagnostics need an up-to-date index to be accurate, so we synchronise
-/// indexing and diagnostics tasks using a simple queue.
-///
-/// - We make sure to refresh diagnostics after every indexer updates.
-/// - Indexer tasks are batched together, same for diagnostics tasks.
-/// - Cancellation is simply dealt with by deduplicating tasks for the same URI,
-///   retaining only the most recent one.
-///
-/// Ideally we'd process indexer tasks continually without making them dependent
-/// on diagnostics tasks. The current setup blocks the queue loop while
-/// diagnostics are running, but it has the benefit that rounds of diagnostic
-/// refreshes don't race against each other. The frontend will receive all
-/// results in order, ensuring that diagnostics for an outdated version are
-/// eventually replaced by the most up-to-date diagnostics.
-///
-/// Note that this setup will be entirely replaced in the future by Salsa
-/// dependencies. Diagnostics refreshes will depend on indexer results in a
-/// natural way and they will be cancelled automatically as document updates
-/// arrive.
-async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>) {
-    let mut diagnostics_batch = Vec::new();
-    let mut indexer_batch = Vec::new();
-
+/// Tasks are batched and deduplicated per URL (only the last task per URL is
+/// processed), so stale-version diagnostics get superseded. The frontend
+/// receives results in order because the queue processes one batch at a time.
+async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
-        let mut tasks = vec![task];
-
-        // Process diagnostics at least every 10 iterations if indexer tasks
-        // keep coming in, so the user gets intermediate diagnostics refreshes
-        for _ in 0..10 {
-            while let Ok(task) = rx.try_recv() {
-                tasks.push(task);
-            }
-
-            // Separate by type
-            for task in std::mem::take(&mut tasks) {
-                match task {
-                    IndexerQueueTask::Indexer(indexer_task) => indexer_batch.push(indexer_task),
-                    IndexerQueueTask::Diagnostics(diagnostic_task) => {
-                        diagnostics_batch.push(diagnostic_task)
-                    },
-                }
-            }
-
-            // No more indexer tasks, let's do diagnostics
-            if indexer_batch.is_empty() {
-                break;
-            }
-
-            // Process indexer tasks first so diagnostics tasks work with an
-            // up-to-date index
-            process_indexer_batch(std::mem::take(&mut indexer_batch)).await;
+        let mut batch = vec![task];
+        while let Ok(task) = rx.try_recv() {
+            batch.push(task);
         }
-
-        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch));
-    }
-}
-
-async fn process_indexer_batch(batch: Vec<IndexerTask>) {
-    tracing::trace!(
-        "Processing {n} indexer tasks ({summary})",
-        n = batch.len(),
-        summary = summarize_indexer_task(&batch)
-    );
-
-    for task in batch {
-        let result: anyhow::Result<()> = match &task {
-            IndexerTask::Index { uri, db, encoding } => {
-                // This is running on a separate task than the main loop, so
-                // Salsa cancellations are possible. Catch cancellation inline
-                // rather than through the `spawn_blocking()` funnel because
-                // this batch must finish before diagnostics are queued (see
-                // `process_indexer_queue()`) and it can't be fire-and-forget.
-                // On cancel we drop the pass and let the oak write that
-                // cancelled it re-enqueue.
-                let Some(result) = catch_cancellation(|| {
-                    let key = FilePath::from_url(uri);
-                    match db.file_by_path(&key) {
-                        Some(file) => indexer::index_file(db, file, *encoding),
-                        None => Err(anyhow!("No `oak_db` file for URI {uri}")),
-                    }
-                }) else {
-                    continue;
-                };
-                result
-            },
-
-            IndexerTask::Delete { uri } => indexer::delete(uri),
-
-            IndexerTask::Rename {
-                uri: old_uri,
-                new: new_uri,
-            } => indexer::rename(old_uri, new_uri),
-        };
-
-        if let Err(err) = result {
-            tracing::warn!("Can't process indexer task: {err}");
-            continue;
-        }
+        process_diagnostics_batch(batch);
     }
 }
 
@@ -1123,153 +947,6 @@ fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
     }
 }
 
-pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        if !ExtUrl::is_indexable(&uri) {
-            continue;
-        }
-
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Index {
-                uri,
-                db: state.db.clone(),
-                encoding: state.config.position_encoding,
-            }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
-}
-
-/// Index all workspace files freshly scanned into `state.db`.
-///
-/// Called from the `OakScanCompleted` hook with a single `WorldState` clone
-/// for the whole root, not one clone per file. Runs on a blocking thread
-/// mirroring `process_diagnostics_batch`, since indexing parses every file
-/// in the root. `skip` carries the editor-owned URLs whose index comes from
-/// `did_open` / `did_change`, so we don't index them twice.
-fn index_scanned_files(
-    root: oak_db::Root,
-    files: Vec<oak_db::File>,
-    skip: HashSet<FilePath>,
-    state: WorldState,
-    events_tx: TokioUnboundedSender<Event>,
-) {
-    spawn_blocking(move || {
-        index_root_files(root, files, &skip, &state, &events_tx);
-        Ok(None)
-    });
-}
-
-/// Run a workspace root's index pass, then act on how it ended.
-///
-/// On `Completed`, refresh diagnostics. They read the legacy workspace index
-/// (`indexer::map` in `generate_diagnostics`), so they have to run after the
-/// pass builds it. Refreshing earlier races the index and flashes false
-/// "undefined symbol" positives that nothing corrects.
-///
-/// On `Cancelled` (a concurrent oak write armed the salsa token mid-pass),
-/// bounce a [`Event::ReindexRoot`] back to the main loop rather than retry
-/// inline. The cancelling write runs to completion on the main loop before the
-/// event is handled, so the retry sees a settled db. A burst of writes can
-/// cancel the retry too, but each cancel re-enqueues, so the pass converges
-/// once the writes stop.
-fn index_root_files(
-    root: oak_db::Root,
-    files: Vec<oak_db::File>,
-    skip: &HashSet<FilePath>,
-    state: &WorldState,
-    events_tx: &TokioUnboundedSender<Event>,
-) {
-    match index_files(&state.db, files, skip, state.config.position_encoding) {
-        IndexPass::Completed => diagnostics_refresh_all(state),
-        IndexPass::Cancelled => {
-            events_tx.send(Event::ReindexRoot(root)).log_err();
-        },
-    }
-}
-
-/// Whether a root index pass ran to completion or was cut short by a salsa
-/// cancellation. A pass parses every file in the root, so a concurrent oak
-/// write (an edit, a follow-up scan) can cancel it partway. `Cancelled` lets
-/// the caller re-enqueue the root instead of leaving a half-built index.
-#[derive(Debug, PartialEq, Eq)]
-enum IndexPass {
-    Completed,
-    Cancelled,
-}
-
-/// Index every file in `files` that isn't editor-owned, into the legacy index.
-///
-/// Salsa queries inside `index_file` unwind with `Cancelled` when a concurrent
-/// write arms the token, so we wrap the whole loop in `catch_cancellation`: a
-/// cancellation aborts the pass and reports `Cancelled` rather than indexing
-/// the remaining files against a db that's about to change.
-fn index_files(
-    db: &OakDatabase,
-    files: Vec<oak_db::File>,
-    skip: &HashSet<FilePath>,
-    encoding: PositionEncoding,
-) -> IndexPass {
-    let completed = catch_cancellation(|| {
-        for file in files {
-            if skip.contains(file.path(db)) {
-                continue;
-            }
-            if let Err(err) = indexer::index_file(db, file, encoding) {
-                tracing::warn!("Can't index scanned file: {err:?}");
-            }
-        }
-    });
-
-    match completed {
-        Some(()) => IndexPass::Completed,
-        None => IndexPass::Cancelled,
-    }
-}
-
-/// Collect every R file under one root: top-level scripts plus each package's
-/// loadable files and non-loadable scripts (`tests/`, `inst/`, ...). Unlike
-/// `oak_db::all_files`, which walks all live roots, this stays scoped to the
-/// single root that just finished scanning.
-fn root_files(db: &OakDatabase, root: oak_db::Root) -> Vec<oak_db::File> {
-    let mut files: Vec<oak_db::File> = root.scripts(db).to_vec();
-    for &pkg in root.packages(db) {
-        files.extend(pkg.files(db));
-        files.extend(pkg.scripts(db));
-    }
-    files
-}
-
-pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Delete { uri }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
-}
-
-pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
-    for (old, new) in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Rename {
-                uri: old,
-                new,
-            }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
-}
-
 pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     tracing::trace!(
         "Refreshing diagnostics for {n} documents",
@@ -1289,40 +966,26 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
             },
         };
 
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
+        DIAGNOSTICS_QUEUE
+            .send(RefreshDiagnosticsTask {
                 file,
                 state: state.diagnostics_snapshot(),
-            }))
+            })
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use aether_path::FilePath;
-    use oak_db::File;
-    use oak_db::OakDatabase;
-    use oak_db::Root;
-    use oak_db::RootKind;
     use oak_scan::DbScan;
     use salsa::Database;
-    use tokio::sync::mpsc::unbounded_channel;
     use url::Url;
 
     use super::catch_cancellation;
-    use super::index_root_files;
-    use super::process_indexer_batch;
     use super::refresh_diagnostics;
-    use super::Event;
-    use super::IndexerTask;
     use super::RefreshDiagnosticsTask;
-    use crate::fixtures::TEST_ENCODING;
     use crate::lsp::document::Document;
-    use crate::lsp::indexer;
-    use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1352,95 +1015,5 @@ mod tests {
             state: snapshot,
         };
         assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
-    }
-
-    /// `IndexerTask::Index` resolves its file through `db.file_by_path()`, so it
-    /// can only index a file the oak db already knows about. `did_create_files`
-    /// enqueues an `Index` task for a freshly created file, but that file isn't
-    /// in the db until the watcher scans it in, so the task hits the `None` arm
-    /// and the file never reaches the legacy index. Both URIs below carry the
-    /// same symbol; only the one present in the db gets indexed, so a single
-    /// `find()` tells the two cases apart.
-    #[tokio::test]
-    async fn test_index_task_requires_file_in_db() {
-        let _guard = ResetIndexerGuard;
-
-        // Present in the db, so `file_by_path()` resolves and it gets indexed.
-        // `upsert_editor` attaches the file to the orphan root; a bare
-        // `File::new` would not be reachable through `file_by_path`.
-        let mut present_db = OakDatabase::new();
-        let present = Url::parse("file:///present.R").unwrap();
-        present_db.upsert_editor(FilePath::from_url(&present), "sym <- 1".to_string());
-        process_indexer_batch(vec![IndexerTask::Index {
-            uri: present,
-            db: present_db,
-            encoding: TEST_ENCODING,
-        }])
-        .await;
-        assert!(indexer::find("sym").is_some());
-
-        indexer::indexer_clear();
-
-        // Absent from the db: the `did_create_files` case. The same contents
-        // sit on disk, but `Index` never reads disk, so the symbol is lost.
-        let absent_db = OakDatabase::new();
-        let absent = Url::parse("file:///absent.R").unwrap();
-        process_indexer_batch(vec![IndexerTask::Index {
-            uri: absent,
-            db: absent_db,
-            encoding: TEST_ENCODING,
-        }])
-        .await;
-        assert!(indexer::find("sym").is_none());
-    }
-
-    /// A root index pass cancelled by a concurrent oak write re-enqueues the
-    /// root through [`Event::ReindexRoot`], so a cancelled pass isn't silently
-    /// dropped and left as a half-built index. Arming
-    /// `cancellation_token().cancel()` makes the first salsa query in
-    /// `index_file` unwind with `Cancelled`, the same payload a concurrent
-    /// `set_*` produces.
-    #[test]
-    fn test_cancelled_root_pass_reschedules_reindex() {
-        let mut state = WorldState::default();
-        let uri = Url::parse("file:///scanned.R").unwrap();
-        let file = state
-            .db
-            .upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
-        let root = workspace_root(&state.db, file);
-
-        state.db.cancellation_token().cancel();
-
-        let (events_tx, mut events_rx) = unbounded_channel::<Event>();
-        index_root_files(root, vec![file], &HashSet::new(), &state, &events_tx);
-
-        match events_rx.try_recv() {
-            Ok(Event::ReindexRoot(rescheduled)) => assert_eq!(rescheduled, root),
-            other => panic!("expected ReindexRoot, got {other:?}"),
-        }
-    }
-
-    /// A pass that runs to completion indexes its files and emits no event.
-    #[test]
-    fn test_completed_root_pass_does_not_reschedule() {
-        let _guard = ResetIndexerGuard;
-
-        let mut state = WorldState::default();
-        let uri = Url::parse("file:///scanned.R").unwrap();
-        let file = state
-            .db
-            .upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
-        let root = workspace_root(&state.db, file);
-
-        let (events_tx, mut events_rx) = unbounded_channel::<Event>();
-        index_root_files(root, vec![file], &HashSet::new(), &state, &events_tx);
-
-        assert!(indexer::find("sym").is_some());
-        assert!(events_rx.try_recv().is_err());
-    }
-
-    fn workspace_root(db: &OakDatabase, file: File) -> Root {
-        let path = FilePath::from_url(&Url::parse("file:///ws").unwrap());
-        Root::new(db, path, RootKind::Workspace, vec![file], vec![])
     }
 }

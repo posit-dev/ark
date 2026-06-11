@@ -277,9 +277,9 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    // Index the freshly opened buffer. Workspace indexing skips editor-owned
-    // files, so editor handlers own index creation and updating.
-    lsp::main_loop::index_update(vec![uri], state.clone());
+    // The freshly opened buffer's contents are now in the db via `upsert_editor`
+    // above, and the workspace index reads the db, so just refresh diagnostics.
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
 
     Ok(())
 }
@@ -304,7 +304,7 @@ pub(crate) fn did_change(
     let path = FilePath::from_url(uri);
     state.db.upsert_editor(path, new_contents);
 
-    lsp::main_loop::index_update(vec![uri.clone()], state.clone());
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -354,52 +354,37 @@ pub(crate) fn did_close(
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_create_files(
-    params: CreateFilesParams,
+    _params: CreateFilesParams,
     state: &WorldState,
 ) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_update(uris, state.clone());
-
+    // Disk-side file events reach oak through `did_change_watched_files`,
+    // which the workspace index reads. Here we only refresh diagnostics for
+    // open documents.
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_delete_files(
-    params: DeleteFilesParams,
+    _params: DeleteFilesParams,
     state: &WorldState,
 ) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_delete(uris, state.clone());
-
+    // Disk-side file events reach oak through `did_change_watched_files`,
+    // which the workspace index reads. Here we only refresh diagnostics for
+    // open documents.
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_rename_files(
-    params: RenameFilesParams,
+    _params: RenameFilesParams,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let uri_pairs = params
-        .files
-        .iter()
-        .filter_map(|file| {
-            let old_url = parse_uri_or_none(&file.old_uri)?;
-            let new_url = parse_uri_or_none(&file.new_uri)?;
-            Some((old_url, new_url))
-        })
-        .collect();
-
-    lsp::main_loop::index_rename(uri_pairs, state.clone());
+    // Disk-side file events reach oak through `did_change_watched_files`,
+    // which the workspace index reads. Here we only refresh diagnostics for
+    // open documents.
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 
@@ -473,16 +458,6 @@ pub(crate) fn did_change_workspace_folders(
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
     Ok(())
-}
-
-fn parse_uri_or_none(uri: &str) -> Option<url::Url> {
-    match url::Url::parse(uri) {
-        Ok(url) => Some(url),
-        Err(err) => {
-            log::warn!("Failed to parse URI '{uri}': {err}");
-            None
-        },
-    }
 }
 
 pub(crate) async fn did_change_configuration(

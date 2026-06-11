@@ -111,10 +111,6 @@ pub struct ScanCompleted {
 }
 
 impl ScanCompleted {
-    pub fn root(&self) -> Root {
-        self.root
-    }
-
     /// Push the scan's output into salsa inputs for `self.root`.
     ///
     /// Atomic full-replacement of the root's packages and scripts.

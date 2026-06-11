@@ -69,7 +69,7 @@ fn completions_from_workspace(
     let token = token.as_str();
 
     // get entries from the index
-    indexer::map(|uri, symbol, entry| {
+    indexer::map(&state.db, |uri, symbol, entry| {
         if !symbol.fuzzy_matches(token) {
             return;
         }
@@ -112,7 +112,7 @@ fn completions_from_workspace(
                 let value = format!(
                     "Defined in `{}` on line {}.",
                     path,
-                    entry.range.start.line + 1
+                    entry.range.start.row + 1
                 );
                 let markup = MarkupContent {
                     kind: MarkupKind::Markdown,
