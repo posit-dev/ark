@@ -208,12 +208,12 @@ pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
 pub(crate) fn root_by_file(db: &dyn Db, file: File) -> Option<Root> {
     let mut best: Option<(Root, usize)> = None;
 
-    let url = file.url(db);
+    let path = file.path(db);
     for &root in db.live_roots() {
         let (LiveRoot::Workspace(r) | LiveRoot::Library(r)) = root else {
             continue;
         };
-        if root_url_index(db, r).contains_key(url) {
+        if root_path_index(db, r).contains_key(path) {
             let depth = root_depth(db, r);
             if best.is_none_or(|(_, d)| depth > d) {
                 best = Some((r, depth));

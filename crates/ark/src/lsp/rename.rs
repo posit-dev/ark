@@ -20,10 +20,10 @@ pub(crate) fn prepare_rename(
     let uri = params.text_document.uri;
     let position = params.position;
 
-    let db = &state.oak;
+    let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_url(&FilePath::from_url(&uri)) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
         return Ok(None);
     };
 
@@ -48,10 +48,10 @@ pub(crate) fn rename(
     let position = params.text_document_position.position;
     let new_name = params.new_name;
 
-    let db = &state.oak;
+    let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_url(&FilePath::from_url(&uri)) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
         return Ok(None);
     };
 
@@ -62,7 +62,7 @@ pub(crate) fn rename(
     let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
     for r in targets.ranges {
         let line_index = r.file.line_index(db);
-        let target_url = r.file.url(db).to_url();
+        let target_url = r.file.path(db).to_url();
         let range = to_proto::range(r.range, line_index, encoding)?;
         changes.entry(target_url).or_default().push(TextEdit {
             range,

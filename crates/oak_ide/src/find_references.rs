@@ -125,7 +125,7 @@ fn sort_file_ranges(ranges: &mut Vec<FileRange>, db: &dyn Db, primary: File) {
     ranges.sort_by_cached_key(|r| {
         (
             r.file != primary,
-            r.file.url(db).to_url().to_string(),
+            r.file.path(db).to_url().to_string(),
             r.range.start(),
         )
     });

@@ -369,10 +369,10 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
     let mut db = OakDatabase::new();
     let short = empty_library_root(&db, "/lib");
     let long = empty_library_root(&db, "/lib/sub");
-    let desc_url = file_url("/lib/sub/DESCRIPTION");
-    let r_url = file_url("/lib/sub/R/a.R");
+    let desc_path = file_path("/lib/sub/DESCRIPTION");
+    let r_path = file_path("/lib/sub/R/a.R");
     let files = vec![FileEntry {
-        url: r_url,
+        path: r_path,
         contents: "f <- function() NULL\n".to_string(),
     }];
 
@@ -381,7 +381,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
     // both. The deepest root owns them.
     let p1 = short.set_package(
         &mut db,
-        desc_url.clone(),
+        desc_path.clone(),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -392,7 +392,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
     register_package(&mut db, short, p1);
     let p2 = long.set_package(
         &mut db,
-        desc_url,
+        desc_path,
         "pkg".to_string(),
         None,
         Namespace::default(),

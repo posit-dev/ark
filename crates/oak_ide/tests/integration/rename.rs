@@ -13,7 +13,7 @@ use oak_ide::prepare_rename;
 use oak_ide::rename;
 use oak_ide::FileRange;
 use oak_package_metadata::namespace::Namespace;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use salsa::Setter;
 use url::Url;
 

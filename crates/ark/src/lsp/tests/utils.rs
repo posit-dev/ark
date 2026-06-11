@@ -11,9 +11,9 @@ pub(super) fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
     state
 }
 
-/// Insert a document and mirror its contents into `oak`, the same pair
+/// Insert a document and mirror its contents into `db`, the same pair
 /// `did_open` performs, so handlers reading either `state.documents` or
-/// `state.oak` (via `file_by_url`) see a consistent file.
+/// `state.db` (via `file_by_path`) see a consistent file.
 pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, doc: &Document) {
     state.insert_document(uri.clone(), doc.clone());
     state

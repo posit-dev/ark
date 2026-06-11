@@ -7,7 +7,7 @@
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::TestDb;
 use crate::File;
 use crate::Identifier;
@@ -15,7 +15,7 @@ use crate::MemberKind;
 use crate::Name;
 
 fn make_file(db: &mut TestDb, contents: &str) -> File {
-    File::new(db, file_url("a.R"), contents.to_string(), None)
+    File::new(db, file_path("a.R"), contents.to_string(), None)
 }
 
 fn offset(n: u32) -> TextSize {

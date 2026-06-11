@@ -16,10 +16,10 @@ pub(crate) fn find_references(
     let position = params.text_document_position.position;
     let include_declaration = params.context.include_declaration;
 
-    let db = &state.oak;
+    let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_url(&FilePath::from_url(&uri)) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
         return Ok(Vec::new());
     };
 
@@ -30,7 +30,7 @@ pub(crate) fn find_references(
         .iter()
         .filter_map(|fr| {
             let range = to_proto::range(fr.range, fr.file.line_index(db), encoding).log_err()?;
-            Some(Location::new(fr.file.url(db).to_url(), range))
+            Some(Location::new(fr.file.path(db).to_url(), range))
         })
         .collect();
 

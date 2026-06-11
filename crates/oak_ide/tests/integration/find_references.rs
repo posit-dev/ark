@@ -16,7 +16,7 @@ use oak_db::File;
 use oak_db::OakDatabase;
 use oak_ide::find_references;
 use oak_ide::FileRange;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use url::Url;
 
 fn file_url(name: &str) -> Url {
