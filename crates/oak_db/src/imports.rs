@@ -85,10 +85,10 @@ fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<Utf8PathBuf> {
         .filter(|r| r.kind(db) == RootKind::Workspace)
     {
         // Workspace roots are file URLs by construction.
-        return root.path(db).as_file().map(|f| f.as_path().to_path_buf());
+        return root.path(db).as_path().map(Utf8Path::to_path_buf);
     }
 
-    let parent = calling_file.path(db).as_file()?.as_path().parent()?;
+    let parent = calling_file.path(db).as_path()?.parent()?;
     Some(parent.to_path_buf())
 }
 

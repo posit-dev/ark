@@ -56,12 +56,12 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath, c
         return;
     }
 
-    let Some(abs) = path.as_file() else {
+    let Some(fs_path) = path.as_path() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
         return;
     };
 
-    let Some(placement) = classify(db, abs.as_path()) else {
+    let Some(placement) = classify(db, fs_path) else {
         // Either the URL falls outside every workspace, or it lives
         // inside a package subdir we don't track (tests/, inst/, ...).
         return;
@@ -147,7 +147,7 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Placement> {
     }
 
     let root = workspace_root_containing(db, path)?;
-    let root_path = root.path(db).as_file()?.as_path();
+    let root_path = root.path(db).as_path()?;
 
     // Find the nearest ancestor (within `root_path`) that contains a
     // `DESCRIPTION`. None means no package above the file, so it's a
@@ -180,8 +180,8 @@ fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Opt
     db.workspace_roots()
         .roots(db)
         .iter()
-        .find(|root| match root.path(db).as_file() {
-            Some(root_path) => path.starts_with(root_path.as_path()),
+        .find(|root| match root.path(db).as_path() {
+            Some(root_path) => path.starts_with(root_path),
             None => false,
         })
         .copied()

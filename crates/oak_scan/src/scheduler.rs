@@ -55,6 +55,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_db::Db;
 use oak_db::DbInputs;
@@ -191,7 +192,7 @@ impl ScanScheduler {
             .iter()
             .filter_map(|path| {
                 let path = FilePath::from_path_buf(path.clone())?;
-                let scan_path = path.as_file()?.as_path().to_path_buf();
+                let scan_path = path.as_path()?.to_path_buf();
                 Some((scan_path, path))
             })
             .collect();
@@ -264,7 +265,7 @@ impl ScanScheduler {
         // instead of applying surgically against a transient world.
         let mut description_roots: HashSet<Root> = HashSet::new();
         for event in &events {
-            let Some(path) = event.path.as_file().map(|f| f.as_path().to_path_buf()) else {
+            let Some(path) = event.path.as_path().map(Utf8Path::to_path_buf) else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -285,7 +286,7 @@ impl ScanScheduler {
 
         // Pass 2: R-file events.
         for event in events {
-            let Some(path) = event.path.as_file().map(|f| f.as_path().to_path_buf()) else {
+            let Some(path) = event.path.as_path().map(Utf8Path::to_path_buf) else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -364,7 +365,7 @@ impl ScanScheduler {
                 // would stay pending forever. On success the buffer rides along
                 // and replays when the requeued scan finishes. On failure we
                 // fall back to the idle drain.
-                let scan_path = root.path(db).as_file().map(|f| f.as_path().to_path_buf());
+                let scan_path = root.path(db).as_path().map(Utf8Path::to_path_buf);
                 match scan_path {
                     Some(path) => {
                         self.state.insert(root, ScanState::Scanning);
@@ -417,11 +418,11 @@ impl ScanScheduler {
             },
             Some(ScanState::ScanningWithRescanQueued) => None,
             None => {
-                let Some(abs) = root.path(db).as_file() else {
+                let Some(path) = root.path(db).as_path() else {
                     log::warn!("Skipping rescan: root path is not a filesystem path");
                     return None;
                 };
-                let path = abs.as_path().to_path_buf();
+                let path = path.to_path_buf();
                 self.state.insert(root, ScanState::Scanning);
                 Some(ScanRequest { root, path })
             },
@@ -455,11 +456,11 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> 
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let Some(abs) = root.path(db).as_file() else {
+            let Some(path) = root.path(db).as_path() else {
                 log::warn!("Skipping workspace root: path is not a filesystem path");
                 return None;
             };
-            Some((abs.as_path().to_path_buf(), *root))
+            Some((path.to_path_buf(), *root))
         })
         .collect()
 }

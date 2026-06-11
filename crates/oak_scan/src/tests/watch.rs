@@ -72,7 +72,7 @@ fn remove_watched_file(db: &mut OakDatabase, url: FilePath) {
 /// Sync helper: force a fresh full rescan of `root`. Equivalent to the
 /// production trigger of a DESCRIPTION watcher event hitting the root.
 fn rescan_workspace_root(db: &mut OakDatabase, root: Root) {
-    let path = root.path(db).as_file().unwrap().as_path().to_path_buf();
+    let path = root.path(db).as_path().unwrap().to_path_buf();
     let result = ScanRequest { root, path }.run();
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.apply_scan_completed(db, result, &HashSet::new());

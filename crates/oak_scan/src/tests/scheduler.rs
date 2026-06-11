@@ -266,12 +266,7 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
     // `FilePath` construction is lexical, so the stored path is the one
     // we handed in, byte for byte.
     assert_eq!(
-        roots[0]
-            .path(&db)
-            .as_file()
-            .unwrap()
-            .as_path()
-            .as_std_path(),
+        roots[0].path(&db).as_path().unwrap().as_std_path(),
         tmp.path()
     );
 }

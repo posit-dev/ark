@@ -89,6 +89,11 @@ impl FilePath {
         }
     }
 
+    /// Borrow the filesystem path for the `File` arm. `None` for `Virtual`.
+    pub fn as_path(&self) -> Option<&Utf8Path> {
+        self.as_file().map(AbsPathBuf::as_path)
+    }
+
     /// Borrow the inner [`VirtualUri`] for the `Virtual` arm.
     pub fn as_virtual(&self) -> Option<&VirtualUri> {
         match self {
@@ -102,8 +107,7 @@ impl std::fmt::Display for FilePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `File` arms format as a `file:` URL so the output matches
         // what we'd send on the wire, not as a bare path. The path
-        // form is reachable via `as_file().map(|p| p.as_path())` for
-        // callers that want it.
+        // form is reachable via `as_path()` for callers that want it.
         match self {
             Self::File(p) => p.to_url().fmt(f),
             Self::Virtual(u) => u.fmt(f),

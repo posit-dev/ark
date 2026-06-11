@@ -172,12 +172,12 @@ impl File {
 /// [`File::root`] (for files without a registered package).
 fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
-    let path = path.as_file()?.as_path();
+    let path = path.as_path()?;
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).as_file()?.as_path();
+            let root_path = root.path(db).as_path()?;
             path.starts_with(root_path).then_some((root_path, *root))
         })
         .max_by_key(|(root_path, _)| root_path.components().count())

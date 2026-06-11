@@ -316,7 +316,7 @@ impl BreakpointMap {
 /// Returns `None` for non-`file:` URLs (`ark://`, `untitled:`, ...), when
 /// the file isn't on disk, and (rare) when the canonical path isn't UTF-8.
 fn canonical_path(path: &FilePath) -> Option<Utf8PathBuf> {
-    let canonical = std::fs::canonicalize(path.as_file()?.as_path()).ok()?;
+    let canonical = std::fs::canonicalize(path.as_path()?).ok()?;
     Utf8PathBuf::from_path_buf(canonical).ok()
 }
 
@@ -1136,7 +1136,7 @@ mod tests {
 
         // Rebuilding the path from the key would hand the frontend different
         // bytes, since the key dropped the `..`.
-        assert_ne!(path.as_file().unwrap().as_path().as_str(), sent);
+        assert_ne!(path.as_path().unwrap().as_str(), sent);
     }
 
     #[test]
