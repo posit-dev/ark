@@ -450,18 +450,21 @@ impl GlobalState {
             },
 
             Event::OakScanCompleted(scan) => {
-                // Oak writes happen only on the main loop. The scan ran off the
-                // loop, but its write lands back here, and it should stay that
-                // way.
+                // This scan ran on a background task, but it sends its result
+                // back here so the write happens on the main loop. Keep it that
+                // way: Only the main loop should write to the oak DB (not
+                // enforced by types unfortunately). Consequences of infringement:
                 //
-                // Nothing enforces this. The snapshots we hand background tasks
-                // are owned and mutable, so one could call `set_*`. It just
-                // mustn't. The main loop is the sole writer and runs serially,
-                // so its own reads are never cancelled (they have no
-                // `catch_cancellation()` around them). A stray background write
-                // would cancel those reads and then deadlock, because salsa
-                // makes a writer wait for `clones == 1` while the main loop's
-                // handle never drops.
+                // - It would deadlock on writes. Salsa makes a writer block
+                //   until every other snapshot handle has dropped (`clones ==
+                //   1`), and the main loop holds a handle that never drops. So a
+                //   background writer would wait forever.
+                //
+                // - It would panic on reads. A salsa write cancels every
+                //   in-flight read. The main loop is the sole writer and runs
+                //   serially, so it never wraps its own reads in
+                //   `catch_cancellation()`. A background write would cancel those
+                //   reads out from under it, causing a cancellation panic.
 
                 // Recompute editor-owned files at apply time, not at spawn
                 // time: a buffer may have opened or closed since the scan
@@ -476,13 +479,12 @@ impl GlobalState {
                 let scan_settled = followups.is_empty();
                 dispatch_scan_requests(&self.events_tx, followups);
 
-                // `apply_scan_completed` is an oak write. It cancels in-flight
-                // diagnostics, and it changes the workspace symbols diagnostics
-                // resolve against. Once the scan settles (no more follow-ups),
-                // recompute diagnostics for the open files so they reflect the
-                // indexed workspace and any cancelled pass is restored. We wait
-                // for settle rather than refreshing every round to avoid churn
-                // during the initial multi-round workspace scan.
+                // `apply_scan_completed()` is an oak write. It cancels
+                // in-flight diagnostics, and it changes the workspace symbols
+                // diagnostics resolve against. Once the scan settles (no more
+                // follow-ups to apply), recompute diagnostics for the open
+                // files so they reflect the indexed workspace and any cancelled
+                // pass is refreshed.
                 if scan_settled {
                     diagnostics_refresh_all(self.world.clone());
                 }
@@ -1040,11 +1042,6 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     }
 }
 
-/// Run the diagnostics pass for one file, off the main loop.
-///
-/// Unwinds with `salsa::Cancelled` if a concurrent oak write cancels the pass.
-/// That's caught by [`spawn_blocking`], so the cancelled refresh drops and the
-/// write's own follow-up recomputes it.
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
     let RefreshDiagnosticsTask { file, state } = task;
     let uri = file.url.clone();
