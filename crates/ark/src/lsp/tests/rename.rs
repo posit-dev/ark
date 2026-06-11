@@ -75,6 +75,22 @@ fn test_prepare_rename_on_namespace_access_returns_none() {
 }
 
 #[test]
+fn test_edits_keyed_by_verbatim_url() {
+    // The `WorkspaceEdit` must key its changes on the buffer's verbatim URL,
+    // not a normalised round-trip, or the editor won't match them to the file.
+    let code = "foo <- 1\nfoo\n";
+    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 0, 0, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let changes = edit.changes.expect("changes map");
+    assert!(changes.contains_key(&uri));
+    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
+}
+
+#[test]
 fn test_rename_emits_edits_for_def_and_uses() {
     let code = "foo <- 1\nfoo + foo\n";
     let uri = test_path("test.R");

@@ -35,7 +35,7 @@ pub(crate) fn goto_definition(
     // to several bindings; the client offers all of them.
     let links = targets
         .iter()
-        .map(|target| nav_target_to_link(db, encoding, target))
+        .map(|target| nav_target_to_link(state, encoding, target))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(GotoDefinitionResponse::Link(links)))
@@ -45,17 +45,18 @@ pub(crate) fn goto_definition(
 /// offsets in the target file, so we translate them through that file's own
 /// line index, not the file the request came from.
 fn nav_target_to_link(
-    db: &dyn Db,
+    state: &WorldState,
     encoding: PositionEncoding,
     target: &NavigationTarget,
 ) -> anyhow::Result<LocationLink> {
+    let db = &state.db;
     let line_index = target.file.line_index(db);
     let target_range = to_proto::range(target.full_range, line_index, encoding)?;
     let target_selection_range = to_proto::range(target.focus_range, line_index, encoding)?;
 
     Ok(LocationLink {
         origin_selection_range: None,
-        target_uri: target.file.path(db).to_url(),
+        target_uri: state.wire_url(target.file),
         target_range,
         target_selection_range,
     })
