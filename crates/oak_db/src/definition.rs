@@ -117,7 +117,7 @@ impl<'db> File {
     /// the lookup key, never part of identity, so inserting a binding earlier
     /// in a scope doesn't churn the ids of the others.
     #[salsa::tracked(returns(ref))]
-    fn definitions(self, db: &'db dyn Db) -> FileDefinitions<'db> {
+    fn definitions(self, db: &'db dyn Db) -> Definitions<'db> {
         let index = self.semantic_index(db);
         let mut by_site = FxHashMap::default();
 
@@ -130,17 +130,17 @@ impl<'db> File {
             }
         }
 
-        FileDefinitions { by_site }
+        Definitions { by_site }
     }
 }
 
 /// Every `Definition` in a file, keyed by its definition site.
 #[derive(Debug, PartialEq, Eq, salsa::Update)]
-struct FileDefinitions<'db> {
+struct Definitions<'db> {
     by_site: FxHashMap<DefinitionSite, Definition<'db>>,
 }
 
-/// Map key for [`FileDefinitions`]: a binding's `(scope, def_id)` site.
+/// Map key for [`Definitions`]: a binding's `(scope, def_id)` site.
 ///
 /// Mirrors ty's `DefinitionNodeKey`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
