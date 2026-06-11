@@ -472,7 +472,7 @@ impl GlobalState {
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.documents.keys().cloned().collect();
-                let root = scan.root;
+                let root = scan.root();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
                     &mut self.world.db,
                     scan,
@@ -1009,7 +1009,7 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
                 // cancelled it re-enqueue.
                 let Some(result) = catch_cancellation(|| {
                     let key = FilePath::from_url(uri);
-                    match db.file_by_url(&key) {
+                    match db.file_by_path(&key) {
                         Some(file) => indexer::index_file(db, file, *encoding),
                         None => Err(anyhow!("No `oak_db` file for URI {uri}")),
                     }
@@ -1127,7 +1127,7 @@ fn index_scanned_files(files: Vec<oak_db::File>, skip: HashSet<FilePath>, state:
         let encoding = state.config.position_encoding;
 
         for file in files {
-            if skip.contains(file.url(db)) {
+            if skip.contains(file.path(db)) {
                 continue;
             }
             if let Err(err) = indexer::index_file(db, file, encoding) {

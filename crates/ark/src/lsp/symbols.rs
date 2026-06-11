@@ -783,7 +783,6 @@ mod tests {
     use super::*;
     use crate::lsp::config::LspConfig;
     use crate::lsp::config::WorkspaceSymbolsConfig;
-    use crate::lsp::document::Document;
     use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::util::test_path;
 
@@ -1182,10 +1181,13 @@ outer <- 4
                 ..Default::default()
             };
 
-            // Index the document
-            let doc = Document::new(code, None);
+            // Index the file off an `oak_db::File`, the same entry point the
+            // scan and editor paths use.
+            let db = oak_db::OakDatabase::new();
             let uri = test_path("test.R");
-            indexer::update(&doc, &uri).unwrap();
+            let key = aether_path::FilePath::from_url(&uri);
+            let file = oak_db::File::new(&db, key, code.to_string(), None);
+            indexer::index_file(&db, file, crate::fixtures::TEST_ENCODING).unwrap();
 
             // Query for all symbols
             let params = WorkspaceSymbolParams {

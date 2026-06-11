@@ -131,7 +131,7 @@ pub(crate) fn index_file(
     file: oak_db::File,
     encoding: PositionEncoding,
 ) -> anyhow::Result<()> {
-    let url = file.url(db).to_url();
+    let url = file.path(db).to_url();
 
     // Defensive, callers are expected to filter virtual doc URIs before queuing
     if !ExtUrl::is_indexable(&url) {
