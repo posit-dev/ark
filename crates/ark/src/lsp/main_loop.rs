@@ -95,6 +95,10 @@ pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
+    /// Re-run a workspace root's index pass. Emitted when a concurrent oak
+    /// write cancelled the pass partway, so the cancelled pass isn't silently
+    /// dropped (see [`index_root_files`]).
+    ReindexRoot(oak_db::Root),
 }
 
 #[derive(Debug)]
@@ -485,7 +489,13 @@ impl GlobalState {
                 // covering the user's workspace.
                 if root.kind(&self.world.db) == oak_db::RootKind::Workspace {
                     let files = root_files(&self.world.db, root);
-                    index_scanned_files(files, editor_owned, self.world.clone());
+                    index_scanned_files(
+                        root,
+                        files,
+                        editor_owned,
+                        self.world.clone(),
+                        self.events_tx.clone(),
+                    );
                 }
 
                 if followups.is_empty() {
@@ -498,6 +508,22 @@ impl GlobalState {
                 } else {
                     dispatch_scan_requests(&self.events_tx, followups);
                 }
+            },
+
+            Event::ReindexRoot(root) => {
+                // Recompute editor-owned files at apply time, same as
+                // `OakScanCompleted`: buffers may have opened or closed since
+                // the cancelled pass kicked off.
+                let editor_owned: HashSet<FilePath> =
+                    self.world.documents.keys().cloned().collect();
+                let files = root_files(&self.world.db, root);
+                index_scanned_files(
+                    root,
+                    files,
+                    editor_owned,
+                    self.world.clone(),
+                    self.events_tx.clone(),
+                );
             },
         }
 
@@ -1121,11 +1147,37 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
 /// mirroring `process_diagnostics_batch`, since indexing parses every file
 /// in the root. `skip` carries the editor-owned URLs whose index comes from
 /// `did_open` / `did_change`, so we don't index them twice.
-fn index_scanned_files(files: Vec<oak_db::File>, skip: HashSet<FilePath>, state: WorldState) {
+fn index_scanned_files(
+    root: oak_db::Root,
+    files: Vec<oak_db::File>,
+    skip: HashSet<FilePath>,
+    state: WorldState,
+    events_tx: TokioUnboundedSender<Event>,
+) {
     spawn_blocking(move || {
-        index_files(&state.db, files, &skip, state.config.position_encoding);
+        index_root_files(root, files, &skip, &state, &events_tx);
         Ok(None)
     });
+}
+
+/// Run a workspace root's index pass, re-enqueueing the root if a concurrent
+/// oak write cancelled it.
+///
+/// On `Cancelled` we bounce a [`Event::ReindexRoot`] back to the main loop
+/// rather than retry inline. The cancelling write runs to completion on the
+/// main loop before the event is handled, so the retry sees a settled db. A
+/// burst of writes can cancel the retry too, but each cancel re-enqueues, so
+/// the pass converges once the writes stop.
+fn index_root_files(
+    root: oak_db::Root,
+    files: Vec<oak_db::File>,
+    skip: &HashSet<FilePath>,
+    state: &WorldState,
+    events_tx: &TokioUnboundedSender<Event>,
+) {
+    if index_files(&state.db, files, skip, state.config.position_encoding) == IndexPass::Cancelled {
+        events_tx.send(Event::ReindexRoot(root)).log_err();
+    }
 }
 
 /// Whether a root index pass ran to completion or was cut short by a salsa
@@ -1240,16 +1292,20 @@ mod tests {
     use std::collections::HashSet;
 
     use aether_path::FilePath;
+    use oak_db::File;
     use oak_db::OakDatabase;
+    use oak_db::Root;
+    use oak_db::RootKind;
     use oak_scan::DbScan;
     use salsa::Database;
+    use tokio::sync::mpsc::unbounded_channel;
     use url::Url;
 
     use super::catch_cancellation;
-    use super::index_files;
+    use super::index_root_files;
     use super::process_indexer_batch;
     use super::refresh_diagnostics;
-    use super::IndexPass;
+    use super::Event;
     use super::IndexerTask;
     use super::RefreshDiagnosticsTask;
     use crate::fixtures::TEST_ENCODING;
@@ -1327,33 +1383,53 @@ mod tests {
         assert!(indexer::find("sym").is_none());
     }
 
-    /// A root index pass cancelled by a concurrent oak write reports
-    /// `Cancelled`, so the caller can re-enqueue the root instead of leaving a
-    /// half-built index. Arming `cancellation_token().cancel()` makes the first
-    /// salsa query in `index_file` unwind with `Cancelled`, the same payload a
-    /// concurrent `set_*` produces.
+    /// A root index pass cancelled by a concurrent oak write re-enqueues the
+    /// root through [`Event::ReindexRoot`], so a cancelled pass isn't silently
+    /// dropped and left as a half-built index. Arming
+    /// `cancellation_token().cancel()` makes the first salsa query in
+    /// `index_file` unwind with `Cancelled`, the same payload a concurrent
+    /// `set_*` produces.
     #[test]
-    fn test_cancelled_index_pass_reports_cancellation() {
-        let mut db = OakDatabase::new();
+    fn test_cancelled_root_pass_reschedules_reindex() {
+        let mut state = WorldState::default();
         let uri = Url::parse("file:///scanned.R").unwrap();
-        let file = db.upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+        let file = state
+            .db
+            .upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+        let root = workspace_root(&state.db, file);
 
-        db.cancellation_token().cancel();
+        state.db.cancellation_token().cancel();
 
-        let outcome = index_files(&db, vec![file], &HashSet::new(), TEST_ENCODING);
-        assert_eq!(outcome, IndexPass::Cancelled);
+        let (events_tx, mut events_rx) = unbounded_channel::<Event>();
+        index_root_files(root, vec![file], &HashSet::new(), &state, &events_tx);
+
+        match events_rx.try_recv() {
+            Ok(Event::ReindexRoot(rescheduled)) => assert_eq!(rescheduled, root),
+            other => panic!("expected ReindexRoot, got {other:?}"),
+        }
     }
 
+    /// A pass that runs to completion indexes its files and emits no event.
     #[test]
-    fn test_completed_index_pass_reports_completion() {
+    fn test_completed_root_pass_does_not_reschedule() {
         let _guard = ResetIndexerGuard;
 
-        let mut db = OakDatabase::new();
+        let mut state = WorldState::default();
         let uri = Url::parse("file:///scanned.R").unwrap();
-        let file = db.upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+        let file = state
+            .db
+            .upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+        let root = workspace_root(&state.db, file);
 
-        let outcome = index_files(&db, vec![file], &HashSet::new(), TEST_ENCODING);
-        assert_eq!(outcome, IndexPass::Completed);
+        let (events_tx, mut events_rx) = unbounded_channel::<Event>();
+        index_root_files(root, vec![file], &HashSet::new(), &state, &events_tx);
+
         assert!(indexer::find("sym").is_some());
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    fn workspace_root(db: &OakDatabase, file: File) -> Root {
+        let path = FilePath::from_url(&Url::parse("file:///ws").unwrap());
+        Root::new(db, path, RootKind::Workspace, vec![file], vec![])
     }
 }
