@@ -11,6 +11,7 @@ use std::io::BufWriter;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -241,7 +242,7 @@ impl DapHandler {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match FilePath::from_file_path(path) {
+        let uri = match FilePath::from_path_buf(PathBuf::from(path)) {
             Ok(uri) => uri,
             Err(err) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");

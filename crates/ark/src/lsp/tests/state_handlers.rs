@@ -252,7 +252,7 @@ fn test_r_file_created_routes_through_add_file() {
 
     let root = state.db.workspace_roots().roots(&state.db)[0];
     assert_eq!(root.scripts(&state.db).len(), 1);
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     let file = state.db.file_by_url(&url).unwrap();
     assert_eq!(file.contents(&state.db), "x <- 1\n");
 }
@@ -296,7 +296,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
     let mut state = workspace_state(tmp.path());
 
     let path = tmp.path().join("a.R");
-    let url_id = FilePath::from_file_path(&path).unwrap();
+    let url_id = FilePath::from_path_buf(path.clone()).unwrap();
     let params = DidChangeWatchedFilesParams {
         changes: vec![event(&path, FileChangeType::DELETED)],
     };
@@ -317,7 +317,7 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
     fs::write(&path, "v1\n").unwrap();
     let mut state = workspace_state(tmp.path());
 
-    let url_id = FilePath::from_file_path(&path).unwrap();
+    let url_id = FilePath::from_path_buf(path.clone()).unwrap();
     assert_eq!(
         state.db.file_by_url(&url_id).unwrap().contents(&state.db),
         "v1\n"
@@ -393,7 +393,7 @@ fn test_description_deleted_demotes_package_to_scripts() {
     assert!(root.packages(&state.db).is_empty());
     assert_eq!(root.scripts(&state.db).len(), 1);
 
-    let a_url = FilePath::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let a_url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = state.db.file_by_url(&a_url).unwrap();
     assert_eq!(file.package(&state.db), None);
 }

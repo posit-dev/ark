@@ -107,7 +107,7 @@ fn real_location(file: &SymlinkedFile) -> JupyterPositronLocation {
 /// Test that breakpoints activate on execute requests when the frontend
 /// sends a URI through a symlink that differs from the canonical path.
 ///
-/// DAP's `SetBreakpoints` canonicalizes paths via `FilePath::from_file_path`.
+/// DAP's `SetBreakpoints` canonicalizes paths via `FilePath::from_path_buf`.
 /// The execute request's URI comes from the frontend as a raw string.
 /// `FilePath` must resolve both to the same canonical key.
 ///

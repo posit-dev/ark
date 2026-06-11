@@ -188,7 +188,7 @@ impl ScanScheduler {
     ) -> Vec<ScanRequest> {
         let new: Vec<(PathBuf, FilePath)> = paths
             .iter()
-            .filter_map(|p| Some((p.clone(), FilePath::from_file_path(p).ok()?)))
+            .filter_map(|p| Some((p.clone(), FilePath::from_path_buf(p.clone()).ok()?)))
             .collect();
         let new_urls: HashSet<FilePath> = new.iter().map(|(_, u)| u.clone()).collect();
 
@@ -465,7 +465,7 @@ mod tests {
     /// `ScanningWithRescanQueued` and its scan completes, the scheduler must
     /// not leave it `Scanning` with nothing in flight, or it would stay pending
     /// forever. This state is unreachable through the public API (workspace
-    /// roots always come from `from_file_path`), so we build it by hand.
+    /// roots always come from `from_path_buf`), so we build it by hand.
     #[test]
     fn test_unresolvable_rescan_path_does_not_strand_root_scanning() {
         let mut db = OakDatabase::new();

@@ -189,7 +189,7 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let url = FilePath::from_file_path(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
+    let url = FilePath::from_path_buf(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
     let file = db.file_by_url(&url).expect("script must be findable");
     assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
     // Package backpointer is set to the containing package.
@@ -268,7 +268,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     let mut db = OakDatabase::new();
 
     // Editor event before any scan.
-    let url = FilePath::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
     db.upsert_editor(url.clone(), "edited_version <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
@@ -291,7 +291,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let r_path = tmp.path().join("pkg/R/a.R");
     let mut db = OakDatabase::new();
 
-    let url = FilePath::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
     db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
@@ -443,7 +443,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert!(file.package(&db).is_some());
 
@@ -484,7 +484,7 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_file_path(tmp.path().join("pkg/R/a.R")).unwrap();
+    let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
     let file = db.file_by_url(&url).unwrap();
 
     set_workspace_paths(&mut db, &[], &HashSet::new());
@@ -567,7 +567,7 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
     fs::write(&r_path, "v2\n").unwrap();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_file_path(&r_path).unwrap();
+    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
     let file = db.file_by_url(&url).unwrap();
     assert_eq!(file.contents(&db), "v2\n");
 }

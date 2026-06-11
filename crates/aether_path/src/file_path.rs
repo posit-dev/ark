@@ -12,7 +12,7 @@
 //! is the job of secondary canonical-path indexes at the specific call
 //! sites that need it, never of this type.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use camino::Utf8Component;
 use camino::Utf8Path;
@@ -50,11 +50,11 @@ impl FilePath {
 
     /// Build a [`FilePath::File`] from a filesystem path. Errors if
     /// the path can't be expressed as a UTF-8 absolute path.
-    pub fn from_file_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let path = path.as_ref();
-        AbsPathBuf::from_path(path)
+    pub fn from_path_buf(path: PathBuf) -> anyhow::Result<Self> {
+        let display = path.display().to_string();
+        AbsPathBuf::from_path_buf(path)
             .map(Self::File)
-            .ok_or_else(|| anyhow::anyhow!("Path is not UTF-8 absolute: {}", path.display()))
+            .ok_or_else(|| anyhow::anyhow!("Path is not UTF-8 absolute: {display}"))
     }
 
     /// Parse a URI string into a [`FilePath`]. `file:` URIs become
@@ -146,21 +146,21 @@ impl AbsPathBuf {
             .to_file_path()
             .map_err(|()| anyhow::anyhow!("URL has no file path: {url}"))
             .warn_on_err()?;
-        Self::from_path(&path)
+        Self::from_path_buf(path)
     }
 
     /// Build from a filesystem path. Returns `None` if the path can't
     /// be represented as UTF-8 or is not absolute.
-    pub fn from_path(path: &Path) -> Option<Self> {
-        let utf8 = Utf8PathBuf::from_path_buf(path.to_path_buf())
+    pub fn from_path_buf(path: PathBuf) -> Option<Self> {
+        let utf8 = Utf8PathBuf::from_path_buf(path)
             .map_err(|p| anyhow::anyhow!("Path is not valid UTF-8: {}", p.display()))
             .warn_on_err()?;
-        Self::from_utf8(utf8)
+        Self::from_utf8_path_buf(utf8)
     }
 
     /// Build from a UTF-8 path. Returns `None` if the path is not
     /// absolute.
-    pub fn from_utf8(path: Utf8PathBuf) -> Option<Self> {
+    pub fn from_utf8_path_buf(path: Utf8PathBuf) -> Option<Self> {
         if !path.is_absolute() {
             return None;
         }

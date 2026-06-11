@@ -87,7 +87,7 @@ fn test_add_watched_file_new_top_level_script() {
 
     let path = tmp.path().join("new.R");
     fs::write(&path, "x <- 1\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
@@ -104,7 +104,7 @@ fn test_add_watched_file_into_existing_package() {
 
     let path = tmp.path().join("pkg/R/b.R");
     fs::write(&path, "y <- 2\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
@@ -128,7 +128,7 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
     fs::write(&path, "test code\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
     let root = db.workspace_roots().roots(&db)[0];
@@ -154,7 +154,7 @@ fn test_add_watched_file_skips_nested_r_subdir() {
 
     let path = tmp.path().join("pkg/R/nested/deep.R");
     fs::write(&path, "z <- 3\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
     let root = db.workspace_roots().roots(&db)[0];
@@ -176,7 +176,7 @@ fn test_add_watched_file_updates_pkg_scripts_content_preserves_placement() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let file_before = pkg.scripts(&db)[0];
 
@@ -201,7 +201,7 @@ fn test_remove_watched_file_from_pkg_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, url.clone());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
@@ -223,7 +223,7 @@ fn test_add_watched_file_outside_workspace_is_skipped() {
 
     let path = outside.path().join("stray.R");
     fs::write(&path, "z <- 3\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
     assert!(db.file_by_url(&url).is_none());
@@ -239,7 +239,7 @@ fn test_add_watched_file_updates_existing_content_preserves_placement() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/R/a.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let file_before = pkg.files(&db)[0];
 
@@ -264,7 +264,7 @@ fn test_remove_watched_file_from_package() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/R/a.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, url.clone());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
@@ -281,7 +281,7 @@ fn test_remove_watched_file_from_workspace_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("a.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, url.clone());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
@@ -295,7 +295,7 @@ fn test_remove_watched_file_unknown_url_is_noop() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let url = FilePath::from_file_path(tmp.path().join("ghost.R")).unwrap();
+    let url = FilePath::from_path_buf(tmp.path().join("ghost.R")).unwrap();
     remove_watched_file(&mut db, url);
 }
 
@@ -391,7 +391,7 @@ fn test_rescan_workspace_root_demotes_removed_description() {
 
 fn file_event(path: &Path, kind: FileEventKind) -> FileEvent {
     FileEvent {
-        url: FilePath::from_file_path(path).unwrap(),
+        url: FilePath::from_path_buf(path.to_path_buf()).unwrap(),
         kind,
     }
 }
@@ -472,7 +472,7 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("a.R");
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     apply_watcher_events(
         &mut db,
         vec![file_event(&path, FileEventKind::Deleted)],
@@ -493,7 +493,7 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     // Driver "owns" this URL (the editor has it open).
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     db.upsert_editor(url.clone(), "editor_v2\n".to_string());
 
     let mut skip = HashSet::new();
@@ -527,7 +527,7 @@ fn test_apply_watcher_events_skip_set_does_not_block_description() {
     .unwrap();
 
     let desc_path = tmp.path().join("pkg/DESCRIPTION");
-    let desc_url = FilePath::from_file_path(&desc_path).unwrap();
+    let desc_url = FilePath::from_path_buf(desc_path.clone()).unwrap();
     let mut skip = HashSet::new();
     skip.insert(desc_url);
 
@@ -585,7 +585,7 @@ fn test_apply_watcher_events_ignores_non_r_files() {
 
     let path = tmp.path().join("notes.txt");
     fs::write(&path, "not R\n").unwrap();
-    let url = FilePath::from_file_path(&path).unwrap();
+    let url = FilePath::from_path_buf(path.clone()).unwrap();
     apply_watcher_events(
         &mut db,
         vec![file_event(&path, FileEventKind::Created)],

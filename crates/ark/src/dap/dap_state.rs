@@ -1125,7 +1125,7 @@ mod tests {
         // them from the normalized key.
         let mut map = BreakpointMap::default();
         let sent = "/home/user/../user/test.R";
-        let path = FilePath::from_file_path(sent).unwrap();
+        let path = FilePath::from_path_buf(PathBuf::from(sent)).unwrap();
 
         map.insert(path.clone(), BreakpointEntry {
             verbatim_path: String::from(sent),
@@ -1148,7 +1148,7 @@ mod tests {
         // `debugInfo` rather than the normalized key.
         let mut map = BreakpointMap::default();
         let sent = "c:\\Users\\test\\file.R";
-        let path = FilePath::from_file_path(sent).unwrap();
+        let path = FilePath::from_path_buf(PathBuf::from(sent)).unwrap();
 
         map.insert(path.clone(), BreakpointEntry {
             verbatim_path: String::from(sent),

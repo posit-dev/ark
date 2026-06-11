@@ -62,7 +62,7 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
     assert!(followups.is_empty());
 
     // The package the scan would have created shouldn't surface.
-    let pkg_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let pkg_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     assert!(package_by_url(&db, &pkg_url).is_none());
 }
 
@@ -125,7 +125,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     // Mid-scan: a new file appears under pkg/R/, the watcher fires.
     let new_path = tmp.path().join("pkg/R/b.R");
     fs::write(&new_path, "y <- 2\n").unwrap();
-    let new_url = FilePath::from_file_path(&new_path).unwrap();
+    let new_url = FilePath::from_path_buf(new_path.clone()).unwrap();
     let event_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
@@ -174,7 +174,7 @@ fn test_description_event_during_scan_queues_rescan() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let watcher_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
@@ -228,7 +228,7 @@ fn test_description_event_on_idle_root_returns_scan_request() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = FilePath::from_file_path(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {

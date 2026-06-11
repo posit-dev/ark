@@ -26,33 +26,33 @@ fn test_virtual_preserves_bytes() {
 #[test]
 #[cfg(not(windows))]
 fn test_abs_path_normalises_dot_dot() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("/a/./b/../c")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("/a/./b/../c")).unwrap();
     assert_eq!(path.as_path(), Utf8Path::new("/a/c"));
 }
 
 #[test]
 #[cfg(not(windows))]
 fn test_abs_path_collapses_repeated_separators() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("/a//b///c")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("/a//b///c")).unwrap();
     assert_eq!(path.as_path(), Utf8Path::new("/a/b/c"));
 }
 
 #[test]
 #[cfg(not(windows))]
 fn test_abs_path_strips_trailing_slash() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("/a/b/")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("/a/b/")).unwrap();
     assert_eq!(path.as_path(), Utf8Path::new("/a/b"));
 }
 
 #[test]
 fn test_abs_path_rejects_relative() {
-    assert!(AbsPathBuf::from_utf8(Utf8PathBuf::from("a/b")).is_none());
+    assert!(AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("a/b")).is_none());
 }
 
 #[test]
 #[cfg(not(windows))]
 fn test_abs_path_round_trips_through_url() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("/home/user/foo.R")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("/home/user/foo.R")).unwrap();
     let url = path.to_url();
     let back = AbsPathBuf::from_url(&url).unwrap();
     assert_eq!(path, back);
@@ -65,7 +65,7 @@ fn test_abs_path_does_not_resolve_symlinks() {
     let file = dir.path().join("test.R");
     std::fs::write(&file, "").unwrap();
 
-    let path = AbsPathBuf::from_path(&file).unwrap();
+    let path = AbsPathBuf::from_path_buf(file).unwrap();
     assert!(path.as_path().as_str().starts_with("/tmp/"));
 }
 
@@ -77,14 +77,14 @@ fn test_abs_path_does_not_resolve_symlinks() {
 #[test]
 #[cfg(windows)]
 fn test_abs_path_uppercases_drive_letter() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("c:\\Users\\test")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("c:\\Users\\test")).unwrap();
     assert!(path.as_path().as_str().starts_with("C:"));
 }
 
 #[test]
 #[cfg(windows)]
 fn test_abs_path_preserves_uppercase_drive() {
-    let path = AbsPathBuf::from_utf8(Utf8PathBuf::from("C:\\Users\\test")).unwrap();
+    let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("C:\\Users\\test")).unwrap();
     assert!(path.as_path().as_str().starts_with("C:"));
 }
 
