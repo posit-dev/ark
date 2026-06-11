@@ -32,6 +32,7 @@ biome_line_index.workspace = true
 biome_rowan.workspace = true
 blake3.workspace = true
 bus.workspace = true
+camino.workspace = true
 cfg-if.workspace = true
 crossbeam.workspace = true
 ctor.workspace = true

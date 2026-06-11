@@ -1,8 +1,7 @@
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
-
 use aether_path::FilePath;
+use camino::Utf8Component;
+use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -80,32 +79,28 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
 /// resolves `source("foo.R")` against `getwd()`, and IDEs (RStudio, Positron)
 /// `setwd()` to the project root, so workspace-root anchoring typically matches
 /// the runtime behaviour.
-fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
+fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<Utf8PathBuf> {
     if let Some(root) = calling_file
         .root(db)
         .filter(|r| r.kind(db) == RootKind::Workspace)
     {
         // Workspace roots are file URLs by construction.
-        return root.path(db).to_path_buf();
+        return root.path(db).as_file().map(|f| f.as_path().to_path_buf());
     }
 
-    let url = calling_file.path(db);
-    if !url.is_file() {
-        return None;
-    }
-    let calling_path = url.to_path_buf()?;
-    calling_path.parent().map(PathBuf::from)
+    let parent = calling_file.path(db).as_file()?.as_path().parent()?;
+    Some(parent.to_path_buf())
 }
 
 /// Resolve `path` (the literal `source("path")` argument) against the anchor
 /// directory. Applies pure `..` / `.` normalisation (no I/O). Returns `None` if
 /// the joined path can't be turned back into a file URL.
-fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<FilePath> {
-    // `from_file_path` failures are expected for ill-formed paths.
+fn resolve_relative_to(anchor_dir: &Utf8Path, path: &str) -> Option<FilePath> {
+    // `Url::from_file_path` failures are expected for ill-formed paths.
     // Drop silently rather than logging noise during discovery.
-    let raw: PathBuf = anchor_dir.join(path);
+    let raw = anchor_dir.join(path);
     let target_path = normalise_path(&raw);
-    let url = Url::from_file_path(&target_path).ok()?;
+    let url = Url::from_file_path(target_path.as_std_path()).ok()?;
     Some(FilePath::from_url(&url))
 }
 
@@ -113,19 +108,19 @@ fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<FilePath> {
 /// touching the filesystem. Mirrors `Path::canonicalize` minus the
 /// symlink walk. Leading `..` against the root just drops (the root
 /// has no parent).
-fn normalise_path(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
+fn normalise_path(path: &Utf8Path) -> Utf8PathBuf {
+    let mut out = Utf8PathBuf::new();
     for component in path.components() {
         match component {
-            Component::CurDir => {},
-            Component::ParentDir => {
+            Utf8Component::CurDir => {},
+            Utf8Component::ParentDir => {
                 if !out.pop() {
                     // Already at the root (or before the prefix /
                     // root component); leading `..` has nothing to
                     // pop, so drop it.
                 }
             },
-            other => out.push(other.as_os_str()),
+            other => out.push(other.as_str()),
         }
     }
     out

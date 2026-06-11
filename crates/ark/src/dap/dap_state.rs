@@ -6,7 +6,6 @@
 //
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -19,6 +18,7 @@ use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_event::DebugEvent;
 use anyhow::anyhow;
+use camino::Utf8PathBuf;
 use crossbeam::channel::Sender;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
@@ -257,37 +257,37 @@ pub struct BreakpointMap {
     /// `fs::canonicalize`d path -> primary key. Populated at insert
     /// only when the URL is a `file:` and `canonicalize` succeeds (i.e.
     /// the file exists, which it does at `setBreakpoints` time).
-    by_canonical: HashMap<PathBuf, FilePath>,
+    by_canonical: HashMap<Utf8PathBuf, FilePath>,
 }
 
 impl BreakpointMap {
-    pub fn insert(&mut self, url: FilePath, entry: BreakpointEntry) {
-        if let Some(canonical) = canonical_path(&url) {
-            self.by_canonical.insert(canonical, url.clone());
+    pub fn insert(&mut self, path: FilePath, entry: BreakpointEntry) {
+        if let Some(canonical) = canonical_path(&path) {
+            self.by_canonical.insert(canonical, path.clone());
         }
-        self.by_path.insert(url, entry);
+        self.by_path.insert(path, entry);
     }
 
-    pub fn remove(&mut self, url: &FilePath) -> Option<BreakpointEntry> {
-        let primary = self.resolve_primary(url)?.clone();
+    pub fn remove(&mut self, path: &FilePath) -> Option<BreakpointEntry> {
+        let primary = self.resolve_primary(path)?.clone();
         self.by_canonical.retain(|_, p| p != &primary);
         self.by_path.remove(&primary)
     }
 
-    pub fn get(&self, url: &FilePath) -> Option<&BreakpointEntry> {
-        let primary = self.resolve_primary(url)?;
+    pub fn get(&self, path: &FilePath) -> Option<&BreakpointEntry> {
+        let primary = self.resolve_primary(path)?;
         self.by_path.get(primary)
     }
 
-    pub fn get_mut(&mut self, url: &FilePath) -> Option<&mut BreakpointEntry> {
+    pub fn get_mut(&mut self, path: &FilePath) -> Option<&mut BreakpointEntry> {
         // Cloning because the mut accessors can't hold a `&self.by_canonical`
         // borrow across `&mut self.by_path`.
-        let primary = self.resolve_primary(url)?.clone();
+        let primary = self.resolve_primary(path)?.clone();
         self.by_path.get_mut(&primary)
     }
 
-    pub fn contains_key(&self, url: &FilePath) -> bool {
-        self.resolve_primary(url).is_some()
+    pub fn contains_key(&self, path: &FilePath) -> bool {
+        self.resolve_primary(path).is_some()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&FilePath, &BreakpointEntry)> {
@@ -298,29 +298,26 @@ impl BreakpointMap {
         self.by_path.iter_mut()
     }
 
-    /// Resolve to the primary key. Tries bare `url` first. On miss,
-    /// canonicalises `url` and consults the secondary index. The
+    /// Resolve to the primary key. Tries bare `path` first. On miss,
+    /// canonicalises `path` and consults the secondary index. The
     /// secondary catches cases like an R srcref `/private/tmp/foo.R`
     /// (resolved by `normalizePath()`) looking up an editor URI
     /// `/tmp/foo.R` (not resolved).
-    fn resolve_primary<'a>(&'a self, url: &'a FilePath) -> Option<&'a FilePath> {
-        if self.by_path.contains_key(url) {
-            return Some(url);
+    fn resolve_primary<'a>(&'a self, path: &'a FilePath) -> Option<&'a FilePath> {
+        if self.by_path.contains_key(path) {
+            return Some(path);
         }
-        let canonical = canonical_path(url)?;
+        let canonical = canonical_path(path)?;
         self.by_canonical.get(&canonical)
     }
 }
 
 /// `fs::canonicalize` of the path component of a `file:` URL, if any.
-/// Returns `None` for non-`file:` URLs (`ark://`, `untitled:`, ...) and
-/// when the file isn't on disk.
-fn canonical_path(url: &FilePath) -> Option<PathBuf> {
-    if !url.is_file() {
-        return None;
-    }
-    let path = url.to_path_buf()?;
-    std::fs::canonicalize(path).ok()
+/// Returns `None` for non-`file:` URLs (`ark://`, `untitled:`, ...), when
+/// the file isn't on disk, and (rare) when the canonical path isn't UTF-8.
+fn canonical_path(path: &FilePath) -> Option<Utf8PathBuf> {
+    let canonical = std::fs::canonicalize(path.as_file()?.as_path()).ok()?;
+    Utf8PathBuf::from_path_buf(canonical).ok()
 }
 
 pub struct Dap {
@@ -958,6 +955,8 @@ impl ServerHandler for Dap {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crossbeam::channel::unbounded;
     use url::Url;
 
@@ -1137,7 +1136,7 @@ mod tests {
 
         // Rebuilding the path from the key would hand the frontend different
         // bytes, since the key dropped the `..`.
-        assert_ne!(path.to_path_buf().unwrap().to_string_lossy(), sent);
+        assert_ne!(path.as_file().unwrap().as_path().as_str(), sent);
     }
 
     #[test]

@@ -55,6 +55,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use camino::Utf8PathBuf;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Package;
@@ -81,7 +82,7 @@ use crate::watch::FileEventKind;
 #[must_use = "scan requests are dispatched by the caller"]
 pub struct ScanRequest {
     pub root: Root,
-    pub path: PathBuf,
+    pub path: Utf8PathBuf,
 }
 
 impl ScanRequest {
@@ -89,8 +90,8 @@ impl ScanRequest {
     /// thread. Production drivers run this on a task pool; tests call
     /// it directly.
     pub fn run(self) -> ScanCompleted {
-        let packages = scan_workspace_packages(&self.path);
-        let scripts = scan_workspace_scripts(&self.path);
+        let packages = scan_workspace_packages(self.path.as_std_path());
+        let scripts = scan_workspace_scripts(self.path.as_std_path());
         ScanCompleted {
             root: self.root,
             packages,
@@ -186,11 +187,15 @@ impl ScanScheduler {
         paths: &[PathBuf],
         editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
-        let new: Vec<(PathBuf, FilePath)> = paths
+        let new: Vec<(Utf8PathBuf, FilePath)> = paths
             .iter()
-            .filter_map(|p| Some((p.clone(), FilePath::from_path_buf(p.clone())?)))
+            .filter_map(|path| {
+                let path = FilePath::from_path_buf(path.clone())?;
+                let scan_path = path.as_file()?.as_path().to_path_buf();
+                Some((scan_path, path))
+            })
             .collect();
-        let new_urls: HashSet<FilePath> = new.iter().map(|(_, u)| u.clone()).collect();
+        let new_paths: HashSet<FilePath> = new.iter().map(|(_, path)| path.clone()).collect();
 
         let old: HashMap<FilePath, Root> = db
             .workspace_roots()
@@ -199,8 +204,8 @@ impl ScanScheduler {
             .map(|r| (r.path(db).clone(), *r))
             .collect();
 
-        for (old_url, &old_root) in &old {
-            if !new_urls.contains(old_url) {
+        for (old_path, &old_root) in &old {
+            if !new_paths.contains(old_path) {
                 old_root.set_stale(db, Some(editor_owned));
                 self.state.remove(&old_root);
                 self.buffered.remove(&old_root);
@@ -209,13 +214,16 @@ impl ScanScheduler {
 
         let mut new_roots = Vec::with_capacity(new.len());
         let mut requests = Vec::new();
-        for (path, url) in new {
-            let root = match old.get(&url) {
+        for (scan_path, path) in new {
+            let root = match old.get(&path) {
                 Some(&r) => r,
                 None => {
-                    let root = Root::new(db, url, RootKind::Workspace, Vec::new(), Vec::new());
+                    let root = Root::new(db, path, RootKind::Workspace, Vec::new(), Vec::new());
                     self.state.insert(root, ScanState::Scanning);
-                    requests.push(ScanRequest { root, path });
+                    requests.push(ScanRequest {
+                        root,
+                        path: scan_path,
+                    });
                     root
                 },
             };
@@ -256,7 +264,7 @@ impl ScanScheduler {
         // instead of applying surgically against a transient world.
         let mut description_roots: HashSet<Root> = HashSet::new();
         for event in &events {
-            let Some(path) = event.path.to_path_buf() else {
+            let Some(path) = event.path.as_file().map(|f| f.as_path().to_path_buf()) else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -277,7 +285,7 @@ impl ScanScheduler {
 
         // Pass 2: R-file events.
         for event in events {
-            let Some(path) = event.path.to_path_buf() else {
+            let Some(path) = event.path.as_file().map(|f| f.as_path().to_path_buf()) else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -303,7 +311,7 @@ impl ScanScheduler {
                         match std::fs::read_to_string(&path) {
                             Ok(contents) => add_watched_file(db, event.path, contents),
                             Err(err) => {
-                                log::warn!("Skipped watched file {}: {err:?}", path.display())
+                                log::warn!("Skipped watched file {path}: {err:?}")
                             },
                         }
                     },
@@ -356,7 +364,8 @@ impl ScanScheduler {
                 // would stay pending forever. On success the buffer rides along
                 // and replays when the requeued scan finishes. On failure we
                 // fall back to the idle drain.
-                match root.path(db).to_path_buf() {
+                let scan_path = root.path(db).as_file().map(|f| f.as_path().to_path_buf());
+                match scan_path {
                     Some(path) => {
                         self.state.insert(root, ScanState::Scanning);
                         vec![ScanRequest { root, path }]
@@ -408,10 +417,11 @@ impl ScanScheduler {
             },
             Some(ScanState::ScanningWithRescanQueued) => None,
             None => {
-                let Some(path) = root.path(db).to_path_buf() else {
+                let Some(abs) = root.path(db).as_file() else {
                     log::warn!("Skipping rescan: root path is not a filesystem path");
                     return None;
                 };
+                let path = abs.as_path().to_path_buf();
                 self.state.insert(root, ScanState::Scanning);
                 Some(ScanRequest { root, path })
             },
@@ -440,16 +450,16 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
     }
 }
 
-fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
+fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let Some(path) = root.path(db).to_path_buf() else {
+            let Some(abs) = root.path(db).as_file() else {
                 log::warn!("Skipping workspace root: path is not a filesystem path");
                 return None;
             };
-            Some((path, *root))
+            Some((abs.as_path().to_path_buf(), *root))
         })
         .collect()
 }

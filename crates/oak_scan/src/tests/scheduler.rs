@@ -265,5 +265,13 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
     assert!(roots[0].packages(&db).is_empty());
     // `FilePath` construction is lexical, so the stored path is the one
     // we handed in, byte for byte.
-    assert_eq!(roots[0].path(&db).to_path_buf().unwrap(), tmp.path());
+    assert_eq!(
+        roots[0]
+            .path(&db)
+            .as_file()
+            .unwrap()
+            .as_path()
+            .as_std_path(),
+        tmp.path()
+    );
 }

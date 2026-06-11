@@ -411,6 +411,7 @@ dependencies = [
  "biome_rowan",
  "blake3",
  "bus",
+ "camino",
  "cc",
  "cfg-if",
  "chrono",
@@ -2594,6 +2595,7 @@ dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
+ "camino",
  "compact_str",
  "log",
  "oak_package_metadata",
@@ -2664,6 +2666,7 @@ name = "oak_scan"
 version = "0.1.0"
 dependencies = [
  "aether_path",
+ "camino",
  "ignore",
  "log",
  "oak_core",

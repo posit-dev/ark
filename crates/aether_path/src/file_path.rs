@@ -61,13 +61,6 @@ impl FilePath {
         Ok(Self::from_url(&url))
     }
 
-    /// Filesystem path buffer for the `File` arm. Returns `None` for the
-    /// `Virtual` arm.
-    pub fn to_path_buf(&self) -> Option<std::path::PathBuf> {
-        self.as_file()
-            .map(|p| p.as_path().as_std_path().to_path_buf())
-    }
-
     /// Reconstruct a [`Url`].
     ///
     /// `File` arms rebuild a `file:` URL from the stored path; `Virtual`

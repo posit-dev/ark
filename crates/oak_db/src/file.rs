@@ -167,24 +167,20 @@ impl File {
 }
 
 /// Find the workspace `Root` whose path is the longest-prefix ancestor
-/// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
+/// of `path`. Returns `None` for virtual documents and for paths outside
 /// every workspace folder. Private helper: the only caller is
 /// [`File::root`] (for files without a registered package).
-fn root_by_path(db: &dyn Db, url: &FilePath) -> Option<Root> {
+fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
-    if !url.is_file() {
-        return None;
-    }
-
-    let path = url.to_path_buf()?;
+    let path = path.as_file()?.as_path();
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).to_path_buf()?;
-            path.starts_with(&root_path).then_some((root_path, *root))
+            let root_path = root.path(db).as_file()?.as_path();
+            path.starts_with(root_path).then_some((root_path, *root))
         })
-        .max_by_key(|(p, _)| p.components().count())
+        .max_by_key(|(root_path, _)| root_path.components().count())
         .map(|(_, r)| r)
 }
 

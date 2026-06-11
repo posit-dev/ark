@@ -7,9 +7,8 @@
 //! after it has decided a single event can apply surgically against the live
 //! root.
 
-use std::path::Path;
-
 use aether_path::FilePath;
+use camino::Utf8Path;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -51,27 +50,24 @@ pub enum FileEventKind {
 /// `<pkg>/R/*.R`, `pkg.scripts` for other R files under a package
 /// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
 /// every package. Mirrors the placement the bulk scanner would pick.
-pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath, contents: String) {
-    if let Some(existing) = db.file_by_path(&url) {
+pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath, contents: String) {
+    if let Some(existing) = db.file_by_path(&path) {
         existing.set_contents(db).to(contents);
         return;
     }
 
-    let Some(path) = url.to_path_buf() else {
+    let Some(abs) = path.as_file() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
         return;
     };
 
-    let Some(placement) = classify(db, &path) else {
+    let Some(placement) = classify(db, abs.as_path()) else {
         // Either the URL falls outside every workspace, or it lives
         // inside a package subdir we don't track (tests/, inst/, ...).
         return;
     };
 
-    let entry = FileEntry {
-        path: url,
-        contents,
-    };
+    let entry = FileEntry { path, contents };
     let file = upsert_root_file(db, placement.package_backpointer(), entry);
     append_to_container(db, file, placement);
 }
@@ -104,8 +100,8 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
 /// `File` entity itself stays in the salsa graph (salsa doesn't
 /// support deleting inputs), but with no container references nothing
 /// will reach it.
-pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath) {
-    let Some(file) = db.file_by_path(&url) else {
+pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
+    let Some(file) = db.file_by_path(&path) else {
         return;
     };
 
@@ -145,13 +141,13 @@ impl Placement {
 /// Returns the placement, or `None` if the file falls outside every
 /// workspace or sits in a package subdir we don't track (e.g.
 /// `<pkg>/R/subdir/` nested below the flat namespace).
-fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
-    if !is_r_file(path) {
+fn classify<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Placement> {
+    if !is_r_file(path.as_std_path()) {
         return None;
     }
 
     let root = workspace_root_containing(db, path)?;
-    let root_path = root.path(db).to_path_buf()?;
+    let root_path = root.path(db).as_file()?.as_path();
 
     // Find the nearest ancestor (within `root_path`) that contains a
     // `DESCRIPTION`. None means no package above the file, so it's a
@@ -159,33 +155,33 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Placement> {
     let pkg_dir = path
         .ancestors()
         .skip(1)
-        .take_while(|path| path.starts_with(&root_path))
-        .find(|path| path.join("DESCRIPTION").is_file());
+        .take_while(|ancestor| ancestor.starts_with(root_path))
+        .find(|ancestor| ancestor.join("DESCRIPTION").is_file());
 
     let Some(pkg_dir) = pkg_dir else {
         return Some(Placement::Script(root));
     };
 
-    let pkg_name = read_description_name(pkg_dir)?;
+    let pkg_name = read_description_name(pkg_dir.as_std_path())?;
     let pkg = root
         .packages(db)
         .iter()
         .find(|pkg| pkg.name(db) == &pkg_name)
         .copied()?;
 
-    match classify_in_package(pkg_dir, path) {
+    match classify_in_package(pkg_dir.as_std_path(), path.as_std_path()) {
         PackagePlacement::File => Some(Placement::PackageFile(pkg)),
         PackagePlacement::Script => Some(Placement::PackageScript(pkg)),
         PackagePlacement::Skip => None,
     }
 }
 
-fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Path) -> Option<Root> {
+fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Root> {
     db.workspace_roots()
         .roots(db)
         .iter()
-        .find(|root| match root.path(db).to_path_buf() {
-            Some(root_path) => path.starts_with(&root_path),
+        .find(|root| match root.path(db).as_file() {
+            Some(root_path) => path.starts_with(root_path.as_path()),
             None => false,
         })
         .copied()

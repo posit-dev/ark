@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 aether_path.workspace = true
+camino.workspace = true
 ignore.workspace = true
 log.workspace = true
 oak_core.workspace = true
