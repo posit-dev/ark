@@ -187,6 +187,11 @@ struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
+    /// Last diagnostics published per file. A refresh re-runs every open file,
+    /// but most runs produce the same result, so we skip the publish when it
+    /// matches what the client already has. Mirrors rust-analyzer's
+    /// `DiagnosticCollection`: only changed files go on the wire.
+    published_diagnostics: HashMap<Url, Vec<Diagnostic>>,
 }
 
 impl GlobalState {
@@ -314,6 +319,14 @@ impl GlobalState {
     ///   the state.
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
+
+        // Diagnostics read the oak database (workspace symbols, imports,
+        // resolved definitions), so any handler that writes to oak invalidates
+        // them. Rather than have each write site remember to refresh, we watch
+        // the oak revision across the whole tick: if a handler advanced it,
+        // refresh centrally. Config and console state live outside oak, so
+        // handlers that mutate those still refresh explicitly.
+        let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
         match event {
             Event::Lsp(msg) => match msg {
@@ -474,20 +487,17 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                if followups.is_empty() {
-                    // The scan settled (no more follow-ups). `apply_scan_completed()`
-                    // is an oak write that changed the workspace symbols diagnostics
-                    // resolve against, so recompute diagnostics for the open files.
-                    diagnostics_refresh_all(&self.world);
-                } else {
-                    dispatch_scan_requests(&self.events_tx, followups);
-                }
+                dispatch_scan_requests(&self.events_tx, followups);
             },
         }
 
         // TODO Make this threshold configurable by the client
         if loop_tick.elapsed() > std::time::Duration::from_millis(50) {
             lsp::log_info!("Handler took {}ms", loop_tick.elapsed().as_millis());
+        }
+
+        if salsa::plumbing::current_revision(&self.world.db) != old_revision {
+            diagnostics_refresh_all(&self.world);
         }
 
         Ok(())
@@ -667,6 +677,7 @@ impl AuxiliaryState {
             client,
             auxiliary_event_rx,
             tasks,
+            published_diagnostics: HashMap::new(),
         }
     }
 
@@ -680,9 +691,7 @@ impl AuxiliaryState {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
                 AuxiliaryEvent::SpawnedTask(handle) => self.tasks.push(Box::pin(handle)),
                 AuxiliaryEvent::PublishDiagnostics(uri, diagnostics, version) => {
-                    self.client
-                        .publish_diagnostics(uri, diagnostics, version)
-                        .await
+                    self.publish_diagnostics(uri, diagnostics, version).await
                 },
                 AuxiliaryEvent::Shutdown => break,
             }
@@ -715,6 +724,26 @@ impl AuxiliaryState {
                 },
             }
         }
+    }
+
+    /// Publish diagnostics for `uri`, skipping the client round-trip when the
+    /// set is identical to what we last sent for that file. Clearing (going to
+    /// an empty set) still publishes, since empty differs from a prior non-empty
+    /// set.
+    async fn publish_diagnostics(
+        &mut self,
+        uri: Url,
+        diagnostics: Vec<Diagnostic>,
+        version: Option<i32>,
+    ) {
+        if self.published_diagnostics.get(&uri) == Some(&diagnostics) {
+            return;
+        }
+        self.published_diagnostics
+            .insert(uri.clone(), diagnostics.clone());
+        self.client
+            .publish_diagnostics(uri, diagnostics, version)
+            .await
     }
 
     async fn log(&self, level: MessageType, message: String) {
@@ -875,8 +904,17 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 /// Process diagnostics refresh tasks.
 ///
 /// Tasks are batched and deduplicated per URL (only the last task per URL is
-/// processed), so stale-version diagnostics get superseded. The frontend
-/// receives results in order because the queue processes one batch at a time.
+/// processed), so stale-version diagnostics get superseded within a batch.
+///
+/// Batches triggered by an oak write can't publish out of order. Each pass
+/// holds a db snapshot, and a salsa write blocks until all snapshots drop, so
+/// by the time the write completes and the newer batch is enqueued, any older
+/// pass has either unwound with `Cancelled` or already produced its result.
+///
+/// FIXME: Batches triggered without an oak write (console inputs, diagnostics
+/// config) have no such barrier. An older pass can run concurrently with the
+/// newer one and publish last, leaving diagnostics computed from the older
+/// console scopes or config until the next refresh.
 async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
         let mut batch = vec![task];
@@ -938,13 +976,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
 
 /// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
 fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
-    match salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)) {
-        Ok(value) => Some(value),
-        Err(cancelled) => {
-            log::trace!("Salsa query {cancelled}");
-            None
-        },
-    }
+    salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)).ok()
 }
 
 pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
@@ -1015,5 +1047,21 @@ mod tests {
             state: snapshot,
         };
         assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
+    }
+
+    /// The central diagnostics refresh keys off the oak revision advancing
+    /// across a loop tick, so an oak write must bump the revision. This pins
+    /// that assumption: if a salsa upgrade changed it, the refresh would
+    /// silently stop firing.
+    #[test]
+    fn test_oak_write_advances_revision() {
+        let mut state = WorldState::default();
+        let before = salsa::plumbing::current_revision(&state.db);
+        state.db.upsert_editor(
+            FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
+            "x <- 1".to_string(),
+        );
+        let after = salsa::plumbing::current_revision(&state.db);
+        assert_ne!(before, after);
     }
 }

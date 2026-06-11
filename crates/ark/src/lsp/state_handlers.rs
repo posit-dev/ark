@@ -277,10 +277,8 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    // The freshly opened buffer's contents are now in the db via `upsert_editor`
-    // above, and the workspace index reads the db, so just refresh diagnostics.
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
-
+    // `upsert_editor` advanced the oak revision, so the main loop refreshes
+    // diagnostics for us (see `GlobalState::handle_event`).
     Ok(())
 }
 
@@ -303,8 +301,6 @@ pub(crate) fn did_change(
     let new_contents = document.contents.to_string();
     let path = FilePath::from_url(uri);
     state.db.upsert_editor(path, new_contents);
-
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -341,50 +337,40 @@ pub(crate) fn did_close(
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
 
-    // `close_editor` is an oak write, so it cancels any diagnostics pass in
-    // flight for the other open files. Re-enqueue them so a cancelled pass
-    // isn't silently dropped. The closed file was removed above, so it isn't
-    // refreshed (we already cleared it with the empty publish).
-    lsp::main_loop::diagnostics_refresh_all(state);
-
+    // `close_editor` advanced the oak revision, so the main loop refreshes the
+    // remaining open files. The closed file isn't refreshed (it was removed
+    // above) but we cleared it with the empty publish.
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
     Ok(())
 }
 
+// Disk-side create, delete, and rename reach oak through the file watcher
+// (`did_change_watched_files`), which writes the change and so triggers a
+// diagnostics refresh through the oak revision. These notifications carry no
+// extra information oak needs, so there's nothing to do here.
+
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_create_files(
     _params: CreateFilesParams,
-    state: &WorldState,
+    _state: &WorldState,
 ) -> anyhow::Result<()> {
-    // Disk-side file events reach oak through `did_change_watched_files`,
-    // which the workspace index reads. Here we only refresh diagnostics for
-    // open documents.
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_delete_files(
     _params: DeleteFilesParams,
-    state: &WorldState,
+    _state: &WorldState,
 ) -> anyhow::Result<()> {
-    // Disk-side file events reach oak through `did_change_watched_files`,
-    // which the workspace index reads. Here we only refresh diagnostics for
-    // open documents.
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_rename_files(
     _params: RenameFilesParams,
-    state: &mut WorldState,
+    _state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    // Disk-side file events reach oak through `did_change_watched_files`,
-    // which the workspace index reads. Here we only refresh diagnostics for
-    // open documents.
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
     Ok(())
 }
 

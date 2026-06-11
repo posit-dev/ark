@@ -18,7 +18,7 @@ use url::Url;
 
 use crate::lsp;
 use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileExt;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
