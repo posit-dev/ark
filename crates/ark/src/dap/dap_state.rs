@@ -1151,12 +1151,12 @@ mod tests {
         let uri = UrlId::from_file_path(sent).unwrap();
 
         map.insert(uri.clone(), BreakpointEntry {
-            source_path: String::from(sent),
+            verbatim_path: String::from(sent),
             hash: blake3::hash(b""),
             breakpoints: vec![],
         });
 
-        assert_eq!(map.get(&uri).unwrap().source_path, sent);
+        assert_eq!(map.get(&uri).unwrap().verbatim_path, sent);
 
         // The key uppercased the drive letter.
         assert!(uri.as_url().as_str().contains("/C:/"));

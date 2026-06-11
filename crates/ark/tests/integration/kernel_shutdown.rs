@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+#[cfg(unix)]
 use amalthea::wire::jupyter_message::Status;
+#[cfg(unix)]
 use ark_test::DummyArkFrontend;
 
 /// Install a SIGINT handler for shutdown tests. This overrides the test runner
@@ -55,6 +57,7 @@ fn test_shutdown_request_with_restart() {
     DummyArkFrontend::wait_for_cleanup();
 }
 
+#[cfg(unix)]
 static SHUTDOWN_TESTS_ENABLED: bool = false;
 
 // Can shut down Ark when running a nested debug console
