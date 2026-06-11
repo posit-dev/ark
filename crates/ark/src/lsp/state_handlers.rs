@@ -337,18 +337,10 @@ pub(crate) fn did_close(
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
 
-    // `close_editor` advanced the oak revision, so the main loop refreshes the
-    // remaining open files. The closed file isn't refreshed (it was removed
-    // above) but we cleared it with the empty publish.
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
     Ok(())
 }
-
-// Disk-side create, delete, and rename reach oak through the file watcher
-// (`did_change_watched_files`), which writes the change and so triggers a
-// diagnostics refresh through the oak revision. These notifications carry no
-// extra information oak needs, so there's nothing to do here.
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_create_files(

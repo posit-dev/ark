@@ -187,10 +187,9 @@ struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
-    /// Last diagnostics published per file. A refresh re-runs every open file,
-    /// but most runs produce the same result, so we skip the publish when it
-    /// matches what the client already has. Mirrors rust-analyzer's
-    /// `DiagnosticCollection`: only changed files go on the wire.
+    /// Last non-empty diagnostics published per file. A refresh re-runs every
+    /// open file, but most runs produce the same result, so we skip the publish
+    /// when it matches what the client already has.
     published_diagnostics: HashMap<Url, Vec<Diagnostic>>,
 }
 
@@ -727,20 +726,32 @@ impl AuxiliaryState {
     }
 
     /// Publish diagnostics for `uri`, skipping the client round-trip when the
-    /// set is identical to what we last sent for that file. Clearing (going to
-    /// an empty set) still publishes, since empty differs from a prior non-empty
-    /// set.
+    /// set is identical to what we last sent for that file. Only non-empty
+    /// sets are remembered, and an absent entry counts as empty. So an empty
+    /// result is published only when it clears diagnostics the client is
+    /// currently showing, and the map stays bounded by the files on screen
+    /// with diagnostics.
     async fn publish_diagnostics(
         &mut self,
         uri: Url,
         diagnostics: Vec<Diagnostic>,
         version: Option<i32>,
     ) {
-        if self.published_diagnostics.get(&uri) == Some(&diagnostics) {
+        let unchanged = match self.published_diagnostics.get(&uri) {
+            Some(old) => diagnostics == *old,
+            None => diagnostics.is_empty(),
+        };
+        if unchanged {
             return;
         }
-        self.published_diagnostics
-            .insert(uri.clone(), diagnostics.clone());
+
+        if diagnostics.is_empty() {
+            self.published_diagnostics.remove(&uri);
+        } else {
+            self.published_diagnostics
+                .insert(uri.clone(), diagnostics.clone());
+        }
+
         self.client
             .publish_diagnostics(uri, diagnostics, version)
             .await
