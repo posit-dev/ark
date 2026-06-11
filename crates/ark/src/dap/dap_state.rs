@@ -1120,45 +1120,45 @@ mod tests {
     #[cfg(not(windows))]
     fn test_breakpoint_map_keeps_verbatim_source_path() {
         // The `source.path` the frontend sends can normalize to a different
-        // `UrlId` (here the `..` segment is collapsed). `debugInfo` echoes
+        // `FilePath` (here the `..` segment is collapsed). `debugInfo` echoes
         // `verbatim_path`, so we store the original bytes rather than rebuild
         // them from the normalized key.
         let mut map = BreakpointMap::default();
         let sent = "/home/user/../user/test.R";
-        let uri = UrlId::from_file_path(sent).unwrap();
+        let path = FilePath::from_file_path(sent).unwrap();
 
-        map.insert(uri.clone(), BreakpointEntry {
+        map.insert(path.clone(), BreakpointEntry {
             verbatim_path: String::from(sent),
             hash: blake3::hash(b""),
             breakpoints: vec![],
         });
 
-        assert_eq!(map.get(&uri).unwrap().verbatim_path, sent);
+        assert_eq!(map.get(&path).unwrap().verbatim_path, sent);
 
         // Rebuilding the path from the key would hand the frontend different
         // bytes, since the key dropped the `..`.
-        assert_ne!(uri.to_file_path().unwrap().to_string_lossy(), sent);
+        assert_ne!(path.to_path_buf().unwrap().to_string_lossy(), sent);
     }
 
     #[test]
     #[cfg(windows)]
     fn test_breakpoint_map_keeps_verbatim_source_path() {
-        // Positron often sends a lowercase Windows drive letter. The `UrlId`
+        // Positron often sends a lowercase Windows drive letter. The `FilePath`
         // key uppercases it, so we echo the original `verbatim_path` back via
         // `debugInfo` rather than the normalized key.
         let mut map = BreakpointMap::default();
         let sent = "c:\\Users\\test\\file.R";
-        let uri = UrlId::from_file_path(sent).unwrap();
+        let path = FilePath::from_file_path(sent).unwrap();
 
-        map.insert(uri.clone(), BreakpointEntry {
+        map.insert(path.clone(), BreakpointEntry {
             verbatim_path: String::from(sent),
             hash: blake3::hash(b""),
             breakpoints: vec![],
         });
 
-        assert_eq!(map.get(&uri).unwrap().verbatim_path, sent);
+        assert_eq!(map.get(&path).unwrap().verbatim_path, sent);
 
         // The key uppercased the drive letter.
-        assert!(uri.as_url().as_str().contains("/C:/"));
+        assert!(path.to_url().as_str().contains("/C:/"));
     }
 }
