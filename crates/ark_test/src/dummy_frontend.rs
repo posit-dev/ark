@@ -1431,10 +1431,10 @@ impl DummyArkFrontend {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        // `uri_id` is what R-side code reports back. R's `path_to_file_uri()`
-        // applies `normalizePath()` which resolves symlinks (e.g. macOS
-        // `/var/...` -> `/private/var/...`), so canonicalize here so tests
-        // can compare against R-reported URIs byte for byte.
+
+        // R side `path_to_file_uri()` applies `normalizePath()`, which resolves
+        // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
+        // in tests, we also canonicalize here.
         let canonical = file.path().canonicalize().unwrap();
         let uri_id = UrlId::from_file_path(&canonical).unwrap().to_string();
         let filename = file
@@ -1827,9 +1827,10 @@ impl SourceFile {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        // `uri_id` is what R reports via `path_to_file_uri()` (which goes
-        // through `normalizePath()`), so canonicalize here so tests can
-        // compare against R-reported URIs byte for byte.
+
+        // R side `path_to_file_uri()` applies `normalizePath()`, which resolves
+        // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
+        // in tests, we also canonicalize here.
         let canonical = file.path().canonicalize().unwrap();
         let url = UrlId::from_file_path(&canonical).unwrap();
         let uri_id = url.to_string();

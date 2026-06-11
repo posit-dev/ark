@@ -221,11 +221,11 @@ impl DapBackendEvent {
     }
 }
 
-/// Breakpoint storage keyed on the verbatim `UrlId` the frontend sent in
-/// `setBreakpoints`. A secondary index maps `fs::canonicalize`d paths
-/// back to the primary key, bridging R-runtime srcref URIs (which go
-/// through `normalizePath()` and therefore arrive symlink-resolved)
-/// against the editor's pre-resolution form.
+/// Breakpoint storage keyed on the lexically normalized `UrlId` the frontend
+/// sent in `setBreakpoints`. A secondary index maps `fs::canonicalize`d paths
+/// back to the primary key, bridging R-runtime srcref URIs (which go through
+/// `normalizePath()` and therefore arrive symlink-resolved) against the
+/// editor's pre-resolution form.
 ///
 /// `fs::canonicalize` runs at insert time and at lookup-fallback time
 /// only. Lookups try the primary first (cheap, no fs touch), then

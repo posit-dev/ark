@@ -36,12 +36,11 @@ use url::Url;
 ///
 /// # Important: don't leak normalised URIs back out
 ///
-/// Even though [`UrlId`] no longer fs-canonicalises, it still
-/// uppercases the Windows drive letter and decodes the percent-encoded
-/// colon. When sending URIs back to the editor or to R, prefer the
-/// original bytes the frontend sent. The frontend treats a URI as the
-/// editor's identity for the file; a normalised form may look like a
-/// different file to it (e.g. open a new editor pane).
+/// When sending URIs back to the editor or to R, prefer the original
+/// bytes the frontend sent rather than the lexically normalized form.
+/// The frontend treats a URI as the editor's identity for the file; a
+/// normalised form may look like a different file to it (e.g. open a
+/// new editor pane).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UrlId(Url);
 
