@@ -47,6 +47,7 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
+use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -487,6 +488,14 @@ impl GlobalState {
                     &editor_owned,
                 );
                 dispatch_scan_requests(&self.events_tx, followups);
+
+                // Warm the workspace index once the scan settles. Editor
+                // writes don't need to re-warm: they imply an open document,
+                // and the diagnostics passes they trigger force the same
+                // memos.
+                if !self.lsp_state.oak_scheduler.has_pending_scans() {
+                    warm_workspace_index(self.world.db.clone());
+                }
             },
         }
 
@@ -1016,6 +1025,25 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
             })
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
+}
+
+/// Build the per-file workspace symbol indexes on a background thread so
+/// main-loop consumers triggered by the user (workspace symbols, workspace
+/// completions) find them already computed. The first run after a workspace
+/// scan does the real work, parsing and walking each file. Later runs only
+/// revalidate the per-file memos.
+///
+/// Mirrors rust-analyzer's cache warming: spawned when a workspace scan
+/// settles, the analogue of r-a's transitions to quiescence (initial VFS scan,
+/// workspace reload, etc). Unlike r-a we don't restart a warmup that gets
+/// cancelled (`spawn_blocking()` swallows the unwind). A cancelling write can
+/// only come from an editor buffer, so a document is open, and the diagnostics
+/// passes spawned by that same write force the same memos and finish the job.
+fn warm_workspace_index(db: OakDatabase) {
+    spawn_blocking(move || {
+        indexer::warm(&db);
+        Ok(None)
+    })
 }
 
 #[cfg(test)]

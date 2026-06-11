@@ -139,6 +139,15 @@ pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(&Url, &str, &IndexEnt
     }
 }
 
+/// Call [`file_index()`] for every workspace file. This ensures workspace
+/// symbols are loaded before the user needs to read them (e.g. by looking up a
+/// workspace symbol without any file opened).
+pub(crate) fn warm(db: &dyn ArkDb) {
+    for &file in oak_db::workspace_files(db) {
+        file_index(db, file);
+    }
+}
+
 fn index_insert(index: &mut rustc_hash::FxHashMap<String, IndexEntry>, entry: IndexEntry) {
     // We generally retain only the first occurrence in the index. In the
     // future we'll track every occurrences and their scopes but for now we
