@@ -197,7 +197,7 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
     let workspace = workspace_root(&db, "w");
     let pkg = Package::new(
         &db,
-        file_url("w/pkg/DESCRIPTION"),
+        file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -208,25 +208,25 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
 
     let r_file = File::new(
         &db,
-        file_url("w/pkg/R/a.R"),
+        file_path("w/pkg/R/a.R"),
         "f <- 1\n".to_string(),
         Some(pkg),
     );
     let helper = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/helper-b.R"),
+        file_path("w/pkg/tests/testthat/helper-b.R"),
         "h <- 1\n".to_string(),
         Some(pkg),
     );
     let setup = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/setup-c.R"),
+        file_path("w/pkg/tests/testthat/setup-c.R"),
         "s <- 1\n".to_string(),
         Some(pkg),
     );
     let test_foo = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/test-foo.R"),
+        file_path("w/pkg/tests/testthat/test-foo.R"),
         "test_that('x', expect_true(TRUE))\n".to_string(),
         Some(pkg),
     );
@@ -234,7 +234,7 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
     // it must not appear in `test_foo`'s imports.
     let test_bar = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/test-bar.R"),
+        file_path("w/pkg/tests/testthat/test-bar.R"),
         "test_that('y', expect_true(TRUE))\n".to_string(),
         Some(pkg),
     );
@@ -269,7 +269,7 @@ fn test_package_r_file_does_not_take_testthat_path() {
     let workspace = workspace_root(&db, "w");
     let pkg = Package::new(
         &db,
-        file_url("w/pkg/DESCRIPTION"),
+        file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -279,13 +279,13 @@ fn test_package_r_file_does_not_take_testthat_path() {
     );
     let r_file = File::new(
         &db,
-        file_url("w/pkg/R/a.R"),
+        file_path("w/pkg/R/a.R"),
         "f <- 1\n".to_string(),
         Some(pkg),
     );
     let helper = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/helper-b.R"),
+        file_path("w/pkg/tests/testthat/helper-b.R"),
         "h <- 1\n".to_string(),
         Some(pkg),
     );
@@ -313,7 +313,7 @@ fn test_testthat_file_includes_top_level_library_calls() {
     let workspace = workspace_root(&db, "w");
     let pkg = Package::new(
         &db,
-        file_url("w/pkg/DESCRIPTION"),
+        file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -323,13 +323,13 @@ fn test_testthat_file_includes_top_level_library_calls() {
     );
     let r_file = File::new(
         &db,
-        file_url("w/pkg/R/a.R"),
+        file_path("w/pkg/R/a.R"),
         "f <- 1\n".to_string(),
         Some(pkg),
     );
     let test_foo = File::new(
         &db,
-        file_url("w/pkg/tests/testthat/test-foo.R"),
+        file_path("w/pkg/tests/testthat/test-foo.R"),
         "library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string(),
         Some(pkg),
     );
@@ -365,7 +365,7 @@ fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
             },
             ImportLayer::Package(p) => format!("Package({})", p.name(db)),
             ImportLayer::File(f) => {
-                let url = f.url(db).to_url();
+                let url = f.path(db).to_url();
                 format!("File({})", url.path().rsplit('/').next().unwrap_or("?"))
             },
         })

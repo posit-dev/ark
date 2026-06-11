@@ -296,7 +296,7 @@ fn testthat_imports(
 /// layout testthat sources and runs files from. This is what separates a
 /// test file from an ordinary package script under e.g. `tests/` or `inst/`.
 fn is_testthat_file(file: File, db: &dyn Db) -> bool {
-    match file.url(db).as_file() {
+    match file.path(db).as_file() {
         Some(path) => in_testthat_dir(path.as_path()),
         None => false,
     }
@@ -321,7 +321,7 @@ fn is_testthat_support_file(file: File, db: &dyn Db) -> bool {
     if !is_testthat_file(file, db) {
         return false;
     }
-    match file.url(db).file_name() {
+    match file.path(db).file_name() {
         Some(name) => name.starts_with("helper") || name.starts_with("setup"),
         None => false,
     }
@@ -333,7 +333,7 @@ fn is_testthat_support_file(file: File, db: &dyn Db) -> bool {
 /// which currently sorts based on locale, but arguably this should be fixed on
 /// the testthat side.
 fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
-    file.url(db).file_name().unwrap_or_default()
+    file.path(db).file_name().unwrap_or_default()
 }
 
 /// Push the `From` layer if the namespace has any `importFrom` entries.
