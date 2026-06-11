@@ -292,7 +292,7 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let document = state.get_document_mut(uri)?;
+    let document = state.get_document_mut(&FilePath::from_url(uri))?;
 
     let parser = lsp_state
         .parsers
@@ -503,7 +503,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.get_document_mut(uri) else {
+    let Ok(doc) = state.get_document_mut(&FilePath::from_url(uri)) else {
         return;
     };
 
@@ -594,8 +594,9 @@ async fn update_config(
         let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
         let head = std::mem::replace(&mut remaining, tail);
 
+        let path = FilePath::from_url(&uri);
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.get_document_mut(&uri) {
+            if let Ok(doc) = state.get_document_mut(&path) {
                 (mapping.set)(&mut doc.config, value);
             }
         }

@@ -1077,7 +1077,7 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
             continue;
         }
 
-        let document = match state.get_document(&uri) {
+        let document = match state.get_document(&FilePath::from_url(&uri)) {
             Ok(doc) => doc.clone(),
             Err(err) => {
                 tracing::warn!("Can't get document '{uri}' for indexing: {err:?}");

@@ -5,6 +5,7 @@
 //
 //
 
+use aether_path::FilePath;
 use anyhow::anyhow;
 use serde_json::Value;
 use stdext::result::ResultExt;
@@ -184,7 +185,7 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let document = state.get_document(uri)?;
+    let document = state.get_document(&FilePath::from_url(uri))?;
     match folding_range(document) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
@@ -210,7 +211,7 @@ pub(crate) fn handle_completion(
 ) -> LspResult<Option<CompletionResponse>> {
     // Get reference to document.
     let uri = params.text_document_position.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let position = params.text_document_position.position;
     let point = document.tree_sitter_point_from_lsp_position(position)?;
@@ -243,7 +244,7 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let position = params.text_document_position_params.position;
     let point = document.tree_sitter_point_from_lsp_position(position)?;
@@ -278,7 +279,7 @@ pub(crate) fn handle_signature_help(
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let position = params.text_document_position_params.position;
     let point = document.tree_sitter_point_from_lsp_position(position)?;
@@ -308,7 +309,7 @@ pub(crate) fn handle_goto_definition(
     state: &WorldState,
 ) -> LspResult<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
-    let document = state.get_document(uri)?;
+    let document = state.get_document(&FilePath::from_url(uri))?;
 
     Ok(goto_definition(document, params).log_err().flatten())
 }
@@ -318,7 +319,7 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let document = state.get_document(&params.text_document.uri)?;
+    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
 
     // Get tree-sitter points to return selection ranges for
     let points = params
@@ -382,7 +383,7 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let document = state.get_document(&params.text_document.uri)?;
+    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
     let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     statement_range(document, point)
 }
@@ -392,7 +393,7 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let document = state.get_document(&params.text_document.uri)?;
+    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
     let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     help_topic(point, document)
 }
@@ -403,7 +404,7 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let doc = state.get_document(&ctxt.text_document.uri)?;
+    let doc = state.get_document(&FilePath::from_url(&ctxt.text_document.uri))?;
     let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
 
     indent_edit(doc, point.row)
@@ -416,7 +417,7 @@ pub(crate) fn handle_code_action(
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
-    let doc = state.get_document(&uri)?;
+    let doc = state.get_document(&FilePath::from_url(&uri))?;
     let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
 
     let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);

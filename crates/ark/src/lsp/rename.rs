@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
+use aether_path::FilePath;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::PrepareRenameResponse;
 use tower_lsp::lsp_types::RenameParams;
@@ -17,7 +18,7 @@ pub(crate) fn prepare_rename(
 ) -> anyhow::Result<Option<PrepareRenameResponse>> {
     let uri = params.text_document.uri;
     let position = params.position;
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let offset = from_proto::offset_from_position(
         position,
@@ -46,7 +47,7 @@ pub(crate) fn rename(
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
     let new_name = params.new_name;
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let offset = from_proto::offset_from_position(
         position,
