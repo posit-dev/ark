@@ -12,7 +12,7 @@ use biome_rowan::TextSize;
 use oak_db::File;
 use oak_db::OakDatabase;
 use oak_ide::goto_definition;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use url::Url;
 
 fn file_url(name: &str) -> Url {

@@ -17,10 +17,10 @@ pub(crate) fn goto_definition(
     let uri = &params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
 
-    let db = &state.oak;
+    let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_url(&FilePath::from_url(uri)) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(uri)) else {
         return Ok(None);
     };
 
@@ -55,7 +55,7 @@ fn nav_target_to_link(
 
     Ok(LocationLink {
         origin_selection_range: None,
-        target_uri: target.file.url(db).to_url(),
+        target_uri: target.file.path(db).to_url(),
         target_range,
         target_selection_range,
     })

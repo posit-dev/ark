@@ -1,5 +1,5 @@
 use aether_path::FilePath;
-use oak_scan::DbExt;
+use oak_scan::DbScan;
 use tower_lsp::lsp_types;
 
 use crate::lsp::document::Document;
@@ -17,7 +17,7 @@ pub(super) fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
 pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, doc: &Document) {
     state.insert_document(uri.clone(), doc.clone());
     state
-        .oak
+        .db
         .upsert_editor(FilePath::from_url(uri), doc.contents.clone());
 }
 

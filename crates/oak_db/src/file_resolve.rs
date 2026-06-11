@@ -154,7 +154,7 @@ impl<'db> File {
             ..
         } = index.definitions(scope)[def_id].kind()
         {
-            let target = db.file_by_url(&FilePath::from_url(target_url))?;
+            let target = db.file_by_path(&FilePath::from_url(target_url))?;
             return target.resolve_export(db, Name::new(db, forwarded.as_str()));
         }
         self.definition(db, scope, def_id)
