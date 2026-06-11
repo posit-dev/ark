@@ -482,29 +482,32 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                // Now that we've included this root's files into the Oak
-                // database, we can safely process them with the legacy Ark
-                // indexer that powers completions, workspace symbols, and
-                // diagnostics. We skip library roots since the indexer is only
-                // covering the user's workspace.
-                if root.kind(&self.world.db) == oak_db::RootKind::Workspace {
-                    let files = root_files(&self.world.db, root);
-                    index_scanned_files(
-                        root,
-                        files,
-                        editor_owned,
-                        self.world.clone(),
-                        self.events_tx.clone(),
-                    );
-                }
-
                 if followups.is_empty() {
-                    // The scan settled (no more follow-ups). `apply_scan_completed()`
-                    // was an oak write: it cancelled in-flight diagnostics and changed
-                    // the workspace symbols diagnostics resolve against. Recompute
-                    // diagnostics for the open files so they reflect the indexed
-                    // workspace and any cancelled pass is refreshed.
-                    diagnostics_refresh_all(&self.world);
+                    // Wait until the root is idle (no more follow-up scans
+                    // queued) before feeding the legacy index and refreshing
+                    // diagnostics, so we don't index a scan that's about to be
+                    // superseded.
+                    if root.kind(&self.world.db) == oak_db::RootKind::Workspace {
+                        // Index the root's files into the legacy index that
+                        // powers completions, workspace symbols, and
+                        // diagnostics. The pass refreshes diagnostics once it
+                        // finishes (see `index_root_files`), so they read a
+                        // fully-built index instead of racing it.
+                        let files = root_files(&self.world.db, root);
+                        index_scanned_files(
+                            root,
+                            files,
+                            editor_owned,
+                            self.world.clone(),
+                            self.events_tx.clone(),
+                        );
+                    } else {
+                        // Library roots don't feed the legacy index, but
+                        // `apply_scan_completed()` changed the oak imports and
+                        // exports diagnostics resolve against. There's no index
+                        // pass to wait on, so refresh directly.
+                        diagnostics_refresh_all(&self.world);
+                    }
                 } else {
                     dispatch_scan_requests(&self.events_tx, followups);
                 }
@@ -1160,14 +1163,19 @@ fn index_scanned_files(
     });
 }
 
-/// Run a workspace root's index pass, re-enqueueing the root if a concurrent
-/// oak write cancelled it.
+/// Run a workspace root's index pass, then act on how it ended.
 ///
-/// On `Cancelled` we bounce a [`Event::ReindexRoot`] back to the main loop
-/// rather than retry inline. The cancelling write runs to completion on the
-/// main loop before the event is handled, so the retry sees a settled db. A
-/// burst of writes can cancel the retry too, but each cancel re-enqueues, so
-/// the pass converges once the writes stop.
+/// On `Completed`, refresh diagnostics. They read the legacy workspace index
+/// (`indexer::map` in `generate_diagnostics`), so they have to run after the
+/// pass builds it. Refreshing earlier races the index and flashes false
+/// "undefined symbol" positives that nothing corrects.
+///
+/// On `Cancelled` (a concurrent oak write armed the salsa token mid-pass),
+/// bounce a [`Event::ReindexRoot`] back to the main loop rather than retry
+/// inline. The cancelling write runs to completion on the main loop before the
+/// event is handled, so the retry sees a settled db. A burst of writes can
+/// cancel the retry too, but each cancel re-enqueues, so the pass converges
+/// once the writes stop.
 fn index_root_files(
     root: oak_db::Root,
     files: Vec<oak_db::File>,
@@ -1175,8 +1183,11 @@ fn index_root_files(
     state: &WorldState,
     events_tx: &TokioUnboundedSender<Event>,
 ) {
-    if index_files(&state.db, files, skip, state.config.position_encoding) == IndexPass::Cancelled {
-        events_tx.send(Event::ReindexRoot(root)).log_err();
+    match index_files(&state.db, files, skip, state.config.position_encoding) {
+        IndexPass::Completed => diagnostics_refresh_all(state),
+        IndexPass::Cancelled => {
+            events_tx.send(Event::ReindexRoot(root)).log_err();
+        },
     }
 }
 
