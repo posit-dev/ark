@@ -120,7 +120,7 @@ impl LibraryRoots {
 ///
 /// Singleton: there is one `OrphanRoot` per concrete database, lazily
 /// initialised by the implementation. The `files` field is what
-/// [`crate::Db::file_by_url`] consults to find unanchored files.
+/// [`crate::Db::file_by_path`] consults to find unanchored files.
 #[salsa::input(debug)]
 pub struct OrphanRoot {
     /// **Placement invariant.** Files here must have `package(db) ==
@@ -149,7 +149,7 @@ impl OrphanRoot {
 /// agent / multi-repo workflows where the same workspace folder gets
 /// added and removed repeatedly across a session.
 ///
-/// **Not consulted by analysis.** `Db::file_by_url` and
+/// **Not consulted by analysis.** `Db::file_by_path` and
 /// `Db::package_by_name` walk workspace / library roots and (for files)
 /// `OrphanRoot` only. Entities in `StaleRoot` are invisible to
 /// completions, goto-def, etc. — they correspond to folders the user
@@ -193,7 +193,7 @@ pub struct Package {
     /// package belongs to whichever `Root.packages` currently holds it.
     /// Workspace-vs-library is then `root.kind(db)`.
     #[returns(ref)]
-    pub description_url: FilePath,
+    pub description_path: FilePath,
     // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
     // method so `db.package_by_name()` and other lookups key on the
     // interned id rather than the string. Can't store `Name<'db>` on

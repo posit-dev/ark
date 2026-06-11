@@ -26,7 +26,7 @@ fn basenames(db: &OakDatabase, files: &[File]) -> Vec<String> {
     files
         .iter()
         .map(|f| {
-            f.url(db)
+            f.path(db)
                 .to_url()
                 .path()
                 .rsplit('/')
@@ -107,7 +107,7 @@ fn test_scan_workspace_collects_top_level_scripts() {
     let mut basenames: Vec<String> = scripts
         .iter()
         .map(|f| {
-            f.url(&db)
+            f.path(&db)
                 .to_url()
                 .path()
                 .rsplit('/')
@@ -134,7 +134,7 @@ fn test_scan_workspace_excludes_package_r_files_from_scripts() {
     let packages = root.packages(&db).clone();
 
     assert_eq!(scripts.len(), 1);
-    assert!(scripts[0].url(&db).to_url().path().ends_with("outside.R"));
+    assert!(scripts[0].path(&db).to_url().path().ends_with("outside.R"));
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].files(&db).len(), 1);
 }
@@ -163,7 +163,7 @@ fn test_scan_workspace_routes_package_subdir_r_files_to_pkg_scripts() {
         .scripts(&db)
         .iter()
         .map(|f| {
-            f.url(&db)
+            f.path(&db)
                 .to_url()
                 .path()
                 .rsplit('/')
@@ -177,7 +177,7 @@ fn test_scan_workspace_routes_package_subdir_r_files_to_pkg_scripts() {
 }
 
 #[test]
-fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
+fn test_scan_workspace_pkg_scripts_findable_via_file_by_path() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     fs::create_dir_all(tmp.path().join("pkg/tests/testthat")).unwrap();
@@ -190,7 +190,7 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_url() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let url = FilePath::from_path_buf(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
-    let file = db.file_by_url(&url).expect("script must be findable");
+    let file = db.file_by_path(&url).expect("script must be findable");
     assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
     // Package backpointer is set to the containing package.
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
@@ -219,7 +219,7 @@ fn test_scan_workspace_honors_gitignore() {
     let basenames: Vec<String> = scripts
         .iter()
         .map(|f| {
-            f.url(&db)
+            f.path(&db)
                 .to_url()
                 .path()
                 .rsplit('/')
@@ -274,7 +274,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let file = db
-        .file_by_url(&url)
+        .file_by_path(&url)
         .expect("script should be findable after scan");
     // The scanner inherited the orphan's edits rather than re-reading disk.
     assert_eq!(file.contents(&db), "edited_version <- 2\n");
@@ -296,7 +296,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let file = db.file_by_url(&url).expect("package file findable");
+    let file = db.file_by_path(&url).expect("package file findable");
     assert_eq!(file.contents(&db), "edited <- 2\n");
 }
 
@@ -392,7 +392,7 @@ fn test_scan_workspace_drops_duplicate_package_names() {
     let files = pkg.files(&db).clone();
     assert_eq!(files.len(), 1);
     assert!(files[0]
-        .url(&db)
+        .path(&db)
         .to_url()
         .path()
         .ends_with("aaa-clone/R/a.R"));
@@ -444,7 +444,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = db.file_by_url(&url).unwrap();
+    let file = db.file_by_path(&url).unwrap();
     assert!(file.package(&db).is_some());
 
     // Editor opens the file; subsequent `set_workspace_paths` calls
@@ -454,7 +454,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
 
     // Workspace folder removed. File routes to orphan, package goes to stale.
     set_workspace_paths(&mut db, &[], &editor_owned);
-    let after_remove = db.file_by_url(&url).unwrap();
+    let after_remove = db.file_by_path(&url).unwrap();
     assert_eq!(file, after_remove);
     assert_eq!(after_remove.package(&db), None);
     assert!(db.orphan_root().files(&db).contains(&after_remove));
@@ -464,7 +464,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     // entity, editor content preserved (the scan's disk snapshot
     // doesn't overwrite).
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &editor_owned);
-    let after_readd = db.file_by_url(&url).unwrap();
+    let after_readd = db.file_by_path(&url).unwrap();
     assert_eq!(file, after_readd);
     assert!(after_readd.package(&db).is_some());
     assert_eq!(after_readd.contents(&db), "edited <- 2\n");
@@ -485,14 +485,14 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = db.file_by_url(&url).unwrap();
+    let file = db.file_by_path(&url).unwrap();
 
     set_workspace_paths(&mut db, &[], &HashSet::new());
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
     assert!(db.stale_root().files(&db).contains(&file));
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let resurrected = db.file_by_url(&url).unwrap();
+    let resurrected = db.file_by_path(&url).unwrap();
     assert_eq!(file, resurrected);
 }
 
@@ -545,8 +545,8 @@ fn test_scan_workspace_package_files_sorted_by_basename() {
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let files = pkg.files(&db).clone();
     assert_eq!(files.len(), 2);
-    assert!(files[0].url(&db).to_url().path().ends_with("mutate.R"));
-    assert!(files[1].url(&db).to_url().path().ends_with("select.R"));
+    assert!(files[0].path(&db).to_url().path().ends_with("mutate.R"));
+    assert!(files[1].path(&db).to_url().path().ends_with("select.R"));
 }
 
 #[test]
@@ -567,8 +567,8 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
     fs::write(&r_path, "v2\n").unwrap();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
-    let file = db.file_by_url(&url).unwrap();
+    let path = FilePath::from_path_buf(r_path.clone()).unwrap();
+    let file = db.file_by_path(&path).unwrap();
     assert_eq!(file.contents(&db), "v2\n");
 }
 

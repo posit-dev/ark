@@ -166,7 +166,7 @@ impl<'db> File {
                 log::error!(
                     "Internal error: Cycle through `Import` forwards while resolving \
                     `{current_name}` in {url}.",
-                    url = current_file.url(db),
+                    url = current_file.path(db),
                 );
                 return None;
             }

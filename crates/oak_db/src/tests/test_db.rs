@@ -100,8 +100,8 @@ impl DbInputs for TestDb {
 
 #[salsa::db]
 impl Db for TestDb {
-    fn file_by_url(&self, url: &FilePath) -> Option<crate::File> {
-        crate::db::file_by_url_query(self, url)
+    fn file_by_path(&self, url: &FilePath) -> Option<crate::File> {
+        crate::db::file_by_path_query(self, url)
     }
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {

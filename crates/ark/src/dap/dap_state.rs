@@ -253,7 +253,7 @@ pub struct BreakpointEntry {
 #[derive(Debug, Default)]
 pub struct BreakpointMap {
     /// Primary index, keyed on the normalized path the frontend gave us.
-    by_url: HashMap<FilePath, BreakpointEntry>,
+    by_path: HashMap<FilePath, BreakpointEntry>,
     /// `fs::canonicalize`d path -> primary key. Populated at insert
     /// only when the URL is a `file:` and `canonicalize` succeeds (i.e.
     /// the file exists, which it does at `setBreakpoints` time).
@@ -265,25 +265,25 @@ impl BreakpointMap {
         if let Some(canonical) = canonical_path(&url) {
             self.by_canonical.insert(canonical, url.clone());
         }
-        self.by_url.insert(url, entry);
+        self.by_path.insert(url, entry);
     }
 
     pub fn remove(&mut self, url: &FilePath) -> Option<BreakpointEntry> {
         let primary = self.resolve_primary(url)?.clone();
         self.by_canonical.retain(|_, p| p != &primary);
-        self.by_url.remove(&primary)
+        self.by_path.remove(&primary)
     }
 
     pub fn get(&self, url: &FilePath) -> Option<&BreakpointEntry> {
         let primary = self.resolve_primary(url)?;
-        self.by_url.get(primary)
+        self.by_path.get(primary)
     }
 
     pub fn get_mut(&mut self, url: &FilePath) -> Option<&mut BreakpointEntry> {
         // Cloning because the mut accessors can't hold a `&self.by_canonical`
-        // borrow across `&mut self.by_url`.
+        // borrow across `&mut self.by_path`.
         let primary = self.resolve_primary(url)?.clone();
-        self.by_url.get_mut(&primary)
+        self.by_path.get_mut(&primary)
     }
 
     pub fn contains_key(&self, url: &FilePath) -> bool {
@@ -291,11 +291,11 @@ impl BreakpointMap {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&FilePath, &BreakpointEntry)> {
-        self.by_url.iter()
+        self.by_path.iter()
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&FilePath, &mut BreakpointEntry)> {
-        self.by_url.iter_mut()
+        self.by_path.iter_mut()
     }
 
     /// Resolve to the primary key. Tries bare `url` first. On miss,
@@ -304,7 +304,7 @@ impl BreakpointMap {
     /// (resolved by `normalizePath()`) looking up an editor URI
     /// `/tmp/foo.R` (not resolved).
     fn resolve_primary<'a>(&'a self, url: &'a FilePath) -> Option<&'a FilePath> {
-        if self.by_url.contains_key(url) {
+        if self.by_path.contains_key(url) {
             return Some(url);
         }
         let canonical = canonical_path(url)?;

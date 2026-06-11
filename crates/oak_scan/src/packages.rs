@@ -25,10 +25,10 @@ pub(crate) struct PackageEntry {
     /// `Package` entity: the same path produces the same entity across
     /// rescans, even when the package's version or files change. So a
     /// version bump updates the existing entity in place rather than
-    /// minting a new one (see `Package::description_url`). The `name`
+    /// minting a new one (see `Package::description_path`). The `name`
     /// can't serve as identity because two packages can declare the
     /// same `Package:` field, and dedup picks one of them per root.
-    pub description_url: FilePath,
+    pub description_path: FilePath,
     pub name: String,
     pub version: Option<String>,
     pub namespace: Namespace,
@@ -54,7 +54,7 @@ pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> 
     let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
-    let description_url = FilePath::from_path_buf(description_path)?;
+    let description_path = FilePath::from_path_buf(description_path)?;
 
     let namespace = fs::read_to_string(package_dir.join("NAMESPACE"))
         .ok()
@@ -64,7 +64,7 @@ pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> 
     let collation = description.collate();
 
     Some(PackageEntry {
-        description_url,
+        description_path,
         name: description.name,
         version: Some(description.version),
         namespace,
@@ -173,7 +173,10 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
             log::warn!("Skipping R file, can't build a URL: {}", path.display());
             continue;
         };
-        let file = FileEntry { url, contents };
+        let file = FileEntry {
+            path: url,
+            contents,
+        };
 
         if placement == PackagePlacement::File {
             files.push((path.to_path_buf(), file));
@@ -287,7 +290,10 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         let Some(url) = FilePath::from_path_buf(path.to_path_buf()) else {
             continue;
         };
-        scripts.push(FileEntry { url, contents });
+        scripts.push(FileEntry {
+            path: url,
+            contents,
+        });
     }
     scripts
 }

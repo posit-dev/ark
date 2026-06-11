@@ -420,7 +420,7 @@ pub(crate) fn did_change_watched_files(
                 _ => return None,
             };
             Some(FileEvent {
-                url: FilePath::from_url(&e.uri),
+                path: FilePath::from_url(&e.uri),
                 kind,
             })
         })

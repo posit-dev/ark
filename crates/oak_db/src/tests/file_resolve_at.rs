@@ -20,7 +20,7 @@ fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Packa
 
 /// Set up a workspace root with the given scripts (top-level files with
 /// `package == None`). Returns the file handles. Registers the root on
-/// `WorkspaceRoots` so `file_by_url` can resolve `source()` targets.
+/// `WorkspaceRoots` so `file_by_path` can resolve `source()` targets.
 fn setup_workspace_scripts(
     db: &mut TestDb,
     workspace_path: &str,

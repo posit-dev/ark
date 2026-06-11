@@ -132,7 +132,7 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
         // Shouldn't happen.
         log::warn!(
             "File {file} has package back-pointer to {package} but is not in its files",
-            file = file.url(db),
+            file = file.path(db),
             package = package.name(db),
         );
         return file.imports(db).clone();

@@ -16,7 +16,7 @@ use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
 
-use crate::lookup::package_by_url;
+use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
 use crate::FileEvent;
 use crate::FileEventKind;
@@ -63,7 +63,7 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
 
     // The package the scan would have created shouldn't surface.
     let pkg_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-    assert!(package_by_url(&db, &pkg_url).is_none());
+    assert!(package_by_path(&db, &pkg_url).is_none());
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            url: new_url.clone(),
+            path: new_url.clone(),
         }],
         &HashSet::new(),
     );
@@ -138,7 +138,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     assert!(event_followups.is_empty());
     // And not yet visible to the db: the scan that would create the
     // root's `Package` hasn't run yet.
-    assert!(db.file_by_url(&new_url).is_none());
+    assert!(db.file_by_path(&new_url).is_none());
 
     // Scan completes. Buffered event replays automatically.
     let result = request.run();
@@ -148,7 +148,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     // Both files are now present in pkg.files.
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 2);
-    assert!(db.file_by_url(&new_url).is_some());
+    assert!(db.file_by_path(&new_url).is_some());
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn test_description_event_during_scan_queues_rescan() {
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            url: desc_url,
+            path: desc_url,
         }],
         &HashSet::new(),
     );
@@ -233,7 +233,7 @@ fn test_description_event_on_idle_root_returns_scan_request() {
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            url: desc_url,
+            path: desc_url,
         }],
         &HashSet::new(),
     );

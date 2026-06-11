@@ -51,10 +51,10 @@ impl File {
     ///
     /// Delegates the walk to [`SemanticIndex::exports`], then translates
     /// each `DefinitionKind::Import { file, name }` into
-    /// `ExportEntry::Import { file, name }` via [`Db::file_by_url`]. If
+    /// `ExportEntry::Import { file, name }` via [`Db::file_by_path`]. If
     /// the target file isn't interned yet, that Import is dropped
     /// silently. Expected, since [`SalsaImportsResolver`] only injects
-    /// Imports when `file_by_url()` resolves the target.
+    /// Imports when `file_by_path()` resolves the target.
     ///
     /// `cycle_result` (FallbackImmediate) recovers from cyclic `source()`
     /// chains by returning empty exports for every cycle participant.
@@ -69,7 +69,7 @@ impl File {
                     ..
                 } => {
                     let target_url_id = FilePath::from_url(target_url);
-                    let Some(target_file) = db.file_by_url(&target_url_id) else {
+                    let Some(target_file) = db.file_by_path(&target_url_id) else {
                         continue;
                     };
                     ExportEntry::Import {

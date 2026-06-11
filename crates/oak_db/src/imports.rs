@@ -53,7 +53,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let url = resolve_relative_to(&anchor, path)?;
-        let file = self.db.file_by_url(&url)?;
+        let file = self.db.file_by_path(&url)?;
 
         let names: Vec<String> = file
             .exports(self.db)
@@ -89,7 +89,7 @@ fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
         return root.path(db).to_path_buf();
     }
 
-    let url = calling_file.url(db);
+    let url = calling_file.path(db);
     if !url.is_file() {
         return None;
     }

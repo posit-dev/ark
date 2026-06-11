@@ -87,7 +87,7 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: FileP
         };
         packages.push(root.set_package(
             db,
-            pkg.description_url,
+            pkg.description_path,
             pkg.name,
             pkg.version,
             pkg.namespace,

@@ -11,7 +11,7 @@ use crate::File;
 
 /// Build a workspace root at `/w` populated with the given scripts.
 /// Returns the file handles in the same order. Registers the root with
-/// `WorkspaceRoots` so `file_by_url` finds the files.
+/// `WorkspaceRoots` so `file_by_path` finds the files.
 fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts

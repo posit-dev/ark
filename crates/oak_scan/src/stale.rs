@@ -73,7 +73,7 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     let (to_orphan, to_stale): (Vec<File>, Vec<File>) = match editor_owned {
         Some(owned) => all_files
             .into_iter()
-            .partition(|f| owned.contains(f.url(db))),
+            .partition(|f| owned.contains(f.path(db))),
         None => (Vec::new(), all_files),
     };
 
@@ -104,7 +104,7 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     // Clear the dropped root's containers and each package's files / scripts
     // vec. The packages themselves now live in `stale_root.packages`. Keeping
     // their `files` populated would leave stale references that
-    // `package_by_url` can resurrect with inconsistent contents.
+    // `package_by_path` can resurrect with inconsistent contents.
     root.set_scripts(db).to(Vec::new());
     for &pkg in &packages {
         pkg.set_files(db).to(Vec::new());
@@ -128,33 +128,33 @@ pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Pa
 }
 
 /// Look up a stale `File` by URL. The scanner's upsert helpers call this to
-/// fall back to the eviction bucket after `oak_db::Db::file_by_url` misses,
+/// fall back to the eviction bucket after `oak_db::Db::file_by_path` misses,
 /// reusing the evicted entity instead of minting a new one.
-pub(crate) fn stale_file_by_url(db: &dyn Db, url: &FilePath) -> Option<File> {
-    stale_url_index(db).get(url).copied()
+pub(crate) fn stale_file_by_path(db: &dyn Db, url: &FilePath) -> Option<File> {
+    stale_path_index(db).get(url).copied()
 }
 
 /// Stale file URL -> File index. Reads only `stale_root().files`. Analysis is
-/// stale-blind by design (`oak_db::Db::file_by_url` never consults this), so
-/// the scanner is the only reader, via [`stale_file_by_url`] when re-adding a
+/// stale-blind by design (`oak_db::Db::file_by_path` never consults this), so
+/// the scanner is the only reader, via [`stale_file_by_path`] when re-adding a
 /// path.
 #[salsa::tracked(returns(ref))]
-fn stale_url_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
+fn stale_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in db.stale_root().files(db) {
-        map.insert(file.url(db).clone(), file);
+        map.insert(file.path(db).clone(), file);
     }
     map
 }
 
 /// Stale DESCRIPTION URL -> Package index. The eviction-bucket counterpart to
-/// the live per-root `root_package_url_index`; consulted by `package_by_url`
+/// the live per-root `root_package_path_index`; consulted by `package_by_path`
 /// as its stale fallback.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn stale_package_url_index(db: &dyn Db) -> FxHashMap<FilePath, Package> {
+pub(crate) fn stale_package_path_index(db: &dyn Db) -> FxHashMap<FilePath, Package> {
     let mut map = FxHashMap::default();
     for &pkg in db.stale_root().packages(db) {
-        map.insert(pkg.description_url(db).clone(), pkg);
+        map.insert(pkg.description_path(db).clone(), pkg);
     }
     map
 }

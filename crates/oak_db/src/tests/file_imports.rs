@@ -165,7 +165,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
                 shape.push(format!("Package({})", p.name(&db)));
             },
             ImportLayer::File(f) => {
-                let url = f.url(&db).to_url();
+                let url = f.path(&db).to_url();
                 shape.push(format!(
                     "File({})",
                     url.path().rsplit('/').next().unwrap_or("?")

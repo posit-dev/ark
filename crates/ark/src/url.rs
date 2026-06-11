@@ -10,7 +10,7 @@ use amalthea::wire::execute_request::CodeLocation;
 use url::Url;
 
 /// Extract a canonical [`FilePath`] from a [`CodeLocation`].
-pub fn url_id_from_code_location(loc: &CodeLocation) -> FilePath {
+pub fn file_path_from_code_location(loc: &CodeLocation) -> FilePath {
     FilePath::from_url(&loc.uri)
 }
 

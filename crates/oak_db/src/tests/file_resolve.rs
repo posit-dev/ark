@@ -9,7 +9,7 @@ use crate::Name;
 
 /// Build a workspace root at `w` populated with the given files.
 /// Returns the file handles in the same order. Registers the root with
-/// `WorkspaceRoots` so `file_by_url` can find the files for cross-file
+/// `WorkspaceRoots` so `file_by_path` can find the files for cross-file
 /// resolution.
 fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
@@ -220,7 +220,7 @@ fn test_name_range_returns_none_for_import_kind() {
             .expect("file must contain a call");
         let kind = DefinitionKind::Import {
             call: AstPtr::new(&call),
-            file: file.url(db).to_url(),
+            file: file.path(db).to_url(),
             name: name.text(db).to_string(),
         };
         Definition::new(db, file, ScopeId::from(0), name, kind)

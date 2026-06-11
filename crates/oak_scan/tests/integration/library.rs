@@ -276,7 +276,7 @@ fn empty_library_root(db: &OakDatabase, path: &str) -> Root {
 
 /// Stash `pkg` in `root.packages` and register `root` on
 /// `library_roots`, mirroring what the library scanner does after
-/// `set_package` returns. Without this step `package_by_url` can't see
+/// `set_package` returns. Without this step `package_by_path` can't see
 /// the package on subsequent `set_package` calls.
 fn register_package(db: &mut OakDatabase, root: Root, pkg: Package) {
     root.set_packages(db).to(vec![pkg]);
@@ -391,7 +391,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
         None,
         Namespace::default(),
         vec![FileEntry {
-            url: r_url.clone(),
+            path: r_url.clone(),
             contents: "disk content".to_string(),
         }],
         Vec::new(),

@@ -129,7 +129,7 @@ impl ScanCompleted {
             .map(|pkg| {
                 root.set_package(
                     db,
-                    pkg.description_url,
+                    pkg.description_path,
                     pkg.name,
                     pkg.version,
                     pkg.namespace,
@@ -256,7 +256,7 @@ impl ScanScheduler {
         // instead of applying surgically against a transient world.
         let mut description_roots: HashSet<Root> = HashSet::new();
         for event in &events {
-            let Some(path) = event.url.to_path_buf() else {
+            let Some(path) = event.path.to_path_buf() else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
@@ -277,13 +277,13 @@ impl ScanScheduler {
 
         // Pass 2: R-file events.
         for event in events {
-            let Some(path) = event.url.to_path_buf() else {
+            let Some(path) = event.path.to_path_buf() else {
                 continue;
             };
             if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
                 continue;
             }
-            if skip.contains(&event.url) {
+            if skip.contains(&event.path) {
                 continue;
             }
 
@@ -301,13 +301,13 @@ impl ScanScheduler {
                 _ => match event.kind {
                     FileEventKind::Created | FileEventKind::Changed => {
                         match std::fs::read_to_string(&path) {
-                            Ok(contents) => add_watched_file(db, event.url, contents),
+                            Ok(contents) => add_watched_file(db, event.path, contents),
                             Err(err) => {
                                 log::warn!("Skipped watched file {}: {err:?}", path.display())
                             },
                         }
                     },
-                    FileEventKind::Deleted => remove_watched_file(db, event.url),
+                    FileEventKind::Deleted => remove_watched_file(db, event.path),
                 },
             }
         }

@@ -33,7 +33,7 @@ use crate::packages::PackagePlacement;
 #[derive(Clone, Debug)]
 pub struct FileEvent {
     pub kind: FileEventKind,
-    pub url: FilePath,
+    pub path: FilePath,
 }
 
 /// Mirrors the three states an OS file watcher reports.
@@ -52,7 +52,7 @@ pub enum FileEventKind {
 /// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
 /// every package. Mirrors the placement the bulk scanner would pick.
 pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath, contents: String) {
-    if let Some(existing) = db.file_by_url(&url) {
+    if let Some(existing) = db.file_by_path(&url) {
         existing.set_contents(db).to(contents);
         return;
     }
@@ -68,7 +68,10 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath, co
         return;
     };
 
-    let entry = FileEntry { url, contents };
+    let entry = FileEntry {
+        path: url,
+        contents,
+    };
     let file = upsert_root_file(db, placement.package_backpointer(), entry);
     append_to_container(db, file, placement);
 }
@@ -97,12 +100,12 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
 }
 
 /// React to a Deleted event. Unlinks the file from whichever container
-/// holds it so [`oak_db::Db::file_by_url`] stops returning it. The
+/// holds it so [`oak_db::Db::file_by_path`] stops returning it. The
 /// `File` entity itself stays in the salsa graph (salsa doesn't
 /// support deleting inputs), but with no container references nothing
 /// will reach it.
 pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, url: FilePath) {
-    let Some(file) = db.file_by_url(&url) else {
+    let Some(file) = db.file_by_path(&url) else {
         return;
     };
 

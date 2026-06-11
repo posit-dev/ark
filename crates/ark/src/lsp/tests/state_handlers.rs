@@ -253,7 +253,7 @@ fn test_r_file_created_routes_through_add_file() {
     let root = state.db.workspace_roots().roots(&state.db)[0];
     assert_eq!(root.scripts(&state.db).len(), 1);
     let url = FilePath::from_path_buf(path.clone()).unwrap();
-    let file = state.db.file_by_url(&url).unwrap();
+    let file = state.db.file_by_path(&url).unwrap();
     assert_eq!(file.contents(&state.db), "x <- 1\n");
 }
 
@@ -284,7 +284,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_url(&url_id).unwrap();
+    let file = state.db.file_by_path(&url_id).unwrap();
     assert_eq!(file.contents(&state.db), "editor_v2\n");
 }
 
@@ -304,7 +304,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
 
     let root = state.db.workspace_roots().roots(&state.db)[0];
     assert_eq!(root.scripts(&state.db).len(), 1);
-    assert!(state.db.file_by_url(&url_id).is_none());
+    assert!(state.db.file_by_path(&url_id).is_none());
 }
 
 #[test]
@@ -319,7 +319,7 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
 
     let url_id = FilePath::from_path_buf(path.clone()).unwrap();
     assert_eq!(
-        state.db.file_by_url(&url_id).unwrap().contents(&state.db),
+        state.db.file_by_path(&url_id).unwrap().contents(&state.db),
         "v1\n"
     );
 
@@ -330,7 +330,7 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
     did_change_watched_files(params, &mut state).unwrap();
 
     assert_eq!(
-        state.db.file_by_url(&url_id).unwrap().contents(&state.db),
+        state.db.file_by_path(&url_id).unwrap().contents(&state.db),
         "v2\n"
     );
 }
@@ -363,7 +363,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_url(&url_id).unwrap();
+    let file = state.db.file_by_path(&url_id).unwrap();
     assert_eq!(file.contents(&state.db), "editor_v2\n");
 }
 
@@ -394,7 +394,7 @@ fn test_description_deleted_demotes_package_to_scripts() {
     assert_eq!(root.scripts(&state.db).len(), 1);
 
     let a_url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = state.db.file_by_url(&a_url).unwrap();
+    let file = state.db.file_by_path(&a_url).unwrap();
     assert_eq!(file.package(&state.db), None);
 }
 
@@ -576,7 +576,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
         .db
         .upsert_editor(url_id.clone(), "editor <- 2\n".to_string());
 
-    let file_before = state.db.file_by_url(&url_id).unwrap();
+    let file_before = state.db.file_by_path(&url_id).unwrap();
 
     // Remove the workspace folder. The handler builds the editor_owned set
     // from state.documents.keys() and passes it to oak; the buffer's file
@@ -584,7 +584,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_remove = state.db.file_by_url(&url_id).unwrap();
+    let after_remove = state.db.file_by_path(&url_id).unwrap();
     assert_eq!(file_before, after_remove);
     assert_eq!(after_remove.package(&state.db), None);
     assert!(state
@@ -600,7 +600,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![folder_for(tmp.path())], vec![]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_readd = state.db.file_by_url(&url_id).unwrap();
+    let after_readd = state.db.file_by_path(&url_id).unwrap();
     assert_eq!(file_before, after_readd);
     assert!(after_readd.package(&state.db).is_some());
     assert_eq!(after_readd.contents(&state.db), "editor <- 2\n");
@@ -645,7 +645,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
         &mut state,
     )
     .unwrap();
-    let file = state.db.file_by_url(&url_id).unwrap();
+    let file = state.db.file_by_path(&url_id).unwrap();
     assert!(state.db.orphan_root().files(&state.db).contains(&file));
 
     // Init the aux channel here, after the workspace-folders churn: the

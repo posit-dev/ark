@@ -52,7 +52,7 @@ fn add_watched_file(db: &mut OakDatabase, url: FilePath) {
         db,
         vec![FileEvent {
             kind: FileEventKind::Changed,
-            url,
+            path: url,
         }],
         &HashSet::new(),
     );
@@ -63,7 +63,7 @@ fn remove_watched_file(db: &mut OakDatabase, url: FilePath) {
         db,
         vec![FileEvent {
             kind: FileEventKind::Deleted,
-            url,
+            path: url,
         }],
         &HashSet::new(),
     );
@@ -92,7 +92,7 @@ fn test_add_watched_file_new_top_level_script() {
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     assert_eq!(scripts.len(), 1);
-    assert!(scripts[0].url(&db).to_url().path().ends_with("new.R"));
+    assert!(scripts[0].path(&db).to_url().path().ends_with("new.R"));
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn test_add_watched_file_into_existing_package() {
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].files(&db).len(), 2);
 
-    let file = db.file_by_url(&url).expect("findable");
+    let file = db.file_by_path(&url).expect("findable");
     assert_eq!(file.package(&db), Some(packages[0]));
 }
 
@@ -136,7 +136,7 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
     assert!(root.scripts(&db).is_empty());
     assert_eq!(pkg.files(&db).len(), 1);
     assert_eq!(pkg.scripts(&db).len(), 1);
-    let file = db.file_by_url(&url).expect("findable via pkg.scripts");
+    let file = db.file_by_path(&url).expect("findable via pkg.scripts");
     assert_eq!(file.package(&db), Some(pkg));
     assert_eq!(file.contents(&db), "test code\n");
 }
@@ -161,7 +161,7 @@ fn test_add_watched_file_skips_nested_r_subdir() {
     let pkg = root.packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 1);
     assert!(pkg.scripts(&db).is_empty());
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn test_add_watched_file_updates_pkg_scripts_content_preserves_placement() {
     fs::write(&path, "v2\n").unwrap();
     add_watched_file(&mut db, url.clone());
 
-    let file_after = db.file_by_url(&url).unwrap();
+    let file_after = db.file_by_path(&url).unwrap();
     assert_eq!(file_before, file_after);
     assert_eq!(file_after.contents(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
@@ -207,7 +207,7 @@ fn test_remove_watched_file_from_pkg_scripts() {
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert!(pkg.scripts(&db).is_empty());
     assert_eq!(pkg.files(&db).len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn test_add_watched_file_outside_workspace_is_skipped() {
     let url = FilePath::from_path_buf(path.clone()).unwrap();
     add_watched_file(&mut db, url.clone());
 
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
 }
@@ -246,7 +246,7 @@ fn test_add_watched_file_updates_existing_content_preserves_placement() {
     fs::write(&path, "v2\n").unwrap();
     add_watched_file(&mut db, url.clone());
 
-    let file_after = db.file_by_url(&url).unwrap();
+    let file_after = db.file_by_path(&url).unwrap();
     assert_eq!(file_before, file_after);
     assert_eq!(file_after.contents(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
@@ -269,7 +269,7 @@ fn test_remove_watched_file_from_package() {
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
 }
 
 #[test]
@@ -286,7 +286,7 @@ fn test_remove_watched_file_from_workspace_scripts() {
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     assert_eq!(scripts.len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn test_rescan_workspace_root_demotes_removed_description() {
 
 fn file_event(path: &Path, kind: FileEventKind) -> FileEvent {
     FileEvent {
-        url: FilePath::from_path_buf(path.to_path_buf()).unwrap(),
+        path: FilePath::from_path_buf(path.to_path_buf()).unwrap(),
         kind,
     }
 }
@@ -481,7 +481,7 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
         &skip,
     );
 
-    let file = db.file_by_url(&url).unwrap();
+    let file = db.file_by_path(&url).unwrap();
     assert_eq!(file.contents(&db), "editor_v2\n");
 }
 
@@ -592,7 +592,7 @@ fn test_apply_watcher_events_ignores_non_r_files() {
         &HashSet::new(),
     );
 
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&url).is_none());
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
     assert!(db.orphan_root().files(&db).is_empty());
