@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 
 use crate::stale::stale_package_path_index;
 
-/// Find the `Package` registered at `url` (a `DESCRIPTION` URL), searching live
+/// Find the `Package` registered at `path` (a `DESCRIPTION` URL), searching live
 /// roots first and the [`oak_db::StaleRoot`] eviction bucket second.
 ///
 /// Live roots are walked in lookup order (workspace then library) and the first
@@ -24,15 +24,15 @@ use crate::stale::stale_package_path_index;
 /// earlier `set_*_paths` call. The scanner reuses that entity and moves it back
 /// into a live container, which is why this lookup deliberately sees stale
 /// packages where analysis (via `oak_db::Db::package_by_name`) does not.
-pub(crate) fn package_by_path(db: &dyn Db, url: &FilePath) -> Option<Package> {
+pub(crate) fn package_by_path(db: &dyn Db, path: &FilePath) -> Option<Package> {
     for &root in db.live_roots() {
         if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
-            if let Some(&pkg) = root_package_path_index(db, r).get(url) {
+            if let Some(&pkg) = root_package_path_index(db, r).get(path) {
                 return Some(pkg);
             }
         }
     }
-    stale_package_path_index(db).get(url).copied()
+    stale_package_path_index(db).get(path).copied()
 }
 
 /// Per-root DESCRIPTION URL -> Package index. Salsa caches one map per `Root`

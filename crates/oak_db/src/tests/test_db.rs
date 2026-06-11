@@ -100,8 +100,8 @@ impl DbInputs for TestDb {
 
 #[salsa::db]
 impl Db for TestDb {
-    fn file_by_path(&self, url: &FilePath) -> Option<crate::File> {
-        crate::db::file_by_path_query(self, url)
+    fn file_by_path(&self, path: &FilePath) -> Option<crate::File> {
+        crate::db::file_by_path_query(self, path)
     }
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {
@@ -117,7 +117,7 @@ impl Db for TestDb {
     }
 }
 
-pub(super) fn file_url(name: &str) -> FilePath {
+pub(super) fn file_path(name: &str) -> FilePath {
     // `Url::to_file_path` on Windows requires a drive-letter prefix, so
     // synthesize one for tests. Linux is happy with rootless paths.
     let url = if cfg!(windows) {
@@ -132,10 +132,10 @@ pub(super) fn file_url(name: &str) -> FilePath {
 /// call allocates a new salsa entity; tests that need to assert on
 /// root identity should retain the returned value.
 pub(super) fn workspace_root(db: &impl Db, path: &str) -> Root {
-    Root::new(db, file_url(path), RootKind::Workspace, vec![], vec![])
+    Root::new(db, file_path(path), RootKind::Workspace, vec![], vec![])
 }
 
 /// Build a fresh empty `RootKind::Library` `Root` at `path`.
 pub(super) fn library_root(db: &impl Db, path: &str) -> Root {
-    Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
+    Root::new(db, file_path(path), RootKind::Library, vec![], vec![])
 }

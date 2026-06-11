@@ -51,8 +51,8 @@ impl<'db> SalsaImportsResolver<'db> {
 impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
-        let url = resolve_relative_to(&anchor, path)?;
-        let file = self.db.file_by_path(&url)?;
+        let target_path = resolve_relative_to(&anchor, path)?;
+        let file = self.db.file_by_path(&target_path)?;
 
         let names: Vec<String> = file
             .exports(self.db)
@@ -66,7 +66,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            url: url.to_url(),
+            url: target_path.to_url(),
             names,
             packages,
         })

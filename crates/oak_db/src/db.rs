@@ -42,17 +42,17 @@ pub trait DbInputs: salsa::Database {
 /// so salsa records dep edges through those.
 ///
 /// Each concrete db type provides its own forwarding `impl Db`, which is
-/// what lets `db.file_by_path(url)` work on both `&dyn Db` (via the trait
+/// what lets `db.file_by_path(path)` work on both `&dyn Db` (via the trait
 /// method) and concrete db references (via the type's impl).
 #[salsa::db]
 pub trait Db: DbInputs {
-    /// Look up the `File` interned at `url`, if any.
+    /// Look up the `File` interned at `path`, if any.
     ///
     /// Walks the per-root URL indices in workspace-then-library order,
     /// then falls back to the orphan bucket. The walk short-circuits
     /// on the first hit, so callers depend only on the index maps
     /// actually visited.
-    fn file_by_path(&self, url: &FilePath) -> Option<File>;
+    fn file_by_path(&self, path: &FilePath) -> Option<File>;
 
     /// Look up the `Package` named `name`, applying the following precedence:
     /// - Workspace packages shadow installed ones
@@ -108,13 +108,13 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
 /// entity), but every step is: each [`root_path_index`] call returns a
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
-pub(crate) fn file_by_path_query(db: &dyn Db, url: &FilePath) -> Option<File> {
+pub(crate) fn file_by_path_query(db: &dyn Db, path: &FilePath) -> Option<File> {
     for &root in db.live_roots() {
         let hit = match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
-                root_path_index(db, r).get(url).copied()
+                root_path_index(db, r).get(path).copied()
             },
-            LiveRoot::Orphan(_) => orphan_path_index(db).get(url).copied(),
+            LiveRoot::Orphan(_) => orphan_path_index(db).get(path).copied(),
         };
         if hit.is_some() {
             return hit;

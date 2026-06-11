@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -16,7 +16,7 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| File::new(db, file_url(name), contents.to_string(), None))
+        .map(|(name, contents)| File::new(db, file_path(name), contents.to_string(), None))
         .collect();
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);

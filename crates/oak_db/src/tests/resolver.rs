@@ -5,7 +5,7 @@ use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -13,7 +13,7 @@ use crate::File;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
-    File::new(db, file_url(name), contents.to_string(), None)
+    File::new(db, file_path(name), contents.to_string(), None)
 }
 
 /// Build a fresh workspace root, attach the given scripts, register
@@ -328,11 +328,11 @@ fn test_source_anchors_relative_to_workspace_root() {
     let root = workspace_root(&db, "proj");
     let a = File::new(
         &db,
-        file_url("proj/sub/a.R"),
+        file_path("proj/sub/a.R"),
         "source(\"b.R\")\n".to_string(),
         None,
     );
-    let b = File::new(&db, file_url("proj/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(&db, file_path("proj/b.R"), "x <- 1\n".to_string(), None);
     root.set_scripts(&mut db).to(vec![a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -347,11 +347,11 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     let mut db = TestDb::new();
     let a = File::new(
         &db,
-        file_url("dir/a.R"),
+        file_path("dir/a.R"),
         "source(\"b.R\")\n".to_string(),
         None,
     );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(&db, file_path("dir/b.R"), "x <- 1\n".to_string(), None);
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([a, b]));
@@ -367,11 +367,11 @@ fn test_source_path_with_parent_dir_segments() {
     let mut db = TestDb::new();
     let a = File::new(
         &db,
-        file_url("dir/sub/a.R"),
+        file_path("dir/sub/a.R"),
         "source(\"../b.R\")\n".to_string(),
         None,
     );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(&db, file_path("dir/b.R"), "x <- 1\n".to_string(), None);
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([a, b]));

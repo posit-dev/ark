@@ -933,14 +933,14 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     // R source references may flow back to the frontend, which expects its
     // own URI representation.
     let uri = Url::parse(&uri)?;
-    let uri_id = FilePath::from_url(&uri);
+    let path = FilePath::from_url(&uri);
 
     let mut dap_guard = Console::get().debug_dap.lock().unwrap();
 
     // If there are no breakpoints for this file, return NULL to signal no
     // annotation needed. Scope the mutable borrow so we can re-borrow after.
     let annotated = {
-        let Some(entry) = dap_guard.breakpoints.get_mut(&uri_id) else {
+        let Some(entry) = dap_guard.breakpoints.get_mut(&path) else {
             return Ok(harp::r_null());
         };
         let breakpoints = &mut entry.breakpoints;
@@ -956,12 +956,12 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     };
 
     // Notify frontend about any breakpoints marked invalid during annotation
-    dap_guard.notify_invalid_breakpoints(&uri_id);
+    dap_guard.notify_invalid_breakpoints(&path);
 
     // Remove disabled breakpoints. Their verification state is now stale since
     // they weren't injected during this annotation. If the user re-enables
     // them, they'll be treated as new unverified breakpoints.
-    if let Some(entry) = dap_guard.breakpoints.get_mut(&uri_id) {
+    if let Some(entry) = dap_guard.breakpoints.get_mut(&path) {
         entry
             .breakpoints
             .retain(|bp| !matches!(bp.state, BreakpointState::Disabled));

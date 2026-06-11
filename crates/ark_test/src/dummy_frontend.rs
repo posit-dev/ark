@@ -1834,8 +1834,8 @@ impl SourceFile {
         // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
         // in tests, we also canonicalize here.
         let canonical = file.path().canonicalize().unwrap();
-        let url = FilePath::from_path_buf(canonical.clone()).unwrap();
-        let uri_id = url.to_string();
+        let file_path = FilePath::from_path_buf(canonical.clone()).unwrap();
+        let uri_id = file_path.to_string();
 
         // Extract file name
         let filename = file

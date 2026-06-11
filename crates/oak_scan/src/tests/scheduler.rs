@@ -62,8 +62,8 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
     assert!(followups.is_empty());
 
     // The package the scan would have created shouldn't surface.
-    let pkg_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-    assert!(package_by_path(&db, &pkg_url).is_none());
+    let pkg_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    assert!(package_by_path(&db, &pkg_path).is_none());
 }
 
 #[test]
@@ -125,12 +125,12 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     // Mid-scan: a new file appears under pkg/R/, the watcher fires.
     let new_path = tmp.path().join("pkg/R/b.R");
     fs::write(&new_path, "y <- 2\n").unwrap();
-    let new_url = FilePath::from_path_buf(new_path.clone()).unwrap();
+    let new_path = FilePath::from_path_buf(new_path.clone()).unwrap();
     let event_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            path: new_url.clone(),
+            path: new_path.clone(),
         }],
         &HashSet::new(),
     );
@@ -138,7 +138,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     assert!(event_followups.is_empty());
     // And not yet visible to the db: the scan that would create the
     // root's `Package` hasn't run yet.
-    assert!(db.file_by_path(&new_url).is_none());
+    assert!(db.file_by_path(&new_path).is_none());
 
     // Scan completes. Buffered event replays automatically.
     let result = request.run();
@@ -148,7 +148,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     // Both files are now present in pkg.files.
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 2);
-    assert!(db.file_by_path(&new_url).is_some());
+    assert!(db.file_by_path(&new_path).is_some());
 }
 
 #[test]
@@ -174,12 +174,12 @@ fn test_description_event_during_scan_queues_rescan() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let watcher_followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            path: desc_url,
+            path: desc_path,
         }],
         &HashSet::new(),
     );
@@ -228,12 +228,12 @@ fn test_description_event_on_idle_root_returns_scan_request() {
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    let desc_url = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+    let desc_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let followups = scheduler.apply_watcher_events(
         &mut db,
         vec![FileEvent {
             kind: FileEventKind::Created,
-            path: desc_url,
+            path: desc_path,
         }],
         &HashSet::new(),
     );

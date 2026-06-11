@@ -130,8 +130,8 @@ pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Pa
 /// Look up a stale `File` by URL. The scanner's upsert helpers call this to
 /// fall back to the eviction bucket after `oak_db::Db::file_by_path` misses,
 /// reusing the evicted entity instead of minting a new one.
-pub(crate) fn stale_file_by_path(db: &dyn Db, url: &FilePath) -> Option<File> {
-    stale_path_index(db).get(url).copied()
+pub(crate) fn stale_file_by_path(db: &dyn Db, path: &FilePath) -> Option<File> {
+    stale_path_index(db).get(path).copied()
 }
 
 /// Stale file URL -> File index. Reads only `stale_root().files`. Analysis is

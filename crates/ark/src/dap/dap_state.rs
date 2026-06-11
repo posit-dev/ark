@@ -962,7 +962,7 @@ mod tests {
 
     use super::*;
 
-    fn url_id(s: &str) -> FilePath {
+    fn file_path(s: &str) -> FilePath {
         FilePath::from_url(&Url::parse(s).unwrap())
     }
 
@@ -997,7 +997,7 @@ mod tests {
     fn test_did_change_document_removes_breakpoints() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
         let hash = blake3::hash(b"test content");
 
         dap.breakpoints.insert(uri.clone(), BreakpointEntry {
@@ -1034,7 +1034,7 @@ mod tests {
     fn test_did_change_document_no_breakpoints_is_noop() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
 
         dap.did_change_document(&uri);
 
@@ -1045,8 +1045,8 @@ mod tests {
     fn test_did_change_document_only_affects_target_uri() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri1 = url_id("file:///test1.R");
-        let uri2 = url_id("file:///test2.R");
+        let uri1 = file_path("file:///test1.R");
+        let uri2 = file_path("file:///test2.R");
         let hash1 = blake3::hash(b"content 1");
         let hash2 = blake3::hash(b"content 2");
 
@@ -1099,7 +1099,7 @@ mod tests {
             shared_self: None,
         };
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
         let hash = blake3::hash(b"test content");
 
         dap.breakpoints.insert(uri.clone(), BreakpointEntry {

@@ -60,8 +60,8 @@ impl DbInputs for OakDatabase {
 
 #[salsa::db]
 impl Db for OakDatabase {
-    fn file_by_path(&self, url: &aether_path::FilePath) -> Option<crate::File> {
-        crate::db::file_by_path_query(self, url)
+    fn file_by_path(&self, path: &aether_path::FilePath) -> Option<crate::File> {
+        crate::db::file_by_path_query(self, path)
     }
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {

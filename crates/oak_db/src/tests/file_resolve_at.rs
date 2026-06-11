@@ -2,7 +2,7 @@ use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -11,11 +11,11 @@ use crate::Package;
 use crate::Root;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_url(path), contents.to_string(), None)
+    File::new(db, file_path(path), contents.to_string(), None)
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_url(path), contents.to_string(), Some(package))
+    File::new(db, file_path(path), contents.to_string(), Some(package))
 }
 
 /// Set up a workspace root with the given scripts (top-level files with
@@ -40,7 +40,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("workspace/{name}/DESCRIPTION")),
+        file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
         Namespace::default(),

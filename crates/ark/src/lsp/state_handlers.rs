@@ -274,8 +274,8 @@ pub(crate) fn did_open(
     lsp_state.parsers.insert(uri.clone(), parser);
     state.documents.insert(uri.clone(), document.clone());
 
-    let url_id = FilePath::from_url(&uri);
-    state.db.upsert_editor(url_id, contents.to_string());
+    let path = FilePath::from_url(&uri);
+    state.db.upsert_editor(path, contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -302,8 +302,8 @@ pub(crate) fn did_change(
     document.on_did_change(parser, &params);
 
     let new_contents = document.contents.to_string();
-    let url_id = FilePath::from_url(uri);
-    state.db.upsert_editor(url_id, new_contents);
+    let path = FilePath::from_url(uri);
+    state.db.upsert_editor(path, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -339,8 +339,8 @@ pub(crate) fn did_close(
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
-    let url_id = FilePath::from_url(&uri);
-    state.db.close_editor(&url_id);
+    let path = FilePath::from_url(&uri);
+    state.db.close_editor(&path);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 

@@ -169,12 +169,12 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
                 continue;
             },
         };
-        let Some(url) = FilePath::from_path_buf(path.to_path_buf()) else {
+        let Some(file_path) = FilePath::from_path_buf(path.to_path_buf()) else {
             log::warn!("Skipping R file, can't build a URL: {}", path.display());
             continue;
         };
         let file = FileEntry {
-            path: url,
+            path: file_path,
             contents,
         };
 
@@ -287,11 +287,11 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         let Ok(contents) = fs::read_to_string(path) else {
             continue;
         };
-        let Some(url) = FilePath::from_path_buf(path.to_path_buf()) else {
+        let Some(file_path) = FilePath::from_path_buf(path.to_path_buf()) else {
             continue;
         };
         scripts.push(FileEntry {
-            path: url,
+            path: file_path,
             contents,
         });
     }

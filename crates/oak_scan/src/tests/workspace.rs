@@ -189,8 +189,8 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_path() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let url = FilePath::from_path_buf(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
-    let file = db.file_by_path(&url).expect("script must be findable");
+    let path = FilePath::from_path_buf(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
+    let file = db.file_by_path(&path).expect("script must be findable");
     assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
     // Package backpointer is set to the containing package.
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
@@ -268,13 +268,13 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     let mut db = OakDatabase::new();
 
     // Editor event before any scan.
-    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
-    db.upsert_editor(url.clone(), "edited_version <- 2\n".to_string());
+    let path = FilePath::from_path_buf(r_path.clone()).unwrap();
+    db.upsert_editor(path.clone(), "edited_version <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let file = db
-        .file_by_path(&url)
+        .file_by_path(&path)
         .expect("script should be findable after scan");
     // The scanner inherited the orphan's edits rather than re-reading disk.
     assert_eq!(file.contents(&db), "edited_version <- 2\n");
@@ -291,12 +291,12 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let r_path = tmp.path().join("pkg/R/a.R");
     let mut db = OakDatabase::new();
 
-    let url = FilePath::from_path_buf(r_path.clone()).unwrap();
-    db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
+    let path = FilePath::from_path_buf(r_path.clone()).unwrap();
+    db.upsert_editor(path.clone(), "edited <- 2\n".to_string());
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let file = db.file_by_path(&url).expect("package file findable");
+    let file = db.file_by_path(&path).expect("package file findable");
     assert_eq!(file.contents(&db), "edited <- 2\n");
 }
 
@@ -443,18 +443,18 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = db.file_by_path(&url).unwrap();
+    let path = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
+    let file = db.file_by_path(&path).unwrap();
     assert!(file.package(&db).is_some());
 
     // Editor opens the file; subsequent `set_workspace_paths` calls
     // treat it as editor-owned.
-    db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
-    let editor_owned: HashSet<FilePath> = [url.clone()].into_iter().collect();
+    db.upsert_editor(path.clone(), "edited <- 2\n".to_string());
+    let editor_owned: HashSet<FilePath> = [path.clone()].into_iter().collect();
 
     // Workspace folder removed. File routes to orphan, package goes to stale.
     set_workspace_paths(&mut db, &[], &editor_owned);
-    let after_remove = db.file_by_path(&url).unwrap();
+    let after_remove = db.file_by_path(&path).unwrap();
     assert_eq!(file, after_remove);
     assert_eq!(after_remove.package(&db), None);
     assert!(db.orphan_root().files(&db).contains(&after_remove));
@@ -464,7 +464,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     // entity, editor content preserved (the scan's disk snapshot
     // doesn't overwrite).
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &editor_owned);
-    let after_readd = db.file_by_path(&url).unwrap();
+    let after_readd = db.file_by_path(&path).unwrap();
     assert_eq!(file, after_readd);
     assert!(after_readd.package(&db).is_some());
     assert_eq!(after_readd.contents(&db), "edited <- 2\n");
@@ -484,15 +484,15 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = db.file_by_path(&url).unwrap();
+    let path = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
+    let file = db.file_by_path(&path).unwrap();
 
     set_workspace_paths(&mut db, &[], &HashSet::new());
-    assert!(db.file_by_path(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
     assert!(db.stale_root().files(&db).contains(&file));
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let resurrected = db.file_by_path(&url).unwrap();
+    let resurrected = db.file_by_path(&path).unwrap();
     assert_eq!(file, resurrected);
 }
 

@@ -100,7 +100,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If no `File` exists at all, one is created in `orphan_root().files`.
     /// It stays there until another handler reclassifies it.
-    fn upsert_editor(&mut self, url: FilePath, contents: String) -> File;
+    fn upsert_editor(&mut self, path: FilePath, contents: String) -> File;
 
     /// Mark the editor as no longer holding a buffer for this URL.
     ///
@@ -113,7 +113,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If the file is in a live workspace / library container, the call is a
     /// no-op.
-    fn close_editor(&mut self, url: &FilePath);
+    fn close_editor(&mut self, path: &FilePath);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -121,15 +121,15 @@ impl<DB: Db + DbInputs> DbScan for DB {
         crate::library::set_library_paths(self, paths);
     }
 
-    fn upsert_editor(&mut self, url: FilePath, contents: String) -> File {
-        if let Some(existing) = self.file_by_path(&url) {
+    fn upsert_editor(&mut self, path: FilePath, contents: String) -> File {
+        if let Some(existing) = self.file_by_path(&path) {
             existing.set_contents(self).to(contents);
             return existing;
         }
 
         // Resurrect a previously-closed buffer from stale. The didOpen
         // content overwrites whatever the stale entity carried.
-        if let Some(stale) = stale_file_by_path(self, &url) {
+        if let Some(stale) = stale_file_by_path(self, &path) {
             stale.set_contents(self).to(contents);
             stale.set_package(self).to(None);
             remove_from_stale_files(self, stale);
@@ -137,13 +137,13 @@ impl<DB: Db + DbInputs> DbScan for DB {
             return stale;
         }
 
-        let file = File::new(self, url, contents, None);
+        let file = File::new(self, path, contents, None);
         add_to_orphan_files(self, file);
         file
     }
 
-    fn close_editor(&mut self, url: &FilePath) {
-        let Some(file) = self.file_by_path(url) else {
+    fn close_editor(&mut self, path: &FilePath) {
+        let Some(file) = self.file_by_path(path) else {
             return;
         };
 

@@ -252,8 +252,8 @@ fn test_r_file_created_routes_through_add_file() {
 
     let root = state.db.workspace_roots().roots(&state.db)[0];
     assert_eq!(root.scripts(&state.db).len(), 1);
-    let url = FilePath::from_path_buf(path.clone()).unwrap();
-    let file = state.db.file_by_path(&url).unwrap();
+    let file_path = FilePath::from_path_buf(path.clone()).unwrap();
+    let file = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file.contents(&state.db), "x <- 1\n");
 }
 
@@ -272,10 +272,10 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
         .documents
         .insert(url.clone(), Document::new("editor_v2\n", None));
     // Pretend the editor pushed its content into oak too.
-    let url_id = FilePath::from_url(&url);
+    let file_path = FilePath::from_url(&url);
     state
         .db
-        .upsert_editor(url_id.clone(), "editor_v2\n".to_string());
+        .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
 
     // Now disk-side `Changed` fires with stale disk content.
     fs::write(&path, "disk_v3\n").unwrap();
@@ -284,7 +284,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_path(&url_id).unwrap();
+    let file = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file.contents(&state.db), "editor_v2\n");
 }
 
@@ -296,7 +296,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
     let mut state = workspace_state(tmp.path());
 
     let path = tmp.path().join("a.R");
-    let url_id = FilePath::from_path_buf(path.clone()).unwrap();
+    let file_path = FilePath::from_path_buf(path.clone()).unwrap();
     let params = DidChangeWatchedFilesParams {
         changes: vec![event(&path, FileChangeType::DELETED)],
     };
@@ -304,7 +304,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
 
     let root = state.db.workspace_roots().roots(&state.db)[0];
     assert_eq!(root.scripts(&state.db).len(), 1);
-    assert!(state.db.file_by_path(&url_id).is_none());
+    assert!(state.db.file_by_path(&file_path).is_none());
 }
 
 #[test]
@@ -317,9 +317,13 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
     fs::write(&path, "v1\n").unwrap();
     let mut state = workspace_state(tmp.path());
 
-    let url_id = FilePath::from_path_buf(path.clone()).unwrap();
+    let file_path = FilePath::from_path_buf(path.clone()).unwrap();
     assert_eq!(
-        state.db.file_by_path(&url_id).unwrap().contents(&state.db),
+        state
+            .db
+            .file_by_path(&file_path)
+            .unwrap()
+            .contents(&state.db),
         "v1\n"
     );
 
@@ -330,7 +334,11 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
     did_change_watched_files(params, &mut state).unwrap();
 
     assert_eq!(
-        state.db.file_by_path(&url_id).unwrap().contents(&state.db),
+        state
+            .db
+            .file_by_path(&file_path)
+            .unwrap()
+            .contents(&state.db),
         "v2\n"
     );
 }
@@ -352,10 +360,10 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     state
         .documents
         .insert(url.clone(), Document::new("editor_v2\n", None));
-    let url_id = FilePath::from_url(&url);
+    let file_path = FilePath::from_url(&url);
     state
         .db
-        .upsert_editor(url_id.clone(), "editor_v2\n".to_string());
+        .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
 
     fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -363,7 +371,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_path(&url_id).unwrap();
+    let file = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file.contents(&state.db), "editor_v2\n");
 }
 
@@ -393,8 +401,8 @@ fn test_description_deleted_demotes_package_to_scripts() {
     assert!(root.packages(&state.db).is_empty());
     assert_eq!(root.scripts(&state.db).len(), 1);
 
-    let a_url = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = state.db.file_by_path(&a_url).unwrap();
+    let file_path = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
+    let file = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file.package(&state.db), None);
 }
 
@@ -568,15 +576,15 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     // Simulate `didOpen` on the package file with editor-side content.
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
-    let url_id = FilePath::from_url(&url);
+    let file_path = FilePath::from_url(&url);
     state
         .documents
         .insert(url.clone(), Document::new("editor <- 2\n", None));
     state
         .db
-        .upsert_editor(url_id.clone(), "editor <- 2\n".to_string());
+        .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
 
-    let file_before = state.db.file_by_path(&url_id).unwrap();
+    let file_before = state.db.file_by_path(&file_path).unwrap();
 
     // Remove the workspace folder. The handler builds the editor_owned set
     // from state.documents.keys() and passes it to oak; the buffer's file
@@ -584,7 +592,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_remove = state.db.file_by_path(&url_id).unwrap();
+    let after_remove = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file_before, after_remove);
     assert_eq!(after_remove.package(&state.db), None);
     assert!(state
@@ -600,7 +608,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![folder_for(tmp.path())], vec![]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_readd = state.db.file_by_path(&url_id).unwrap();
+    let after_readd = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file_before, after_readd);
     assert!(after_readd.package(&state.db).is_some());
     assert_eq!(after_readd.contents(&state.db), "editor <- 2\n");
@@ -625,7 +633,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
-    let url_id = FilePath::from_url(&url);
+    let file_path = FilePath::from_url(&url);
 
     // Simulate `didOpen` via state mutation (matches the rest of the file's
     // pattern).
@@ -637,7 +645,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
         .insert(url.clone(), tree_sitter::Parser::new());
     state
         .db
-        .upsert_editor(url_id.clone(), "edited\n".to_string());
+        .upsert_editor(file_path.clone(), "edited\n".to_string());
 
     // Remove the workspace folder; file goes to orphan (editor-owned).
     did_change_workspace_folders(
@@ -645,7 +653,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
         &mut state,
     )
     .unwrap();
-    let file = state.db.file_by_path(&url_id).unwrap();
+    let file = state.db.file_by_path(&file_path).unwrap();
     assert!(state.db.orphan_root().files(&state.db).contains(&file));
 
     // Init the aux channel here, after the workspace-folders churn: the
