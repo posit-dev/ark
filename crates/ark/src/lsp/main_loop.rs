@@ -1123,9 +1123,34 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
 /// `did_open` / `did_change`, so we don't index them twice.
 fn index_scanned_files(files: Vec<oak_db::File>, skip: HashSet<FilePath>, state: WorldState) {
     spawn_blocking(move || {
-        let db = &state.db;
-        let encoding = state.config.position_encoding;
+        index_files(&state.db, files, &skip, state.config.position_encoding);
+        Ok(None)
+    });
+}
 
+/// Whether a root index pass ran to completion or was cut short by a salsa
+/// cancellation. A pass parses every file in the root, so a concurrent oak
+/// write (an edit, a follow-up scan) can cancel it partway. `Cancelled` lets
+/// the caller re-enqueue the root instead of leaving a half-built index.
+#[derive(Debug, PartialEq, Eq)]
+enum IndexPass {
+    Completed,
+    Cancelled,
+}
+
+/// Index every file in `files` that isn't editor-owned, into the legacy index.
+///
+/// Salsa queries inside `index_file` unwind with `Cancelled` when a concurrent
+/// write arms the token, so we wrap the whole loop in `catch_cancellation`: a
+/// cancellation aborts the pass and reports `Cancelled` rather than indexing
+/// the remaining files against a db that's about to change.
+fn index_files(
+    db: &OakDatabase,
+    files: Vec<oak_db::File>,
+    skip: &HashSet<FilePath>,
+    encoding: PositionEncoding,
+) -> IndexPass {
+    let completed = catch_cancellation(|| {
         for file in files {
             if skip.contains(file.path(db)) {
                 continue;
@@ -1134,9 +1159,12 @@ fn index_scanned_files(files: Vec<oak_db::File>, skip: HashSet<FilePath>, state:
                 tracing::warn!("Can't index scanned file: {err:?}");
             }
         }
-
-        Ok(None)
     });
+
+    match completed {
+        Some(()) => IndexPass::Completed,
+        None => IndexPass::Cancelled,
+    }
 }
 
 /// Collect every R file under one root: top-level scripts plus each package's
@@ -1209,15 +1237,25 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use aether_path::FilePath;
+    use oak_db::OakDatabase;
     use oak_scan::DbScan;
     use salsa::Database;
     use url::Url;
 
     use super::catch_cancellation;
+    use super::index_files;
+    use super::process_indexer_batch;
     use super::refresh_diagnostics;
+    use super::IndexPass;
+    use super::IndexerTask;
     use super::RefreshDiagnosticsTask;
+    use crate::fixtures::TEST_ENCODING;
     use crate::lsp::document::Document;
+    use crate::lsp::indexer;
+    use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1247,5 +1285,75 @@ mod tests {
             state: snapshot,
         };
         assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
+    }
+
+    /// `IndexerTask::Index` resolves its file through `db.file_by_path()`, so it
+    /// can only index a file the oak db already knows about. `did_create_files`
+    /// enqueues an `Index` task for a freshly created file, but that file isn't
+    /// in the db until the watcher scans it in, so the task hits the `None` arm
+    /// and the file never reaches the legacy index. Both URIs below carry the
+    /// same symbol; only the one present in the db gets indexed, so a single
+    /// `find()` tells the two cases apart.
+    #[tokio::test]
+    async fn test_index_task_requires_file_in_db() {
+        let _guard = ResetIndexerGuard;
+
+        // Present in the db, so `file_by_path()` resolves and it gets indexed.
+        // `upsert_editor` attaches the file to the orphan root; a bare
+        // `File::new` would not be reachable through `file_by_path`.
+        let mut present_db = OakDatabase::new();
+        let present = Url::parse("file:///present.R").unwrap();
+        present_db.upsert_editor(FilePath::from_url(&present), "sym <- 1".to_string());
+        process_indexer_batch(vec![IndexerTask::Index {
+            uri: present,
+            db: present_db,
+            encoding: TEST_ENCODING,
+        }])
+        .await;
+        assert!(indexer::find("sym").is_some());
+
+        indexer::indexer_clear();
+
+        // Absent from the db: the `did_create_files` case. The same contents
+        // sit on disk, but `Index` never reads disk, so the symbol is lost.
+        let absent_db = OakDatabase::new();
+        let absent = Url::parse("file:///absent.R").unwrap();
+        process_indexer_batch(vec![IndexerTask::Index {
+            uri: absent,
+            db: absent_db,
+            encoding: TEST_ENCODING,
+        }])
+        .await;
+        assert!(indexer::find("sym").is_none());
+    }
+
+    /// A root index pass cancelled by a concurrent oak write reports
+    /// `Cancelled`, so the caller can re-enqueue the root instead of leaving a
+    /// half-built index. Arming `cancellation_token().cancel()` makes the first
+    /// salsa query in `index_file` unwind with `Cancelled`, the same payload a
+    /// concurrent `set_*` produces.
+    #[test]
+    fn test_cancelled_index_pass_reports_cancellation() {
+        let mut db = OakDatabase::new();
+        let uri = Url::parse("file:///scanned.R").unwrap();
+        let file = db.upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+
+        db.cancellation_token().cancel();
+
+        let outcome = index_files(&db, vec![file], &HashSet::new(), TEST_ENCODING);
+        assert_eq!(outcome, IndexPass::Cancelled);
+    }
+
+    #[test]
+    fn test_completed_index_pass_reports_completion() {
+        let _guard = ResetIndexerGuard;
+
+        let mut db = OakDatabase::new();
+        let uri = Url::parse("file:///scanned.R").unwrap();
+        let file = db.upsert_editor(FilePath::from_url(&uri), "sym <- 1".to_string());
+
+        let outcome = index_files(&db, vec![file], &HashSet::new(), TEST_ENCODING);
+        assert_eq!(outcome, IndexPass::Completed);
+        assert!(indexer::find("sym").is_some());
     }
 }
