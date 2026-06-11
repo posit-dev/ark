@@ -54,7 +54,7 @@ pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> 
     let description_path = package_dir.join("DESCRIPTION");
     let description_text = fs::read_to_string(&description_path).ok()?;
     let description = Description::parse(&description_text).log_err()?;
-    let description_url = FilePath::from_path_buf(description_path).ok()?;
+    let description_url = FilePath::from_path_buf(description_path)?;
 
     let namespace = fs::read_to_string(package_dir.join("NAMESPACE"))
         .ok()
@@ -169,7 +169,7 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
                 continue;
             },
         };
-        let Ok(url) = FilePath::from_path_buf(path.to_path_buf()) else {
+        let Some(url) = FilePath::from_path_buf(path.to_path_buf()) else {
             log::warn!("Skipping R file, can't build a URL: {}", path.display());
             continue;
         };
@@ -284,7 +284,7 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         let Ok(contents) = fs::read_to_string(path) else {
             continue;
         };
-        let Ok(url) = FilePath::from_path_buf(path.to_path_buf()) else {
+        let Some(url) = FilePath::from_path_buf(path.to_path_buf()) else {
             continue;
         };
         scripts.push(FileEntry { url, contents });

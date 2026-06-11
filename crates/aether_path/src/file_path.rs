@@ -48,13 +48,10 @@ impl FilePath {
         Self::Virtual(VirtualUri::new(url.clone()))
     }
 
-    /// Build a [`FilePath::File`] from a filesystem path. Errors if
-    /// the path can't be expressed as a UTF-8 absolute path.
-    pub fn from_path_buf(path: PathBuf) -> anyhow::Result<Self> {
-        let display = path.display().to_string();
-        AbsPathBuf::from_path_buf(path)
-            .map(Self::File)
-            .ok_or_else(|| anyhow::anyhow!("Path is not UTF-8 absolute: {display}"))
+    /// Build a [`FilePath::File`] from a filesystem path. Returns `None`
+    /// if the path can't be expressed as a UTF-8 absolute path.
+    pub fn from_path_buf(path: PathBuf) -> Option<Self> {
+        AbsPathBuf::from_path_buf(path).map(Self::File)
     }
 
     /// Parse a URI string into a [`FilePath`]. `file:` URIs become

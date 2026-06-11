@@ -188,7 +188,7 @@ impl ScanScheduler {
     ) -> Vec<ScanRequest> {
         let new: Vec<(PathBuf, FilePath)> = paths
             .iter()
-            .filter_map(|p| Some((p.clone(), FilePath::from_path_buf(p.clone()).ok()?)))
+            .filter_map(|p| Some((p.clone(), FilePath::from_path_buf(p.clone())?)))
             .collect();
         let new_urls: HashSet<FilePath> = new.iter().map(|(_, u)| u.clone()).collect();
 

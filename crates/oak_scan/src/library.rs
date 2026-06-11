@@ -34,7 +34,7 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
     let new: Vec<(PathBuf, FilePath)> = paths
         .iter()
         .filter_map(|p| {
-            let url = FilePath::from_path_buf(p.clone()).ok()?;
+            let url = FilePath::from_path_buf(p.clone())?;
             Some((p.clone(), url))
         })
         .collect();
