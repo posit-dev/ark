@@ -6,6 +6,7 @@
 //
 
 use std::fmt;
+use std::path::Component;
 
 use stdext::result::ResultExt;
 use url::Url;
@@ -17,10 +18,16 @@ use url::Url;
 /// at every entry point so that two paths the editor considers "the
 /// same file" produce the same [`UrlId`].
 ///
-/// What we normalise: drive-letter casing on Windows; percent-encoding
-/// of `:` (decoded via `Url -> PathBuf -> Url` round-trip). No I/O:
-/// `std::fs::canonicalize()`, no symlink resolution. The same input URI
-/// produces the same [`UrlId`] whether or not the file exists on disk.
+/// What we normalise: dot segments (`.` and `..`, collapsed lexically);
+/// drive-letter casing on Windows; percent-encoding of `:` (decoded via
+/// `Url -> PathBuf -> Url` round-trip). No I/O: `std::fs::canonicalize()`,
+/// no symlink resolution. The same input URI produces the same [`UrlId`]
+/// whether or not the file exists on disk.
+///
+/// "Lexical" means we resolve `..` by dropping the previous segment, not
+/// by asking the filesystem. So `/a/b/../c.R` becomes `/a/c.R` even if
+/// `/a/b` is a symlink that points elsewhere. That's the same trade-off
+/// the editor makes, so the two agree.
 ///
 /// # Bridging across symlinks
 ///
@@ -47,10 +54,10 @@ pub struct UrlId(Url);
 impl UrlId {
     /// Lexically normalise a [`Url`] into a [`UrlId`].
     ///
-    /// Decodes encoding variants (e.g. `%3A` to `:` on Windows) and
-    /// uppercases the Windows drive letter. Does no filesystem I/O.
-    /// Non-`file:` URLs (`ark://`, `untitled:`, ...) pass through
-    /// untouched.
+    /// Decodes encoding variants (e.g. `%3A` to `:` on Windows),
+    /// uppercases the Windows drive letter, and collapses `.` and `..`
+    /// segments lexically. Does no filesystem I/O. Non-`file:` URLs
+    /// (`ark://`, `untitled:`, ...) pass through untouched.
     pub fn from_url(uri: Url) -> Self {
         if uri.scheme() != "file" {
             return Self(uri);
@@ -59,11 +66,19 @@ impl UrlId {
         // Round-trip through `PathBuf` so the URI form matches what
         // `Url::from_file_path` produces (decoded `%3A`, etc.). Skip
         // on error, we let pathological URIs flow through unchanged.
+        //
+        // `Url::parse` already collapses dot segments for `file:` URLs,
+        // but `Url::from_file_path` does not, so `from_file_path` entry
+        // points would keep a stray `..`. Normalise the path here so all
+        // three constructors land on the same `UrlId`.
         let uri = match uri.to_file_path().warn_on_err() {
-            Some(path) => Url::from_file_path(&path)
-                .map_err(|()| anyhow::anyhow!("Failed to convert path to URI: {path:?}"))
-                .warn_on_err()
-                .unwrap_or(uri),
+            Some(path) => {
+                let path = lexically_normalize(&path);
+                Url::from_file_path(&path)
+                    .map_err(|()| anyhow::anyhow!("Failed to convert path to URI: {path:?}"))
+                    .warn_on_err()
+                    .unwrap_or(uri)
+            },
             None => uri,
         };
 
@@ -121,6 +136,33 @@ impl fmt::Display for UrlId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
+}
+
+/// Collapse `.` and `..` segments without touching the filesystem.
+///
+/// `Path::components` already drops `.` and redundant separators, so all
+/// we add is popping the previous segment when we hit a `..`. A `..` that
+/// would climb above the root is dropped, matching how the URL parser
+/// clamps `file:` paths. Inputs here are always absolute (a `file:` URL
+/// can't be built from a relative path), so the leading root component is
+/// preserved and a `..` never escapes it.
+fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                },
+                Some(Component::RootDir | Component::Prefix(_)) => {},
+                _ => out.push(component),
+            },
+            other => out.push(other),
+        }
+    }
+
+    out
 }
 
 /// Uppercase the drive letter in a Windows file URI for consistent hashing.
@@ -214,6 +256,38 @@ mod tests {
     fn test_from_file_path_unix() {
         let id = UrlId::from_file_path("/home/user/test.R").unwrap();
         assert_eq!(id.as_url().as_str(), "file:///home/user/test.R");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_resolves_dot_segments_on_parse() {
+        let id = UrlId::parse("file:///a/b/../c/./d.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///a/c/d.R");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_resolves_dot_segments_from_file_path() {
+        // `Url::from_file_path` keeps `..`, unlike `Url::parse`. The
+        // explicit lexical pass in `from_url` is what makes this entry
+        // point agree with the others.
+        let id = UrlId::from_file_path("/a/b/../c/./d.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///a/c/d.R");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_dot_segments_consistent_across_constructors() {
+        let parsed = UrlId::parse("file:///a/b/../c.R").unwrap();
+        let from_path = UrlId::from_file_path("/a/b/../c.R").unwrap();
+        assert_eq!(parsed, from_path);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_parent_dir_clamped_at_root() {
+        let id = UrlId::from_file_path("/../../a.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///a.R");
     }
 
     // Windows-specific tests
