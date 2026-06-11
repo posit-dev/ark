@@ -99,12 +99,12 @@ impl<'db> File {
     pub(crate) fn definition(
         self,
         db: &'db dyn Db,
-        scope: ScopeId,
+        scope_id: ScopeId,
         def_id: DefinitionId,
     ) -> Option<Definition<'db>> {
         self.definitions(db)
             .by_site
-            .get(&DefinitionSite { scope, def_id })
+            .get(&DefinitionSite { scope_id, def_id })
             .copied()
     }
 
@@ -121,12 +121,12 @@ impl<'db> File {
         let index = self.semantic_index(db);
         let mut by_site = FxHashMap::default();
 
-        for scope in index.scope_ids() {
-            let symbols = index.symbols(scope);
-            for (def_id, def) in index.definitions(scope).iter() {
+        for scope_id in index.scope_ids() {
+            let symbols = index.symbols(scope_id);
+            for (def_id, def) in index.definitions(scope_id).iter() {
                 let name = Name::new(db, symbols.symbol(def.symbol()).name());
-                let definition = Definition::new(db, self, scope, name, def.kind().clone());
-                by_site.insert(DefinitionSite { scope, def_id }, definition);
+                let definition = Definition::new(db, self, scope_id, name, def.kind().clone());
+                by_site.insert(DefinitionSite { scope_id, def_id }, definition);
             }
         }
 
@@ -145,6 +145,6 @@ struct FileDefinitions<'db> {
 /// Mirrors ty's `DefinitionNodeKey`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 struct DefinitionSite {
-    scope: ScopeId,
+    scope_id: ScopeId,
     def_id: DefinitionId,
 }
