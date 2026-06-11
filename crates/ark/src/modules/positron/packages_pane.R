@@ -16,7 +16,7 @@
 # active project, so the same call works for pak/base/renv callers.
 #' @export
 .ps.rpc.pkg_list <- function(method = c("pak", "base", "renv")) {
-    ip <- utils::installed.packages(fields = "Description")
+    ip <- utils::installed.packages(fields = c("Description", "URL"))
     name <- ip[, "Package"]
     version <- ip[, "Version"]
     id <- paste0(name, "-", version)
@@ -34,18 +34,35 @@
         ifelse(is.na(ip[, "Description"]), "", ip[, "Description"]),
         perl = TRUE
     ))
-    # `Map(list, id = ...)` would name the output list by `id`'s values
-    # (mapply USE.NAMES semantics for a character first arg), and a named
-    # list serializes to a JSON object instead of the array the frontend
-    # expects. Strip the names with unname().
+    # DESCRIPTION's URL field can list several URLs separated by commas and/or
+    # whitespace; the first is conventionally the package's canonical website.
+    # Surface it as the single best URL (Positron validates the scheme before
+    # opening). Drop everything from the first separator on; "" when absent.
+    url <- sub("[[:space:],].*$", "", trimws(ip[, "URL"]))
+    # Build each package as a list so `url` can be omitted entirely when a
+    # package advertises none -- a vectorized `Map(list, url = url)` forces the
+    # key onto every package (serializing "" rather than leaving it absent).
+    # `Map`'s first argument (`id`, a character vector) would name the result,
+    # so `unname()` keeps it a JSON array rather than an object keyed by id.
     unname(Map(
-        list,
-        id = id,
-        name = name,
-        displayName = name,
-        version = version,
-        attached = attached,
-        description = description
+        function(id, name, version, attached, description, url) {
+            entry <- list(
+                id = id,
+                name = name,
+                displayName = name,
+                version = version,
+                attached = attached,
+                description = description
+            )
+            entry$url <- if (!is.na(url)) url
+            entry
+        },
+        id,
+        name,
+        version,
+        attached,
+        description,
+        url
     ))
 }
 
