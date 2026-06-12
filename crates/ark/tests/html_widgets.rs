@@ -26,9 +26,9 @@ widget <- htmltools::attachDependencies(
 }
 
 /// Send R code, then receive busy / input / display_data, returning the
-/// `text/html` payload from the display_data message. Test finishes the
-/// IOPub cycle (idle + execute_reply) before returning so the next test
-/// starts cleanly.
+/// `text/html` payload from the display_data message. Finishes the IOPub
+/// cycle (idle + execute_reply) before returning so a following request in
+/// the same test starts cleanly.
 fn execute_and_get_html(frontend: &DummyArkFrontendNotebook, code: &str) -> String {
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -46,10 +46,7 @@ fn execute_and_get_html(frontend: &DummyArkFrontendNotebook, code: &str) -> Stri
 fn test_html_widget_emits_self_contained_html() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut code = String::from(".ps.internal(html_widget_reset_deps())\n");
-    // Defensive reset in case a sibling test leaked the option.
-    code.push_str("options(ark.html_widget.deduplicate = NULL)\n");
-    code.push_str(&setup_fake_widget("marker-A"));
+    let mut code = setup_fake_widget("marker-A");
     code.push_str(".ps.view_html_widget(widget)\n");
 
     let html = execute_and_get_html(&frontend, &code);
@@ -77,14 +74,10 @@ fn test_html_widget_does_not_dedupe_by_default() {
     // The safe default is to re-inline deps every time.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut first = String::from(".ps.internal(html_widget_reset_deps())\n");
-    // Defensive reset in case a sibling test leaked the option.
-    first.push_str("options(ark.html_widget.deduplicate = NULL)\n");
-    first.push_str(&setup_fake_widget("marker-first"));
+    let mut first = setup_fake_widget("marker-first");
     first.push_str(".ps.view_html_widget(widget)\n");
 
-    let mut second = String::new();
-    second.push_str(&setup_fake_widget("marker-second"));
+    let mut second = setup_fake_widget("marker-second");
     second.push_str(".ps.view_html_widget(widget)\n");
 
     let first_html = execute_and_get_html(&frontend, &first);
@@ -100,24 +93,14 @@ fn test_html_widget_dedupe_can_be_enabled() {
     // JupyterLab) can opt into IRkernel-style dedup to keep notebooks small.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut first = String::from(".ps.internal(html_widget_reset_deps())\n");
-    // Start from a known state so an earlier failed test that left the
-    // option set TRUE doesn't make this one a no-op.
-    first.push_str("options(ark.html_widget.deduplicate = NULL)\n");
-    first.push_str("options(ark.html_widget.deduplicate = TRUE)\n");
+    let mut first = String::from("options(ark.html_widget.deduplicate = TRUE)\n");
     first.push_str(&setup_fake_widget("marker-first"));
     first.push_str(".ps.view_html_widget(widget)\n");
-    // Tear down the option immediately in the same cell, before any
-    // assertion can short-circuit the test. This keeps the global option
-    // contained to a single cell so later tests start clean even if this
-    // one fails partway through.
-    first.push_str("options(ark.html_widget.deduplicate = NULL)\n");
 
-    let mut second = String::new();
-    second.push_str("options(ark.html_widget.deduplicate = TRUE)\n");
-    second.push_str(&setup_fake_widget("marker-second"));
+    // The option and the per-session dep cache both persist across cells in
+    // a session, so the second cell sees `fakedep@1.0` as already inlined.
+    let mut second = setup_fake_widget("marker-second");
     second.push_str(".ps.view_html_widget(widget)\n");
-    second.push_str("options(ark.html_widget.deduplicate = NULL)\n");
 
     let first_html = execute_and_get_html(&frontend, &first);
     let second_html = execute_and_get_html(&frontend, &second);
@@ -146,9 +129,7 @@ fn test_html_widget_auto_print_emits_only_display_data() {
     // regression that adds a stray `execute_result` here fails loudly.
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let mut code = String::from(".ps.internal(html_widget_reset_deps())\n");
-    code.push_str("options(ark.html_widget.deduplicate = NULL)\n");
-    code.push_str(&setup_fake_widget("marker-autoprint"));
+    let mut code = setup_fake_widget("marker-autoprint");
     // Tests don't load `htmlwidgets`, so the package-load hook hasn't run
     // and the S3 override isn't installed. Install it manually and tag the
     // fake widget so `print(widget)` dispatches to `print.htmlwidget`.

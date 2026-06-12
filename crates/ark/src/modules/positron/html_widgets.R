@@ -259,14 +259,6 @@ html_dep_cache <- function() {
     the$html_dep_cache
 }
 
-# Test hook: clear the per-session dedup cache so tests can assert dedup
-# behavior independently. Reached from tests via
-# `.ps.internal(html_widget_reset_deps())`.
-html_widget_reset_deps <- function() {
-    the$html_dep_cache <- NULL
-    invisible(NULL)
-}
-
 # Derive a human-readable label for the `text/plain` fallback from the
 # widget's class. Falls back to a generic label if the class is empty.
 widget_label <- function(x) {
