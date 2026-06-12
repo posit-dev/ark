@@ -10,7 +10,6 @@ use std::sync::LazyLock;
 
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use aether_path::FilePath;
 use oak_db::File;
 use regex::Regex;
 use stdext::result::ResultExt;
@@ -19,7 +18,6 @@ use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
-use url::Url;
 
 use crate::lsp;
 use crate::lsp::db::ArkDb;
@@ -82,16 +80,14 @@ pub struct IndexEntry {
 }
 
 /// Convert an index entry's tree-sitter point range to an LSP range, resolving
-/// the file's line index from the db. Returns `None` if the file is no longer
-/// in the db or the points fall outside it, in which case the symbol is
-/// dropped from the results.
+/// the file's line index from the db. Returns `None` if the points fall outside
+/// the line index, in which case the symbol is dropped from the results.
 pub(crate) fn index_range_to_lsp_range(
     db: &dyn ArkDb,
-    uri: &Url,
+    file: File,
     range: IndexRange,
     encoding: PositionEncoding,
 ) -> Option<Range> {
-    let file = db.file_by_path(&FilePath::from_url(uri))?;
     let line_index = file.line_index(db);
 
     let to_position = |point: IndexPoint| {
@@ -160,15 +156,16 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
     FileIndex { symbols }
 }
 
-/// Visit every workspace symbol across all indexable files.
-pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(&Url, &str, &IndexEntry)) {
+/// Visit every workspace symbol across all indexable files. Callers that need a
+/// URL for messages to the frontend can resolve it from `File` via
+/// `WorldState::wire_url`.
+pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
     for &file in oak_db::workspace_files(db) {
         if !is_indexable(db, file) {
             continue;
         }
-        let url = file.path(db).to_url();
         for (symbol, entry) in file_index(db, file).symbols.iter() {
-            callback(&url, symbol, entry);
+            callback(file, symbol, entry);
         }
     }
 }
@@ -380,6 +377,7 @@ mod tests {
     use assert_matches::assert_matches;
     use insta::assert_debug_snapshot;
     use oak_scan::DbScan;
+    use url::Url;
 
     use super::*;
     use crate::lsp::ark_file::test_ark_file;

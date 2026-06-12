@@ -64,14 +64,16 @@ pub(crate) fn symbols(
     let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
-    indexer::map(db, |uri, symbol, entry| {
+    indexer::map(db, |file, symbol, entry| {
         if !symbol.fuzzy_matches(query) {
             return;
         }
 
-        let Some(range) = indexer::index_range_to_lsp_range(db, uri, entry.range, encoding) else {
+        let Some(range) = indexer::index_range_to_lsp_range(db, file, entry.range, encoding) else {
             return;
         };
+
+        let uri = state.wire_url(file);
 
         match &entry.data {
             IndexEntryData::Function { name, arguments: _ } => {
