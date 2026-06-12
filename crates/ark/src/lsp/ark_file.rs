@@ -18,11 +18,7 @@ use crate::lsp::db::FileArkExt;
 
 /// Editor-managed buffer state, paired with its `oak_db::File`.
 ///
-/// This is the value stored in `WorldState::documents`. The protocol fields
-/// (`version`, `config`, `url`) are plain data. Everything derived from the
-/// buffer text (the tree-sitter tree, the line index, the contents) is reached
-/// through salsa queries on `file`, so it's computed once and never stored
-/// twice.
+/// This is a temporary structure during the transition to pure Oak handlers.
 ///
 /// The methods take `db` as a parameter rather than holding it. `ArkFile` lives
 /// in `WorldState`, and the db is a sibling field there, so a stored borrow of
@@ -33,6 +29,18 @@ pub(crate) struct ArkFile {
     pub(crate) file: File,
     pub(crate) version: Option<i32>,
     pub(crate) config: DocumentConfig,
+    // The editor's verbatim URL. We store it rather than recompute it from
+    // `file`'s path so the bytes the frontend sent round-trip exactly. It lives
+    // on `ArkFile` so it travels with owned values for callers that can't
+    // easily access `WorldState::open_files`: the diagnostics task on a worker
+    // thread (`RefreshDiagnosticsTask`) and `code_action/roxygen.rs`, which
+    // builds a `WorkspaceEdit` keyed by URL.
+    //
+    // TODO: this is a stopgap that goes away with `ArkFile`. Once handlers are
+    // pure Oak, they return `File`-keyed results (diagnostics, the edit targets
+    // in a `WorkspaceEdit`) and the wire URL gets attached at the transport
+    // boundary from a map of open editor URLs owned by the LSP layer. In that
+    // design the verbatim URL never travels through the analysis layer.
     pub(crate) url: Url,
     pub(crate) encoding: PositionEncoding,
 }
