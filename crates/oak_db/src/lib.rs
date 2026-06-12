@@ -9,6 +9,7 @@ mod identifier;
 mod imports;
 mod inputs;
 mod name;
+mod package;
 mod package_resolve;
 mod parse;
 mod storage;

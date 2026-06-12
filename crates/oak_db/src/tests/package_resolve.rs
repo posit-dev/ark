@@ -31,11 +31,11 @@ fn setup_package(
         db,
         file_path(&format!("workspace/{pkg_name}/DESCRIPTION")),
         pkg_name.to_string(),
-        None,
-        namespace,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(namespace),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let file_entities: Vec<File> = files

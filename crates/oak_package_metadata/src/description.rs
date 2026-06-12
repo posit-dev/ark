@@ -1,7 +1,7 @@
 use crate::dcf::Dcf;
 
 /// Parsed DESCRIPTION file
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Description {
     pub name: String,
     pub version: String,
@@ -17,12 +17,12 @@ pub struct Description {
     pub fields: Dcf,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Repository {
     CRAN,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Priority {
     Base,
     Recommended,

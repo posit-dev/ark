@@ -1,5 +1,4 @@
 use biome_rowan::TextSize;
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::tests::test_db::file_path;
@@ -43,11 +42,11 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
             db,
             file_path(&format!("libs/{name}/DESCRIPTION")),
             name.to_string(),
-            Some("1.0.0".to_string()),
-            Namespace::default(),
-            Vec::new(),
-            Vec::new(),
+            FileRevision::zero(),
+            FileRevision::zero(),
             None,
+            Vec::new(),
+            Vec::new(),
         );
         root.set_packages(db).to(vec![pkg]);
         roots.push(root);
@@ -65,11 +64,11 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
         db,
         file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     root.set_packages(db).to(vec![pkg]);
     db.workspace_roots().set_roots(db).to(vec![root]);

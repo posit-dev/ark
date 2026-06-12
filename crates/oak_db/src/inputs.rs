@@ -5,6 +5,7 @@ use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;
 use crate::File;
+use crate::FileRevision;
 
 /// Salsa-tracked root directory.
 ///
@@ -200,12 +201,28 @@ pub struct Package {
     // `Package` directly because salsa inputs are lifetime-free.
     #[returns(ref)]
     pub name: String,
-    /// Installed-package version (from `DESCRIPTION`). `None` for
-    /// workspace packages.
+    /// Mtime of the package's `DESCRIPTION` file, or [`FileRevision::zero`]
+    /// when it can't be stat'd. Drives the lazy [`Package::description`]
+    /// query (and the `version` / `collation` derivations on top of it), the
+    /// same way `namespace_revision` drives [`Package::namespace`]. We stat
+    /// `DESCRIPTION` at scan time but parse it only on demand.
+    pub description_revision: FileRevision,
+    /// Mtime of the package's `NAMESPACE` file, or [`FileRevision::zero`]
+    /// when it can't be stat'd. The lazy [`Package::namespace`] query reads
+    /// it so a watcher that bumps it on a `NAMESPACE` change forces the next
+    /// parse to re-read disk, exactly like [`File::revision`] drives
+    /// [`File::source_text`]. We don't read or parse `NAMESPACE` at scan
+    /// time, only stat it, so installed packages the user never imports cost
+    /// nothing beyond the stat.
+    pub namespace_revision: FileRevision,
+    /// In-memory `NAMESPACE`, checked by [`Package::namespace`] before it
+    /// touches disk. Mirrors [`File::source_text_override`]: `None` means
+    /// "read from disk". The scanners always leave it `None`. It's the
+    /// injection point unit tests use to supply a namespace for a synthetic
+    /// path with no file behind it, and the natural hook for an editor
+    /// editing a package's `NAMESPACE` live.
     #[returns(ref)]
-    pub version: Option<String>,
-    #[returns(ref)]
-    pub namespace: Namespace,
+    pub namespace_override: Option<Namespace>,
     /// R source files belonging to this package (the `R/*.R` files), in
     /// R's load order. When DESCRIPTION's `Collate:` directive is
     /// present, this is exactly the files it lists, in that order;
@@ -235,11 +252,4 @@ pub struct Package {
     /// stays `Some(self)`, file lives in one of the two containers.
     #[returns(ref)]
     pub scripts: Vec<File>,
-    /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
-    /// present. `None` when the field is absent (R defaults to
-    /// alphabetical load order). Changes only when `DESCRIPTION`
-    /// itself changes, so this anchor is independent of `files` (which
-    /// bumps when R/ files are added or removed).
-    #[returns(ref)]
-    pub collation: Option<Vec<String>>,
 }

@@ -27,7 +27,6 @@ use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Root;
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::lookup::package_by_path;
@@ -181,9 +180,16 @@ pub trait RootExt {
     ///
     /// Identity is keyed on `description_path`: if `self.packages`
     /// already contains a `Package` with this URL, that entity is
-    /// reused and its `name` / `version` / `namespace` / `collation`
-    /// fields are updated in place. Salsa backdates each setter call
-    /// when the value doesn't actually change.
+    /// reused and its `name` / `description_revision` /
+    /// `namespace_revision` fields are updated in place. Salsa backdates
+    /// each setter call when the value doesn't actually change.
+    ///
+    /// `description_revision` and `namespace_revision` are the `DESCRIPTION`
+    /// and `NAMESPACE` mtimes. The version, collation, and namespace are
+    /// parsed lazily by [`Package::version`] / [`Package::collation`] /
+    /// [`Package::namespace`], so the scanner never reads or parses those
+    /// files (the workspace scanner reads `DESCRIPTION` separately, for the
+    /// name and file ordering, before calling this).
     ///
     /// Files are reused by URL via [`Db::file_by_path`]; see
     /// [`FileEntry`] for the content-preservation semantics. Wiring
@@ -194,11 +200,10 @@ pub trait RootExt {
         db: &mut DB,
         description_path: FilePath,
         name: String,
-        version: Option<String>,
-        namespace: Namespace,
+        description_revision: FileRevision,
+        namespace_revision: FileRevision,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
-        collation: Option<Vec<String>>,
     ) -> Package;
 
     /// Drop this root from its live container, rehoming its files and packages
@@ -227,11 +232,10 @@ impl RootExt for Root {
         db: &mut DB,
         description_path: FilePath,
         name: String,
-        version: Option<String>,
-        namespace: Namespace,
+        description_revision: FileRevision,
+        namespace_revision: FileRevision,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
-        collation: Option<Vec<String>>,
     ) -> Package {
         // `package_by_path()` finds the existing entity whether it's already
         // in `self.packages` (rescan, common path) or in
@@ -240,9 +244,8 @@ impl RootExt for Root {
         let pkg = match package_by_path(db, &description_path) {
             Some(p) => {
                 p.set_name(db).to(name);
-                p.set_version(db).to(version);
-                p.set_namespace(db).to(namespace);
-                p.set_collation(db).to(collation);
+                p.set_description_revision(db).to(description_revision);
+                p.set_namespace_revision(db).to(namespace_revision);
                 remove_from_stale_packages(db, p);
                 p
             },
@@ -250,11 +253,11 @@ impl RootExt for Root {
                 db,
                 description_path,
                 name,
-                version,
-                namespace,
+                description_revision,
+                namespace_revision,
+                None,
                 Vec::new(),
                 Vec::new(),
-                collation,
             ),
         };
 

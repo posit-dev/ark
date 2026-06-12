@@ -13,7 +13,6 @@ use filetime::FileTime;
 use ignore::WalkBuilder;
 use oak_db::FileRevision;
 use oak_package_metadata::description::Description;
-use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
 
 use crate::inputs::FileEntry;
@@ -32,8 +31,13 @@ pub(crate) struct PackageEntry {
     /// same `Package:` field, and dedup picks one of them per root.
     pub description_path: FilePath,
     pub name: String,
-    pub version: Option<String>,
-    pub namespace: Namespace,
+    /// Mtime of `DESCRIPTION`, stat'd during the walk. Drives the lazy
+    /// `Package::description()` query (and `version` / `collation` on top).
+    pub description_revision: FileRevision,
+    /// Mtime of the package's `NAMESPACE`, stat'd during the walk. Drives
+    /// the lazy `Package::namespace()` query. That query is the only place
+    /// `NAMESPACE` gets read and parsed. The walk only stats it.
+    pub namespace_revision: FileRevision,
     /// `R/*.R` files: the package's loadable namespace.
     pub files: Vec<FileEntry>,
     /// R files inside the package directory but outside `R/`: tests/,
@@ -44,32 +48,40 @@ pub(crate) struct PackageEntry {
     pub collation: Option<Vec<String>>,
 }
 
-/// Read a package's `DESCRIPTION` / `NAMESPACE` metadata. Returns `None` if
+/// Read a package's `DESCRIPTION` for its name and `Collate:` order, and stat
+/// `DESCRIPTION` / `NAMESPACE` for their revisions. Returns `None` if
 /// `DESCRIPTION` is missing or malformed. The returned entry has empty `files`
 /// and `scripts`; callers fill those separately.
 ///
-/// The library scanner uses this directly: installed packages have no `.R`
-/// sources under `R/` (it holds the lazy-load db), so their `files` come from
-/// a cache later, not from a directory scan. The workspace scanner wraps this
-/// in [`read_workspace_package`], which discovers sources by walking the tree.
+/// `NAMESPACE` is only stat'd here, never read or parsed. The lazy
+/// [`oak_db::Package::namespace`] query does the parse. `DESCRIPTION` is read
+/// and parsed because the walk needs the `Package:` name (the workspace
+/// directory name isn't authoritative) and the `Collate:` order to sort
+/// `R/*.R`. The parsed `collation` only orders this walk's files. It isn't
+/// pushed to salsa. [`oak_db::Package::version`] and
+/// [`oak_db::Package::collation`] re-read `DESCRIPTION` lazily off the
+/// revision.
+///
+/// Workspace-only: [`read_workspace_package`] wraps this and discovers sources
+/// by walking the tree. The library scanner skips it entirely and registers
+/// installed packages without reading `DESCRIPTION` (it takes the name from
+/// the directory).
 pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> {
-    let description_path = package_dir.join("DESCRIPTION");
-    let description_text = fs::read_to_string(&description_path).ok()?;
+    let description_file = package_dir.join("DESCRIPTION");
+    let description_text = fs::read_to_string(&description_file).ok()?;
     let description = Description::parse(&description_text).log_err()?;
-    let description_path = FilePath::from_path_buf(description_path)?;
 
-    let namespace = fs::read_to_string(package_dir.join("NAMESPACE"))
-        .ok()
-        .and_then(|text| Namespace::parse(&text).log_err())
-        .unwrap_or_default();
+    let description_revision = file_revision(&description_file);
+    let namespace_revision = file_revision(&package_dir.join("NAMESPACE"));
+    let description_path = FilePath::from_path_buf(description_file)?;
 
     let collation = description.collate();
 
     Some(PackageEntry {
         description_path,
         name: description.name,
-        version: Some(description.version),
-        namespace,
+        description_revision,
+        namespace_revision,
         files: Vec::new(),
         scripts: Vec::new(),
         collation,

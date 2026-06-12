@@ -133,11 +133,10 @@ impl ScanCompleted {
                     db,
                     pkg.description_path,
                     pkg.name,
-                    pkg.version,
-                    pkg.namespace,
+                    pkg.description_revision,
+                    pkg.namespace_revision,
                     pkg.files,
                     pkg.scripts,
-                    pkg.collation,
                 )
             })
             .collect();

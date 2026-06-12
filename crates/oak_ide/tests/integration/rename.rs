@@ -10,7 +10,6 @@ use oak_db::Root;
 use oak_db::RootKind;
 use oak_ide::prepare_rename;
 use oak_ide::rename;
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 use url::Url;
 
@@ -251,7 +250,7 @@ fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
 /// package back-pointer set, and register it under a workspace root. Returns
 /// the created `File`s in order.
 fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<File> {
-    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION", None);
+    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION");
     let created: Vec<File> = files
         .iter()
         .map(|(name, contents)| {
@@ -276,7 +275,7 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
 
 /// Build a single installed-package file under a library root.
 fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
-    let pkg = empty_package(db, "file:///lib/pkg/DESCRIPTION", Some("1.0".to_string()));
+    let pkg = empty_package(db, "file:///lib/pkg/DESCRIPTION");
     let url = FilePath::from_url(&Url::parse("file:///lib/pkg/R/foo.R").unwrap());
     let file = File::new(
         db,
@@ -293,15 +292,15 @@ fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
     file
 }
 
-fn empty_package(db: &OakDatabase, description_url: &str, version: Option<String>) -> Package {
+fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
     Package::new(
         db,
         FilePath::from_url(&Url::parse(description_url).unwrap()),
         "pkg".to_string(),
-        version,
-        Namespace::default(),
-        vec![],
-        vec![],
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
+        vec![],
+        vec![],
     )
 }

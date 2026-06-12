@@ -1,4 +1,3 @@
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::tests::test_db::file_path;
@@ -70,11 +69,11 @@ fn test_root_dispatches_through_library_package_when_set() {
         &db,
         file_path("libs/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
-        Some("1.0.0".to_string()),
-        Namespace::default(),
-        Vec::new(),
-        Vec::new(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
+        Vec::new(),
+        Vec::new(),
     );
     pkg_root.set_packages(&mut db).to(vec![pkg]);
     db.library_roots().set_roots(&mut db).to(vec![pkg_root]);
@@ -103,11 +102,11 @@ fn test_root_dispatches_through_workspace_package_when_set() {
         &db,
         file_path("proj/DESCRIPTION"),
         "mypkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     pkg_root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![pkg_root]);
