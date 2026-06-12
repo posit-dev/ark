@@ -373,7 +373,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
     let r_path = file_path("/lib/sub/R/a.R");
     let files = vec![FileEntry {
         path: r_path,
-        contents: "f <- function() NULL\n".to_string(),
+        revision: oak_db::FileRevision::zero(),
     }];
 
     // Same DESCRIPTION scanned from both roots reuses one `Package`, so
@@ -423,7 +423,13 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
 
     // Editor opens the file before any scan -> orphan.
     let r_path = file_path("/lib/pkg/R/a.R");
-    let file = File::new(&db, r_path.clone(), "editor content".to_string(), None);
+    let file = File::new(
+        &db,
+        r_path.clone(),
+        oak_db::FileRevision::zero(),
+        Some("editor content".to_string()),
+        None,
+    );
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([file]));
@@ -439,7 +445,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
         Namespace::default(),
         vec![FileEntry {
             path: r_path.clone(),
-            contents: "disk content".to_string(),
+            revision: oak_db::FileRevision::zero(),
         }],
         Vec::new(),
         None,
@@ -448,7 +454,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     // Same `File` entity, editor content preserved, package backpointer set.
     let pkg_file = pkg.files(&db)[0];
     assert_eq!(pkg_file, file);
-    assert_eq!(file.contents(&db), "editor content");
+    assert_eq!(file.source_text(&db), "editor content");
     assert_eq!(file.package(&db), Some(pkg));
 
     // Orphan reference cleaned up.

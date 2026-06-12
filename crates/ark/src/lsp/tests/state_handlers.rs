@@ -251,7 +251,7 @@ fn test_r_file_created_routes_through_add_file() {
     assert_eq!(root.scripts(&state.db).len(), 1);
     let file_path = FilePath::from_path_buf(path.clone()).unwrap();
     let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.contents(&state.db), "x <- 1\n");
+    assert_eq!(file.source_text(&state.db), "x <- 1\n");
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     did_change_watched_files(params, &mut state).unwrap();
 
     let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.contents(&state.db), "editor_v2\n");
+    assert_eq!(file.source_text(&state.db), "editor_v2\n");
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
             .db
             .file_by_path(&file_path)
             .unwrap()
-            .contents(&state.db),
+            .source_text(&state.db),
         "v1\n"
     );
 
@@ -333,7 +333,7 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
             .db
             .file_by_path(&file_path)
             .unwrap()
-            .contents(&state.db),
+            .source_text(&state.db),
         "v2\n"
     );
 }
@@ -365,7 +365,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     did_change_watched_files(params, &mut state).unwrap();
 
     let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.contents(&state.db), "editor_v2\n");
+    assert_eq!(file.source_text(&state.db), "editor_v2\n");
 }
 
 #[test]
@@ -591,7 +591,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
         .orphan_root()
         .files(&state.db)
         .contains(&after_remove));
-    assert_eq!(after_remove.contents(&state.db), "editor <- 2\n");
+    assert_eq!(after_remove.source_text(&state.db), "editor <- 2\n");
 
     // Re-add the same folder. The file snaps back into pkg.files with
     // the same entity and the editor content carries over (the scan's
@@ -602,7 +602,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let after_readd = state.db.file_by_path(&file_path).unwrap();
     assert_eq!(file_before, after_readd);
     assert!(after_readd.package(&state.db).is_some());
-    assert_eq!(after_readd.contents(&state.db), "editor <- 2\n");
+    assert_eq!(after_readd.source_text(&state.db), "editor <- 2\n");
     // `upsert_root_file` cleaned the orphan reference.
     assert!(!state
         .db

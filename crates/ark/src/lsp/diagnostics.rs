@@ -1173,7 +1173,13 @@ mod tests {
 
     fn generate_diagnostics(code: &str, state: WorldState) -> Vec<lsp_types::Diagnostic> {
         let url = url::Url::parse("file:///test.R").unwrap();
-        let file = oak_db::File::new(&state.db, FilePath::from_url(&url), code.to_string(), None);
+        let file = oak_db::File::new(
+            &state.db,
+            FilePath::from_url(&url),
+            oak_db::FileRevision::zero(),
+            Some(code.to_string()),
+            None,
+        );
         let ark_file = ArkFile {
             file,
             version: None,

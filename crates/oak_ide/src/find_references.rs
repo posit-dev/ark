@@ -227,7 +227,7 @@ fn find_namespace_references<'db>(
 fn all_matching_files(db: &dyn Db, text: &str) -> Vec<File> {
     all_files(db)
         .iter()
-        .filter(|&&f| f.contents(db).contains(text))
+        .filter(|&&f| f.source_text(db).contains(text))
         .copied()
         .collect()
 }

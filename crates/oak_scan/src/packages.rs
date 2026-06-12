@@ -9,7 +9,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use filetime::FileTime;
 use ignore::WalkBuilder;
+use oak_db::FileRevision;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
@@ -162,20 +164,13 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
             continue;
         }
 
-        let contents = match fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(err) => {
-                log::warn!("Failed to read R file {}: {err}", path.display());
-                continue;
-            },
-        };
         let Some(file_path) = FilePath::from_path_buf(path.to_path_buf()) else {
             log::warn!("Skipping R file, can't build a URL: {}", path.display());
             continue;
         };
         let file = FileEntry {
             path: file_path,
-            contents,
+            revision: file_revision(path),
         };
 
         if placement == PackagePlacement::File {
@@ -347,18 +342,30 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         if package_dirs.iter().any(|pkg| path.starts_with(pkg)) {
             continue;
         }
-        let Ok(contents) = fs::read_to_string(path) else {
-            continue;
-        };
         let Some(file_path) = FilePath::from_path_buf(path.to_path_buf()) else {
             continue;
         };
         scripts.push(FileEntry {
             path: file_path,
-            contents,
+            revision: file_revision(path),
         });
     }
     scripts
+}
+
+/// The file's last-modification time as a [`FileRevision`], or
+/// [`FileRevision::zero`] if the metadata can't be read. A zero revision means
+/// the next `source_text` still reads disk, it just doesn't get re-invalidated
+/// until a real mtime lands.
+///
+/// We go through `filetime::FileTime::from_last_modification_time` rather than
+/// `std::fs::Metadata::modified` to match ty: `FileTime` carries signed
+/// seconds, so a pre-epoch mtime stays distinct instead of collapsing onto the
+/// `zero()` sentinel the way a `SystemTime` before `UNIX_EPOCH` would.
+pub(crate) fn file_revision(path: &Path) -> FileRevision {
+    fs::metadata(path)
+        .map(|metadata| FileRevision::from(FileTime::from_last_modification_time(&metadata)))
+        .unwrap_or_else(|_| FileRevision::zero())
 }
 
 /// Build a directory walker for workspace discovery.

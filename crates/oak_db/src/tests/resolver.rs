@@ -10,10 +10,17 @@ use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
-    File::new(db, file_path(name), contents.to_string(), None)
+    File::new(
+        db,
+        file_path(name),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 /// Build a fresh workspace root, attach the given scripts, register
@@ -73,7 +80,8 @@ fn test_editing_sourced_file_invalidates_caller_index() {
 
     // Add a new top-level definition in `b`. `a` sees `b`'s exports
     // change, so its index must re-run.
-    b.set_contents(&mut db).to("x <- 1\ny <- 2\n".to_string());
+    b.set_source_text_override(&mut db)
+        .to(Some("x <- 1\ny <- 2\n".to_string()));
     let _ = a.semantic_index(&db);
     // 4 = 2 initial (a + b) + 2 re-runs (b's parse and index invalidate
     // first via the contents bump, then a's index re-runs because its
@@ -329,10 +337,17 @@ fn test_source_anchors_relative_to_workspace_root() {
     let a = File::new(
         &db,
         file_path("proj/sub/a.R"),
-        "source(\"b.R\")\n".to_string(),
+        FileRevision::zero(),
+        Some("source(\"b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_path("proj/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(
+        &db,
+        file_path("proj/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     root.set_scripts(&mut db).to(vec![a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -348,10 +363,17 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     let a = File::new(
         &db,
         file_path("dir/a.R"),
-        "source(\"b.R\")\n".to_string(),
+        FileRevision::zero(),
+        Some("source(\"b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_path("dir/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(
+        &db,
+        file_path("dir/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([a, b]));
@@ -368,10 +390,17 @@ fn test_source_path_with_parent_dir_segments() {
     let a = File::new(
         &db,
         file_path("dir/sub/a.R"),
-        "source(\"../b.R\")\n".to_string(),
+        FileRevision::zero(),
+        Some("source(\"../b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_path("dir/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(
+        &db,
+        file_path("dir/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([a, b]));

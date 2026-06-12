@@ -10,13 +10,14 @@ use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::Package;
 
 #[test]
 fn test_file_by_path_finds_workspace_script() {
     let mut db = TestDb::new();
     let root = workspace_root(&db, "proj");
-    let file = File::new(&db, file_path("proj/a.R"), String::new(), None);
+    let file = File::new(&db, file_path("proj/a.R"), FileRevision::zero(), None, None);
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -41,7 +42,13 @@ fn test_file_by_path_finds_workspace_package_file() {
         Vec::new(),
         None,
     );
-    let file = File::new(&db, file_path("proj/R/foo.R"), String::new(), Some(pkg));
+    let file = File::new(
+        &db,
+        file_path("proj/R/foo.R"),
+        FileRevision::zero(),
+        None,
+        Some(pkg),
+    );
     pkg.set_files(&mut db).to(vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
@@ -63,7 +70,13 @@ fn test_file_by_path_finds_library_package_file() {
         Vec::new(),
         None,
     );
-    let file = File::new(&db, file_path("libs/foo/R/a.R"), String::new(), Some(pkg));
+    let file = File::new(
+        &db,
+        file_path("libs/foo/R/a.R"),
+        FileRevision::zero(),
+        None,
+        Some(pkg),
+    );
     pkg.set_files(&mut db).to(vec![file]);
     lib.set_packages(&mut db).to(vec![pkg]);
     db.library_roots().set_roots(&mut db).to(vec![lib]);
@@ -74,7 +87,13 @@ fn test_file_by_path_finds_library_package_file() {
 #[test]
 fn test_file_by_path_finds_orphan_file() {
     let mut db = TestDb::new();
-    let file = File::new(&db, file_path("untitled.R"), String::new(), None);
+    let file = File::new(
+        &db,
+        file_path("untitled.R"),
+        FileRevision::zero(),
+        None,
+        None,
+    );
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([file]));
@@ -96,8 +115,8 @@ fn test_root_path_index_invalidates_per_root() {
     let mut db = TestDb::new();
     let root_a = workspace_root(&db, "a");
     let root_b = workspace_root(&db, "b");
-    let file_a = File::new(&db, file_path("a/file.R"), String::new(), None);
-    let file_b = File::new(&db, file_path("b/file.R"), String::new(), None);
+    let file_a = File::new(&db, file_path("a/file.R"), FileRevision::zero(), None, None);
+    let file_b = File::new(&db, file_path("b/file.R"), FileRevision::zero(), None, None);
     root_a.set_scripts(&mut db).to(vec![file_a]);
     root_b.set_scripts(&mut db).to(vec![file_b]);
     db.workspace_roots()
@@ -112,7 +131,13 @@ fn test_root_path_index_invalidates_per_root() {
     assert_eq!(db.executions("root_path_index"), 2);
 
     // Add a script to root B. B's index invalidates; A's stays cached.
-    let file_b2 = File::new(&db, file_path("b/other.R"), String::new(), None);
+    let file_b2 = File::new(
+        &db,
+        file_path("b/other.R"),
+        FileRevision::zero(),
+        None,
+        None,
+    );
     root_b.set_scripts(&mut db).to(vec![file_b, file_b2]);
 
     // Look up the file in A. A's index is still cached, no re-exec.

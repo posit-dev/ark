@@ -8,6 +8,7 @@ use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::ExportEntry;
 use crate::File;
+use crate::FileRevision;
 
 /// Build a workspace root at `/w` populated with the given scripts.
 /// Returns the file handles in the same order. Registers the root with
@@ -16,7 +17,15 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| File::new(db, file_path(name), contents.to_string(), None))
+        .map(|(name, contents)| {
+            File::new(
+                db,
+                file_path(name),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                None,
+            )
+        })
         .collect();
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -317,8 +326,8 @@ fn test_editing_function_body_keeps_exports_stable() {
 
     // An edit inside the function body changes `semantic_index` but
     // not the file's exports (still just `f`).
-    file.set_contents(&mut db)
-        .to("f <- function() 2\n".to_string());
+    file.set_source_text_override(&mut db)
+        .to(Some("f <- function() 2\n".to_string()));
     let after = entries(&db, file);
 
     assert_eq!(initial, after);

@@ -8,15 +8,28 @@ use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_path(path), contents.to_string(), None)
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_path(path), contents.to_string(), Some(package))
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(package),
+    )
 }
 
 /// Register a set of installed packages on `LibraryRoots`, one library

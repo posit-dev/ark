@@ -1,5 +1,6 @@
 use aether_path::FilePath;
 use oak_db::File;
+use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use url::Url;
 
@@ -7,7 +8,13 @@ use crate::lsp::db::FileArkExt;
 
 fn file(db: &OakDatabase, contents: &str) -> File {
     let url = FilePath::from_url(&Url::parse("file:///test.R").unwrap());
-    File::new(db, url, contents.to_string(), None)
+    File::new(
+        db,
+        url,
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 #[test]

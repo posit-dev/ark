@@ -2599,6 +2599,7 @@ dependencies = [
  "biome_rowan",
  "camino",
  "compact_str",
+ "filetime",
  "log",
  "oak_core",
  "oak_package_metadata",
@@ -2607,6 +2608,7 @@ dependencies = [
  "salsa",
  "salsa-macros",
  "stdext",
+ "tempfile",
  "url",
 ]
 
@@ -2676,6 +2678,7 @@ version = "0.1.0"
 dependencies = [
  "aether_path",
  "camino",
+ "filetime",
  "ignore",
  "log",
  "oak_core",

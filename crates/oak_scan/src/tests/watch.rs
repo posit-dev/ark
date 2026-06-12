@@ -138,7 +138,7 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
     assert_eq!(pkg.scripts(&db).len(), 1);
     let file = db.file_by_path(&path).expect("findable via pkg.scripts");
     assert_eq!(file.package(&db), Some(pkg));
-    assert_eq!(file.contents(&db), "test code\n");
+    assert_eq!(file.source_text(&db), "test code\n");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn test_add_watched_file_updates_pkg_scripts_content_preserves_placement() {
 
     let file_after = db.file_by_path(&path).unwrap();
     assert_eq!(file_before, file_after);
-    assert_eq!(file_after.contents(&db), "v2\n");
+    assert_eq!(file_after.source_text(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
     assert_eq!(pkg.scripts(&db).len(), 1);
     assert_eq!(pkg.files(&db).len(), 1);
@@ -248,7 +248,7 @@ fn test_add_watched_file_updates_existing_content_preserves_placement() {
 
     let file_after = db.file_by_path(&path).unwrap();
     assert_eq!(file_before, file_after);
-    assert_eq!(file_after.contents(&db), "v2\n");
+    assert_eq!(file_after.source_text(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
     assert_eq!(pkg.files(&db).len(), 1);
 }
@@ -507,7 +507,7 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
     );
 
     let file = db.file_by_path(&path).unwrap();
-    assert_eq!(file.contents(&db), "editor_v2\n");
+    assert_eq!(file.source_text(&db), "editor_v2\n");
 }
 
 #[test]

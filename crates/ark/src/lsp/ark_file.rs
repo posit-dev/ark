@@ -55,7 +55,7 @@ impl ArkFile {
     }
 
     pub(crate) fn contents<'db>(&self, db: &'db dyn ArkDb) -> &'db str {
-        self.file.contents(db).as_str()
+        self.file.source_text(db).as_str()
     }
 
     pub(crate) fn get_line<'db>(&self, db: &'db dyn ArkDb, line: usize) -> Option<&'db str> {
@@ -167,7 +167,13 @@ pub(crate) fn test_ark_file(code: &str) -> (oak_db::OakDatabase, ArkFile) {
     let url = Url::parse("file:///test.R").unwrap();
     let key = FilePath::from_url(&url);
     let file = ArkFile {
-        file: File::new(&db, key, code.to_string(), None),
+        file: File::new(
+            &db,
+            key,
+            oak_db::FileRevision::zero(),
+            Some(code.to_string()),
+            None,
+        ),
         version: None,
         config: DocumentConfig::default(),
         url,

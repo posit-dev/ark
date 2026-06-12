@@ -6,6 +6,7 @@ use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::Definition;
 use crate::File;
+use crate::FileRevision;
 use crate::Name;
 
 /// Build a workspace root at `w` populated with the given files.
@@ -16,7 +17,15 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| File::new(db, file_path(name), contents.to_string(), None))
+        .map(|(name, contents)| {
+            File::new(
+                db,
+                file_path(name),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                None,
+            )
+        })
         .collect();
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -348,16 +357,16 @@ fn test_definition_id_stable_across_body_edits() {
     let file = files[0];
 
     // Capture the salsa id and range out of the entity before mutating db,
-    // since the `Definition<'db>` borrow conflicts with `set_contents`'s
-    // mutable borrow.
+    // since the `Definition<'db>` borrow conflicts with
+    // `set_source_text_override`'s mutable borrow.
     let (id1, range1) = {
         let def = resolve_one(&db, file, "x");
         (def.as_id(), def.name_range(&db))
     };
 
     // Add a function above `x`, shifting its position downward.
-    file.set_contents(&mut db)
-        .to("f <- function() 2\nx <- 1\n".to_string());
+    file.set_source_text_override(&mut db)
+        .to(Some("f <- function() 2\nx <- 1\n".to_string()));
 
     let (id2, range2) = {
         let def = resolve_one(&db, file, "x");
@@ -399,7 +408,8 @@ fn test_definition_id_stable_across_def_id_renumber_local_path() {
     // shifts 0 -> 1 within the function scope.
     let content2 = "f <- function() {\nw <- 0\nx <- 1\nx\n}\n";
     let use2 = content2.find("\nx\n").expect("standalone use of x") + 1;
-    file.set_contents(&mut db).to(content2.to_string());
+    file.set_source_text_override(&mut db)
+        .to(Some(content2.to_string()));
 
     let id2 = {
         let defs = file.resolve_at(&db, TextSize::from(use2 as u32));
@@ -471,8 +481,8 @@ fn test_position_shift_keeps_id_and_does_not_invalidate_identity_consumers() {
     assert_eq!(db.executions("name_len"), 1);
 
     // Pure position shift: x moves down a line, no binding added or removed.
-    file.set_contents(&mut db)
-        .to("# comment\nx <- 1\n".to_string());
+    file.set_source_text_override(&mut db)
+        .to(Some("# comment\nx <- 1\n".to_string()));
 
     let (id2, range2) = {
         let def = resolve_one(&db, file, "x");
@@ -513,8 +523,8 @@ fn test_same_name_sibling_insertion_churns_later_definition_id() {
 
     // Insert another `x` at the top. The final `x` is still last, but its
     // ordinal among same-name siblings shifts from 1 to 2.
-    file.set_contents(&mut db)
-        .to("x <- 0\nx <- 1\nx <- 2\n".to_string());
+    file.set_source_text_override(&mut db)
+        .to(Some("x <- 0\nx <- 1\nx <- 2\n".to_string()));
 
     let id2 = file
         .resolve(&db, name(&db, "x"))
@@ -547,13 +557,15 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
     let a = File::new(
         &db,
         file_path("/w/pkg/R/a.R"),
-        "x <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
         Some(pkg),
     );
     let b = File::new(
         &db,
         file_path("/w/pkg/R/b.R"),
-        "y <- 2\n".to_string(),
+        FileRevision::zero(),
+        Some("y <- 2\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![a, b]);
@@ -587,13 +599,15 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
     let a = File::new(
         &db,
         file_path("/w/pkg/R/a.R"),
-        "shared <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("shared <- 1\n".to_string()),
         Some(pkg),
     );
     let b = File::new(
         &db,
         file_path("/w/pkg/R/b.R"),
-        "use_shared <- function() shared\n".to_string(),
+        FileRevision::zero(),
+        Some("use_shared <- function() shared\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![a, b]);

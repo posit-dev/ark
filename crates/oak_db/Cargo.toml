@@ -21,6 +21,7 @@ biome_line_index.workspace = true
 biome_rowan.workspace = true
 camino.workspace = true
 compact_str.workspace = true
+filetime.workspace = true
 log.workspace = true
 oak_core.workspace = true
 oak_package_metadata.workspace = true
@@ -33,3 +34,4 @@ url.workspace = true
 
 [dev-dependencies]
 oak_semantic = { workspace = true, features = ["salsa", "testing"] }
+tempfile.workspace = true

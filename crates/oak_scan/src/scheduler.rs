@@ -309,12 +309,7 @@ impl ScanScheduler {
                 // the watcher's single-file fast path.
                 _ => match event.kind {
                     FileEventKind::Created | FileEventKind::Changed => {
-                        match std::fs::read_to_string(&path) {
-                            Ok(contents) => add_watched_file(db, event.path, contents),
-                            Err(err) => {
-                                log::warn!("Skipped watched file {path}: {err:?}")
-                            },
-                        }
+                        add_watched_file(db, event.path)
                     },
                     FileEventKind::Deleted => remove_watched_file(db, event.path),
                 },

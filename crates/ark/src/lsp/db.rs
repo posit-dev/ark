@@ -55,7 +55,7 @@ unsafe impl salsa::Update for TreeSitterTree {
 /// `oak_db::File::parse`.
 #[salsa::tracked(returns(ref), no_eq, lru = 128)]
 fn tree_sitter_query(db: &dyn ArkDb, file: File) -> TreeSitterTree {
-    TreeSitterTree(parse_tree_sitter(file.contents(db)))
+    TreeSitterTree(parse_tree_sitter(file.source_text(db).as_str()))
 }
 
 /// Parse R source with tree-sitter.
