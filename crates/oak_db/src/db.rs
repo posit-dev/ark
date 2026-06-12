@@ -149,7 +149,7 @@ pub fn all_files(db: &dyn Db) -> Vec<File> {
 
 /// Files eligible for the workspace symbol index: workspace-root scripts and
 /// package files, plus orphan editor buffers. Library roots are excluded, so
-/// installed package symbols don't leak into completions or workspace symbols.
+/// installed package symbols don't leak into e.g. workspace symbols.
 #[salsa::tracked(returns(ref))]
 pub fn workspace_files(db: &dyn Db) -> Vec<File> {
     let mut files: Vec<File> = Vec::new();

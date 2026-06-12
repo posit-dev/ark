@@ -139,11 +139,7 @@ pub(crate) fn initialize(
         }
     }
 
-    // Kick off the first workspace scan. The resulting `OakScanCompleted`
-    // events drive workspace indexing, so there's no separate directory walk
-    // here anymore. `state.documents` is empty at init since no `didOpen` has
-    // fired yet, but build the set through the same shape we use elsewhere so
-    // the call site reads consistently.
+    // Kick off the initial workspace scan
     let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
     let requests =
         lsp_state
@@ -277,8 +273,6 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    // `upsert_editor` advanced the oak revision, so the main loop refreshes
-    // diagnostics for us (see `GlobalState::handle_event`).
     Ok(())
 }
 
