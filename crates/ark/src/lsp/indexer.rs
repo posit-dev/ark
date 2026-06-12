@@ -24,7 +24,6 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
-use crate::url::ExtUrl;
 
 #[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
 pub enum IndexEntryData {
@@ -91,8 +90,7 @@ pub(crate) struct FileIndex {
 /// foreign code the user can't edit.
 pub(crate) fn find(db: &dyn ArkDb, symbol: &str) -> Option<IndexEntry> {
     for &file in oak_db::workspace_files(db) {
-        let url = file.path(db).to_url();
-        if !ExtUrl::is_indexable(&url) {
+        if !is_indexable(db, file) {
             continue;
         }
         if let Some(entry) = file_index(db, file).symbols.get(symbol) {
@@ -129,10 +127,10 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
 /// Visit every workspace symbol across all indexable files.
 pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(&Url, &str, &IndexEntry)) {
     for &file in oak_db::workspace_files(db) {
-        let url = file.path(db).to_url();
-        if !ExtUrl::is_indexable(&url) {
+        if !is_indexable(db, file) {
             continue;
         }
+        let url = file.path(db).to_url();
         for (symbol, entry) in file_index(db, file).symbols.iter() {
             callback(&url, symbol, entry);
         }
@@ -145,6 +143,13 @@ pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(&Url, &str, &IndexEnt
 pub(crate) fn warm(db: &dyn ArkDb) {
     for &file in oak_db::workspace_files(db) {
         file_index(db, file);
+    }
+}
+
+fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
+    match file.path(db) {
+        aether_path::FilePath::File(_) => true,
+        aether_path::FilePath::Virtual(uri) => uri.as_url().scheme() != "ark",
     }
 }
 
