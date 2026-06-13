@@ -26,12 +26,14 @@ use harp::object::RObject;
 use serde_json::Value;
 use stdext::result::ResultExt;
 
+use crate::analysis::input_boundaries::input_boundaries;
 use crate::comm_handler::handle_comm_message;
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
+use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::modules::ARK_ENVS;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
@@ -127,6 +129,18 @@ impl UiComm {
 
     fn handle_call_method(&self, request: CallMethodParams) -> anyhow::Result<UiBackendReply> {
         log::trace!("Handling '{}' frontend RPC method", request.method);
+
+        if request.method == "inputBoundaries" {
+            let Some(text) = request.params.first().and_then(Value::as_str) else {
+                return Err(anyhow::anyhow!(
+                    "inputBoundaries expects the code string as its first parameter"
+                ));
+            };
+
+            let boundaries = input_boundaries(text)?;
+            let result = serde_json::to_value(InputBoundariesResponse { boundaries })?;
+            return Ok(UiBackendReply::CallMethodReply(result));
+        }
 
         // Today, all RPCs are fulfilled by R directly. Check to see if an R
         // method of the appropriate name is defined.
@@ -278,6 +292,7 @@ mod tests {
     use ark_test::dummy_jupyter_header;
     use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
+    use serde_json::json;
     use serde_json::Value;
 
     use super::*;
@@ -396,6 +411,44 @@ mod tests {
                         // Output capture is exercised in integration tests instead.
                         output: String::from(""),
                     })
+                );
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_input_boundaries_call_method() {
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
+        r_task(move || {
+            let (mut handler, ctx) = setup_ui_comm(iopub_tx);
+
+            let msg = CommMsg::Rpc {
+                id: String::from("input-boundaries-1"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::CallMethod(CallMethodParams {
+                    method: String::from("inputBoundaries"),
+                    params: vec![Value::from("values <- list(\n  1\n)\n2")],
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+        });
+
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { id, data, .. } => {
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
+                assert_eq!(id, "input-boundaries-1");
+                assert_eq!(
+                    result,
+                    UiBackendReply::CallMethodReply(json!({
+                        "boundaries": [
+                            { "range": { "start": 0, "end": 3 }, "kind": "complete" },
+                            { "range": { "start": 3, "end": 4 }, "kind": "complete" }
+                        ]
+                    }))
                 );
             },
             _ => panic!("Unexpected response: {:?}", response),
