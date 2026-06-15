@@ -107,7 +107,7 @@ impl<'db> File {
             .symbol(use_site.symbol())
             .name()
             .to_string();
-        let interned = Name::new(db, name.as_str());
+        let name = Name::new(db, name.as_str());
 
         // Get local definitions for that use
         let reaching: Vec<(ScopeId, DefinitionId)> =
@@ -124,7 +124,7 @@ impl<'db> File {
         let file_scope = ScopeId::from(0);
         if use_scope != file_scope {
             // Function body: the lazy / end-of-file view the body sees at run time.
-            return self.resolve(db, interned).into_iter().collect();
+            return self.resolve(db, name).into_iter().collect();
         }
 
         // Top level: collation predecessors / other visible files (exports-only
@@ -132,7 +132,7 @@ impl<'db> File {
         // matches R's namespace semantics. TODO: Package-level layers.
         for layer in self.imports_at(db, offset) {
             if let ImportLayer::File(target) = layer {
-                if let Some(def) = target.resolve_export(db, interned) {
+                if let Some(def) = target.resolve_export(db, name) {
                     return vec![def];
                 }
             }
@@ -144,7 +144,7 @@ impl<'db> File {
     fn resolve_definition(
         self,
         db: &'db dyn Db,
-        scope: ScopeId,
+        scope_id: ScopeId,
         def_id: DefinitionId,
     ) -> Option<Definition<'db>> {
         let index = self.semantic_index(db);
@@ -152,12 +152,12 @@ impl<'db> File {
             file: target_url,
             name: forwarded,
             ..
-        } = index.definitions(scope)[def_id].kind()
+        } = index.definitions(scope_id)[def_id].kind()
         {
             let target = db.file_by_path(&FilePath::from_url(target_url))?;
             return target.resolve_export(db, Name::new(db, forwarded.as_str()));
         }
-        self.definition(db, scope, def_id)
+        self.definition(db, scope_id, def_id)
     }
 
     /// Walk this file's exports chain for `name`, chasing `source()`-forwarded
