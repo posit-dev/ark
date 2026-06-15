@@ -40,6 +40,16 @@ A boolean, with a default value of `TRUE`.
 
 If `TRUE`, virtual documents will be generated for packages without source references for usage during debugging.
 
+## `ark.html_widget.deduplicate`
+
+A boolean, with a default value of `FALSE`.
+
+Controls whether shared JavaScript/CSS dependencies of HTML widgets (e.g. plotly.js) are inlined only once per session when widgets are rendered as self-contained HTML in notebook output.
+
+When `FALSE` (the default), every widget carries its own copy of its dependencies. This is required by frontends that isolate each cell's output, such as Positron's notebook view, where a later widget cannot reach assets loaded by an earlier cell.
+
+Set to `TRUE` only on frontends that render all cell outputs into a shared DOM (e.g. classic Jupyter or JupyterLab), where it keeps notebooks smaller by avoiding repeated copies of large dependencies.
+
 # Positron options
 
 ## `positron.show_last_value`

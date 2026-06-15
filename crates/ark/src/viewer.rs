@@ -1,7 +1,7 @@
 //
 // viewer.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -10,7 +10,6 @@ use amalthea::comm::ui_comm::ShowHtmlFileParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
-use anyhow::Result;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
 use libr::R_NilValue;
@@ -19,36 +18,6 @@ use libr::SEXP;
 use crate::console::Console;
 use crate::console::SessionMode;
 
-/// Emit HTML output on IOPub for delivery to the client
-///
-/// - `iopub_tx` - The IOPub channel to send the output on
-/// - `path` - The path to the HTML file to display
-/// - `kind` - The kind of the HTML widget
-fn emit_html_output_jupyter(
-    iopub_tx: Sender<IOPubMessage>,
-    path: String,
-    kind: String,
-) -> Result<()> {
-    // Read the contents of the file
-    let contents = std::fs::read_to_string(path)?;
-
-    // Create the output object
-    let output = serde_json::json!({
-        "text/html": contents,
-        "text/plain": format!("<{} HTML Widget>", kind),
-    });
-
-    // Emit the HTML output on IOPub for delivery to the client
-    let message = IOPubMessage::DisplayData(DisplayData {
-        data: output,
-        metadata: serde_json::Value::Null,
-        transient: serde_json::Value::Null,
-    });
-    iopub_tx.send(message)?;
-
-    Ok(())
-}
-
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_html_viewer(
     url: SEXP,
@@ -56,6 +25,8 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
     height: SEXP,
     destination: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let console = Console::get();
+
     // Convert url to a string; note that we are only passed URLs that
     // correspond to files in the temporary directory.
     let path = RObject::view(url).to::<String>();
@@ -66,14 +37,15 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
 
     match path {
         Ok(path) => {
-            // Emit HTML output
-            let console = Console::get();
-            let iopub_tx = console.iopub_tx().clone();
             match console.session_mode() {
                 SessionMode::Notebook | SessionMode::Background => {
-                    // In notebook mode, send the output as a Jupyter display_data message
-                    if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {
-                        log::error!("Failed to emit HTML output: {:?}", err);
+                    // In notebook mode, read the rendered HTML from disk and emit
+                    // it as a Jupyter `display_data` message
+                    match std::fs::read_to_string(&path) {
+                        Ok(contents) => emit_html_display_data(contents, label, console.iopub_tx()),
+                        Err(err) => {
+                            log::error!("Failed to read HTML file {path}: {err:?}");
+                        },
                     }
                 },
                 SessionMode::Console => {
@@ -123,4 +95,44 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
 
     // No return value
     Ok(R_NilValue)
+}
+
+/// Emit a pre-rendered, self-contained HTML widget as a Jupyter `display_data`
+/// message.
+///
+/// Used by the notebook-mode widget print path, which renders the widget to a
+/// single HTML string with its JS/CSS dependencies inlined as `data:` URIs.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_html_display_data(
+    html: SEXP,
+    label: SEXP,
+) -> anyhow::Result<SEXP> {
+    let console = Console::get();
+
+    let html = RObject::view(html).to::<String>()?;
+    let label = match RObject::view(label).to::<String>() {
+        Ok(label) => label,
+        Err(_) => String::from("R"),
+    };
+
+    emit_html_display_data(html, label, console.iopub_tx());
+
+    Ok(R_NilValue)
+}
+
+fn emit_html_display_data(contents: String, kind: String, iopub_tx: &Sender<IOPubMessage>) {
+    let data = serde_json::json!({
+        "text/html": contents,
+        "text/plain": format!("<{kind}>"),
+    });
+
+    let message = IOPubMessage::DisplayData(DisplayData {
+        data,
+        metadata: serde_json::Value::Null,
+        transient: serde_json::Value::Null,
+    });
+
+    if let Err(err) = iopub_tx.send(message) {
+        log::error!("Failed to emit HTML output: {err:?}");
+    }
 }

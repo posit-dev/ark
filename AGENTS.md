@@ -150,6 +150,7 @@ The following R packages are required for tests:
 - rstudioapi
 - tibble
 - haven
+- htmltools
 - R6
 - readr
 
