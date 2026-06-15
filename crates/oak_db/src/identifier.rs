@@ -84,7 +84,11 @@ impl<'db> Identifier<'db> {
 impl<'db> File {
     /// All use-site ranges for `name` in this file, across every scope.
     pub fn uses_of(self, db: &'db dyn Db, name: Name<'db>) -> Vec<TextRange> {
-        self.semantic_index(db).uses_of(name.text(db).as_str())
+        self.semantic_index(db)
+            .uses_of(name.text(db).as_str())
+            .into_iter()
+            .map(|(_scope_id, _use_id, use_site)| use_site.range())
+            .collect()
     }
 
     /// All ranges where `name` appears as the RHS of a `$` or `@` with the
