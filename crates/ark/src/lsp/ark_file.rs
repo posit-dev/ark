@@ -90,11 +90,7 @@ impl ArkFile {
         db: &dyn ArkDb,
         point: tree_sitter::Point,
     ) -> anyhow::Result<lsp_types::Position> {
-        let line_col = biome_line_index::LineCol {
-            line: point.row as u32,
-            col: point.column as u32,
-        };
-        to_proto::position_from_line_col(line_col, self.line_index(db), self.encoding)
+        lsp_position_from_tree_sitter_point(point, self.line_index(db), self.encoding)
     }
 
     pub(crate) fn lsp_range_from_tree_sitter_range(
@@ -102,9 +98,7 @@ impl ArkFile {
         db: &dyn ArkDb,
         range: tree_sitter::Range,
     ) -> anyhow::Result<lsp_types::Range> {
-        let start = self.lsp_position_from_tree_sitter_point(db, range.start_point)?;
-        let end = self.lsp_position_from_tree_sitter_point(db, range.end_point)?;
-        Ok(lsp_types::Range::new(start, end))
+        lsp_range_from_tree_sitter_range(range, self.line_index(db), self.encoding)
     }
 
     pub(crate) fn tree_sitter_range_from_lsp_range(
@@ -124,6 +118,31 @@ impl ArkFile {
             end_point,
         })
     }
+}
+
+/// Free functions over `LineIndex` + `PositionEncoding`, so anything holding
+/// those two (an `ArkFile` plus its `db`, or a `DocumentContext`) can convert
+/// without each carrying its own copy of the logic.
+pub(crate) fn lsp_position_from_tree_sitter_point(
+    point: tree_sitter::Point,
+    line_index: &biome_line_index::LineIndex,
+    encoding: PositionEncoding,
+) -> anyhow::Result<lsp_types::Position> {
+    let line_col = biome_line_index::LineCol {
+        line: point.row as u32,
+        col: point.column as u32,
+    };
+    to_proto::position_from_line_col(line_col, line_index, encoding)
+}
+
+pub(crate) fn lsp_range_from_tree_sitter_range(
+    range: tree_sitter::Range,
+    line_index: &biome_line_index::LineIndex,
+    encoding: PositionEncoding,
+) -> anyhow::Result<lsp_types::Range> {
+    let start = lsp_position_from_tree_sitter_point(range.start_point, line_index, encoding)?;
+    let end = lsp_position_from_tree_sitter_point(range.end_point, line_index, encoding)?;
+    Ok(lsp_types::Range::new(start, end))
 }
 
 #[cfg(test)]

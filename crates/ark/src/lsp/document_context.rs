@@ -5,9 +5,7 @@
 //
 //
 
-use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use tower_lsp::lsp_types;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
@@ -107,26 +105,6 @@ impl<'a> DocumentContext<'a> {
             point,
             trigger,
         }
-    }
-
-    pub fn lsp_position_from_tree_sitter_point(
-        &self,
-        point: tree_sitter::Point,
-    ) -> anyhow::Result<lsp_types::Position> {
-        let line_col = biome_line_index::LineCol {
-            line: point.row as u32,
-            col: point.column as u32,
-        };
-        to_proto::position_from_line_col(line_col, self.line_index, self.encoding)
-    }
-
-    pub fn lsp_range_from_tree_sitter_range(
-        &self,
-        range: tree_sitter::Range,
-    ) -> anyhow::Result<lsp_types::Range> {
-        let start = self.lsp_position_from_tree_sitter_point(range.start_point)?;
-        let end = self.lsp_position_from_tree_sitter_point(range.end_point)?;
-        Ok(lsp_types::Range::new(start, end))
     }
 }
 

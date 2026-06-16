@@ -36,6 +36,7 @@ use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 
+use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::function_context::FunctionRefUsage;
@@ -644,7 +645,8 @@ fn completion_item_from_dot_dot_dot(
 
     item.kind = Some(CompletionItemKind::FIELD);
 
-    let position = context.lsp_position_from_tree_sitter_point(context.point)?;
+    let position =
+        lsp_position_from_tree_sitter_point(context.point, context.line_index, context.encoding)?;
 
     let range = Range {
         start: position,
