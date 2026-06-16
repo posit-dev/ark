@@ -248,8 +248,8 @@ fn selector_name_and_range(selector: &AnyRSelector) -> Option<(String, TextRange
             Some((ident.name_text(), ident.syntax().text_trimmed_range()))
         },
         AnyRSelector::RStringValue(s) => Some((s.string_text()?, s.syntax().text_trimmed_range())),
-        // Dots are not actionable identifiers
-        _ => None,
+        // Dots are not regular identifiers so we intentionally exclude them here
+        AnyRSelector::RDotDotI(_) | AnyRSelector::RDots(_) => None,
     }
 }
 

@@ -147,6 +147,24 @@ fn test_classify_inside_namespace_operator_snaps_to_symbol() {
 // --- classify: members ---
 
 #[test]
+fn test_classify_on_backticked_member_strips_backticks() {
+    // "foo$`bar`": `$` 3..4, `` `bar` `` 4..9. The classified name is unquoted,
+    // but the range spans the backticks.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "foo$`bar`\n");
+
+    match Identifier::classify(&db, file, offset(5)) {
+        Some(Identifier::Member {
+            name, name_range, ..
+        }) => {
+            assert_eq!(name.text(&db).as_str(), "bar");
+            assert_eq!(name_range, text_range(4, 9));
+        },
+        other => panic!("expected Member, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_classify_on_dollar_member() {
     // "foo$bar": `$` at 3..4, `bar` at 4..7.
     let mut db = TestDb::new();
@@ -312,6 +330,20 @@ fn test_member_uses_of_recurses_into_nested_dollar() {
 }
 
 #[test]
+fn test_member_uses_of_recurses_through_braces_and_parens() {
+    // `descendants()` walks the whole subtree, so members nested in a function
+    // body / braces and in parens are found, not just top-level ones.
+    // "f <- function() {\n  a$bar\n}\n(b$bar)\n": `a$bar` 22..25, `b$bar` 31..34.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "f <- function() {\n  a$bar\n}\n(b$bar)\n");
+
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
+        text_range(22, 25),
+        text_range(31, 34),
+    ]);
+}
+
+#[test]
 fn test_member_uses_of_filters_by_kind() {
     // "foo$bar\nfoo@bar\n": one `$bar`, one `@bar`.
     let mut db = TestDb::new();
@@ -343,6 +375,40 @@ fn test_member_uses_of_filters_by_name() {
 
     assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
         text_range(4, 7)
+    ]);
+}
+
+#[test]
+fn test_member_uses_of_ignores_dots_selectors() {
+    // `...` and `..1` are the dots mechanism, not member names. `foo$...` and
+    // `foo$..1` yield no member reference, only the real `$bar` matches.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "foo$...\nfoo$..1\nfoo$bar\n");
+
+    assert!(file
+        .member_uses_of(&db, "...", MemberKind::Dollar)
+        .is_empty());
+    assert!(file
+        .member_uses_of(&db, "..1", MemberKind::Dollar)
+        .is_empty());
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
+        text_range(20, 23)
+    ]);
+}
+
+#[test]
+fn test_member_uses_of_normalizes_backticks_and_quotes() {
+    // `foo$bar`, `` baz$`bar` ``, and `qux$"bar"` all name member `bar`, so a
+    // search for the unquoted "bar" finds all three. The same stripping that
+    // `classify` applies to the cursor's name is applied to each candidate, so
+    // the forms cross-match. The quoted forms' ranges span the backticks/quotes.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "foo$bar\nbaz$`bar`\nqux$\"bar\"\n");
+
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
+        text_range(4, 7),
+        text_range(12, 17),
+        text_range(22, 27),
     ]);
 }
 
