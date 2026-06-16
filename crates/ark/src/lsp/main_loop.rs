@@ -991,22 +991,14 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
         n = state.open_files.len()
     );
 
-    for document in state.open_files.values() {
-        if !ExtUrl::should_diagnose(&document.url) {
+    for file in state.open_files.values() {
+        if !ExtUrl::should_diagnose(&file.url) {
             continue;
         }
 
-        let file = match state.ark_file(&document.url) {
-            Ok(file) => file,
-            Err(err) => {
-                tracing::warn!("Can't build ArkFile for '{}': {err:?}", document.url);
-                continue;
-            },
-        };
-
         DIAGNOSTICS_QUEUE
             .send(RefreshDiagnosticsTask {
-                file,
+                file: file.clone(),
                 state: state.diagnostics_snapshot(),
             })
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
