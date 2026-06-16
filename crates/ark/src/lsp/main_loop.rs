@@ -966,9 +966,12 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 }
 
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
-    let RefreshDiagnosticsTask { file, state } = task;
-    let uri = file.wire_url.clone();
-    let version = file.version;
+    let RefreshDiagnosticsTask {
+        file: open_file,
+        state,
+    } = task;
+    let uri = open_file.wire_url.clone();
+    let version = open_file.version;
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
     // Special case testthat-specific behaviour. This is a simple stopgap
@@ -979,7 +982,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
         .components()
         .any(|c| c.as_os_str() == "testthat");
 
-    let diagnostics = generate_diagnostics(file, state, testthat);
+    let diagnostics = generate_diagnostics(open_file.file, state, testthat);
 
     RefreshDiagnosticsResult {
         uri,

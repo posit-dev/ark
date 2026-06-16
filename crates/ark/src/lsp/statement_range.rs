@@ -154,7 +154,7 @@ pub(crate) fn statement_range(
     encoding: PositionEncoding,
 ) -> LspResult<Option<StatementRangeResponse>> {
     let root = file.tree_sitter(db).root_node();
-    let contents = file.contents(db).as_str();
+    let contents = file.source_text(db).as_str();
 
     // Initial check to see if we are in a roxygen2 comment, in which case we parse a
     // subdocument containing the `@examples` or `@examplesIf` section and locate a

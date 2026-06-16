@@ -52,7 +52,7 @@ pub(crate) fn help_topic(
         return Ok(None);
     };
 
-    let text = node.node_to_string(file.contents(db))?;
+    let text = node.node_to_string(file.source_text(db))?;
     let response = HelpTopicResponse { topic: text };
 
     lsp::log_info!(

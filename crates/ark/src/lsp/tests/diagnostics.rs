@@ -23,15 +23,13 @@ fn test_diagnostics_published_through_refresh_snapshot() {
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
         state.insert_ark_file(uri.clone(), file, None);
 
-        // Mirror `diagnostics_refresh_all`: build the `ArkFile` from the live
+        // Mirror `diagnostics_refresh_all`: fetch the `File` from the live
         // state, then hand the worker the `diagnostics_snapshot`. The snapshot's
-        // oak must still serve the file the `ArkFile` points at.
-        let ark_file = state
-            .ark_file(&uri)
-            .expect("ArkFile builds from live state");
+        // oak must still serve that file.
+        let file = state.file(&uri).expect("file is open in live state");
 
         let snapshot = state.diagnostics_snapshot();
-        generate_diagnostics(ark_file, snapshot, false)
+        generate_diagnostics(file, snapshot, false)
     });
 
     assert!(!diagnostics.is_empty());

@@ -60,7 +60,7 @@ pub(crate) fn roxygen_documentation(
     // Fairly simple detection of existing `#'` on the previous line (but starting at the
     // same `column` offset), which tells us not to provide this code action
     if let Some(previous_line) = get_line(
-        file.contents(db).as_str(),
+        file.source_text(db).as_str(),
         file.line_index(db),
         position.row.saturating_sub(1),
     ) {
@@ -91,7 +91,7 @@ pub(crate) fn roxygen_documentation(
     for child in parameters.children_by_field_name("parameter", &mut cursor) {
         let parameter_name = child.child_by_field_name("name")?;
         let parameter_name = parameter_name
-            .node_to_string(file.contents(db).as_str())
+            .node_to_string(file.source_text(db).as_str())
             .ok()?;
         parameter_names.push(parameter_name);
     }

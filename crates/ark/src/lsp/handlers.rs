@@ -225,7 +225,7 @@ pub(crate) fn handle_completion(
 
     let context = DocumentContext::new(
         file.tree_sitter(db),
-        file.contents(db).as_str(),
+        file.source_text(db).as_str(),
         file.line_index(db),
         encoding,
         point,
@@ -264,7 +264,7 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
 
     let context = DocumentContext::new(
         file.tree_sitter(db),
-        file.contents(db).as_str(),
+        file.source_text(db).as_str(),
         file.line_index(db),
         encoding,
         point,
@@ -307,7 +307,7 @@ pub(crate) fn handle_signature_help(
 
     let context = DocumentContext::new(
         file.tree_sitter(db),
-        file.contents(db).as_str(),
+        file.source_text(db).as_str(),
         file.line_index(db),
         encoding,
         point,

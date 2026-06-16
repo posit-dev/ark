@@ -86,9 +86,11 @@ fn parse_ts_node(
             }
 
             // Nested comment section handling
-            if let Some(comment_line) =
-                get_line(file.contents(db).as_str(), file.line_index(db), start.row)
-            {
+            if let Some(comment_line) = get_line(
+                file.source_text(db).as_str(),
+                file.line_index(db),
+                start.row,
+            ) {
                 if let Err(err) =
                     nested_processor(comment_stack, folding_ranges, start.row, comment_line)
                 {
@@ -177,7 +179,7 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
 }
 
 fn count_leading_whitespaces(db: &dyn ArkDb, file: File, line_num: usize) -> usize {
-    let Some(line) = get_line(file.contents(db).as_str(), file.line_index(db), line_num) else {
+    let Some(line) = get_line(file.source_text(db).as_str(), file.line_index(db), line_num) else {
         return 0;
     };
 

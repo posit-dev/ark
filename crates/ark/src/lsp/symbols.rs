@@ -405,7 +405,7 @@ where
 
     for child in node.children(&mut cursor) {
         if let NodeType::Comment = child.node_type() {
-            let comment_text = child.node_as_str(file.contents(db))?;
+            let comment_text = child.node_as_str(file.source_text(db))?;
 
             // If we have a section comment, add it to our stack and close any sections if needed
             if let Some((level, title)) = parse_comment_as_section(comment_text) {
@@ -415,7 +415,7 @@ where
                     // Set end position for the section being closed
                     if let Some(section) = active_sections.last_mut() {
                         let pos =
-                            point_end_of_previous_row(child.start_position(), file.contents(db));
+                            point_end_of_previous_row(child.start_position(), file.source_text(db));
                         section.end_position = Some(pos);
                     }
                     finalize_section(&mut active_sections, symbols, file, db, ctx.encoding)?;
@@ -462,7 +462,7 @@ where
         if let Some(section) = active_sections.last_mut() {
             let mut pos = node.end_position();
             if pos.row > section.start_position.row {
-                pos = point_end_of_previous_row(pos, file.contents(db));
+                pos = point_end_of_previous_row(pos, file.source_text(db));
             }
             section.end_position = Some(pos);
         }
@@ -494,7 +494,7 @@ fn collect_call(
     };
 
     if callee.is_identifier() {
-        let fun_symbol = callee.node_as_str(file.contents(db))?;
+        let fun_symbol = callee.node_as_str(file.source_text(db))?;
         if fun_symbol == "test_that" {
             return collect_call_test_that(ctx, node, file, db, symbols);
         }
@@ -574,7 +574,7 @@ fn collect_method(
     if !arg_fun.is_identifier_or_string() {
         return Ok(());
     }
-    let arg_name = arg_fun.node_to_string(file.contents(db))?;
+    let arg_name = arg_fun.node_to_string(file.source_text(db))?;
 
     let line_index = file.line_index(db);
     let start =
@@ -631,7 +631,7 @@ fn collect_call_test_that(
         }
     }
 
-    let name = string.node_as_str(file.contents(db))?;
+    let name = string.node_as_str(file.source_text(db))?;
     let name = name.to_string();
 
     let line_index = file.line_index(db);
@@ -675,7 +675,7 @@ fn collect_assignment(
         // Collect as generic object, but typically only if we're at top-level. Assigned
         // objects in nested functions and blocks cause the outline to become
         // too busy.
-        let name = lhs.node_to_string(file.contents(db))?;
+        let name = lhs.node_to_string(file.source_text(db))?;
 
         let line_index = file.line_index(db);
         let start =
@@ -715,11 +715,11 @@ fn collect_assignment_with_function(
     let mut cursor = parameters.walk();
     for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
         let name = parameter.child_by_field_name("name").into_result()?;
-        let name = name.node_to_string(file.contents(db))?;
+        let name = name.node_to_string(file.source_text(db))?;
         arguments.push(name);
     }
 
-    let name = lhs.node_to_string(file.contents(db))?;
+    let name = lhs.node_to_string(file.source_text(db))?;
     let detail = format!("function({})", arguments.join(", "));
 
     let line_index = file.line_index(db);

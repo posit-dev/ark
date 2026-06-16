@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::Diagnostic;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::diagnostics::DiagnosticContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -421,9 +422,11 @@ fn new_syntax_diagnostic(
     range: Range,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Diagnostic> {
-    let range = context
-        .file
-        .lsp_range_from_tree_sitter_range(context.db, range)?;
+    let range = lsp_range_from_tree_sitter_range(
+        range,
+        context.file.line_index(context.db),
+        context.encoding,
+    )?;
     Ok(Diagnostic::new_simple(range, message))
 }
 
@@ -438,10 +441,12 @@ mod tests {
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let (db, file) = test_ark_file(text);
+        let (db, open_file) = test_ark_file(text);
         let library = Library::default();
-        let context = DiagnosticContext::new(&db, &None, &library, &file);
-        let diagnostics = syntax_diagnostics(file.tree_sitter(&db).root_node(), &context).unwrap();
+        let context =
+            DiagnosticContext::new(&db, &None, &library, open_file.file, open_file.encoding);
+        let diagnostics =
+            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

@@ -34,7 +34,7 @@ pub(crate) fn indent_edit(
     config: &IndentationConfig,
     line: usize,
 ) -> LspResult<Option<Vec<IndentEdit>>> {
-    let text = file.contents(db).as_str();
+    let text = file.source_text(db).as_str();
     let ast = file.tree_sitter(db);
 
     let line_count = if text.is_empty() {
