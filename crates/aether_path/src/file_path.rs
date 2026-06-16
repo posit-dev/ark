@@ -118,8 +118,11 @@ impl FilePath {
                     .as_url()
                     .path_segments()?
                     .next_back()
+                    // A trailing slash (`.../foo/`) yields a final empty segment,
+                    // meaning the URL points at a directory. Drop it so we return
+                    // `None` rather than `""`.
                     .filter(|seg| !seg.is_empty())?;
-                Some(percent_decode_str(last).decode_utf8_lossy())
+                percent_decode_str(last).decode_utf8().warn_on_err()
             },
         }
     }

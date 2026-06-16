@@ -158,9 +158,12 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
 }
 
 /// The file's `library()` / `require()` attaches as `Package` layers, in LIFO
-/// order (latest-attached first). `before` narrows to a top-level cursor: with
-/// `Some(offset)`, keep only file-scope calls that have run by `offset`; with
-/// `None`, keep every attach (the end-of-file view, used for lazy contexts).
+/// order (latest-attached first). `before` selects which calls to include:
+///
+/// - `None`: every attach. The end-of-file view, used for lazy contexts.
+/// - `Some(offset)`: only top-level (file-scope) calls that have run by
+///   `offset`. Calls nested in a block (e.g. inside `test_that({})`) are
+///   dropped, as are calls after the offset.
 fn attach_layers(file: File, db: &dyn Db, before: Option<TextSize>) -> Vec<ImportLayer> {
     let index = file.semantic_index(db);
     let file_scope = ScopeId::from(0);
@@ -239,7 +242,7 @@ fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
 /// 6. base.
 ///
 /// `offset` narrows the components of layer 4. `None` produces the end-of-file
-/// view and keeps every `library()` call. `Some(offset)` keeps only the calls
+/// view and uses every `library()` call. `Some(offset)` uses only the calls
 /// that have run by `offset`. The other layers are sourced or attached before
 /// the file body runs, so they never narrow.
 fn testthat_imports(
