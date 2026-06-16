@@ -137,8 +137,13 @@ fn test_function_scope_target_stays_in_file() {
     // Cursor on the parameter `x` at line 0, column 14.
     let params = make_params(uri1.clone(), 0, 14, true);
     let locs = find_references(params, &state).unwrap();
-    assert!(locs.iter().all(|l| l.uri == uri1));
-    assert_eq!(locs.len(), 2);
+
+    // Only file1's parameter and its use. No file2 hits.
+    let expected: Vec<Location> = vec![
+        Location::new(uri1.clone(), range((0, 14), (0, 15))),
+        Location::new(uri1, range((1, 2), (1, 3))),
+    ];
+    assert_eq!(locs, expected);
 }
 
 #[test]

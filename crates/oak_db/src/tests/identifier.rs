@@ -198,6 +198,51 @@ fn test_classify_on_member_lhs_is_variable() {
     }
 }
 
+#[test]
+fn test_classify_nested_dollar_by_cursor_position() {
+    // "foo$bar$baz" parses as `(foo$bar)$baz`. `foo` 0..3, `$` 3..4, `bar`
+    // 4..7, `$` 7..8, `baz` 8..11. The cursor picks out the base variable
+    // and each member by position.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "foo$bar$baz\n");
+
+    match Identifier::classify(&db, file, offset(0)) {
+        Some(Identifier::Variable { name, range }) => {
+            assert_eq!(name.text(&db).as_str(), "foo");
+            assert_eq!(range, text_range(0, 3));
+        },
+        other => panic!("expected Variable for `foo`, got {other:?}"),
+    }
+
+    match Identifier::classify(&db, file, offset(4)) {
+        Some(Identifier::Member {
+            name,
+            operator_range,
+            name_range,
+            ..
+        }) => {
+            assert_eq!(name.text(&db).as_str(), "bar");
+            assert_eq!(operator_range, text_range(3, 4));
+            assert_eq!(name_range, text_range(4, 7));
+        },
+        other => panic!("expected Member for `bar`, got {other:?}"),
+    }
+
+    match Identifier::classify(&db, file, offset(8)) {
+        Some(Identifier::Member {
+            name,
+            operator_range,
+            name_range,
+            ..
+        }) => {
+            assert_eq!(name.text(&db).as_str(), "baz");
+            assert_eq!(operator_range, text_range(7, 8));
+            assert_eq!(name_range, text_range(8, 11));
+        },
+        other => panic!("expected Member for `baz`, got {other:?}"),
+    }
+}
+
 // --- uses_of ---
 
 #[test]
@@ -249,6 +294,21 @@ fn test_member_uses_collects_matching_kind() {
 
     let ranges = file.member_uses(&db, "bar", MemberKind::Dollar);
     assert_eq!(ranges, vec![text_range(4, 7), text_range(12, 15)]);
+}
+
+#[test]
+fn test_member_uses_recurses_into_nested_dollar() {
+    // "foo$bar$baz": `(foo$bar)$baz`. The scan walks both the inner and outer
+    // extract, so `bar` (4..7) and `baz` (8..11) each match on their own.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "foo$bar$baz\n");
+
+    assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
+        text_range(4, 7)
+    ]);
+    assert_eq!(file.member_uses(&db, "baz", MemberKind::Dollar), vec![
+        text_range(8, 11)
+    ]);
 }
 
 #[test]
