@@ -406,8 +406,7 @@ fn test_cursor_in_installed_package_excludes_other_packages() {
     let mut db = OakDatabase::new();
     let mypkg_file =
         install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 1\n");
-    let _otherpkg_file =
-        install_library_package(&mut db, "otherpkg", &[], "b.R", "mypkg::foo()\n");
+    let _otherpkg_file = install_library_package(&mut db, "otherpkg", &[], "b.R", "mypkg::foo()\n");
     let script = upsert(&mut db, "script.R", "mypkg::foo()\n");
 
     // Cursor on the def `foo` at offset 0 inside `mypkg`.
