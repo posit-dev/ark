@@ -350,5 +350,8 @@ fn test_cross_package_references_via_library() {
     // Excluding the declaration drops the package definition `pkg_file`,
     // leaving only the script use.
     let refs = find_references(&db, script, offset(use_start), false);
-    assert_eq!(pairs(&refs), vec![(script, range(use_start, use_start + 3))]);
+    assert_eq!(pairs(&refs), vec![(
+        script,
+        range(use_start, use_start + 3)
+    )]);
 }
