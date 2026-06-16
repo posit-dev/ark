@@ -12,6 +12,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 
 use crate::Db;
+use crate::Definition;
 use crate::File;
 use crate::Name;
 
@@ -114,6 +115,24 @@ impl<'db> Identifier<'db> {
 }
 
 impl<'db> File {
+    /// The variable at `offset` and the definitions it resolves to.
+    ///
+    /// `None` when the cursor isn't on a `Variable` (a member name, a namespace
+    /// access, or a non-name). The semantic index only tracks variables, so
+    /// they're the only classification `resolve_at` can answer for.
+    pub fn resolve_variable_at(
+        self,
+        db: &'db dyn Db,
+        offset: TextSize,
+    ) -> Option<(Name<'db>, TextRange, Vec<Definition<'db>>)> {
+        let Some(Identifier::Variable { name, range }) = Identifier::classify(db, self, offset)
+        else {
+            return None;
+        };
+        let defs = self.resolve_at(db, range.start());
+        Some((name, range, defs))
+    }
+
     /// All use-site ranges for `name` in this file, across every scope.
     pub fn uses_of(self, db: &'db dyn Db, name: Name<'db>) -> Vec<TextRange> {
         self.semantic_index(db)

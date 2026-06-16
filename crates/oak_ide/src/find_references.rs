@@ -29,8 +29,8 @@ pub fn find_references(
     };
 
     match ident {
-        Identifier::Variable { range, .. } => {
-            find_variable_references(db, file, range.start(), include_declaration)
+        Identifier::Variable { .. } => {
+            find_variable_references(db, file, offset, include_declaration)
         },
         Identifier::Member { name, kind, .. } => {
             find_member_references(db, file, name.text(db).as_str(), kind)
@@ -59,7 +59,9 @@ fn find_variable_references(
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let target_defs = file.resolve_at(db, offset);
+    let Some((_, _, target_defs)) = file.resolve_variable_at(db, offset) else {
+        return Vec::new();
+    };
     if target_defs.is_empty() {
         return Vec::new();
     }

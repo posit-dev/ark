@@ -5,7 +5,6 @@ use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use oak_db::Definition;
 use oak_db::File;
-use oak_db::Identifier;
 use oak_db::Name;
 use oak_db::RootKind;
 
@@ -74,16 +73,14 @@ fn renamable_at<'db>(
     file: File,
     offset: TextSize,
 ) -> anyhow::Result<Option<(TextRange, Name<'db>)>> {
-    let Some(Identifier::Variable { name, range }) = Identifier::classify(db, file, offset) else {
+    let Some((name, range, defs)) = file.resolve_variable_at(db, offset) else {
         return Ok(None);
     };
 
-    for def in file.resolve_at(db, range.start()) {
-        if is_library_def(db, def) {
-            return Err(anyhow!(
-                "Can't rename: symbol is defined in an installed package."
-            ));
-        }
+    if defs.iter().any(|&def| is_library_def(db, def)) {
+        return Err(anyhow!(
+            "Can't rename: symbol is defined in an installed package."
+        ));
     }
 
     Ok(Some((range, name)))
