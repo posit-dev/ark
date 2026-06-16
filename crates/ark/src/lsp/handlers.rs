@@ -49,6 +49,7 @@ use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
 use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::ark_file::tree_sitter_point_from_lsp_position;
+use crate::lsp::ark_file::tree_sitter_range_from_lsp_range;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
@@ -476,9 +477,18 @@ pub(crate) fn handle_code_action(
     let uri = params.text_document.uri;
     let file = state.ark_file(&uri)?;
     let db = &state.db;
-    let range = file.tree_sitter_range_from_lsp_range(db, params.range)?;
+    let encoding = state.config.position_encoding;
+    let range = tree_sitter_range_from_lsp_range(params.range, file.file.line_index(db), encoding)?;
 
-    let code_actions = code_actions(db, &file, range, &lsp_state.capabilities);
+    let code_actions = code_actions(
+        db,
+        file.file,
+        range,
+        encoding,
+        &file.wire_url,
+        file.version,
+        &lsp_state.capabilities,
+    );
 
     if code_actions.is_empty() {
         Ok(None)
