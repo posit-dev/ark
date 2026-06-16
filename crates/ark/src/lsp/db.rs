@@ -55,6 +55,15 @@ unsafe impl salsa::Update for TreeSitterTree {
 /// `oak_db::File::parse`.
 #[salsa::tracked(returns(ref), no_eq, lru = 128)]
 fn tree_sitter_query(db: &dyn ArkDb, file: File) -> TreeSitterTree {
+    TreeSitterTree(parse_tree_sitter(file.contents(db)))
+}
+
+/// Parse R source with tree-sitter.
+///
+/// The one place we build a tree-sitter parser. `tree_sitter_query()` runs it
+/// over editor files; `statement_range` runs it over standalone snippets that
+/// have no `oak_db::File`.
+pub(crate) fn parse_tree_sitter(text: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
 
     // Unwrap Safety: `tree-sitter-r` is a valid grammar; `set_language` only
@@ -65,7 +74,5 @@ fn tree_sitter_query(db: &dyn ArkDb, file: File) -> TreeSitterTree {
 
     // Unwrap Safety: parsing without a timeout or cancellation flag never
     // returns `None`.
-    let tree = parser.parse(file.contents(db), None).unwrap();
-
-    TreeSitterTree(tree)
+    parser.parse(text, None).unwrap()
 }

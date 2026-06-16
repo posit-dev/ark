@@ -20,6 +20,7 @@ use tree_sitter::Point;
 
 use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspResult;
+use crate::lsp::db::parse_tree_sitter;
 use crate::lsp::db::ArkDb;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
@@ -347,7 +348,9 @@ fn find_roxygen_examples_range(
         .collect();
     let subcontents = subcontents.join("\n");
 
-    // Parse the subdocument
+    // Parse the subdocument directly. The `@examples` subdocument is a
+    // re-indented slice of the buffer, not an editor file with its own
+    // `oak_db::File`.
     let subdocument_tree = parse_tree_sitter(&subcontents);
     let subdocument_root = subdocument_tree.root_node();
 
@@ -427,23 +430,6 @@ fn adjust_roxygen_examples_success(
     let code = Some(subdocument_code);
 
     Some(ArkStatementRangeSuccess { range, code })
-}
-
-/// Parse a standalone snippet of R with tree-sitter.
-///
-/// Used for the `@examples` subdocument, which is a slice of the buffer
-/// re-indented into runnable code, so it isn't an editor file with its own
-/// `oak_db::File`. We parse it directly instead.
-fn parse_tree_sitter(text: &str) -> tree_sitter::Tree {
-    let mut parser = tree_sitter::Parser::new();
-    // Unwrap Safety: `tree-sitter-r` is a valid grammar; `set_language` only
-    // fails on an ABI version mismatch, which is a build-time invariant.
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-    // Unwrap Safety: parsing without a timeout or cancellation flag never
-    // returns `None`.
-    parser.parse(text, None).unwrap()
 }
 
 fn adjust_roxygen_examples_rejection(
