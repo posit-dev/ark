@@ -232,7 +232,7 @@ pub(crate) fn did_open(
     let version = params.text_document.version;
 
     let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
-    state.insert_ark_file(uri.clone(), file, Some(version));
+    state.insert_open_file(uri.clone(), file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -269,8 +269,11 @@ pub(crate) fn did_change(
     }
 
     // Fold the edits into the new buffer text and push it into `oak`
-    let new_contents =
-        apply_content_changes(file.contents(&state.db), &params.content_changes, encoding);
+    let new_contents = apply_content_changes(
+        file.inner.source_text(&state.db).as_str(),
+        &params.content_changes,
+        encoding,
+    );
     state.db.upsert_editor(key.clone(), new_contents);
 
     file.version = Some(new_version);
@@ -406,7 +409,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.ark_file_mut(uri) else {
+    let Ok(doc) = state.open_file_mut(uri) else {
         return;
     };
 
@@ -498,7 +501,7 @@ async fn update_config(
         let head = std::mem::replace(&mut remaining, tail);
 
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.ark_file_mut(&uri) {
+            if let Ok(doc) = state.open_file_mut(&uri) {
                 (mapping.set)(&mut doc.config, value);
             }
         }

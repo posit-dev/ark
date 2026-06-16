@@ -21,11 +21,11 @@ use tower_lsp::lsp_types::SymbolKind;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
-use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::string::StringExt;
@@ -790,6 +790,7 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use oak_scan::DbScan;
     use tower_lsp::lsp_types::Position;
 
@@ -798,15 +799,18 @@ mod tests {
     use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::util::test_path;
 
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
-        let (db, file) = crate::lsp::ark_file::test_ark_file(code);
-        let node = file.tree_sitter(&db).root_node();
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
+        let node = file.inner.tree_sitter(&db).root_node();
 
         let mut symbols = Vec::new();
         collect_symbols(
-            &mut CollectContext::new(file.encoding),
+            &mut CollectContext::new(ENCODING),
             &node,
-            file.file,
+            file.inner,
             &db,
             &mut symbols,
         )
@@ -1159,7 +1163,7 @@ outer <- 4
 
     #[test]
     fn test_symbol_nested_assignments_enabled() {
-        let (db, file) = crate::lsp::ark_file::test_ark_file(
+        let (db, file) = crate::lsp::open_file::test_open_file(
             "
 local({
   inner1 <- 1
@@ -1171,13 +1175,13 @@ a <- function() {
 outer <- 4
 ",
         );
-        let node = file.tree_sitter(&db).root_node();
+        let node = file.inner.tree_sitter(&db).root_node();
 
-        let ctx = &mut CollectContext::new(file.encoding);
+        let ctx = &mut CollectContext::new(ENCODING);
         ctx.include_assignments_in_blocks = true;
 
         let mut symbols = Vec::new();
-        collect_symbols(ctx, &node, file.file, &db, &mut symbols).unwrap();
+        collect_symbols(ctx, &node, file.inner, &db, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
     }

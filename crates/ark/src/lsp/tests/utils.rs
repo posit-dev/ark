@@ -17,7 +17,7 @@ pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, contents
     let file = state
         .db
         .upsert_editor(FilePath::from_url(uri), contents.to_string());
-    state.insert_ark_file(uri.clone(), file, None);
+    state.insert_open_file(uri.clone(), file, None);
 }
 
 pub(super) fn range(start: (u32, u32), end: (u32, u32)) -> lsp_types::Range {

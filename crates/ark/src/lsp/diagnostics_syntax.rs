@@ -9,8 +9,8 @@ use tower_lsp::lsp_types::Diagnostic;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
-use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::diagnostics::DiagnosticContext;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
@@ -432,21 +432,25 @@ fn new_syntax_diagnostic(
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use oak_semantic::library::Library;
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 
-    use crate::lsp::ark_file::test_ark_file;
+    use crate::lsp::db::FileArkExt;
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
+    use crate::lsp::open_file::test_open_file;
+
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let (db, open_file) = test_ark_file(text);
+        let (db, open_file) = test_open_file(text);
         let library = Library::default();
-        let context =
-            DiagnosticContext::new(&db, &None, &library, open_file.file, open_file.encoding);
+        let context = DiagnosticContext::new(&db, &None, &library, open_file.inner, ENCODING);
         let diagnostics =
-            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
+            syntax_diagnostics(open_file.inner.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

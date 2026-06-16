@@ -10,16 +10,18 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 #[cfg(test)]
-use crate::lsp::ark_file::test_ark_file;
+use crate::lsp::db::FileArkExt;
 #[cfg(test)]
-use crate::lsp::ark_file::ArkFile;
+use crate::lsp::open_file::test_open_file;
+#[cfg(test)]
+use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
-    /// We store extracted components of `&ArkFile` + `&dyn ArkDb` here because
+    /// We store extracted components of a `File` + `&dyn ArkDb` here because
     /// the latter can't be sent over an `r_task()`.
     pub tree: &'a tree_sitter::Tree,
     pub contents: &'a str,
@@ -108,19 +110,21 @@ impl<'a> DocumentContext<'a> {
     }
 }
 
-/// Owns a `db` + `ArkFile` so unit tests can build a `DocumentContext` the same
+/// Owns a `db` + `OpenFile` so unit tests can build a `DocumentContext` the same
 /// way handlers do, borrowing the cached tree and line index from the database.
 #[cfg(test)]
 pub(crate) struct TestDocument {
     db: oak_db::OakDatabase,
-    file: ArkFile,
+    file: OpenFile,
+    encoding: PositionEncoding,
 }
 
 #[cfg(test)]
 impl TestDocument {
     pub(crate) fn new(contents: &str) -> Self {
-        let (db, file) = test_ark_file(contents);
-        Self { db, file }
+        let (db, file) = test_open_file(contents);
+        let encoding = PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+        Self { db, file, encoding }
     }
 
     pub(crate) fn context(&self, point: Point) -> DocumentContext<'_> {
@@ -133,10 +137,10 @@ impl TestDocument {
         trigger: Option<String>,
     ) -> DocumentContext<'_> {
         DocumentContext::new(
-            self.file.tree_sitter(&self.db),
-            self.file.contents(&self.db),
-            self.file.line_index(&self.db),
-            self.file.encoding,
+            self.file.inner.tree_sitter(&self.db),
+            self.file.inner.source_text(&self.db).as_str(),
+            self.file.inner.line_index(&self.db),
+            self.encoding,
             point,
             trigger,
         )

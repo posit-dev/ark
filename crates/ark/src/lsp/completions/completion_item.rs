@@ -36,13 +36,13 @@ use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 
-use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;

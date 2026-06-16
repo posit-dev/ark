@@ -15,9 +15,9 @@ use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp;
-use crate::lsp::ark_file::get_line;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::get_line;
 
 pub(crate) fn folding_range(db: &dyn ArkDb, file: File) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
@@ -373,8 +373,8 @@ mod tests {
     use super::*;
 
     fn test_folding_range(code: &str) -> Vec<FoldingRange> {
-        let (db, file) = crate::lsp::ark_file::test_ark_file(code);
-        sorted_ranges(folding_range(&db, file.file).unwrap())
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
+        sorted_ranges(folding_range(&db, file.inner).unwrap())
     }
 
     fn sorted_ranges(mut ranges: Vec<FoldingRange>) -> Vec<FoldingRange> {
@@ -719,10 +719,10 @@ function(a, b, c) {
 function() {
   # Unclosed function
 ";
-        let (db, file) = crate::lsp::ark_file::test_ark_file(code);
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
 
         // Handle the expected parse error
-        match folding_range(&db, file.file) {
+        match folding_range(&db, file.inner) {
             Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
             Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
         }
@@ -735,12 +735,12 @@ function() {
   two spaces
     four spaces
 \ttab char";
-        let (db, file) = crate::lsp::ark_file::test_ark_file(code);
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
 
-        assert_eq!(count_leading_whitespaces(&db, file.file, 0), 0);
-        assert_eq!(count_leading_whitespaces(&db, file.file, 1), 2);
-        assert_eq!(count_leading_whitespaces(&db, file.file, 2), 4);
-        assert_eq!(count_leading_whitespaces(&db, file.file, 3), 1); // Tab counts as 1 char
+        assert_eq!(count_leading_whitespaces(&db, file.inner, 0), 0);
+        assert_eq!(count_leading_whitespaces(&db, file.inner, 1), 2);
+        assert_eq!(count_leading_whitespaces(&db, file.inner, 2), 4);
+        assert_eq!(count_leading_whitespaces(&db, file.inner, 3), 1); // Tab counts as 1 char
     }
 
     #[test]

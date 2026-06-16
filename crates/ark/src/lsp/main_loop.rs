@@ -39,7 +39,6 @@ use url::Url;
 use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -50,6 +49,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
+use crate::lsp::open_file::OpenFile;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -898,7 +898,7 @@ pub(crate) struct RefreshDiagnosticsTask {
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
     state: WorldState,
     /// The file to diagnose, built against the live oak at enqueue time.
-    file: ArkFile,
+    file: OpenFile,
 }
 
 #[derive(Debug)]
@@ -966,12 +966,9 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 }
 
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
-    let RefreshDiagnosticsTask {
-        file: open_file,
-        state,
-    } = task;
-    let uri = open_file.wire_url.clone();
-    let version = open_file.version;
+    let RefreshDiagnosticsTask { file, state } = task;
+    let uri = file.wire_url.clone();
+    let version = file.version;
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
     // Special case testthat-specific behaviour. This is a simple stopgap
@@ -982,7 +979,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
         .components()
         .any(|c| c.as_os_str() == "testthat");
 
-    let diagnostics = generate_diagnostics(open_file.file, state, testthat);
+    let diagnostics = generate_diagnostics(file.inner, state, testthat);
 
     RefreshDiagnosticsResult {
         uri,
@@ -1051,6 +1048,7 @@ mod tests {
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::db::FileArkExt;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1069,9 +1067,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
-        state.insert_ark_file(uri.clone(), file, None);
+        state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.ark_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 
@@ -1093,9 +1091,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
-        state.insert_ark_file(uri.clone(), file, None);
+        state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.ark_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 
@@ -1103,7 +1101,7 @@ mod tests {
         respond(
             response_tx,
             || {
-                let _ = file.tree_sitter(&snapshot.db);
+                let _ = file.inner.tree_sitter(&snapshot.db);
                 Ok(LspResponse::Hover(None))
             },
             |response| response,

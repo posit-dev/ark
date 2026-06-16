@@ -7,10 +7,10 @@ use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::config::DocumentConfig;
 use crate::lsp::config::LspConfig;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::open_file::OpenFile;
 
 #[derive(Clone, Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -21,9 +21,9 @@ pub(crate) struct WorldState {
     pub(crate) db: OakDatabase,
 
     /// Watched documents, keyed on the normalised [`FilePath`] form.
-    /// The verbatim editor URL is preserved on each [`ArkFile::wire_url`]
+    /// The verbatim editor URL is preserved on each [`OpenFile::wire_url`]
     /// for wire output.
-    pub(crate) open_files: HashMap<FilePath, ArkFile>,
+    pub(crate) open_files: HashMap<FilePath, OpenFile>,
 
     /// Watched folders
     pub(crate) workspace: Workspace,
@@ -82,10 +82,10 @@ impl WorldState {
         }
     }
 
-    pub(crate) fn ark_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut ArkFile> {
+    pub(crate) fn open_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut OpenFile> {
         let key = FilePath::from_url(uri);
-        if let Some(ark_file) = self.open_files.get_mut(&key) {
-            Ok(ark_file)
+        if let Some(open_file) = self.open_files.get_mut(&key) {
+            Ok(open_file)
         } else {
             Err(anyhow!("Can't find document for URI {uri}"))
         }
@@ -107,26 +107,26 @@ impl WorldState {
         }
     }
 
-    /// Get a clone of the stored [`ArkFile`] for a request.
+    /// Get a clone of the stored [`OpenFile`] for a request.
     ///
-    /// `ArkFile` is cheap to clone: the analysis handle is a salsa id and the
+    /// `OpenFile` is cheap to clone: the analysis handle is a salsa id and the
     /// protocol fields are small. Handlers want an owned value because the
     /// `r_task` ones move it across a thread boundary.
-    pub(crate) fn ark_file(&self, uri: &Url) -> anyhow::Result<ArkFile> {
+    pub(crate) fn open_file(&self, uri: &Url) -> anyhow::Result<OpenFile> {
         let key = FilePath::from_url(uri);
-        let Some(ark_file) = self.open_files.get(&key) else {
+        let Some(open_file) = self.open_files.get(&key) else {
             return Err(anyhow!("Can't find document for URI {uri}"));
         };
-        Ok(ark_file.clone())
+        Ok(open_file.clone())
     }
 
     /// The salsa [`File`] handle for an open document.
     pub(crate) fn file(&self, uri: &Url) -> anyhow::Result<File> {
         let key = FilePath::from_url(uri);
-        let Some(open_file) = self.open_files.get(&key) else {
+        let Some(file) = self.open_files.get(&key) else {
             return Err(anyhow!("Can't find document for URI {uri}"));
         };
-        Ok(open_file.file)
+        Ok(file.inner)
     }
 
     /// URL to put on the wire for `file`. Open buffers keep the editor's
@@ -137,26 +137,25 @@ impl WorldState {
         let path = file.path(&self.db);
         self.open_files
             .get(path)
-            .map(|ark_file| ark_file.wire_url.clone())
+            .map(|open_file| open_file.wire_url.clone())
             .unwrap_or_else(|| path.to_url())
     }
 
     /// Register an editor buffer in `open_files`, keying on the normalised
-    /// [`FilePath`] and stashing the verbatim editor URL on [`ArkFile::wire_url`] for
+    /// [`FilePath`] and stashing the verbatim editor URL on [`OpenFile::wire_url`] for
     /// wire output.
     ///
     /// The caller is in charge of pushing the contents into `oak` via
     /// `upsert_editor()` and handing us the resulting [`File`].
-    pub(crate) fn insert_ark_file(&mut self, uri: Url, file: File, version: Option<i32>) {
-        let key = FilePath::from_url(&uri);
-        let ark_file = ArkFile {
-            file,
+    pub(crate) fn insert_open_file(&mut self, url: Url, file: File, version: Option<i32>) {
+        let key = FilePath::from_url(&url);
+        let open_file = OpenFile {
+            inner: file,
             version,
             config: DocumentConfig::default(),
-            wire_url: uri,
-            encoding: self.config.position_encoding,
+            wire_url: url,
         };
-        self.open_files.insert(key, ark_file);
+        self.open_files.insert(key, open_file);
     }
 }
 

@@ -270,7 +270,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
-    state.insert_ark_file(url.clone(), file, None);
+    state.insert_open_file(url.clone(), file, None);
 
     // Now disk-side `Changed` fires with stale disk content.
     fs::write(&path, "disk_v3\n").unwrap();
@@ -305,7 +305,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
 #[test]
 fn test_r_file_changed_for_unopened_file_updates_contents() {
     // No editor buffer, so the watcher's disk content is authoritative
-    // and should land in `file.contents()`. Complements the open-file
+    // and should land in `file.source_text()`. Complements the open-file
     // skip test above.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("a.R");
@@ -356,7 +356,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
-    state.insert_ark_file(url.clone(), file, None);
+    state.insert_open_file(url.clone(), file, None);
 
     fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -573,7 +573,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
-    state.insert_ark_file(url.clone(), file, None);
+    state.insert_open_file(url.clone(), file, None);
 
     let file_before = state.db.file_by_path(&file_path).unwrap();
 
@@ -630,7 +630,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "edited\n".to_string());
-    state.insert_ark_file(url.clone(), file, None);
+    state.insert_open_file(url.clone(), file, None);
 
     // Remove the workspace folder; file goes to orphan (editor-owned).
     did_change_workspace_folders(

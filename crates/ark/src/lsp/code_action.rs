@@ -10,15 +10,15 @@
 use std::collections::HashMap;
 
 use aether_lsp_utils::proto::PositionEncoding;
-use oak_db::File;
 use tower_lsp::lsp_types;
 use tree_sitter::Range;
 use url::Url;
 
-use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::roxygen::roxygen_documentation;
 use crate::lsp::db::ArkDb;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
+use crate::lsp::open_file::OpenFile;
 
 mod roxygen;
 
@@ -30,11 +30,9 @@ pub(crate) struct CodeActions {
 /// Collect the code actions for `range` and assemble them into the LSP response.
 pub(crate) fn code_actions(
     db: &dyn ArkDb,
-    file: File,
+    file: &OpenFile,
     range: Range,
     encoding: PositionEncoding,
-    wire_url: &Url,
-    version: Option<i32>,
     capabilities: &Capabilities,
 ) -> lsp_types::CodeActionResponse {
     let mut actions = CodeActions::new();
@@ -45,15 +43,15 @@ pub(crate) fn code_actions(
         return actions.into_response();
     }
 
-    if let Some(edit) = roxygen_documentation(db, file, range) {
+    if let Some(edit) = roxygen_documentation(db, file.inner, range) {
         if let Ok(position) =
-            lsp_position_from_tree_sitter_point(edit.position, file.line_index(db), encoding)
+            lsp_position_from_tree_sitter_point(edit.position, file.inner.line_index(db), encoding)
         {
             let range = lsp_types::Range::new(position, position);
             let text_edit = lsp_types::TextEdit::new(range, edit.documentation);
             let workspace_edit = code_action_workspace_text_edit(
-                wire_url.clone(),
-                version,
+                file.wire_url.clone(),
+                file.version,
                 vec![text_edit],
                 capabilities,
             );

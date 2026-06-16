@@ -26,13 +26,13 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp;
-use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;

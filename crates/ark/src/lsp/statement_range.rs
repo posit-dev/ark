@@ -20,11 +20,11 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::backend::LspResult;
 use crate::lsp::db::parse_tree_sitter;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;

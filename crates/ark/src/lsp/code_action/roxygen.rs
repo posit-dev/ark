@@ -1,8 +1,8 @@
 use oak_db::File;
 
-use crate::lsp::ark_file::get_line;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::get_line;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -150,6 +150,7 @@ fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use tower_lsp::lsp_types::CodeActionOrCommand;
     use tower_lsp::lsp_types::DocumentChanges;
     use tower_lsp::lsp_types::OneOf;
@@ -159,9 +160,12 @@ mod tests {
     use url::Url;
 
     use crate::fixtures::point_and_offset_from_cursor;
-    use crate::lsp::ark_file::test_ark_file;
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::code_actions;
+    use crate::lsp::open_file::test_open_file;
+
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn point_range(point: Point, byte: usize) -> Range {
         Range {
@@ -182,15 +186,13 @@ mod tests {
             .with_workspace_edit_document_changes(true);
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
         let mut actions = code_actions(
             &db,
-            file.file,
+            &file,
             point_range(point, offset),
-            file.encoding,
-            &file.wire_url,
-            file.version,
+            ENCODING,
             &capabilities,
         );
         assert_eq!(actions.len(), 1);
@@ -284,15 +286,13 @@ outer <- function(a, b = 2) {
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
         let actions = code_actions(
             &db,
-            file.file,
+            &file,
             point_range(point, offset),
-            file.encoding,
-            &file.wire_url,
-            file.version,
+            ENCODING,
             &capabilities,
         );
         assert!(actions.is_empty());
@@ -310,15 +310,13 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
         let actions = code_actions(
             &db,
-            file.file,
+            &file,
             point_range(point, offset),
-            file.encoding,
-            &file.wire_url,
-            file.version,
+            ENCODING,
             &capabilities,
         );
         assert!(actions.is_empty());
@@ -336,15 +334,13 @@ fn@ <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, open_file) = test_open_file(&text);
 
         let actions = code_actions(
             &db,
-            ark_file.file,
+            &open_file,
             point_range(point, offset),
-            ark_file.encoding,
-            &ark_file.wire_url,
-            ark_file.version,
+            ENCODING,
             &capabilities,
         );
         assert!(actions.is_empty());
@@ -362,15 +358,13 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, open_file) = test_open_file(&text);
 
         let actions = code_actions(
             &db,
-            ark_file.file,
+            &open_file,
             point_range(point, offset),
-            ark_file.encoding,
-            &ark_file.wire_url,
-            ark_file.version,
+            ENCODING,
             &capabilities,
         );
         assert!(actions.is_empty());
@@ -390,15 +384,13 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, open_file) = test_open_file(&text);
 
         let mut actions = code_actions(
             &db,
-            ark_file.file,
+            &open_file,
             point_range(point, offset),
-            ark_file.encoding,
-            &ark_file.wire_url,
-            ark_file.version,
+            ENCODING,
             &capabilities,
         );
         assert_eq!(actions.len(), 1);

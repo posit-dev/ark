@@ -13,8 +13,8 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 use tree_sitter::Tree;
 
-use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::db::ArkDb;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
