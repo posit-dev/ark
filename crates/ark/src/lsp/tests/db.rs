@@ -3,7 +3,7 @@ use oak_db::File;
 use oak_db::OakDatabase;
 use url::Url;
 
-use crate::lsp::db::FileExt;
+use crate::lsp::db::FileArkExt;
 
 fn file(db: &OakDatabase, contents: &str) -> File {
     let url = FilePath::from_url(&Url::parse("file:///test.R").unwrap());

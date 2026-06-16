@@ -14,7 +14,7 @@ use url::Url;
 
 use crate::lsp::config::DocumentConfig;
 use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileExt;
+use crate::lsp::db::FileArkExt;
 
 /// Editor-managed buffer state, paired with its `oak_db::File`.
 ///

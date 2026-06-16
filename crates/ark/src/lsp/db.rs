@@ -18,11 +18,11 @@ pub(crate) trait ArkDb: oak_db::Db {}
 impl ArkDb for OakDatabase {}
 
 /// Extension trait that adds ark-side query methods to `oak_db::File`.
-pub(crate) trait FileExt {
+pub(crate) trait FileArkExt {
     fn tree_sitter(self, db: &dyn ArkDb) -> &tree_sitter::Tree;
 }
 
-impl FileExt for File {
+impl FileArkExt for File {
     fn tree_sitter(self, db: &dyn ArkDb) -> &tree_sitter::Tree {
         &tree_sitter_query(db, self).0
     }
