@@ -222,8 +222,8 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
     let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
 
     let use_start = "library(mypkg)\n".len() as u32;
-    let result = rename(&db, script, offset(use_start), "bar").unwrap();
-    assert_eq!(pairs(&result.ranges), vec![
+    let result = rename(&db, script, offset(use_start)).unwrap();
+    assert_eq!(pairs(&result), vec![
         (script, range(use_start, use_start + 3)),
         (pkg_file, range(0, 3)),
     ]);
