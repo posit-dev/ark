@@ -59,31 +59,7 @@ impl ArkFile {
     }
 
     pub(crate) fn get_line<'db>(&self, db: &'db dyn ArkDb, line: usize) -> Option<&'db str> {
-        let line_index = self.line_index(db);
-        let contents = self.contents(db);
-
-        let Some(line_start) = line_index.newlines.get(line) else {
-            // Forcing a full capture so we can learn the situations in which this occurs
-            log::error!(
-                "Requesting line {line} but only {n} lines exist.\n\nContents:\n{contents}\n\nBacktrace:\n{trace}",
-                n = line_index.len(),
-                line = line + 1,
-                trace = std::backtrace::Backtrace::force_capture(),
-            );
-            return None;
-        };
-
-        let line_end = line_index
-            .newlines
-            .get(line + 1)
-            .copied()
-            // if `line` is last, extract text until end of buffer
-            .unwrap_or_else(|| (contents.len() as u32).into());
-
-        let line_start_byte: usize = line_start.to_owned().into();
-        let line_end_byte: usize = line_end.into();
-
-        contents.get(line_start_byte..line_end_byte)
+        get_line(self.contents(db), self.line_index(db), line)
     }
 
     pub(crate) fn tree_sitter_point_from_lsp_position(
@@ -91,12 +67,7 @@ impl ArkFile {
         db: &dyn ArkDb,
         position: lsp_types::Position,
     ) -> anyhow::Result<tree_sitter::Point> {
-        let line_col =
-            from_proto::line_col_from_position(position, self.line_index(db), self.encoding);
-        Ok(tree_sitter::Point::new(
-            line_col.line as usize,
-            line_col.col as usize,
-        ))
+        tree_sitter_point_from_lsp_position(position, self.line_index(db), self.encoding)
     }
 
     pub(crate) fn lsp_position_from_tree_sitter_point(
@@ -120,17 +91,7 @@ impl ArkFile {
         db: &dyn ArkDb,
         range: lsp_types::Range,
     ) -> anyhow::Result<tree_sitter::Range> {
-        let start_point = self.tree_sitter_point_from_lsp_position(db, range.start)?;
-        let end_point = self.tree_sitter_point_from_lsp_position(db, range.end)?;
-
-        let text_range = from_proto::text_range(range, self.line_index(db), self.encoding)?;
-
-        Ok(tree_sitter::Range {
-            start_byte: text_range.start().into(),
-            end_byte: text_range.end().into(),
-            start_point,
-            end_point,
-        })
+        tree_sitter_range_from_lsp_range(range, self.line_index(db), self.encoding)
     }
 }
 
@@ -157,6 +118,65 @@ pub(crate) fn lsp_range_from_tree_sitter_range(
     let start = lsp_position_from_tree_sitter_point(range.start_point, line_index, encoding)?;
     let end = lsp_position_from_tree_sitter_point(range.end_point, line_index, encoding)?;
     Ok(lsp_types::Range::new(start, end))
+}
+
+pub(crate) fn tree_sitter_point_from_lsp_position(
+    position: lsp_types::Position,
+    line_index: &biome_line_index::LineIndex,
+    encoding: PositionEncoding,
+) -> anyhow::Result<tree_sitter::Point> {
+    let line_col = from_proto::line_col_from_position(position, line_index, encoding);
+    Ok(tree_sitter::Point::new(
+        line_col.line as usize,
+        line_col.col as usize,
+    ))
+}
+
+pub(crate) fn tree_sitter_range_from_lsp_range(
+    range: lsp_types::Range,
+    line_index: &biome_line_index::LineIndex,
+    encoding: PositionEncoding,
+) -> anyhow::Result<tree_sitter::Range> {
+    let start_point = tree_sitter_point_from_lsp_position(range.start, line_index, encoding)?;
+    let end_point = tree_sitter_point_from_lsp_position(range.end, line_index, encoding)?;
+
+    let text_range = from_proto::text_range(range, line_index, encoding)?;
+
+    Ok(tree_sitter::Range {
+        start_byte: text_range.start().into(),
+        end_byte: text_range.end().into(),
+        start_point,
+        end_point,
+    })
+}
+
+pub(crate) fn get_line<'a>(
+    contents: &'a str,
+    line_index: &biome_line_index::LineIndex,
+    line: usize,
+) -> Option<&'a str> {
+    let Some(line_start) = line_index.newlines.get(line) else {
+        // Forcing a full capture so we can learn the situations in which this occurs
+        log::error!(
+            "Requesting line {line} but only {n} lines exist.\n\nContents:\n{contents}\n\nBacktrace:\n{trace}",
+            n = line_index.len(),
+            line = line + 1,
+            trace = std::backtrace::Backtrace::force_capture(),
+        );
+        return None;
+    };
+
+    let line_end = line_index
+        .newlines
+        .get(line + 1)
+        .copied()
+        // if `line` is last, extract text until end of buffer
+        .unwrap_or_else(|| (contents.len() as u32).into());
+
+    let line_start_byte: usize = line_start.to_owned().into();
+    let line_end_byte: usize = line_end.into();
+
+    contents.get(line_start_byte..line_end_byte)
 }
 
 #[cfg(test)]
