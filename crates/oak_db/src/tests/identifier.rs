@@ -1,6 +1,6 @@
 //! Unit tests for the cursor-classification and candidate-enumeration
 //! queries that back find-references / rename: `Identifier::classify`,
-//! `uses_of`, `member_uses`. Resolution itself is covered by
+//! `uses_of`, `member_uses_of`. Resolution itself is covered by
 //! `file_resolve(_at)`; here we pin down classification and the raw range
 //! collection.
 
@@ -284,118 +284,118 @@ fn test_uses_of_unknown_name_is_empty() {
     assert!(file.uses_of(&db, Name::new(&db, "nope")).is_empty());
 }
 
-// --- member_uses ---
+// --- member_uses_of ---
 
 #[test]
-fn test_member_uses_collects_matching_kind() {
+fn test_member_uses_of_collects_matching_kind() {
     // "foo$bar\nbaz$bar\n": both `bar` are `$` members.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "foo$bar\nbaz$bar\n");
 
-    let ranges = file.member_uses(&db, "bar", MemberKind::Dollar);
+    let ranges = file.member_uses_of(&db, "bar", MemberKind::Dollar);
     assert_eq!(ranges, vec![text_range(4, 7), text_range(12, 15)]);
 }
 
 #[test]
-fn test_member_uses_recurses_into_nested_dollar() {
+fn test_member_uses_of_recurses_into_nested_dollar() {
     // "foo$bar$baz": `(foo$bar)$baz`. The scan walks both the inner and outer
     // extract, so `bar` (4..7) and `baz` (8..11) each match on their own.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "foo$bar$baz\n");
 
-    assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
         text_range(4, 7)
     ]);
-    assert_eq!(file.member_uses(&db, "baz", MemberKind::Dollar), vec![
+    assert_eq!(file.member_uses_of(&db, "baz", MemberKind::Dollar), vec![
         text_range(8, 11)
     ]);
 }
 
 #[test]
-fn test_member_uses_filters_by_kind() {
+fn test_member_uses_of_filters_by_kind() {
     // "foo$bar\nfoo@bar\n": one `$bar`, one `@bar`.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "foo$bar\nfoo@bar\n");
 
-    assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
         text_range(4, 7)
     ]);
-    assert_eq!(file.member_uses(&db, "bar", MemberKind::At), vec![
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::At), vec![
         text_range(12, 15)
     ]);
 }
 
 #[test]
-fn test_member_uses_ignores_plain_identifier() {
+fn test_member_uses_of_ignores_plain_identifier() {
     // A standalone `bar` is not a member; only the `$bar` matches.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "bar\nfoo$bar\n");
 
-    assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
         text_range(8, 11)
     ]);
 }
 
 #[test]
-fn test_member_uses_filters_by_name() {
+fn test_member_uses_of_filters_by_name() {
     let mut db = TestDb::new();
     let file = make_file(&mut db, "foo$bar\nfoo$baz\n");
 
-    assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
+    assert_eq!(file.member_uses_of(&db, "bar", MemberKind::Dollar), vec![
         text_range(4, 7)
     ]);
 }
 
-// --- namespace_uses ---
+// --- namespace_uses_of ---
 
 #[test]
-fn test_namespace_uses_collects_matching() {
+fn test_namespace_uses_of_collects_matching() {
     // "dplyr::mutate\ndplyr::mutate\n": RHS `mutate` at 7..13 and 21..27.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\ndplyr::mutate\n");
 
-    let ranges = file.namespace_uses(&db, "dplyr", "mutate");
+    let ranges = file.namespace_uses_of(&db, "dplyr", "mutate");
     assert_eq!(ranges, vec![text_range(7, 13), text_range(21, 27)]);
 }
 
 #[test]
-fn test_namespace_uses_matches_triple_colon() {
+fn test_namespace_uses_of_matches_triple_colon() {
     // `:::` names the same symbol as `::`.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\ndplyr:::mutate\n");
 
-    let ranges = file.namespace_uses(&db, "dplyr", "mutate");
+    let ranges = file.namespace_uses_of(&db, "dplyr", "mutate");
     assert_eq!(ranges, vec![text_range(7, 13), text_range(22, 28)]);
 }
 
 #[test]
-fn test_namespace_uses_filters_by_namespace() {
+fn test_namespace_uses_of_filters_by_namespace() {
     // `tidyr::mutate` is a different symbol than `dplyr::mutate`.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\ntidyr::mutate\n");
 
-    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+    assert_eq!(file.namespace_uses_of(&db, "dplyr", "mutate"), vec![
         text_range(7, 13)
     ]);
 }
 
 #[test]
-fn test_namespace_uses_filters_by_name() {
+fn test_namespace_uses_of_filters_by_name() {
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\ndplyr::filter\n");
 
-    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+    assert_eq!(file.namespace_uses_of(&db, "dplyr", "mutate"), vec![
         text_range(7, 13)
     ]);
 }
 
 #[test]
-fn test_namespace_uses_ignores_bare_call() {
+fn test_namespace_uses_of_ignores_bare_call() {
     // A bare `mutate` is not a namespace access; only `dplyr::mutate` matches.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "mutate\ndplyr::mutate\n");
 
-    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+    assert_eq!(file.namespace_uses_of(&db, "dplyr", "mutate"), vec![
         text_range(14, 20)
     ]);
 }

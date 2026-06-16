@@ -56,10 +56,10 @@ pub fn find_references(
 fn find_variable_references(
     db: &dyn Db,
     file: File,
-    snapped: TextSize,
+    offset: TextSize,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let target_defs = file.resolve_at(db, snapped);
+    let target_defs = file.resolve_at(db, offset);
     if target_defs.is_empty() {
         return Vec::new();
     }
@@ -146,27 +146,22 @@ fn collect_package_qualified_uses<'db>(
 
     let name = name.text(db);
     for file in all_matching_files(db, name.as_str()) {
-        for range in file.namespace_uses(db, package, name.as_str()) {
+        for range in file.namespace_uses_of(db, package, name.as_str()) {
             results.push(FileRange { file, range });
         }
     }
 }
 
-fn find_member_references(
-    db: &dyn Db,
-    primary: File,
-    name: &str,
-    kind: MemberKind,
-) -> Vec<FileRange> {
+fn find_member_references(db: &dyn Db, file: File, name: &str, kind: MemberKind) -> Vec<FileRange> {
     let mut results = Vec::new();
 
     for file in all_matching_files(db, name) {
-        for range in file.member_uses(db, name, kind) {
+        for range in file.member_uses_of(db, name, kind) {
             results.push(FileRange { file, range });
         }
     }
 
-    sort_file_ranges(&mut results, db, primary);
+    sort_file_ranges(&mut results, db, file);
     results
 }
 
@@ -179,7 +174,7 @@ fn find_namespace_references(
     let mut results = Vec::new();
 
     for file in all_matching_files(db, name) {
-        for range in file.namespace_uses(db, namespace, name) {
+        for range in file.namespace_uses_of(db, namespace, name) {
             results.push(FileRange { file, range });
         }
     }

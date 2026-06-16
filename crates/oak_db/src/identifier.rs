@@ -69,25 +69,25 @@ impl<'db> Identifier<'db> {
         let root = parse.syntax();
         let index = file.semantic_index(db);
 
-        let snapped = snap_to_name_at_boundary(&root, offset);
+        let offset = snap_to_name_at_boundary(&root, offset);
 
-        if let Some((scope_id, _use_id, use_site)) = index.use_at(snapped) {
-            let name_str = index.symbols(scope_id).symbol(use_site.symbol()).name();
+        if let Some((scope_id, _use_id, use_site)) = index.use_at(offset) {
+            let name = index.symbols(scope_id).symbol(use_site.symbol()).name();
             return Some(Identifier::Variable {
-                name: Name::new(db, name_str),
+                name: Name::new(db, name),
                 range: use_site.range(),
             });
         }
 
-        if let Some((scope_id, _def_id, def)) = index.definition_at(snapped) {
-            let name_str = index.symbols(scope_id).symbol(def.symbol()).name();
+        if let Some((scope_id, _def_id, def)) = index.definition_at(offset) {
+            let name = index.symbols(scope_id).symbol(def.symbol()).name();
             return Some(Identifier::Variable {
-                name: Name::new(db, name_str),
+                name: Name::new(db, name),
                 range: def.range(),
             });
         }
 
-        if let Some((name, kind, operator_range, name_range)) = classify_member(&root, snapped) {
+        if let Some((name, kind, operator_range, name_range)) = classify_member(&root, offset) {
             return Some(Identifier::Member {
                 name: Name::new(db, name.as_str()),
                 kind,
@@ -97,7 +97,7 @@ impl<'db> Identifier<'db> {
         }
 
         if let Some((namespace, name, part, operator_range, name_range)) =
-            classify_namespace(&root, snapped)
+            classify_namespace(&root, offset)
         {
             return Some(Identifier::NamespaceAccess {
                 namespace: Name::new(db, namespace.as_str()),
@@ -124,7 +124,7 @@ impl<'db> File {
 
     /// All ranges where `name` appears as the RHS of a `$` or `@` with the
     /// given `kind` in this file. Structural scan of the parse tree.
-    pub fn member_uses(self, db: &'db dyn Db, name: &str, kind: MemberKind) -> Vec<TextRange> {
+    pub fn member_uses_of(self, db: &'db dyn Db, name: &str, kind: MemberKind) -> Vec<TextRange> {
         let root = self.parse(db).syntax();
         root.descendants()
             .filter_map(RExtractExpression::cast)
@@ -151,7 +151,7 @@ impl<'db> File {
     /// All ranges where `name` appears as the RHS symbol of a `::` or `:::`
     /// with `namespace` on the left, in this file. Structural scan of the
     /// parse tree. `::` and `:::` both count: they name the same symbol.
-    pub fn namespace_uses(self, db: &'db dyn Db, namespace: &str, name: &str) -> Vec<TextRange> {
+    pub fn namespace_uses_of(self, db: &'db dyn Db, namespace: &str, name: &str) -> Vec<TextRange> {
         let root = self.parse(db).syntax();
         root.descendants()
             .filter_map(RNamespaceExpression::cast)
