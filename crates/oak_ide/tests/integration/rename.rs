@@ -63,7 +63,10 @@ fn test_prepare_rename_library_package_symbol_errors() {
     let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
 
     let err = prepare_rename(&db, lib_file, offset(0)).unwrap_err();
-    assert!(err.to_string().contains("installed package"));
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
 }
 
 // --- rename: basic ---
@@ -183,7 +186,10 @@ fn test_rename_refuses_library_package_symbol() {
 
     // Cursor on the def `foo` at offset 0.
     let err = rename(&db, lib_file, offset(0)).unwrap_err();
-    assert!(err.to_string().contains("installed package"));
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
 }
 
 #[test]
@@ -199,7 +205,10 @@ fn test_rename_refuses_package_export_used_via_library() {
 
     let use_start = "library(mypkg)\n".len() as u32;
     let err = rename(&db, script, offset(use_start)).unwrap_err();
-    assert!(err.to_string().contains("installed package"));
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
 }
 
 #[test]
