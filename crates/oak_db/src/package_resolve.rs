@@ -69,6 +69,24 @@ impl<'db> Package {
             results.extend(file.resolve_export(db, name));
         }
 
+        // Re-exports. A name brought in by `importFrom()` and surfaced again by
+        // `export()` has no binding in this package's own files, so the loop
+        // above returns empty. Follow the import to the source package and
+        // resolve the name among its exports instead.
+        if results.is_empty() {
+            let name_str = name.text(db).as_str();
+            if let Some(import) = self
+                .namespace(db)
+                .imports
+                .iter()
+                .find(|import| import.name == name_str)
+            {
+                if let Some(source) = db.package_by_name(&import.package) {
+                    results = source.resolve(db, name, PackageVisibility::Exported);
+                }
+            }
+        }
+
         results
     }
 }

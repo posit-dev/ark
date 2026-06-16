@@ -1,3 +1,4 @@
+use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 use stdext::SortedVec;
@@ -178,6 +179,72 @@ fn test_stub_and_onload_override_both_returned() {
     let target_files: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
     assert!(target_files.contains(&files[0]));
     assert!(target_files.contains(&files[1]));
+}
+
+#[test]
+fn test_reexport_via_import_from_resolves_to_source() {
+    // dplyr re-exports tibble's `tibble`: NAMESPACE carries `export(tibble)`
+    // plus `importFrom(tibble, tibble)`, and the only R source is a bare
+    // `tibble::tibble` expression (not an assignment). The binding lives in
+    // tibble, so `dplyr::tibble` must follow the import and resolve there.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "workspace");
+
+    let tibble_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["tibble".to_string()]),
+        ..Default::default()
+    };
+    let tibble = Package::new(
+        &db,
+        file_path("workspace/tibble/DESCRIPTION"),
+        "tibble".to_string(),
+        None,
+        tibble_ns,
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let tibble_file = File::new(
+        &db,
+        file_path("workspace/tibble/R/tibble.R"),
+        "tibble <- function() 1\n".to_string(),
+        Some(tibble),
+    );
+    tibble.set_files(&mut db).to(vec![tibble_file]);
+
+    let dplyr_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["tibble".to_string()]),
+        imports: vec![Import {
+            name: "tibble".to_string(),
+            package: "tibble".to_string(),
+        }],
+        ..Default::default()
+    };
+    let dplyr = Package::new(
+        &db,
+        file_path("workspace/dplyr/DESCRIPTION"),
+        "dplyr".to_string(),
+        None,
+        dplyr_ns,
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+    let dplyr_file = File::new(
+        &db,
+        file_path("workspace/dplyr/R/reexport.R"),
+        "tibble::tibble\n".to_string(),
+        Some(dplyr),
+    );
+    dplyr.set_files(&mut db).to(vec![dplyr_file]);
+
+    root.set_packages(&mut db).to(vec![tibble, dplyr]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let defs = dplyr.resolve(&db, name(&db, "tibble"), PackageVisibility::Exported);
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), tibble_file);
+    assert_eq!(defs[0].name(&db).text(&db).as_str(), "tibble");
 }
 
 #[test]
