@@ -1,5 +1,6 @@
 use aether_syntax::AnyRSelector;
 use aether_syntax::RExtractExpression;
+use aether_syntax::RNamespaceExpression;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use aether_syntax::RSyntaxToken;
@@ -29,6 +30,16 @@ pub enum Identifier<'db> {
         operator_range: TextRange,
         name_range: TextRange,
     },
+    /// Cursor anywhere on a `pkg::sym` or `pkg:::sym` namespace access. The
+    /// whole qualified name is treated as one symbol, so the classification is
+    /// the same wherever the cursor sits. `part` records which half it was on.
+    NamespaceAccess {
+        namespace: Name<'db>,
+        name: Name<'db>,
+        part: NamespacePart,
+        operator_range: TextRange,
+        name_range: TextRange,
+    },
 }
 
 /// The kind of `$` or `@` member-access operator.
@@ -38,13 +49,21 @@ pub enum MemberKind {
     At,
 }
 
+/// Which half of a `pkg::sym` the cursor landed on. The operator is not listed
+/// here because a cursor inside the `::` operator is snapped onto the RHS.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NamespacePart {
+    Package,
+    Symbol,
+}
+
 impl<'db> Identifier<'db> {
     /// Classify the identifier at `offset` in `file`, snapping to the
     /// nearest name-token boundary first.
     ///
-    /// Returns `None` when the cursor isn't on a variable binding/use or
-    /// a member name (e.g. cursor is on an operator, a keyword, or a
-    /// `pkg::sym` namespace access).
+    /// Returns `None` when the cursor isn't on a variable binding/use, a
+    /// member name, or a namespace access (e.g. cursor is on an operator or
+    /// a keyword).
     pub fn classify(db: &'db dyn Db, file: File, offset: TextSize) -> Option<Identifier<'db>> {
         let parse = file.parse(db);
         let root = parse.syntax();
@@ -72,6 +91,18 @@ impl<'db> Identifier<'db> {
             return Some(Identifier::Member {
                 name: Name::new(db, name.as_str()),
                 kind,
+                operator_range,
+                name_range,
+            });
+        }
+
+        if let Some((namespace, name, part, operator_range, name_range)) =
+            classify_namespace(&root, snapped)
+        {
+            return Some(Identifier::NamespaceAccess {
+                namespace: Name::new(db, namespace.as_str()),
+                name: Name::new(db, name.as_str()),
+                part,
                 operator_range,
                 name_range,
             });
@@ -108,7 +139,30 @@ impl<'db> File {
                     return None;
                 }
                 let rhs = extract.right().ok()?;
-                let (member_name, range) = member_name_and_range(&rhs)?;
+                let (member_name, range) = selector_name_and_range(&rhs)?;
+                if member_name != name {
+                    return None;
+                }
+                Some(range)
+            })
+            .collect()
+    }
+
+    /// All ranges where `name` appears as the RHS symbol of a `::` or `:::`
+    /// with `namespace` on the left, in this file. Structural scan of the
+    /// parse tree. `::` and `:::` both count: they name the same symbol.
+    pub fn namespace_uses(self, db: &'db dyn Db, namespace: &str, name: &str) -> Vec<TextRange> {
+        let root = self.parse(db).syntax();
+        root.descendants()
+            .filter_map(RNamespaceExpression::cast)
+            .filter_map(|namespace_expr| {
+                let left = namespace_expr.left().ok()?;
+                let (lhs_name, _) = selector_name_and_range(&left)?;
+                if lhs_name != namespace {
+                    return None;
+                }
+                let rhs = namespace_expr.right().ok()?;
+                let (member_name, range) = selector_name_and_range(&rhs)?;
                 if member_name != name {
                     return None;
                 }
@@ -149,16 +203,52 @@ fn classify_member(
     };
 
     let rhs = extract.right().ok()?;
-    let (name, name_range) = member_name_and_range(&rhs)?;
+    let (name, name_range) = selector_name_and_range(&rhs)?;
     Some((name, kind, op.text_trimmed_range(), name_range))
 }
 
-fn member_name_and_range(selector: &AnyRSelector) -> Option<(String, TextRange)> {
+/// Check whether the offset is on a `pkg::sym` / `pkg:::sym` namespace access.
+/// Returns `(namespace, name, part, operator_range, name_range)` on a match.
+/// `part` says which side of the operator the cursor is on. A cursor inside
+/// the operator has been snapped onto the symbol upstream, so it reads as
+/// `Symbol`.
+fn classify_namespace(
+    root: &RSyntaxNode,
+    offset: TextSize,
+) -> Option<(String, String, NamespacePart, TextRange, TextRange)> {
+    let token = root.token_at_offset(offset).right_biased()?;
+    if !is_name_token(&token) {
+        return None;
+    }
+
+    // For `pkg::sym`: token -> parent `RIdentifier` -> parent `RNamespaceExpression`.
+    let identifier = token.parent()?;
+    let namespace_expr = RNamespaceExpression::cast(identifier.parent()?)?;
+
+    // `offset` has been snapped onto the LHS or RHS, so the cursor is never on
+    // the operator, which simplifies classification
+    let op = namespace_expr.operator().ok()?;
+    let part = if token.text_trimmed_range().start() < op.text_trimmed_range().end() {
+        NamespacePart::Package
+    } else {
+        NamespacePart::Symbol
+    };
+
+    let left = namespace_expr.left().ok()?;
+    let (namespace, _) = selector_name_and_range(&left)?;
+
+    let rhs = namespace_expr.right().ok()?;
+    let (name, name_range) = selector_name_and_range(&rhs)?;
+    Some((namespace, name, part, op.text_trimmed_range(), name_range))
+}
+
+fn selector_name_and_range(selector: &AnyRSelector) -> Option<(String, TextRange)> {
     match selector {
         AnyRSelector::RIdentifier(ident) => {
             Some((ident.name_text(), ident.syntax().text_trimmed_range()))
         },
         AnyRSelector::RStringValue(s) => Some((s.string_text()?, s.syntax().text_trimmed_range())),
+        // Dots are not actionable identifiers
         _ => None,
     }
 }
@@ -169,6 +259,14 @@ fn snap_to_name_at_boundary(root: &RSyntaxNode, offset: TextSize) -> TextSize {
         TokenAtOffset::Single(token) => {
             if is_name_token(&token) {
                 token.text_trimmed_range().start()
+            } else if matches!(token.kind(), RSyntaxKind::COLON2 | RSyntaxKind::COLON3) {
+                // Cursor strictly inside `::` / `:::` (only multi-char operators
+                // have an interior). Snap onto the qualified symbol on its right.
+                token
+                    .next_token()
+                    .filter(is_name_token)
+                    .map(|name| name.text_trimmed_range().start())
+                    .unwrap_or(offset)
             } else {
                 offset
             }

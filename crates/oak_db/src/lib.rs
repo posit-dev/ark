@@ -24,6 +24,7 @@ pub use file_exports::FileExports;
 pub use file_imports::ImportLayer;
 pub use identifier::Identifier;
 pub use identifier::MemberKind;
+pub use identifier::NamespacePart;
 pub use inputs::LibraryRoots;
 pub use inputs::LiveRoot;
 pub use inputs::OrphanRoot;

@@ -13,6 +13,7 @@ use crate::File;
 use crate::Identifier;
 use crate::MemberKind;
 use crate::Name;
+use crate::NamespacePart;
 
 fn make_file(db: &mut TestDb, contents: &str) -> File {
     File::new(db, file_path("a.R"), contents.to_string(), None)
@@ -79,12 +80,68 @@ fn test_classify_on_operator_is_none() {
 }
 
 #[test]
-fn test_classify_on_namespace_is_none() {
-    // `pkg::sym` namespace access isn't a renamable variable or a member.
+fn test_classify_on_namespace_symbol() {
+    // "dplyr::mutate": `dplyr` 0..5, `::` 5..7, `mutate` 7..13.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\n");
 
-    assert!(Identifier::classify(&db, file, offset(7)).is_none());
+    match Identifier::classify(&db, file, offset(7)) {
+        Some(Identifier::NamespaceAccess {
+            namespace,
+            name,
+            part,
+            operator_range,
+            name_range,
+        }) => {
+            assert_eq!(namespace.text(&db).as_str(), "dplyr");
+            assert_eq!(name.text(&db).as_str(), "mutate");
+            assert_eq!(part, NamespacePart::Symbol);
+            assert_eq!(operator_range, text_range(5, 7));
+            assert_eq!(name_range, text_range(7, 13));
+        },
+        other => panic!("expected NamespaceAccess, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classify_on_namespace_package() {
+    // Cursor on the `dplyr` package half classifies as the same symbol, with
+    // `part` recording the package side.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr::mutate\n");
+
+    match Identifier::classify(&db, file, offset(0)) {
+        Some(Identifier::NamespaceAccess {
+            namespace,
+            name,
+            part,
+            name_range,
+            ..
+        }) => {
+            assert_eq!(namespace.text(&db).as_str(), "dplyr");
+            assert_eq!(name.text(&db).as_str(), "mutate");
+            assert_eq!(part, NamespacePart::Package);
+            // The name range is the symbol's, regardless of cursor position.
+            assert_eq!(name_range, text_range(7, 13));
+        },
+        other => panic!("expected NamespaceAccess, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classify_inside_namespace_operator_snaps_to_symbol() {
+    // "dplyr:::mutate": `:::` 5..8. A cursor strictly inside the operator
+    // (offset 6) snaps onto the symbol.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr:::mutate\n");
+
+    match Identifier::classify(&db, file, offset(6)) {
+        Some(Identifier::NamespaceAccess { name, part, .. }) => {
+            assert_eq!(name.text(&db).as_str(), "mutate");
+            assert_eq!(part, NamespacePart::Symbol);
+        },
+        other => panic!("expected NamespaceAccess, got {other:?}"),
+    }
 }
 
 // --- classify: members ---
@@ -226,5 +283,59 @@ fn test_member_uses_filters_by_name() {
 
     assert_eq!(file.member_uses(&db, "bar", MemberKind::Dollar), vec![
         text_range(4, 7)
+    ]);
+}
+
+// --- namespace_uses ---
+
+#[test]
+fn test_namespace_uses_collects_matching() {
+    // "dplyr::mutate\ndplyr::mutate\n": RHS `mutate` at 7..13 and 21..27.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr::mutate\ndplyr::mutate\n");
+
+    let ranges = file.namespace_uses(&db, "dplyr", "mutate");
+    assert_eq!(ranges, vec![text_range(7, 13), text_range(21, 27)]);
+}
+
+#[test]
+fn test_namespace_uses_matches_triple_colon() {
+    // `:::` names the same symbol as `::`.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr::mutate\ndplyr:::mutate\n");
+
+    let ranges = file.namespace_uses(&db, "dplyr", "mutate");
+    assert_eq!(ranges, vec![text_range(7, 13), text_range(22, 28)]);
+}
+
+#[test]
+fn test_namespace_uses_filters_by_namespace() {
+    // `tidyr::mutate` is a different symbol than `dplyr::mutate`.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr::mutate\ntidyr::mutate\n");
+
+    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+        text_range(7, 13)
+    ]);
+}
+
+#[test]
+fn test_namespace_uses_filters_by_name() {
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr::mutate\ndplyr::filter\n");
+
+    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+        text_range(7, 13)
+    ]);
+}
+
+#[test]
+fn test_namespace_uses_ignores_bare_call() {
+    // A bare `mutate` is not a namespace access; only `dplyr::mutate` matches.
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "mutate\ndplyr::mutate\n");
+
+    assert_eq!(file.namespace_uses(&db, "dplyr", "mutate"), vec![
+        text_range(14, 20)
     ]);
 }

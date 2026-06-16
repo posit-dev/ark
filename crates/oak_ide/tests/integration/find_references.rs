@@ -12,11 +12,17 @@
 use aether_path::FilePath;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
+use oak_db::Package;
+use oak_db::Root;
+use oak_db::RootKind;
 use oak_ide::find_references;
 use oak_ide::FileRange;
+use oak_package_metadata::namespace::Namespace;
 use oak_scan::DbScan;
+use salsa::Setter;
 use url::Url;
 
 fn file_url(name: &str) -> Url {
@@ -224,12 +230,26 @@ fn test_unbound_use_returns_empty() {
 }
 
 #[test]
-fn test_namespace_access_returns_empty() {
+fn test_namespace_rhs_returns_namespace_scan() {
+    // Cursor on `mutate` RHS of `::` uses the structural namespace scan: it
+    // matches `dplyr::mutate` across files but not `tidyr::mutate` (different
+    // namespace) nor a bare `mutate()` call (installed packages aren't in the
+    // resolution graph, so there's no shared definition to compare against).
+    //
+    // TODO(namespace-refs): once `resolve` consumes the `Package` / `From`
+    // import layers, a bare `mutate` will resolve to dplyr's `mutate` and
+    // belong here.
     let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
+    let file = upsert(&mut db, "a.R", "dplyr::mutate\n");
+    let file2 = upsert(&mut db, "b.R", "dplyr::mutate\ntidyr::mutate\nmutate()\n");
 
     let refs = find_references(&db, file, offset(7), true);
-    assert!(refs.is_empty());
+    // a.R (primary) first, then b.R. b.R's `tidyr::mutate` and bare `mutate`
+    // are excluded.
+    assert_eq!(pairs(&refs), vec![
+        (file, range(7, 13)),
+        (file2, range(7, 13)),
+    ]);
 }
 
 // --- Dollar/at member access ---
@@ -318,4 +338,64 @@ fn test_locally_scoped_stays_in_file() {
         (file1, range(14, 15)),
         (file1, range(21, 22)),
     ]);
+}
+
+// --- Bare name <-> namespace bridge ---
+
+#[test]
+fn test_package_symbol_bridges_to_namespace_access() {
+    // `foo` is defined in workspace package `pkg`. A reference search from the
+    // bare name also surfaces `pkg::foo` qualified sites, since they name the
+    // same binding. `script.R`'s bare `foo` doesn't resolve to `pkg` (no
+    // attach), so it isn't included.
+    let mut db = OakDatabase::new();
+    let pkg_files = build_workspace_package(&mut db, &[("foo.R", "foo <- function() 1\n")]);
+    let foo_file = pkg_files[0];
+    let script = upsert(&mut db, "script.R", "pkg::foo()\nfoo\n");
+
+    // Cursor on the def `foo` at offset 0.
+    let refs = find_references(&db, foo_file, offset(0), true);
+
+    // `pkg`'s def (primary) first, then `pkg::foo` in script.R (5..8). The
+    // bare `foo` in script.R (11..14) is excluded.
+    assert_eq!(pairs(&refs), vec![
+        (foo_file, range(0, 3)),
+        (script, range(5, 8)),
+    ]);
+}
+
+// --- helpers for root / package wiring ---
+
+/// Build a workspace package holding `files` (name, contents), each with the
+/// package back-pointer set, and register it under a workspace root. Returns
+/// the created `File`s in order.
+fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<File> {
+    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION");
+    let created: Vec<File> = files
+        .iter()
+        .map(|(name, contents)| {
+            let url =
+                FilePath::from_url(&Url::parse(&format!("file:///project/pkg/R/{name}")).unwrap());
+            File::new(db, url, contents.to_string(), Some(pkg))
+        })
+        .collect();
+    pkg.set_files(db).to(created.clone());
+
+    let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
+    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    created
+}
+
+fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
+    Package::new(
+        db,
+        FilePath::from_url(&Url::parse(description_url).unwrap()),
+        "pkg".to_string(),
+        None,
+        Namespace::default(),
+        vec![],
+        vec![],
+        None,
+    )
 }

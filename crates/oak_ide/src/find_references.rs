@@ -7,6 +7,7 @@ use oak_db::Definition;
 use oak_db::File;
 use oak_db::Identifier;
 use oak_db::MemberKind;
+use oak_db::Name;
 use oak_semantic::ScopeId;
 
 use crate::FileRange;
@@ -15,7 +16,8 @@ use crate::FileRange;
 ///
 /// Uses `resolve_at()` to confirm each candidate: a textual mention of the
 /// same name is only included when it resolves to the same definition set.
-/// Member-name cursors (`$`/`@` RHS) fall back to a structural cross-file scan.
+/// Member-name cursors (`$`/`@` RHS) and namespace-access cursors (`pkg::sym`
+/// RHS) fall back to a structural cross-file scan.
 pub fn find_references(
     db: &dyn Db,
     file: File,
@@ -32,6 +34,21 @@ pub fn find_references(
         },
         Identifier::Member { name, kind, .. } => {
             find_member_references(db, file, name.text(db).as_str(), kind)
+        },
+        Identifier::NamespaceAccess {
+            namespace, name, ..
+        } => {
+            // TODO(namespace-refs): also union the bare-name references, the
+            // inverse of the bridge in `find_variable_references`. When
+            // `namespace` is a workspace package, resolve `name` to its
+            // definition and run the variable path. Installed-package symbols
+            // wait on package resolution (see `find_namespace_references`).
+            find_namespace_references(
+                db,
+                file,
+                namespace.text(db).as_str(),
+                name.text(db).as_str(),
+            )
         },
     }
 }
@@ -77,6 +94,13 @@ fn find_variable_references(
         }
     }
 
+    // Bare `foo` and `pkg::foo` name the same binding when `foo` is a
+    // package-level definition, so include the qualified sites too. Locally
+    // scoped symbols (params, locals) can't be reached through `::`.
+    if !locally_scoped {
+        collect_package_qualified_uses(db, &target_defs, name, &mut results);
+    }
+
     if include_declaration {
         for def in &target_defs {
             if let Some(range) = def.name_range(db) {
@@ -92,6 +116,42 @@ fn find_variable_references(
     results
 }
 
+/// Add `pkg::name` / `pkg:::name` sites for a package-level binding.
+///
+/// Bare `name` and `pkg::name` are the same symbol when `name` is defined in
+/// package `pkg`, so a reference search from the bare name should surface the
+/// qualified sites too. We take the symbol's owning package from the target
+/// definitions and scan structurally. The `pkg::` qualifier is itself the
+/// confirmation that it's the right symbol, so unlike the bare-name path this
+/// needs no re-resolution.
+///
+/// TODO(namespace-refs): the reverse (cursor on `pkg::name` also finding bare
+/// `name`) is unimplemented in the `NamespaceAccess` arm of `find_references`.
+/// Installed-package symbols bridge in neither direction until package
+/// resolution lands (see `find_namespace_references`).
+fn collect_package_qualified_uses<'db>(
+    db: &'db dyn Db,
+    target_defs: &[Definition<'db>],
+    name: Name<'db>,
+    results: &mut Vec<FileRange>,
+) {
+    // The cursor resolves to one binding, so its definitions all share a single
+    // owning package. Find the first one.
+    let Some(package) = target_defs.iter().find_map(|def| def.file(db).package(db)) else {
+        // The symbol resolves to a definition in a script, there can't be
+        // namespace references to it
+        return;
+    };
+    let package = package.name(db);
+
+    let name = name.text(db);
+    for file in all_matching_files(db, name.as_str()) {
+        for range in file.namespace_uses(db, package, name.as_str()) {
+            results.push(FileRange { file, range });
+        }
+    }
+}
+
 fn find_member_references(
     db: &dyn Db,
     primary: File,
@@ -102,6 +162,24 @@ fn find_member_references(
 
     for file in all_matching_files(db, name) {
         for range in file.member_uses(db, name, kind) {
+            results.push(FileRange { file, range });
+        }
+    }
+
+    sort_file_ranges(&mut results, db, primary);
+    results
+}
+
+fn find_namespace_references(
+    db: &dyn Db,
+    primary: File,
+    namespace: &str,
+    name: &str,
+) -> Vec<FileRange> {
+    let mut results = Vec::new();
+
+    for file in all_matching_files(db, name) {
+        for range in file.namespace_uses(db, namespace, name) {
             results.push(FileRange { file, range });
         }
     }

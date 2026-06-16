@@ -178,14 +178,46 @@ fn test_cross_file_dollar_kind() {
 }
 
 #[test]
-fn test_namespace_access_returns_empty() {
-    // Cursor on `mutate` in `dplyr::mutate` is a namespace access, returns nothing.
-    let code = "dplyr::mutate\n";
-    let doc = Document::new(code, None);
-    let uri = test_path("a.R");
-    let state = make_state(&uri, &doc);
+fn test_cross_file_namespace_access() {
+    // Cursor on `mutate` in `dplyr::mutate` -- structural scan matches every
+    // `dplyr::mutate` across files. The namespace matters, so `tidyr::mutate`
+    // is excluded. A bare `mutate()` call is excluded too: installed packages
+    // aren't part of the resolution graph, so neither `dplyr::mutate` nor a
+    // bare `mutate` lands on a shared definition we could compare. We match
+    // `pkg::name` structurally instead.
+    //
+    // TODO(namespace-refs): once `resolve` consumes the `Package` / `From`
+    // import layers, a bare `mutate` will resolve to dplyr's `mutate`, and this
+    // can resolve-and-compare like the variable path (folding the structural
+    // scan into it). A bare `mutate()` would then be a match here.
+    let code1 = "dplyr::mutate\n";
+    let doc1 = Document::new(code1, None);
+    let uri1 = test_path("a.R");
+    let mut state = make_state(&uri1, &doc1);
 
-    let params = make_params(uri, 0, 7, true);
+    let code2 = "dplyr::mutate\ntidyr::mutate\nmutate()\n";
+    let doc2 = Document::new(code2, None);
+    let uri2 = test_path("b.R");
+    insert_file(&mut state, &uri2, &doc2);
+
+    // Cursor on `mutate` (RHS of `::`) at line 0, col 7.
+    let params = make_params(uri1.clone(), 0, 7, true);
     let locs = find_references(params, &state).unwrap();
-    assert!(locs.is_empty());
+
+    // a.R's `dplyr::mutate`
+    assert!(locs
+        .iter()
+        .any(|l| l.uri == uri1 && l.range == range((0, 7), (0, 13))));
+    // b.R's `dplyr::mutate` (matches)
+    assert!(locs
+        .iter()
+        .any(|l| l.uri == uri2 && l.range == range((0, 7), (0, 13))));
+    // b.R's `tidyr::mutate` (different namespace, does NOT match)
+    assert!(!locs
+        .iter()
+        .any(|l| l.uri == uri2 && l.range == range((1, 7), (1, 13))));
+    // b.R's bare `mutate()` (not a namespace access, does NOT match) TODO
+    assert!(!locs
+        .iter()
+        .any(|l| l.uri == uri2 && l.range == range((2, 0), (2, 6))));
 }
