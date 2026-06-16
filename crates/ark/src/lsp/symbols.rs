@@ -80,10 +80,7 @@ pub(crate) fn symbols(
                 info.push(SymbolInformation {
                     name: name.to_string(),
                     kind: SymbolKind::FUNCTION,
-                    location: Location {
-                        uri,
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
@@ -95,10 +92,7 @@ pub(crate) fn symbols(
                     info.push(SymbolInformation {
                         name: title.to_string(),
                         kind: SymbolKind::STRING,
-                        location: Location {
-                            uri,
-                            range,
-                        },
+                        location: Location { uri, range },
                         tags: None,
                         deprecated: None,
                         container_name: None,
@@ -110,10 +104,7 @@ pub(crate) fn symbols(
                 info.push(SymbolInformation {
                     name: name.clone(),
                     kind: SymbolKind::VARIABLE,
-                    location: Location {
-                        uri,
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
@@ -124,10 +115,7 @@ pub(crate) fn symbols(
                 info.push(SymbolInformation {
                     name: name.clone(),
                     kind: SymbolKind::METHOD,
-                    location: Location {
-                        uri,
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
