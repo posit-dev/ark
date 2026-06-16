@@ -214,7 +214,8 @@ fn test_reexport_via_import_from_resolves_to_source() {
     let tibble_file = File::new(
         &db,
         file_path("workspace/tibble/R/tibble.R"),
-        "tibble <- function() 1\n".to_string(),
+        FileRevision::zero(),
+        Some("tibble <- function() 1\n".to_string()),
         Some(tibble),
     );
     tibble.set_files(&mut db).to(vec![tibble_file]);
@@ -240,7 +241,8 @@ fn test_reexport_via_import_from_resolves_to_source() {
     let dplyr_file = File::new(
         &db,
         file_path("workspace/dplyr/R/reexport.R"),
-        "tibble::tibble\n".to_string(),
+        FileRevision::zero(),
+        Some("tibble::tibble\n".to_string()),
         Some(dplyr),
     );
     dplyr.set_files(&mut db).to(vec![dplyr_file]);

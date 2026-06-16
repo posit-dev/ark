@@ -643,13 +643,15 @@ fn test_resolve_if_else_in_collated_file_offers_both() {
     let a = File::new(
         &db,
         file_path("/w/pkg/R/a.R"),
-        "if (cond) fn <- 1 else fn <- 2\n".to_string(),
+        FileRevision::zero(),
+        Some("if (cond) fn <- 1 else fn <- 2\n".to_string()),
         Some(pkg),
     );
     let b = File::new(
         &db,
         file_path("/w/pkg/R/b.R"),
-        "use_fn <- function() fn\n".to_string(),
+        FileRevision::zero(),
+        Some("use_fn <- function() fn\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![a, b]);
@@ -693,13 +695,15 @@ fn test_resolve_collated_sequential_redef_resolves_to_last() {
     let a = File::new(
         &db,
         file_path("/w/pkg/R/a.R"),
-        "shared <- 1\nshared <- 2\n".to_string(),
+        FileRevision::zero(),
+        Some("shared <- 1\nshared <- 2\n".to_string()),
         Some(pkg),
     );
     let b = File::new(
         &db,
         file_path("/w/pkg/R/b.R"),
-        "use_shared <- function() shared\n".to_string(),
+        FileRevision::zero(),
+        Some("use_shared <- function() shared\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![a, b]);
