@@ -1292,12 +1292,16 @@ fn test_file_exports_empty() {
 }
 
 #[test]
-fn test_file_exports_multiple_defs_same_symbol() {
+fn test_file_exports_sequential_redef_keeps_last() {
     let index = index("x <- 1\nx <- 2");
     let exports = index.exports();
-    // One name, but both definitions are kept (in definition order).
+    // The second assignment overwrites the first, so only the last def is in
+    // effect at end of file.
     assert_eq!(exports.len(), 1);
-    assert_eq!(exports.get("x").unwrap().len(), 2);
+    let x = exports.get("x").unwrap();
+    assert_eq!(x.len(), 1);
+    // The surviving def is the second `x` (offset 7), not the first (offset 0).
+    assert_eq!(x[0].1.range().start(), biome_rowan::TextSize::from(7));
 }
 
 // --- File directives ---
@@ -1501,11 +1505,10 @@ fn test_source_call_emitted_without_resolver() {
 }
 
 #[test]
-fn test_file_exports_keeps_all_defs_in_order() {
-    // When the same name is defined multiple times at file scope,
-    // exports() keeps all of them, in definition order; the last is R's
-    // runtime winner.
-    let index = index("foo <- 1\nfoo <- 2\nbar <- 3\n");
+fn test_file_exports_if_else_keeps_both_branches() {
+    // Both arms of a top-level `if`/`else` could run, so both bindings are in
+    // effect at end of file. exports() keeps both, in definition order.
+    let index = index("if (cond) foo <- 1 else foo <- 2\nbar <- 3\n");
     let exports = index.exports();
     assert_eq!(exports.len(), 2);
 
@@ -1514,10 +1517,10 @@ fn test_file_exports_keeps_all_defs_in_order() {
         .iter()
         .map(|(_def_id, def)| def.range().start())
         .collect();
-    // First `foo` at offset 0, second at offset 9.
+    // `foo <- 1` at offset 10, `foo <- 2` at offset 24.
     assert_eq!(starts, vec![
-        biome_rowan::TextSize::from(0),
-        biome_rowan::TextSize::from(9),
+        biome_rowan::TextSize::from(10),
+        biome_rowan::TextSize::from(24),
     ]);
 }
 

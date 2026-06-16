@@ -258,9 +258,11 @@ impl<'db> File {
             match entry {
                 ExportEntry::Local => {
                     // The `Local` marker doesn't carry a `def_id`, so recover
-                    // every file-scope `def_id` for the name from the semantic
-                    // index and mint each through the single site. A name bound
-                    // more than once at top level fans out here.
+                    // from the semantic index the file-scope `def_id`s still in
+                    // effect once the file has run top to bottom, and mint each
+                    // through the single site. Usually that's one def; a name
+                    // still bound on several paths (both arms of a top-level
+                    // `if`/`else`) fans out to several here.
                     //
                     // `exports()` also lists the `Import`-kind defs that
                     // `source()` emits at file scope. Skip them: they're the

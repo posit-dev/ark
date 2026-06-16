@@ -87,18 +87,147 @@ fn test_source_call_to_resolved_file_produces_import_entries() {
 }
 
 #[test]
-fn test_sourced_then_local_keep_both() {
+fn test_sourced_then_local_resolves_to_local() {
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[
         ("w/helpers.R", "shared <- 1\n"),
         ("w/analysis.R", "source(\"helpers.R\")\nshared <- 2\n"),
     ]);
+    let analysis = files[1];
+
+    // The local `shared <- 2` runs after the `source()`, overwriting the
+    // sourced binding. Only the local is in effect at end of file.
+    let map = entries(&db, analysis);
+    assert_eq!(map.get("shared"), Some(&vec![ExportEntry::Local]));
+}
+
+#[test]
+fn test_two_sources_of_same_name_keeps_last_forward() {
+    let mut db = TestDb::new();
+
+    // Both `b` and `c` define `dup`. R evaluates each `source()` in sequence,
+    // so `c`'s assignment overwrites `b`'s. Only the `c` forward is in effect
+    // at end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\n"),
+    ]);
+    let c = files[1];
+    let a = files[2];
+
+    let map = entries(&db, a);
+    assert_eq!(
+        map.get("dup"),
+        Some(&vec![ExportEntry::Import {
+            file: c,
+            name: "dup".to_string(),
+        }])
+    );
+}
+
+#[test]
+fn test_sources_then_local_resolves_to_local() {
+    let mut db = TestDb::new();
+
+    // sources first, then local. The local is the last assignment, so it
+    // overwrites both sourced forwards and is the only binding in effect at
+    // end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\ndup <- 3\n"),
+    ]);
+    let a = files[2];
+
+    let map = entries(&db, a);
+    assert_eq!(map.get("dup"), Some(&vec![ExportEntry::Local]));
+}
+
+#[test]
+fn test_source_local_source_resolves_to_last_source() {
+    let mut db = TestDb::new();
+
+    // Local in the middle, sources either side. Each statement assigns in
+    // order; the last write (the `c` source) overwrites the rest, so only the
+    // `c` forward is in effect at end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "source(\"b.R\")\ndup <- 3\nsource(\"c.R\")\n"),
+    ]);
+    let c = files[1];
+    let a = files[2];
+
+    let map = entries(&db, a);
+    assert_eq!(
+        map.get("dup"),
+        Some(&vec![ExportEntry::Import {
+            file: c,
+            name: "dup".to_string(),
+        }])
+    );
+}
+
+#[test]
+fn test_local_then_sources_resolves_to_last_source() {
+    let mut db = TestDb::new();
+
+    // Local first, sources later. The sources reassign in order, so the last
+    // source (`c`) overwrites the rest and is the only binding in effect at
+    // end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/c.R", "dup <- 2\n"),
+        ("w/a.R", "dup <- 3\nsource(\"b.R\")\nsource(\"c.R\")\n"),
+    ]);
+    let c = files[1];
+    let a = files[2];
+
+    let map = entries(&db, a);
+    assert_eq!(
+        map.get("dup"),
+        Some(&vec![ExportEntry::Import {
+            file: c,
+            name: "dup".to_string(),
+        }])
+    );
+}
+
+#[test]
+fn test_repeated_local_with_source_resolves_to_last_local() {
+    let mut db = TestDb::new();
+
+    // Local, then a sourced forward of the same name, then a later local. The
+    // last statement (`dup <- 3`) overwrites the rest, so only the local is in
+    // effect at end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/a.R", "dup <- 2\nsource(\"b.R\")\ndup <- 3\n"),
+    ]);
+    let a = files[1];
+
+    let map = entries(&db, a);
+    assert_eq!(map.get("dup"), Some(&vec![ExportEntry::Local]));
+}
+
+#[test]
+fn test_if_else_source_and_local_keeps_both_entries() {
+    let mut db = TestDb::new();
+
+    // `source()` on one `if` arm, a local rebind on the other. Either arm could
+    // run, so both the sourced forward and the local are in effect at end of
+    // file. The firewall keeps both entries, in definition order.
+    let files = setup_workspace(&mut db, &[
+        ("w/helpers.R", "shared <- 1\n"),
+        (
+            "w/analysis.R",
+            "if (cond) source(\"helpers.R\") else shared <- 2\n",
+        ),
+    ]);
     let helpers = files[0];
     let analysis = files[1];
 
-    // Multi-target keeps every candidate in definition order. The sourced
-    // forward comes first, the local `shared <- 2` second. R's runtime takes
-    // the last one (the local), but goto-def offers both.
     let map = entries(&db, analysis);
     assert_eq!(
         map.get("shared"),
@@ -106,166 +235,6 @@ fn test_sourced_then_local_keep_both() {
             ExportEntry::Import {
                 file: helpers,
                 name: "shared".to_string(),
-            },
-            ExportEntry::Local,
-        ])
-    );
-}
-
-#[test]
-fn test_two_sources_of_same_name_keep_both_forwards() {
-    let mut db = TestDb::new();
-
-    // Both `b` and `c` define `dup`. R evaluates each `source()` in sequence
-    // and the later one's assignment wins at runtime. Multi-target keeps both
-    // forwards, in source order, so the runtime winner (`c`) is last.
-    let files = setup_workspace(&mut db, &[
-        ("w/b.R", "dup <- 1\n"),
-        ("w/c.R", "dup <- 2\n"),
-        ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\n"),
-    ]);
-    let b = files[0];
-    let c = files[1];
-    let a = files[2];
-
-    let map = entries(&db, a);
-    assert_eq!(
-        map.get("dup"),
-        Some(&vec![
-            ExportEntry::Import {
-                file: b,
-                name: "dup".to_string(),
-            },
-            ExportEntry::Import {
-                file: c,
-                name: "dup".to_string(),
-            },
-        ])
-    );
-}
-
-#[test]
-fn test_sources_then_local_keep_all_in_order() {
-    let mut db = TestDb::new();
-
-    // sources first, then local. Local is the last assignment so it ends up
-    // bound at end-of-file. Multi-target keeps both forwards plus the local, in
-    // definition order, so the runtime winner (the local) is last.
-    let files = setup_workspace(&mut db, &[
-        ("w/b.R", "dup <- 1\n"),
-        ("w/c.R", "dup <- 2\n"),
-        ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\ndup <- 3\n"),
-    ]);
-    let b = files[0];
-    let c = files[1];
-    let a = files[2];
-
-    let map = entries(&db, a);
-    assert_eq!(
-        map.get("dup"),
-        Some(&vec![
-            ExportEntry::Import {
-                file: b,
-                name: "dup".to_string(),
-            },
-            ExportEntry::Import {
-                file: c,
-                name: "dup".to_string(),
-            },
-            ExportEntry::Local,
-        ])
-    );
-}
-
-#[test]
-fn test_source_local_source_keep_all_in_order() {
-    let mut db = TestDb::new();
-
-    // Local in the middle, sources either side. Matches R's runtime: each
-    // statement assigns in order; the last write (the `c` source) wins.
-    // Multi-target keeps all three candidates in definition order.
-    let files = setup_workspace(&mut db, &[
-        ("w/b.R", "dup <- 1\n"),
-        ("w/c.R", "dup <- 2\n"),
-        ("w/a.R", "source(\"b.R\")\ndup <- 3\nsource(\"c.R\")\n"),
-    ]);
-    let b = files[0];
-    let c = files[1];
-    let a = files[2];
-
-    let map = entries(&db, a);
-    assert_eq!(
-        map.get("dup"),
-        Some(&vec![
-            ExportEntry::Import {
-                file: b,
-                name: "dup".to_string(),
-            },
-            ExportEntry::Local,
-            ExportEntry::Import {
-                file: c,
-                name: "dup".to_string(),
-            },
-        ])
-    );
-}
-
-#[test]
-fn test_local_then_sources_keep_all_in_order() {
-    let mut db = TestDb::new();
-
-    // Local first, sources later. Sources reassign, last source wins at
-    // runtime. Multi-target keeps all three candidates in definition order, so
-    // the runtime winner (`c`) is last.
-    let files = setup_workspace(&mut db, &[
-        ("w/b.R", "dup <- 1\n"),
-        ("w/c.R", "dup <- 2\n"),
-        ("w/a.R", "dup <- 3\nsource(\"b.R\")\nsource(\"c.R\")\n"),
-    ]);
-    let b = files[0];
-    let c = files[1];
-    let a = files[2];
-
-    let map = entries(&db, a);
-    assert_eq!(
-        map.get("dup"),
-        Some(&vec![
-            ExportEntry::Local,
-            ExportEntry::Import {
-                file: b,
-                name: "dup".to_string(),
-            },
-            ExportEntry::Import {
-                file: c,
-                name: "dup".to_string(),
-            },
-        ])
-    );
-}
-
-#[test]
-fn test_repeated_local_moves_to_runtime_winning_position() {
-    let mut db = TestDb::new();
-
-    // Local, then a sourced forward of the same name, then a later local. The
-    // two locals collapse to one `Local` marker, and the dedup keeps it at the
-    // *last* local's position. So the entry order is `[Import{b}, Local]` and
-    // the final entry is the binding R picks at runtime (`dup <- 3`), not the
-    // earlier `Import{b}`.
-    let files = setup_workspace(&mut db, &[
-        ("w/b.R", "dup <- 1\n"),
-        ("w/a.R", "dup <- 2\nsource(\"b.R\")\ndup <- 3\n"),
-    ]);
-    let b = files[0];
-    let a = files[1];
-
-    let map = entries(&db, a);
-    assert_eq!(
-        map.get("dup"),
-        Some(&vec![
-            ExportEntry::Import {
-                file: b,
-                name: "dup".to_string(),
             },
             ExportEntry::Local,
         ])

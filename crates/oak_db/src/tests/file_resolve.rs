@@ -93,27 +93,31 @@ fn test_resolve_chases_two_step_source_chain() {
 }
 
 #[test]
-fn test_resolve_sourced_and_local_same_name_skips_import_marker() {
-    // `analysis.R` both sources `shared` and rebinds it locally, so its file
-    // scope holds an `Import` def (from `source()`) and a `Local` def for the
-    // same name. resolve must return the two real bindings: the sourced def in
-    // `helpers` and the local rebind in `analysis`. It must not also mint the
-    // `Import` def as a candidate, which would point at the empty `source()`
-    // call span (`name_range == None`).
+fn test_resolve_if_else_source_and_local_skips_import_marker() {
+    // `analysis.R` sources `shared` on one `if` arm and rebinds it locally on
+    // the other, so either arm could run and both are in effect at end of file:
+    // an `Import` def (from `source()`) and a `Local` def for the same name.
+    // resolve must return the two real bindings: the sourced def in `helpers`
+    // and the local rebind in `analysis`. It must not also mint the `Import`
+    // def as a candidate, which would point at the empty `source()` call span
+    // (`name_range == None`).
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[
         ("w/helpers.R", "shared <- 1\n"),
-        ("w/analysis.R", "source(\"helpers.R\")\nshared <- 2\n"),
+        (
+            "w/analysis.R",
+            "if (cond) source(\"helpers.R\") else shared <- 2\n",
+        ),
     ]);
     let helpers = files[0];
     let analysis = files[1];
 
     let defs = analysis.resolve(&db, name(&db, "shared"));
 
-    // Two real bindings, in `exports()` order: the sourced `shared <- 1` in
-    // helpers (offset 0), then the local `shared <- 2` in analysis (offset 20,
-    // past `source("helpers.R")\n`). The local is R's runtime winner, so it's
-    // last. No third entry for the `Import` marker.
+    // Two real bindings: the sourced `shared <- 1` in helpers (offset 0) and
+    // the local `shared <- 2` in analysis (offset 35, past
+    // `if (cond) source("helpers.R") else `). No third entry for the `Import`
+    // marker.
     let hits: Vec<(File, usize)> = defs
         .iter()
         .map(|d| {
@@ -124,48 +128,73 @@ fn test_resolve_sourced_and_local_same_name_skips_import_marker() {
             (d.file(&db), usize::from(start))
         })
         .collect();
-    assert_eq!(hits, vec![(helpers, 0), (analysis, 20)]);
+    assert_eq!(hits, vec![(helpers, 0), (analysis, 35)]);
 }
 
 #[test]
-fn test_resolve_two_sourced_defs_put_runtime_winner_last() {
+fn test_resolve_two_sourced_defs_resolves_to_last() {
     // `a.R` sources `b.R` then `c.R`, both binding `dup`. R runs the sources in
-    // order, so `c`'s binding wins at runtime. resolve returns both forwards in
-    // source order, so the runtime winner (`c`) is the last element.
+    // order, so `c`'s binding overwrites `b`'s. resolve returns only the `c`
+    // forward, the binding in effect at end of file.
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
         ("w/a.R", "source(\"b.R\")\nsource(\"c.R\")\n"),
     ]);
-    let b = files[0];
     let c = files[1];
     let a = files[2];
 
     let defs = a.resolve(&db, name(&db, "dup"));
     let hits: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
-    assert_eq!(hits, vec![b, c]);
+    assert_eq!(hits, vec![c]);
 }
 
 #[test]
-fn test_resolve_interleaved_source_local_source_puts_runtime_winner_last() {
+fn test_resolve_interleaved_source_local_source_resolves_to_last_source() {
     // `source("b.R")`, then a local `dup <- 3`, then `source("c.R")`, all
-    // binding `dup`. The last statement (the `c` source) wins at runtime, so it
-    // must be last. Entries come back in `exports()` order: the `b` forward, the
-    // local, then the `c` forward.
+    // binding `dup`. The last statement (the `c` source) overwrites the rest,
+    // so resolve returns only the `c` forward.
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
         ("w/a.R", "source(\"b.R\")\ndup <- 3\nsource(\"c.R\")\n"),
     ]);
-    let b = files[0];
     let c = files[1];
     let a = files[2];
 
     let defs = a.resolve(&db, name(&db, "dup"));
     let hits: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
-    assert_eq!(hits, vec![b, a, c]);
+    assert_eq!(hits, vec![c]);
+}
+
+#[test]
+fn test_resolve_if_else_in_sourced_file_offers_both() {
+    // `helpers.R` binds `fn` on both arms of a top-level `if`/`else`, so either
+    // arm could run and both are in effect when `source()` finishes. resolve
+    // from the sourcing file offers both, in definition order.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/helpers.R", "if (cond) fn <- 1 else fn <- 2\n"),
+        ("w/analysis.R", "source(\"helpers.R\")\n"),
+    ]);
+    let helpers = files[0];
+    let analysis = files[1];
+
+    let defs = analysis.resolve(&db, name(&db, "fn"));
+    let hits: Vec<(File, usize)> = defs
+        .iter()
+        .map(|d| {
+            let start = d
+                .name_range(&db)
+                .expect("both arms have a name range")
+                .start();
+            (d.file(&db), usize::from(start))
+        })
+        .collect();
+    // `fn <- 1` at offset 10, `fn <- 2` at offset 23, both in helpers.
+    assert_eq!(hits, vec![(helpers, 10), (helpers, 23)]);
 }
 
 #[test]
@@ -382,16 +411,17 @@ fn test_definition_id_stable_across_def_id_renumber_local_path() {
 }
 
 #[test]
-fn test_definitions_mints_distinct_entities_for_same_name_redefinition() {
-    // Two file-scope `x` bindings share the `(file, scope, name)` id-fields.
-    // The single mint site must create two distinct salsa entities rather than
-    // collide or panic; salsa disambiguates same-id-field tracked structs by
-    // creation order. With multi-target exports, resolving `x` returns both
-    // bindings, in definition order.
+fn test_definitions_mints_distinct_entities_for_same_name() {
+    // Two file-scope `x` bindings on the arms of an `if`/`else` share the
+    // `(file, scope, name)` id-fields. The single mint site must create two
+    // distinct salsa entities rather than collide or panic; salsa
+    // disambiguates same-id-field tracked structs by creation order. Both arms
+    // are in effect at end of file, so resolving `x` returns both, in
+    // definition order.
     use salsa::plumbing::AsId;
 
     let mut db = TestDb::new();
-    let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\nx <- 2\n")]);
+    let files = setup_workspace(&mut db, &[("w/a.R", "if (cond) x <- 1 else x <- 2\n")]);
     let file = files[0];
 
     let defs = file.resolve(&db, name(&db, "x"));
@@ -408,7 +438,8 @@ fn test_definitions_mints_distinct_entities_for_same_name_redefinition() {
             )
         })
         .collect();
-    assert_eq!(starts, vec![0, 7]);
+    // `x <- 1` at offset 10, `x <- 2` at offset 22.
+    assert_eq!(starts, vec![10, 22]);
 }
 
 #[test]
@@ -575,4 +606,103 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
     let def = resolve_one(&db, b, "shared");
     assert_eq!(def.file(&db), a);
     assert_eq!(def.name(&db).text(&db).as_str(), "shared");
+}
+
+#[test]
+fn test_resolve_if_else_in_collated_file_offers_both() {
+    // A collation file binds `fn` on both arms of a top-level `if`/`else`, so
+    // either arm could run and both are in the namespace once the package is
+    // loaded. A sibling file's reference resolves to both, in definition order.
+    let mut db = TestDb::new();
+    let workspace = workspace_root(&db, "w/pkg");
+    let pkg = crate::Package::new(
+        &db,
+        file_path("/w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        None,
+        oak_package_metadata::namespace::Namespace::default(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+
+    let a = File::new(
+        &db,
+        file_path("/w/pkg/R/a.R"),
+        "if (cond) fn <- 1 else fn <- 2\n".to_string(),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("/w/pkg/R/b.R"),
+        "use_fn <- function() fn\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let defs = b.resolve(&db, name(&db, "fn"));
+    let hits: Vec<(File, usize)> = defs
+        .iter()
+        .map(|d| {
+            let start = d
+                .name_range(&db)
+                .expect("both arms have a name range")
+                .start();
+            (d.file(&db), usize::from(start))
+        })
+        .collect();
+    // `fn <- 1` at offset 10, `fn <- 2` at offset 23, both in `a`.
+    assert_eq!(hits, vec![(a, 10), (a, 23)]);
+}
+
+#[test]
+fn test_resolve_collated_sequential_redef_resolves_to_last() {
+    // An earlier collation file rebinds `shared` in sequence; the second
+    // assignment overwrites the first, so the namespace holds only the final
+    // binding once the package is loaded. A sibling file's reference resolves
+    // to that single binding, not the overwritten one.
+    let mut db = TestDb::new();
+    let workspace = workspace_root(&db, "w/pkg");
+    let pkg = crate::Package::new(
+        &db,
+        file_path("/w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        None,
+        oak_package_metadata::namespace::Namespace::default(),
+        Vec::new(),
+        Vec::new(),
+        None,
+    );
+
+    let a = File::new(
+        &db,
+        file_path("/w/pkg/R/a.R"),
+        "shared <- 1\nshared <- 2\n".to_string(),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("/w/pkg/R/b.R"),
+        "use_shared <- function() shared\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let defs = b.resolve(&db, name(&db, "shared"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), a);
+    // The surviving binding is `shared <- 2` (offset 12), not `shared <- 1`.
+    assert_eq!(
+        usize::from(
+            defs[0]
+                .name_range(&db)
+                .expect("local binding has a name range")
+                .start()
+        ),
+        12
+    );
 }

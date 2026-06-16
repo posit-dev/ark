@@ -86,17 +86,13 @@ impl File {
                     },
                     _ => ExportEntry::Local,
                 };
-                // Dedup, moving each entry to its last position so the final
-                // entry is the binding R picks at runtime (statements run in
-                // order, last write wins). `Local` carries no `def_id` (that
-                // contentlessness is what keeps `exports()` stable across body
-                // edits), so a name's several top-level definitions collapse to
-                // one `Local`, identical `source()` forwards to one `Import`,
-                // and `resolve_export` re-mints from the marker either way.
-                if let Some(pos) = list.iter().position(|e| e == &entry) {
-                    list.remove(pos);
+                // A name can have several live defs (e.g. both arms of an
+                // `if`/`else`), and several can collapse to one marker: `Local`
+                // and `Import` carry no `def_id`, so duplicates are byte-equal.
+                // Dedup them, keeping definition order.
+                if !list.contains(&entry) {
+                    list.push(entry);
                 }
-                list.push(entry);
             }
         }
 

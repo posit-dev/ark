@@ -876,6 +876,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .into_iter()
             .map(|b| Arc::new(b.build()))
             .collect();
+
+        // The file scope's exit flow state is the file's exports. Capture it
+        // before the builders are consumed below.
+        let file_final_bindings = self.use_def_maps[ScopeId::from(0)].final_bindings().clone();
+
         let use_def_maps: IndexVec<ScopeId, _> = self
             .use_def_maps
             .into_iter()
@@ -891,6 +896,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.enclosing_snapshots,
             self.semantic_calls,
+            file_final_bindings,
         )
     }
 }
