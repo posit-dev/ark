@@ -22,6 +22,8 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
+#[cfg(test)]
+use crate::lsp::document_context::TestDocument;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
@@ -147,17 +149,15 @@ fn test_comment() {
     r_task(|| {
         // If not in a comment, return `None`
         let point = Point { row: 0, column: 1 };
-        let tree = crate::fixtures::tree_sitter_parse("mean()");
-        let context =
-            DocumentContext::new(&tree, "mean()", crate::fixtures::TEST_ENCODING, point, None);
+        let doc = TestDocument::new("mean()");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap();
         assert!(completions.is_none());
 
         // If in a comment, return empty vector
         let point = Point { row: 0, column: 1 };
-        let tree = crate::fixtures::tree_sitter_parse("# mean");
-        let context =
-            DocumentContext::new(&tree, "# mean", crate::fixtures::TEST_ENCODING, point, None);
+        let doc = TestDocument::new("# mean");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap().unwrap();
         assert!(completions.is_empty());
     });
@@ -183,9 +183,8 @@ fn test_roxygen_comment() {
         }
 
         let point = Point { row: 0, column: 4 };
-        let tree = crate::fixtures::tree_sitter_parse("#' @");
-        let context =
-            DocumentContext::new(&tree, "#' @", crate::fixtures::TEST_ENCODING, point, None);
+        let doc = TestDocument::new("#' @");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap().unwrap();
 
         // Make sure we find it

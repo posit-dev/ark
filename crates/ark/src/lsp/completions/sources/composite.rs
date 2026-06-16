@@ -220,7 +220,7 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::get_completions;
     use crate::lsp::completions::sources::composite::is_identifier_like;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::NodeType;
@@ -234,9 +234,8 @@ mod tests {
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
                 let (text, point) = point_from_cursor(&format!("{keyword}@"));
-                let tree = crate::fixtures::tree_sitter_parse(&text);
-                let context =
-                    DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+                let doc = TestDocument::new(&text);
+                let context = doc.context(point);
 
                 assert!(is_identifier_like(context.node));
                 assert_eq!(
@@ -251,9 +250,8 @@ mod tests {
     fn test_get_completions_on_empty_document() {
         r_task(|| {
             let (text, point) = point_from_cursor("@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
 
@@ -270,9 +268,8 @@ mod tests {
         r_task(|| {
             let code = "x <- 1:3\n@\nrnorm(3)";
             let (text, point) = point_from_cursor(code);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
 

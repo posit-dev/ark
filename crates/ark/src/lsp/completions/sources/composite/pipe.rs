@@ -167,7 +167,7 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
     use crate::treesitter::node_find_containing_call;
 
@@ -176,9 +176,8 @@ mod tests {
         r_task(|| {
             // Place cursor between `()` of `bar()`
             let (text, point) = point_from_cursor("x |> foo() %>% bar(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap().unwrap();
@@ -190,9 +189,8 @@ mod tests {
             // `%||%` is not a pipe!
             // Place cursor between `()` of `bar()`
             let (text, point) = point_from_cursor("x |> foo() %||% bar(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap();
@@ -210,9 +208,8 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("x %>% foo(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let call_node = node_find_containing_call(context.node);
 
             let root = find_pipe_root(&context, call_node).unwrap().unwrap();

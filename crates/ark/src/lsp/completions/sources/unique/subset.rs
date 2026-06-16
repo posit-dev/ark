@@ -124,7 +124,7 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
     use crate::treesitter::node_find_string;
 
@@ -136,9 +136,8 @@ mod tests {
 
             // Inside top level `""`
             let (text, point) = point_from_cursor(r#"foo["@"]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
 
             let completions = completions_from_string_subset(&node, &context)
@@ -158,9 +157,8 @@ mod tests {
 
             // Inside `""` in `[[`
             let (text, point) = point_from_cursor(r#"foo[["@"]]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context)
                 .unwrap()
@@ -169,9 +167,8 @@ mod tests {
 
             // Inside `""` as second argument
             let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context)
                 .unwrap()
@@ -180,9 +177,8 @@ mod tests {
 
             // Inside `""` inside `c()`
             let (text, point) = point_from_cursor(r#"foo[c("@")]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context)
                 .unwrap()
@@ -191,9 +187,8 @@ mod tests {
 
             // Inside `""` inside `c()` with another string already specified
             let (text, point) = point_from_cursor(r#"foo[c("a", "@")]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context)
                 .unwrap()
@@ -204,9 +199,8 @@ mod tests {
             // Instead file path completions should kick in, because this is an arbitrary
             // function call so subset completions don't make sense, but file ones might.
             let (text, point) = point_from_cursor(r#"foo[fn("@")]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context).unwrap();
             assert!(completions.is_none());
@@ -214,9 +208,8 @@ mod tests {
             // A fake object that we can't get object names for.
             // It _looks_ like we want string completions though, so we return an empty set.
             let (text, point) = point_from_cursor(r#"not_real["@"]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
             let completions = completions_from_string_subset(&node, &context)
                 .unwrap()
@@ -236,9 +229,8 @@ mod tests {
             parse_eval_global("colnames(foo) <- c('a', 'b')").unwrap();
 
             let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
 
             let completions = completions_from_string_subset(&node, &context)

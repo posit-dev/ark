@@ -280,7 +280,7 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::call::completions_from_call;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -289,9 +289,8 @@ mod tests {
         r_task(|| {
             // Right after `tab`
             let (text, point) = point_from_cursor("match(tab@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -303,9 +302,8 @@ mod tests {
 
             // Right after `tab`
             let (text, point) = point_from_cursor("match(1, tab@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -324,9 +322,8 @@ mod tests {
         r_task(|| {
             // Place cursor between `()`
             let (text, point) = point_from_cursor("not_a_known_function(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -345,9 +342,8 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("my_fun(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -363,9 +359,8 @@ mod tests {
 
             // Place just before the `()`
             let (text, point) = point_from_cursor("my_fun@()");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -373,9 +368,8 @@ mod tests {
 
             // Place just after the `()`
             let (text, point) = point_from_cursor("my_fun()@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -397,9 +391,8 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("my_fun(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -415,9 +408,8 @@ mod tests {
         r_task(|| {
             // No arguments typed yet
             let (text, point) = point_from_cursor("match(\n  @\n)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -428,9 +420,8 @@ mod tests {
 
             // Partially typed argument
             let (text, point) = point_from_cursor("match(\n  tab@\n)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -441,9 +432,8 @@ mod tests {
 
             // Partially typed second argument
             let (text, point) = point_from_cursor("match(\n  1,\n  tab@\n)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let document_context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -459,9 +449,8 @@ mod tests {
         r_task(|| {
             fn assert_no_call_completions(code_with_cursor: &str) {
                 let (text, point) = point_from_cursor(code_with_cursor);
-                let tree = crate::fixtures::tree_sitter_parse(&text);
-                let document_context =
-                    DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+                let doc = TestDocument::new(&text);
+                let document_context = doc.context(point);
                 let state = WorldState::default();
                 let context = CompletionContext::new(&document_context, &state);
                 let completions = completions_from_call(&context).unwrap();

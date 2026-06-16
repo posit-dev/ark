@@ -96,7 +96,7 @@ pub(super) fn completions_from_string_file_path(
 mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::file_path::completions_from_string_file_path;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
     use crate::treesitter::node_find_string;
 
@@ -106,9 +106,8 @@ mod tests {
         r_task(|| {
             // "\R" is an unrecognized escape character and `R_ParseVector()` errors on it
             let (text, point) = point_from_cursor(r#" ".\R\utils.R@" "#);
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let node = node_find_string(&context.node).unwrap();
 
             let completions = completions_from_string_file_path(&node, &context).unwrap();

@@ -208,7 +208,7 @@ mod tests {
     use crate::fixtures::package_is_installed;
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
 
     #[test]
@@ -223,9 +223,8 @@ mod tests {
             harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             let completions = completions_from_dollar(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
@@ -238,9 +237,8 @@ mod tests {
             assert_eq!(completion.label, "a".to_string());
 
             let (text, point) = point_from_cursor("foo@$");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let completions = completions_from_dollar(&context).unwrap();
             assert!(completions.is_none());
 
@@ -262,9 +260,8 @@ mod tests {
             assert_eq!(r_lgl_get(exists.sexp, 0), 0);
 
             let (text, point) = point_from_cursor("foo$@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // No error and empty completions list
             // (If the user is typing pseudocode, we want to respect that and say that we
@@ -274,9 +271,8 @@ mod tests {
             assert_eq!(completions.len(), 0);
 
             let (text, point) = point_from_cursor("foo$mat@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // Same as above
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -288,9 +284,8 @@ mod tests {
     fn test_dollar_completions_on_complex_lhs() {
         r_task(|| {
             let (text, point) = point_from_cursor("list(a = 1, b = 2)$@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // No error and empty completions list
             // We know we are on the RHS of a `$`, but `r_parse_eval()` will fail on the
@@ -314,9 +309,8 @@ mod tests {
             harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo@$");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // `None` because we have no completions to provide, and we do want other
             // completion sources to get a chance to run, as you can put arbitrary
@@ -341,9 +335,8 @@ mod tests {
             harp::parse_eval("foo <- list(abcd = 1, wxyz = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$abc@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // All names of `foo`, the frontend filters them
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -352,9 +345,8 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
 
             let (text, point) = point_from_cursor("foo$a@bc");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // Same as above
             let completions = completions_from_dollar(&context).unwrap().unwrap();
@@ -390,9 +382,8 @@ foo <- Foo$new()
             .unwrap();
 
             let (text, point) = point_from_cursor("foo$@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             // We get some default R6 methods back, but we are looking for `abc`
             let completions = completions_from_dollar(&context).unwrap().unwrap();

@@ -92,7 +92,7 @@ mod tests {
 
     use crate::fixtures::package_is_installed;
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
 
     #[test]
@@ -108,9 +108,8 @@ mod tests {
 
             // Right after the `[`
             let point = Point { row: 0, column: 4 };
-            let tree = crate::fixtures::tree_sitter_parse("foo[]");
-            let context =
-                DocumentContext::new(&tree, "foo[]", crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new("foo[]");
+            let context = doc.context(point);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
@@ -125,17 +124,15 @@ mod tests {
 
             // Right before the `[`
             let point = Point { row: 0, column: 3 };
-            let tree = crate::fixtures::tree_sitter_parse("foo[]");
-            let context =
-                DocumentContext::new(&tree, "foo[]", crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new("foo[]");
+            let context = doc.context(point);
             let completions = completions_from_subset(&context).unwrap();
             assert!(completions.is_none());
 
             // Right after the `]`
             let point = Point { row: 0, column: 5 };
-            let tree = crate::fixtures::tree_sitter_parse("foo[]");
-            let context =
-                DocumentContext::new(&tree, "foo[]", crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new("foo[]");
+            let context = doc.context(point);
             let completions = completions_from_subset(&context).unwrap();
             assert!(completions.is_none());
 
@@ -155,9 +152,8 @@ mod tests {
 
             // Works for single comlumn name completion
             let point = Point { row: 0, column: 2 };
-            let tree = crate::fixtures::tree_sitter_parse("x[]");
-            let context =
-                DocumentContext::new(&tree, "x[]", crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new("x[]");
+            let context = doc.context(point);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
@@ -168,14 +164,8 @@ mod tests {
 
             // Works when completing inside a `c` call
             let point = Point { row: 0, column: 6 };
-            let tree = crate::fixtures::tree_sitter_parse("x[, c()]");
-            let context = DocumentContext::new(
-                &tree,
-                "x[, c()]",
-                crate::fixtures::TEST_ENCODING,
-                point,
-                None,
-            );
+            let doc = TestDocument::new("x[, c()]");
+            let context = doc.context(point);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
@@ -186,14 +176,8 @@ mod tests {
 
             // Works when completing inside a `c` call with a collumn already selected
             let point = Point { row: 0, column: 10 };
-            let tree = crate::fixtures::tree_sitter_parse("x[, c(mpg,)]");
-            let context = DocumentContext::new(
-                &tree,
-                "x[, c(mpg,)]",
-                crate::fixtures::TEST_ENCODING,
-                point,
-                None,
-            );
+            let doc = TestDocument::new("x[, c(mpg,)]");
+            let context = doc.context(point);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
@@ -205,9 +189,8 @@ mod tests {
 
             // Works completing subset2
             let point = Point { row: 0, column: 3 };
-            let tree = crate::fixtures::tree_sitter_parse("x[[]]");
-            let context =
-                DocumentContext::new(&tree, "x[[]]", crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new("x[[]]");
+            let context = doc.context(point);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);

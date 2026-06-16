@@ -509,7 +509,7 @@ mod tests {
     use tower_lsp::lsp_types::ParameterLabel;
 
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
 
@@ -517,9 +517,8 @@ mod tests {
     fn test_basic_signature_help() {
         crate::r_task(|| {
             let (text, point) = point_from_cursor("library(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
@@ -542,17 +541,15 @@ mod tests {
     fn test_no_signature_help_outside_parentheses() {
         crate::r_task(|| {
             let (text, point) = point_from_cursor("library@()");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
@@ -579,9 +576,8 @@ fn <- function(
             harp::parse_eval_global(fun).unwrap();
 
             let (text, point) = point_from_cursor("fn(@)");
-            let tree = crate::fixtures::tree_sitter_parse(&text);
-            let context =
-                DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
 

@@ -246,7 +246,7 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -254,9 +254,8 @@ mod tests {
         cursor_text: &str,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         let (text, point) = point_from_cursor(cursor_text);
-        let tree = crate::fixtures::tree_sitter_parse(&text);
-        let document_context =
-            DocumentContext::new(&tree, &text, crate::fixtures::TEST_ENCODING, point, None);
+        let doc = TestDocument::new(&text);
+        let document_context = doc.context(point);
         let state = WorldState::default();
         let context = CompletionContext::new(&document_context, &state);
 

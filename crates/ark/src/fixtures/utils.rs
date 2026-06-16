@@ -29,17 +29,6 @@ pub fn r_test_init() {
     Console::test_init();
 }
 
-pub const TEST_ENCODING: aether_lsp_utils::proto::PositionEncoding =
-    aether_lsp_utils::proto::PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
-
-pub fn tree_sitter_parse(code: &str) -> tree_sitter::Tree {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-    parser.parse(code, None).unwrap()
-}
-
 pub fn point_from_cursor(x: &str) -> (String, Point) {
     // i.e. looking for `@` in something like `fn(x = @1, y = 2)`, and it treats the
     // `@` as the cursor position
