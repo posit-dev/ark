@@ -1,5 +1,6 @@
 use aether_path::FilePath;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 
 use crate::File;
 use crate::LibraryRoots;
@@ -108,33 +109,41 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
 /// Used as the workspace-wide candidate pool for find-references: callers
 /// apply a textual name filter before building indexes.
 ///
-/// Nested roots overlap on disk, so the same `File` is reachable from
-/// several roots (open `/proj` and `/proj/sub-pkg` and the outer scan walks
-/// into `sub-pkg`). We emit each file once by attributing it to a single
-/// owner via `root_by_file`, the same deepest-root rule
-/// [`root_by_package`] uses.
+/// Nested roots overlap on disk, so the same `File` is reachable from several
+/// roots (open `/proj` and `/proj/sub-pkg` and the outer scan walks into
+/// `sub-pkg`). A `seen` set drops the repeats. Unlike `root_by_package` /
+/// `root_by_file`, this query exposes no ownership, just a flat set, so it
+/// doesn't matter which root a duplicate is attributed to. We keep the first
+/// occurrence, which preserves the traversal order above.
 #[salsa::tracked(returns(ref))]
 pub fn all_files(db: &dyn Db) -> Vec<File> {
-    let mut files: Vec<File> = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut files = Vec::new();
 
     for &root in db.live_roots() {
         match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
-                let owned = |f: File| root_by_file(db, f) == Some(r);
-                files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));
-                for &pkg in r.packages(db) {
-                    let pkg_files = pkg.files(db).iter().chain(pkg.scripts(db));
-                    files.extend(pkg_files.copied().filter(|&f| owned(f)));
+                let root_files = r.scripts(db).iter().chain(
+                    r.packages(db)
+                        .iter()
+                        .flat_map(|&pkg| pkg.files(db).iter().chain(pkg.scripts(db))),
+                );
+                for &file in root_files {
+                    if seen.insert(file) {
+                        files.push(file);
+                    }
                 }
             },
-            // Orphan files are disjoint from every root's scanned set
-            // (`upsert_root_file` removes a file from orphan as it promotes
-            // it into a root), so they need no ownership check.
             LiveRoot::Orphan(orphan) => {
-                files.extend(orphan.files(db).iter().copied());
+                for &file in orphan.files(db) {
+                    if seen.insert(file) {
+                        files.push(file);
+                    }
+                }
             },
         }
     }
+
     files
 }
 
@@ -194,14 +203,13 @@ pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
 /// The live root that owns `file`: among the workspace and library roots
 /// whose scanned set reaches `file`, the one with the longest path.
 ///
-/// The file-level analogue of [`root_by_package`]. Nested roots overlap on
-/// disk, so a file reachable from several roots is owned by the deepest one,
-/// matching the package tiebreak. Ownership is keyed on reachability (the
-/// file is in the root's [`root_url_index`]), not bare path prefix, so the
-/// owner always actually contains the file. That's what makes it safe for
-/// [`all_files`] to emit each file exactly once: the owner is guaranteed to
-/// visit it. A bare path prefix would name a freshly-added but not-yet-scanned
-/// nested root and drop the file until its scan landed.
+/// The file-level analogue of [`root_by_package`], used by [`File::root`].
+/// Nested roots overlap on disk, so a file reachable from several roots is
+/// owned by the deepest one, matching the package tiebreak. Ownership is keyed
+/// on reachability (the file is in the root's [`root_path_index`]), not bare
+/// path prefix, so the owner always actually contains the file. A bare path
+/// prefix would name a freshly-added but not-yet-scanned nested root that
+/// doesn't contain the file yet.
 ///
 /// Returns `None` for orphan files (they live in no workspace or library
 /// root). [`File::root`] handles that case with a path-prefix fallback.
