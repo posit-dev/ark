@@ -47,6 +47,7 @@ use tracing::Instrument;
 
 use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
+use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::ark_file::tree_sitter_point_from_lsp_position;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
@@ -443,10 +444,27 @@ pub(crate) fn handle_indent(
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
     let uri = &ctxt.text_document.uri;
-    let file = state.ark_file(uri)?;
+    let open_file = state.ark_file(uri)?;
+    let encoding = state.config.position_encoding;
+
     let db = &state.db;
-    let point = file.tree_sitter_point_from_lsp_position(db, ctxt.position)?;
-    indent_edit(db, &file, point.row)
+    let line_index = open_file.file.line_index(db);
+    let point = tree_sitter_point_from_lsp_position(ctxt.position, line_index, encoding)?;
+
+    let Some(edits) = indent_edit(db, open_file.file, &open_file.config.indent, point.row)? else {
+        return Ok(None);
+    };
+
+    let edits = edits
+        .into_iter()
+        .map(|edit| {
+            Ok(TextEdit {
+                range: lsp_range_from_tree_sitter_range(edit.range, line_index, encoding)?,
+                new_text: edit.new_text,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Some(edits))
 }
 
 #[tracing::instrument(level = "info", skip_all)]
