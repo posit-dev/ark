@@ -1184,7 +1184,7 @@ mod tests {
             file,
             version: None,
             config: DocumentConfig::default(),
-            url,
+            wire_url: url,
             encoding: aether_lsp_utils::proto::PositionEncoding::Wide(
                 biome_line_index::WideEncoding::Utf16,
             ),

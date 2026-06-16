@@ -947,7 +947,7 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     // way of cancelling diagnostics tasks for outdated documents.
     let batch: HashMap<_, _> = batch
         .into_iter()
-        .map(|task| (task.file.url.clone(), task))
+        .map(|task| (task.file.wire_url.clone(), task))
         .collect();
 
     // Each file is its own blocking task. `spawn_blocking()` catches salsa
@@ -967,7 +967,7 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
     let RefreshDiagnosticsTask { file, state } = task;
-    let uri = file.url.clone();
+    let uri = file.wire_url.clone();
     let version = file.version;
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
@@ -1000,7 +1000,7 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     );
 
     for file in state.open_files.values() {
-        if !ExtUrl::should_diagnose(&file.url) {
+        if !ExtUrl::should_diagnose(&file.wire_url) {
             continue;
         }
 

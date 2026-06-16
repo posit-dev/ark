@@ -41,7 +41,7 @@ pub(crate) struct ArkFile {
     // in a `WorkspaceEdit`) and the wire URL gets attached at the transport
     // boundary from a map of open editor URLs owned by the LSP layer. In that
     // design the verbatim URL never travels through the analysis layer.
-    pub(crate) url: Url,
+    pub(crate) wire_url: Url,
     pub(crate) encoding: PositionEncoding,
 }
 
@@ -176,7 +176,7 @@ pub(crate) fn test_ark_file(code: &str) -> (oak_db::OakDatabase, ArkFile) {
         ),
         version: None,
         config: DocumentConfig::default(),
-        url,
+        wire_url: url,
         encoding: PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
     };
     (db, file)

@@ -105,8 +105,12 @@ pub(crate) fn roxygen_documentation(
         .ok()?;
     let range = lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
-    let edit =
-        code_action_workspace_text_edit(file.url.clone(), file.version, vec![edit], capabilities);
+    let edit = code_action_workspace_text_edit(
+        file.wire_url.clone(),
+        file.version,
+        vec![edit],
+        capabilities,
+    );
 
     actions.add_action(code_action(
         "Generate a roxygen template".to_string(),
@@ -220,7 +224,7 @@ mod tests {
         assert_eq!(text_document_edits.len(), 1);
 
         let mut text_document_edit = text_document_edits.pop().unwrap();
-        assert_eq!(text_document_edit.text_document.uri, file.url);
+        assert_eq!(text_document_edit.text_document.uri, file.wire_url);
         assert_eq!(text_document_edit.edits.len(), 1);
 
         let OneOf::Left(text_edit) = text_document_edit.edits.pop().unwrap() else {

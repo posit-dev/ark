@@ -21,7 +21,7 @@ pub(crate) struct WorldState {
     pub(crate) db: OakDatabase,
 
     /// Watched documents, keyed on the normalised [`FilePath`] form.
-    /// The verbatim editor URL is preserved on each [`ArkFile::url`]
+    /// The verbatim editor URL is preserved on each [`ArkFile::wire_url`]
     /// for wire output.
     pub(crate) open_files: HashMap<FilePath, ArkFile>,
 
@@ -128,12 +128,12 @@ impl WorldState {
         let path = file.path(&self.db);
         self.open_files
             .get(path)
-            .map(|ark_file| ark_file.url.clone())
+            .map(|ark_file| ark_file.wire_url.clone())
             .unwrap_or_else(|| path.to_url())
     }
 
     /// Register an editor buffer in `open_files`, keying on the normalised
-    /// [`FilePath`] and stashing the verbatim editor URL on [`ArkFile::url`] for
+    /// [`FilePath`] and stashing the verbatim editor URL on [`ArkFile::wire_url`] for
     /// wire output.
     ///
     /// The caller is in charge of pushing the contents into `oak` via
@@ -144,7 +144,7 @@ impl WorldState {
             file,
             version,
             config: DocumentConfig::default(),
-            url: uri,
+            wire_url: uri,
             encoding: self.config.position_encoding,
         };
         self.open_files.insert(key, ark_file);
@@ -155,6 +155,6 @@ pub(crate) fn open_file_uris(state: &WorldState) -> Vec<Url> {
     state
         .open_files
         .values()
-        .map(|doc| doc.url.clone())
+        .map(|doc| doc.wire_url.clone())
         .collect()
 }
