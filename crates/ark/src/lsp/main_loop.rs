@@ -486,7 +486,7 @@ impl GlobalState {
                 // files so they reflect the indexed workspace and any cancelled
                 // pass is refreshed.
                 if scan_settled {
-                    diagnostics_refresh_all(self.world.clone());
+                    diagnostics_refresh_all(&self.world);
                 }
             },
         }
@@ -1122,7 +1122,7 @@ pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
             .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
     }
 
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
@@ -1149,7 +1149,7 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
@@ -1161,7 +1161,7 @@ pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
@@ -1176,10 +1176,10 @@ pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
-pub(crate) fn diagnostics_refresh_all(state: WorldState) {
+pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     tracing::trace!(
         "Refreshing diagnostics for {n} documents",
         n = state.documents.len()
