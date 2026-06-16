@@ -185,9 +185,9 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let ark_file = state.ark_file(uri)?;
+    let file = state.ark_file(uri)?;
     let db = &state.db;
-    match folding_range(db, &ark_file) {
+    match folding_range(db, &file) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
             lsp::log_error!("{err:?}");
