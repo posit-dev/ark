@@ -205,11 +205,11 @@ fn test_reexport_via_import_from_resolves_to_source() {
         &db,
         file_path("workspace/tibble/DESCRIPTION"),
         "tibble".to_string(),
-        None,
-        tibble_ns,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(tibble_ns),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let tibble_file = File::new(
         &db,
@@ -232,11 +232,11 @@ fn test_reexport_via_import_from_resolves_to_source() {
         &db,
         file_path("workspace/dplyr/DESCRIPTION"),
         "dplyr".to_string(),
-        None,
-        dplyr_ns,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(dplyr_ns),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let dplyr_file = File::new(
         &db,
