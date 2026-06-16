@@ -8,7 +8,6 @@ pub use goto_definition::goto_definition;
 use oak_db::File;
 pub use rename::prepare_rename;
 pub use rename::rename;
-pub use rename::RenameTargets;
 
 /// A span in the workspace: a file and a byte range within it.
 #[derive(Debug, Clone, PartialEq, Eq)]

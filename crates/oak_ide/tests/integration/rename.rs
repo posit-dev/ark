@@ -99,9 +99,8 @@ fn test_rename_def_and_use() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo <- 1\nfoo + foo\n");
 
-    let targets = rename(&db, file, offset(0), "bar").unwrap();
-    assert_eq!(targets.new_text, "bar");
-    assert_eq!(ranges(&targets.ranges), vec![
+    let targets = rename(&db, file, offset(0)).unwrap();
+    assert_eq!(ranges(&targets), vec![
         range(0, 3),
         range(9, 12),
         range(15, 18)
@@ -116,8 +115,8 @@ fn test_rename_excludes_shadowed_outer() {
 
     let inner_def = source.find("x <- 2").unwrap() as u32;
     let inner_use = source.rfind('x').unwrap() as u32;
-    let targets = rename(&db, file, offset(inner_def), "y").unwrap();
-    assert_eq!(ranges(&targets.ranges), vec![
+    let targets = rename(&db, file, offset(inner_def)).unwrap();
+    assert_eq!(ranges(&targets), vec![
         range(inner_def, inner_def + 1),
         range(inner_use, inner_use + 1),
     ]);
@@ -126,34 +125,11 @@ fn test_rename_excludes_shadowed_outer() {
 // --- rename: validation ---
 
 #[test]
-fn test_rename_empty_name_errors() {
-    let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "foo <- 1\n");
-
-    let err = rename(&db, file, offset(0), "").unwrap_err();
-    assert!(err.to_string().contains("empty"));
-}
-
-#[test]
-fn test_rename_reserved_word_errors() {
-    let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "foo <- 1\n");
-
-    for word in ["if", "for", "function", "TRUE", "NULL", "NA"] {
-        let err = rename(&db, file, offset(0), word).unwrap_err();
-        assert!(
-            err.to_string().contains("reserved"),
-            "expected {word} to be rejected"
-        );
-    }
-}
-
-#[test]
 fn test_rename_non_renamable_errors() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
-    let err = rename(&db, file, offset(7), "x").unwrap_err();
+    let err = rename(&db, file, offset(7)).unwrap_err();
     assert!(err.to_string().contains("Can't rename identifier"));
 }
 
@@ -163,49 +139,19 @@ fn test_rename_unbound_use_errors() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo\n");
 
-    let err = rename(&db, file, offset(0), "bar").unwrap_err();
+    let err = rename(&db, file, offset(0)).unwrap_err();
     assert!(err.to_string().contains("no binding"));
-}
-
-// --- rename: backtick canonicalization ---
-
-#[test]
-fn test_rename_to_name_with_space_gets_backticked() {
-    let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
-
-    let targets = rename(&db, file, offset(0), "foo bar").unwrap();
-    assert_eq!(targets.new_text, "`foo bar`");
-}
-
-#[test]
-fn test_rename_to_name_with_starting_digit_gets_backticked() {
-    let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
-
-    let targets = rename(&db, file, offset(0), "1foo").unwrap();
-    assert_eq!(targets.new_text, "`1foo`");
-}
-
-#[test]
-fn test_rename_to_name_with_backtick_errors() {
-    let mut db = OakDatabase::new();
-    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
-
-    let err = rename(&db, file, offset(0), "foo`bar").unwrap_err();
-    assert!(err.to_string().contains("backtick"));
 }
 
 // --- rename: string definitions ---
 
 #[test]
-fn test_rename_string_def_normalizes_to_identifier_form() {
+fn test_rename_string_def_spans_quoted_range() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "\"foo\" <- 1\nfoo\n");
 
-    let targets = rename(&db, file, offset(11), "bar").unwrap();
-    assert_eq!(targets.new_text, "bar");
-    assert_eq!(ranges(&targets.ranges), vec![range(0, 5), range(11, 14)]);
+    let targets = rename(&db, file, offset(11)).unwrap();
+    assert_eq!(ranges(&targets), vec![range(0, 5), range(11, 14)]);
 }
 
 // --- rename: cross-file workspace scripts ---
@@ -220,10 +166,9 @@ fn test_rename_cross_file_workspace_scripts() {
     place_in_workspace_scripts(&mut db, vec![helpers, script]);
 
     let use_start = "source(\"helpers.R\")\n".len() as u32;
-    let targets = rename(&db, script, offset(use_start), "renamed").unwrap();
-    assert_eq!(targets.new_text, "renamed");
+    let targets = rename(&db, script, offset(use_start)).unwrap();
     // script.R (cursor's file) first, then helpers.R.
-    assert_eq!(pairs(&targets.ranges), vec![
+    assert_eq!(pairs(&targets), vec![
         (script, range(use_start, use_start + 6)),
         (helpers, range(0, 6)),
     ]);
@@ -244,10 +189,9 @@ fn test_rename_cross_file_workspace_package() {
     let (a, b) = (files[0], files[1]);
 
     // Cursor on the def `shared` in a.R at offset 0.
-    let targets = rename(&db, a, offset(0), "renamed").unwrap();
-    assert_eq!(targets.new_text, "renamed");
+    let targets = rename(&db, a, offset(0)).unwrap();
     let use_start = "use_shared <- function() ".len() as u32;
-    assert_eq!(pairs(&targets.ranges), vec![
+    assert_eq!(pairs(&targets), vec![
         (a, range(0, 6)),
         (b, range(use_start, use_start + 6)),
     ]);
@@ -264,7 +208,7 @@ fn test_rename_refuses_library_package_symbol() {
     let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
 
     // Cursor on the def `foo` at offset 0.
-    let err = rename(&db, lib_file, offset(0), "bar").unwrap_err();
+    let err = rename(&db, lib_file, offset(0)).unwrap_err();
     assert!(err.to_string().contains("installed package"));
 }
 

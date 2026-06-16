@@ -215,3 +215,40 @@ fn test_rename_to_name_with_space_wraps_in_backticks() {
     let edits = edit.changes.unwrap().remove(&uri).unwrap();
     assert!(edits.iter().all(|e| e.new_text == "`new name`"));
 }
+
+#[test]
+fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
+    let code = "foo <- 1\nfoo\n";
+    let doc = Document::new(code, None);
+    let uri = test_path("test.R");
+    let state = make_state(&uri, &doc);
+
+    let params = make_rename_params(uri.clone(), 0, 0, "1foo");
+    let edit = rename(params, &state).unwrap().unwrap();
+    let edits = edit.changes.unwrap().remove(&uri).unwrap();
+    assert!(edits.iter().all(|e| e.new_text == "`1foo`"));
+}
+
+#[test]
+fn test_rename_to_empty_name_errors() {
+    let code = "foo <- 1\n";
+    let doc = Document::new(code, None);
+    let uri = test_path("test.R");
+    let state = make_state(&uri, &doc);
+
+    let params = make_rename_params(uri, 0, 0, "");
+    let err = rename(params, &state).unwrap_err();
+    assert!(err.to_string().contains("empty"));
+}
+
+#[test]
+fn test_rename_to_name_with_backtick_errors() {
+    let code = "foo <- 1\n";
+    let doc = Document::new(code, None);
+    let uri = test_path("test.R");
+    let state = make_state(&uri, &doc);
+
+    let params = make_rename_params(uri, 0, 0, "foo`bar");
+    let err = rename(params, &state).unwrap_err();
+    assert!(err.to_string().contains("backtick"));
+}

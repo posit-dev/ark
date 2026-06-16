@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use oak_db::Definition;
 use oak_db::File;
@@ -10,16 +9,6 @@ use oak_db::RootKind;
 
 use crate::find_references;
 use crate::FileRange;
-
-/// All edits needed to rename the symbol at the cursor. Each range gets
-/// replaced by `new_text`, across all files in the database.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenameTargets {
-    pub ranges: Vec<FileRange>,
-    /// The canonical syntactic form of the new name (backtick-wrapped if
-    /// needed). Same for every range in `ranges`.
-    pub new_text: String,
-}
 
 /// Identify the renamable identifier at `offset`, returning its range and
 /// current (unquoted) name.
@@ -37,23 +26,14 @@ pub fn prepare_rename(
     Ok(renamable_at(db, file, offset)?.map(|(range, name)| (range, name.text(db).to_string())))
 }
 
-/// Compute all rename edits across the database.
+/// Find every site to rename for the symbol at `offset`. The caller turns
+/// these ranges into edits.
 ///
-/// Returns `Err` when:
-/// - `new_name` is empty, is an R reserved word, or contains a literal
-///   backtick (which can't appear in a backtick-quoted identifier).
-/// - The cursor isn't on a renamable identifier, or it resolves to an
-///   installed package (both via `renamable_at`).
-/// - Nothing in the database binds the cursor's symbol. Rename would
-///   produce no edits, so we refuse rather than silently succeed.
-pub fn rename(
-    db: &dyn Db,
-    file: File,
-    offset: TextSize,
-    new_name: &str,
-) -> anyhow::Result<RenameTargets> {
-    let new_text = to_identifier_text(new_name)?;
-
+/// Returns `Err` when the cursor isn't on a renamable identifier or it
+/// resolves to an installed package (both via `renamable_at`), or when nothing
+/// in the database binds the cursor's symbol. In that last case a rename would
+/// produce no edits, so we refuse rather than silently succeed.
+pub fn rename(db: &dyn Db, file: File, offset: TextSize) -> anyhow::Result<Vec<FileRange>> {
     let Some(_) = renamable_at(db, file, offset)? else {
         return Err(anyhow!("Can't rename identifier at cursor."));
     };
@@ -65,7 +45,7 @@ pub fn rename(
         ));
     }
 
-    Ok(RenameTargets { ranges, new_text })
+    Ok(ranges)
 }
 
 fn renamable_at<'db>(
