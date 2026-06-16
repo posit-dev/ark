@@ -81,7 +81,7 @@ pub(crate) fn symbols(
                     name: name.to_string(),
                     kind: SymbolKind::FUNCTION,
                     location: Location {
-                        uri: uri.clone(),
+                        uri,
                         range,
                     },
                     tags: None,
@@ -96,7 +96,7 @@ pub(crate) fn symbols(
                         name: title.to_string(),
                         kind: SymbolKind::STRING,
                         location: Location {
-                            uri: uri.clone(),
+                            uri,
                             range,
                         },
                         tags: None,
@@ -111,7 +111,7 @@ pub(crate) fn symbols(
                     name: name.clone(),
                     kind: SymbolKind::VARIABLE,
                     location: Location {
-                        uri: uri.clone(),
+                        uri,
                         range,
                     },
                     tags: None,
@@ -125,7 +125,7 @@ pub(crate) fn symbols(
                     name: name.clone(),
                     kind: SymbolKind::METHOD,
                     location: Location {
-                        uri: uri.clone(),
+                        uri,
                         range,
                     },
                     tags: None,
