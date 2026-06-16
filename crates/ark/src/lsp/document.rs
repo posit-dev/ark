@@ -63,7 +63,7 @@ impl std::fmt::Debug for Document {
 impl Document {
     pub fn new(contents: &str, version: Option<i32>) -> Self {
         // A one-shot parser, assumes the `Document` won't be incrementally reparsed.
-        // Useful for testing, `with_document()`, and `index_file()`.
+        // Useful for testing and `index_file()`.
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_r::LANGUAGE.into())
