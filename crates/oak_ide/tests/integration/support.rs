@@ -127,8 +127,16 @@ fn install_pkg(
         pkg,
     ]);
     match kind {
-        RootKind::Library => db.library_roots().set_roots(db).to(vec![root]),
-        RootKind::Workspace => db.workspace_roots().set_roots(db).to(vec![root]),
+        // Append rather than replace, so a test can install several library
+        // packages into the database.
+        RootKind::Library => {
+            let mut roots = db.library_roots().roots(db).clone();
+            roots.push(root);
+            db.library_roots().set_roots(db).to(roots);
+        },
+        RootKind::Workspace => {
+            db.workspace_roots().set_roots(db).to(vec![root]);
+        },
     };
     file
 }

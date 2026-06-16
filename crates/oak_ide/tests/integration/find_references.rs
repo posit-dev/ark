@@ -331,10 +331,11 @@ fn test_namespace_access_bridges_to_bare_name() {
     // The inverse of `test_package_symbol_bridges_to_namespace_access`: a cursor
     // on `mypkg::foo` resolves `foo` in `mypkg` and runs the variable path, so
     // it surfaces the bare `foo` use that attaches `mypkg` too. `script.R` does
-    // `library(mypkg)`, so its bare `foo` resolves to the same binding.
+    // `library(mypkg)`, so its bare `foo` resolves to the same binding. `mypkg`
+    // is a workspace package, so its editable def is included.
     let mut db = OakDatabase::new();
     let pkg_file =
-        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+        install_workspace_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
     let script = upsert(&mut db, "script.R", "library(mypkg)\nmypkg::foo()\nfoo\n");
 
     // Cursor on the `foo` in `mypkg::foo` (offset 22).
@@ -350,26 +351,95 @@ fn test_namespace_access_bridges_to_bare_name() {
 }
 
 #[test]
+fn test_namespace_access_excludes_installed_package_def() {
+    // Same shape as the workspace bridge, but `mypkg` is an *installed* package.
+    // Its source is read-only, so the def in a.R is dropped. Only the workspace
+    // sites in script.R survive: the `mypkg::foo` qualified site and the bare
+    // `foo` use that resolves through the attach.
+    let mut db = OakDatabase::new();
+    let _pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nmypkg::foo()\nfoo\n");
+
+    let refs = find_references(&db, script, offset(22), true);
+    assert_eq!(pairs(&refs), vec![
+        (script, range(22, 25)),
+        (script, range(28, 31)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_installed_package_finds_references() {
+    // The cursor is in installed-package source itself: the user has navigated
+    // into `mypkg` and runs find-references on its `foo`. Here library hits are
+    // wanted, so the exclusion is lifted. We get the def and the sibling use
+    // inside `mypkg`, plus the bare `foo` in the workspace script that attaches
+    // it.
+    let mut db = OakDatabase::new();
+    let pkg_file = install_library_package(
+        &mut db,
+        "mypkg",
+        &["foo"],
+        "a.R",
+        "foo <- function() 1\nfoo()\n",
+    );
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    // Cursor on the def `foo` at offset 0 inside the package file.
+    let refs = find_references(&db, pkg_file, offset(0), true);
+
+    // a.R (primary, the library file) first: def (0..3) then the sibling use
+    // `foo()` (20..23). Then the workspace use in script.R (15..18).
+    assert_eq!(pairs(&refs), vec![
+        (pkg_file, range(0, 3)),
+        (pkg_file, range(20, 23)),
+        (script, range(15, 18)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_installed_package_excludes_other_packages() {
+    // Cursor in `mypkg` source again, but now a *second* installed package,
+    // `otherpkg`, also calls `mypkg::foo`. References within `mypkg` and in the
+    // workspace are kept, but the hit inside `otherpkg` is dropped: it's
+    // read-only source the user didn't navigate into.
+    let mut db = OakDatabase::new();
+    let mypkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 1\n");
+    let _otherpkg_file =
+        install_library_package(&mut db, "otherpkg", &[], "b.R", "mypkg::foo()\n");
+    let script = upsert(&mut db, "script.R", "mypkg::foo()\n");
+
+    // Cursor on the def `foo` at offset 0 inside `mypkg`.
+    let refs = find_references(&db, mypkg_file, offset(0), true);
+
+    // `mypkg`'s def (primary) and the workspace `mypkg::foo` site. `otherpkg`'s
+    // `mypkg::foo` is excluded.
+    assert_eq!(pairs(&refs), vec![
+        (mypkg_file, range(0, 3)),
+        (script, range(7, 10)),
+    ]);
+}
+
+#[test]
 fn test_cross_package_references_via_library() {
     // A script attaches `mypkg` and uses its exported `foo`. The use resolves
-    // through the package layer to the binding in the package file, so
-    // find-references reports both the script use and (with include_declaration)
-    // the package definition. Newly live now that package-layer resolution
-    // feeds `resolve_at`.
+    // through the package layer to the binding in the package file, confirming
+    // the cross-package resolution feeds `resolve_at`. The def lives in an
+    // installed package, so it is excluded from the results: only the script
+    // use is reported, with or without `include_declaration`.
     let mut db = OakDatabase::new();
-    let pkg_file =
+    let _pkg_file =
         install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
     let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
 
     let use_start = "library(mypkg)\n".len() as u32;
     let refs = find_references(&db, script, offset(use_start), true);
-    assert_eq!(pairs(&refs), vec![
-        (script, range(use_start, use_start + 3)),
-        (pkg_file, range(0, 3)),
-    ]);
+    assert_eq!(pairs(&refs), vec![(
+        script,
+        range(use_start, use_start + 3)
+    )]);
 
-    // Excluding the declaration drops the package definition `pkg_file`,
-    // leaving only the script use.
     let refs = find_references(&db, script, offset(use_start), false);
     assert_eq!(pairs(&refs), vec![(
         script,

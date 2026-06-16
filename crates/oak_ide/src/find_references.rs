@@ -9,6 +9,7 @@ use oak_db::Identifier;
 use oak_db::MemberKind;
 use oak_db::Name;
 use oak_db::PackageVisibility;
+use oak_db::RootKind;
 use oak_semantic::ScopeId;
 
 use crate::FileRange;
@@ -27,11 +28,11 @@ pub fn find_references(
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let Some(ident) = Identifier::classify(db, file, offset) else {
+    let Some(identifier) = Identifier::classify(db, file, offset) else {
         return Vec::new();
     };
 
-    match ident {
+    let mut refs = match identifier {
         Identifier::Variable { .. } => {
             find_variable_references(db, file, offset, include_declaration)
         },
@@ -41,7 +42,24 @@ pub fn find_references(
         Identifier::NamespaceAccess {
             namespace, name, ..
         } => find_namespace_references(db, file, namespace, name, include_declaration),
-    }
+    };
+
+    // Installed-package sources are read-only, so references there are noise we
+    // drop. The one exception is the package the cursor sits in: when the user
+    // has navigated into a library, they want references within that same
+    // package. Workspace hits are on the other hand always kept.
+    let cursor_package = file.package(db);
+    refs.retain(|reference| {
+        !is_library_file(db, reference.file) || reference.file.package(db) == cursor_package
+    });
+
+    refs
+}
+
+/// Whether `file` belongs to an installed (library) package root.
+fn is_library_file(db: &dyn Db, file: File) -> bool {
+    file.root(db)
+        .is_some_and(|root| root.kind(db) == RootKind::Library)
 }
 
 fn find_variable_references(
