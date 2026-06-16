@@ -13,8 +13,9 @@ fn test_diagnostics_published_through_refresh_snapshot() {
     // A tighter scope for `r_task()` results in a compilation error about
     // sharing Salsa ingredients across threads
     let diagnostics = r_task(|| {
-        // Open an editor file with an undefined symbol, mirroring `did_open`:
-        // a `Document` plus its matching `oak_db::File`.
+        // Open an editor file with an undefined symbol, mirroring `did_open`.
+        // `upsert_editor` pushes the contents into the oak and returns the
+        // matching `File`, which `insert_ark_file` stores as an `ArkFile`.
         let uri = Url::parse("file:///test.R").unwrap();
         let code = "foo";
         let file = state
