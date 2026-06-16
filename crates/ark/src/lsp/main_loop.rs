@@ -476,17 +476,15 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                let scan_settled = followups.is_empty();
-                dispatch_scan_requests(&self.events_tx, followups);
-
-                // `apply_scan_completed()` is an oak write. It cancels
-                // in-flight diagnostics, and it changes the workspace symbols
-                // diagnostics resolve against. Once the scan settles (no more
-                // follow-ups to apply), recompute diagnostics for the open
-                // files so they reflect the indexed workspace and any cancelled
-                // pass is refreshed.
-                if scan_settled {
+                if followups.is_empty() {
+                    // The scan settled (no more follow-ups). `apply_scan_completed()`
+                    // was an oak write: it cancelled in-flight diagnostics and changed
+                    // the workspace symbols diagnostics resolve against. Recompute
+                    // diagnostics for the open files so they reflect the indexed
+                    // workspace and any cancelled pass is refreshed.
                     diagnostics_refresh_all(&self.world);
+                } else {
+                    dispatch_scan_requests(&self.events_tx, followups);
                 }
             },
         }
@@ -875,9 +873,7 @@ pub(crate) struct RefreshDiagnosticsTask {
     /// Snapshot carrying the live oak plus the session context the diagnostics
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
     state: WorldState,
-    /// The file to diagnose, built against the live oak at enqueue time. Pairs
-    /// the oak `File` with the editor metadata (verbatim `url`, `version`) the
-    /// worker needs, so it never re-resolves anything.
+    /// The file to diagnose, built against the live oak at enqueue time.
     file: ArkFile,
 }
 
