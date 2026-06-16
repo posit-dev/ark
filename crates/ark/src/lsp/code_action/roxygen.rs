@@ -220,11 +220,7 @@ mod tests {
         assert_eq!(text_document_edits.len(), 1);
 
         let mut text_document_edit = text_document_edits.pop().unwrap();
-        // `ark_file_for_test` uses `file:///test.R`, verified against the expected URI
-        assert_eq!(
-            text_document_edit.text_document.uri,
-            Url::parse("file:///test.R").unwrap()
-        );
+        assert_eq!(text_document_edit.text_document.uri, file.url);
         assert_eq!(text_document_edit.edits.len(), 1);
 
         let OneOf::Left(text_edit) = text_document_edit.edits.pop().unwrap() else {
