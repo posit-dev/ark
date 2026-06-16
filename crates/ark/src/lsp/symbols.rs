@@ -9,9 +9,6 @@
 
 use std::result::Result::Ok;
 
-use aether_lsp_utils::proto::to_proto;
-use aether_lsp_utils::proto::PositionEncoding;
-use aether_path::FilePath;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
 use tower_lsp::lsp_types::DocumentSymbolParams;
@@ -21,7 +18,6 @@ use tower_lsp::lsp_types::SymbolInformation;
 use tower_lsp::lsp_types::SymbolKind;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
-use url::Url;
 
 use crate::lsp::ark_file::ArkFile;
 use crate::lsp::db::ArkDb;
@@ -73,7 +69,7 @@ pub(crate) fn symbols(
             return;
         }
 
-        let Some(range) = index_range_to_lsp_range(db, uri, entry.range, encoding) else {
+        let Some(range) = indexer::index_range_to_lsp_range(db, uri, entry.range, encoding) else {
             return;
         };
 
@@ -139,37 +135,6 @@ pub(crate) fn symbols(
     });
 
     Ok(info)
-}
-
-/// Convert an index entry's tree-sitter point range to an LSP range, resolving
-/// the file's line index from the db. Returns `None` if the file is no longer
-/// in the db or the points fall outside it, in which case the symbol is
-/// dropped from the results.
-fn index_range_to_lsp_range(
-    db: &dyn ArkDb,
-    uri: &Url,
-    range: indexer::IndexRange,
-    encoding: PositionEncoding,
-) -> Option<Range> {
-    let file = db.file_by_path(&FilePath::from_url(uri))?;
-    let line_index = file.line_index(db);
-
-    let to_position = |point: indexer::IndexPoint| {
-        to_proto::position_from_line_col(
-            biome_line_index::LineCol {
-                line: point.row,
-                col: point.column,
-            },
-            line_index,
-            encoding,
-        )
-        .ok()
-    };
-
-    Some(Range::new(
-        to_position(range.start)?,
-        to_position(range.end)?,
-    ))
 }
 
 /// Represents a section in the document with its title, level, range, and children

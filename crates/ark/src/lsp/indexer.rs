@@ -8,10 +8,15 @@
 use std::result::Result::Ok;
 use std::sync::LazyLock;
 
+use aether_lsp_utils::proto::to_proto;
+use aether_lsp_utils::proto::PositionEncoding;
+use aether_path::FilePath;
 use oak_db::File;
 use regex::Regex;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
+use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 use url::Url;
@@ -47,7 +52,7 @@ pub enum IndexEntryData {
 /// A position in a file as a tree-sitter point: zero-based row, and column in
 /// bytes within that row. Encoding-free, so the per-file index stays a pure
 /// salsa query. Consumers that need an LSP position convert via the file's
-/// line index and the session encoding (see `symbols.rs`).
+/// line index and the session encoding (see `index_range_to_lsp_range`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
 pub struct IndexPoint {
     pub row: u32,
@@ -74,6 +79,37 @@ pub struct IndexEntry {
     pub key: String,
     pub range: IndexRange,
     pub data: IndexEntryData,
+}
+
+/// Convert an index entry's tree-sitter point range to an LSP range, resolving
+/// the file's line index from the db. Returns `None` if the file is no longer
+/// in the db or the points fall outside it, in which case the symbol is
+/// dropped from the results.
+pub(crate) fn index_range_to_lsp_range(
+    db: &dyn ArkDb,
+    uri: &Url,
+    range: IndexRange,
+    encoding: PositionEncoding,
+) -> Option<Range> {
+    let file = db.file_by_path(&FilePath::from_url(uri))?;
+    let line_index = file.line_index(db);
+
+    let to_position = |point: IndexPoint| {
+        to_proto::position_from_line_col(
+            biome_line_index::LineCol {
+                line: point.row,
+                col: point.column,
+            },
+            line_index,
+            encoding,
+        )
+        .log_err()
+    };
+
+    Some(Range::new(
+        to_position(range.start)?,
+        to_position(range.end)?,
+    ))
 }
 
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
