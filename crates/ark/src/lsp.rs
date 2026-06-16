@@ -12,6 +12,7 @@ pub mod code_action;
 pub mod comm;
 pub mod completions;
 mod config;
+mod content_changes;
 pub(crate) mod db;
 mod declarations;
 pub mod diagnostics;
