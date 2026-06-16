@@ -59,14 +59,12 @@ fn find_variable_references(
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let Some((_, _, target_defs)) = file.resolve_variable_at(db, offset) else {
+    let Some((name, _, target_defs)) = file.resolve_variable_at(db, offset) else {
         return Vec::new();
     };
     if target_defs.is_empty() {
         return Vec::new();
     }
-
-    let name = target_defs[0].name(db);
 
     let file_scope = ScopeId::from(0);
     let locally_scoped = target_defs.iter().all(|d| d.scope(db) != file_scope);
