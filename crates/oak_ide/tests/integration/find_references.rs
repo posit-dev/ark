@@ -195,14 +195,12 @@ fn test_unbound_use_returns_empty() {
 
 #[test]
 fn test_namespace_rhs_returns_namespace_scan() {
-    // Cursor on `mutate` RHS of `::` uses the structural namespace scan: it
-    // matches `dplyr::mutate` across files but not `tidyr::mutate` (different
-    // namespace) nor a bare `mutate()` call (installed packages aren't in the
-    // resolution graph, so there's no shared definition to compare against).
-    //
-    // TODO(namespace-refs): once `resolve` consumes the `Package` / `From`
-    // import layers, a bare `mutate` will resolve to dplyr's `mutate` and
-    // belong here.
+    // Cursor on `mutate` RHS of `::` with no `dplyr` package in the db falls
+    // back to the structural namespace scan: it matches `dplyr::mutate` across
+    // files but not `tidyr::mutate` (different namespace) nor a bare `mutate()`
+    // call (no package to resolve through, so there's no shared definition to
+    // compare against). The resolve-and-bridge path is exercised by
+    // `test_namespace_access_bridges_to_bare_name`.
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "a.R", "dplyr::mutate\n");
     let file2 = upsert(&mut db, "b.R", "dplyr::mutate\ntidyr::mutate\nmutate()\n");
@@ -325,6 +323,29 @@ fn test_package_symbol_bridges_to_namespace_access() {
     assert_eq!(pairs(&refs), vec![
         (foo_file, range(0, 3)),
         (script, range(5, 8)),
+    ]);
+}
+
+#[test]
+fn test_namespace_access_bridges_to_bare_name() {
+    // The inverse of `test_package_symbol_bridges_to_namespace_access`: a cursor
+    // on `mypkg::foo` resolves `foo` in `mypkg` and runs the variable path, so
+    // it surfaces the bare `foo` use that attaches `mypkg` too. `script.R` does
+    // `library(mypkg)`, so its bare `foo` resolves to the same binding.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nmypkg::foo()\nfoo\n");
+
+    // Cursor on the `foo` in `mypkg::foo` (offset 22).
+    let refs = find_references(&db, script, offset(22), true);
+
+    // script.R (primary) first: the `mypkg::foo` qualified site (22..25) then the
+    // bare `foo` use (28..31). Then `mypkg`'s def in a.R (0..3).
+    assert_eq!(pairs(&refs), vec![
+        (script, range(22, 25)),
+        (script, range(28, 31)),
+        (pkg_file, range(0, 3)),
     ]);
 }
 
