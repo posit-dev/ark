@@ -413,10 +413,8 @@ where
                 {
                     // Set end position for the section being closed
                     if let Some(section) = active_sections.last_mut() {
-                        let pos = point_end_of_previous_row(
-                            child.start_position(),
-                            file.contents(db),
-                        );
+                        let pos =
+                            point_end_of_previous_row(child.start_position(), file.contents(db));
                         section.end_position = Some(pos);
                     }
                     finalize_section(&mut active_sections, symbols, file, db)?;
@@ -794,14 +792,7 @@ mod tests {
         let node = file.tree_sitter(&db).root_node();
 
         let mut symbols = Vec::new();
-        collect_symbols(
-            &mut CollectContext::new(),
-            &node,
-            &file,
-            &db,
-            &mut symbols,
-        )
-        .unwrap();
+        collect_symbols(&mut CollectContext::new(), &node, &file, &db, &mut symbols).unwrap();
         symbols
     }
 
