@@ -175,13 +175,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // the first scope where the symbol is already bound. If no binding is
     // found, it assigns in the global (file) scope.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
-        let target_scope = self.resolve_super_target(name);
-
-        // A top-level `<<-` resolves its target to the file scope it already
-        // sits in (no enclosing frame to walk to), so the marker scope and the
-        // binding scope coincide. Record one definition carrying both flags,
-        // rather than pushing duplicate definition entries.
-        if target_scope == self.current_scope {
+        let Some(parent) = self.scopes[self.current_scope].parent else {
+            // A top-level `<<-` has no enclosing frame to walk to, so it binds
+            // in the file scope it already sits in. The marker scope and the
+            // binding scope coincide, so record one definition carrying both
+            // flags rather than pushing two coinciding entries.
             let symbol_id = self.symbol_tables[self.current_scope].intern(
                 name,
                 SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
@@ -194,7 +192,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
             self.use_def_maps[self.current_scope].record_deferred_definition(symbol_id, def_id);
             return;
-        }
+        };
+
+        let target_scope = self.resolve_super_target(name, parent);
 
         let symbol_id =
             self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
@@ -214,15 +214,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);
     }
 
-    // Walk up from the parent scope looking for a scope where `name` already
-    // has `IS_BOUND`. Returns that scope, or the file scope if no binding is
-    // found (mirroring R's assignment to the global environment).
-    fn resolve_super_target(&self, name: &str) -> ScopeId {
-        let file_scope = ScopeId::from(0);
-        let Some(mut scope) = self.scopes[self.current_scope].parent else {
-            return file_scope;
-        };
-
+    // Walk up from `start` to the first scope where `name` already has
+    // `IS_BOUND`. Returns that scope, or the file scope if no binding is found
+    // (mirroring R's assignment to the global environment). Reaching the file
+    // scope unbound ends the walk there, so its `parent` of `None` is the
+    // natural terminator.
+    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
+        let mut scope = start;
         loop {
             if let Some(id) = self.symbol_tables[scope].id(name) {
                 if self.symbol_tables[scope]
@@ -234,7 +232,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
             }
             let Some(parent) = self.scopes[scope].parent else {
-                return file_scope;
+                return scope;
             };
             scope = parent;
         }
