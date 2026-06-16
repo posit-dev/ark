@@ -120,6 +120,15 @@ impl WorldState {
         Ok(ark_file.clone())
     }
 
+    /// The salsa [`File`] handle for an open document.
+    pub(crate) fn file(&self, uri: &Url) -> anyhow::Result<File> {
+        let key = FilePath::from_url(uri);
+        let Some(open_file) = self.open_files.get(&key) else {
+            return Err(anyhow!("Can't find document for URI {uri}"));
+        };
+        Ok(open_file.file)
+    }
+
     /// URL to put on the wire for `file`. Open buffers keep the editor's
     /// verbatim URL so the frontend sees the URI it sent us. Files that were
     /// never opened in the editor (disk-scanned files, resolution targets) have
