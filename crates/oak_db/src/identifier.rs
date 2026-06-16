@@ -69,7 +69,8 @@ impl<'db> Identifier<'db> {
         let root = parse.syntax();
         let index = file.semantic_index(db);
 
-        let offset = snap_to_name_at_boundary(&root, offset);
+        let token = snap_to_name_token(&root, offset)?;
+        let offset = token.text_trimmed_range().start();
 
         if let Some((scope_id, _use_id, use_site)) = index.use_at(offset) {
             let name = index.symbols(scope_id).symbol(use_site.symbol()).name();
@@ -87,7 +88,7 @@ impl<'db> Identifier<'db> {
             });
         }
 
-        if let Some((name, kind, operator_range, name_range)) = classify_member(&root, offset) {
+        if let Some((name, kind, operator_range, name_range)) = classify_member(&token) {
             return Some(Identifier::Member {
                 name: Name::new(db, name.as_str()),
                 kind,
@@ -97,7 +98,7 @@ impl<'db> Identifier<'db> {
         }
 
         if let Some((namespace, name, part, operator_range, name_range)) =
-            classify_namespace(&root, offset)
+            classify_namespace(&token)
         {
             return Some(Identifier::NamespaceAccess {
                 namespace: Name::new(db, namespace.as_str()),
@@ -172,20 +173,9 @@ impl<'db> File {
     }
 }
 
-/// Check whether the offset is on the RHS name of an `RExtractExpression`.
+/// Check whether `token` is the RHS name of an `RExtractExpression`.
 /// Returns `(name, kind, operator_range, name_range)` on a match.
-fn classify_member(
-    root: &RSyntaxNode,
-    offset: TextSize,
-) -> Option<(String, MemberKind, TextRange, TextRange)> {
-    // Snapping put `offset` at the name's start, which is the operator's end,
-    // so `token_at_offset()` reports `Between(op, name)`. Take the name on the
-    // right side.
-    let token = root.token_at_offset(offset).right_biased()?;
-    if !is_name_token(&token) {
-        return None;
-    }
-
+fn classify_member(token: &RSyntaxToken) -> Option<(String, MemberKind, TextRange, TextRange)> {
     // For `foo$bar`: token `bar` -> parent `RIdentifier` -> parent `RExtractExpression`.
     let selector_node = token.parent()?;
     let extract = RExtractExpression::cast(selector_node.parent()?)?;
@@ -207,20 +197,14 @@ fn classify_member(
     Some((name, kind, op.text_trimmed_range(), name_range))
 }
 
-/// Check whether the offset is on a `pkg::sym` / `pkg:::sym` namespace access.
-/// Returns `(namespace, name, part, operator_range, name_range)` on a match.
-/// `part` says which side of the operator the cursor is on. A cursor inside
-/// the operator has been snapped onto the symbol upstream, so it reads as
-/// `Symbol`.
+/// Check whether `token` is part of a `pkg::sym` / `pkg:::sym` namespace
+/// access. Returns `(namespace, name, part, operator_range, name_range)` on a
+/// match. `part` says which side of the operator the cursor is on. A cursor
+/// inside the operator has been snapped onto the symbol upstream, so it reads
+/// as `Symbol`.
 fn classify_namespace(
-    root: &RSyntaxNode,
-    offset: TextSize,
+    token: &RSyntaxToken,
 ) -> Option<(String, String, NamespacePart, TextRange, TextRange)> {
-    let token = root.token_at_offset(offset).right_biased()?;
-    if !is_name_token(&token) {
-        return None;
-    }
-
     // For `pkg::sym`: token -> parent `RIdentifier` -> parent `RNamespaceExpression`.
     let identifier = token.parent()?;
     let namespace_expr = RNamespaceExpression::cast(identifier.parent()?)?;
@@ -253,31 +237,33 @@ fn selector_name_and_range(selector: &AnyRSelector) -> Option<(String, TextRange
     }
 }
 
-fn snap_to_name_at_boundary(root: &RSyntaxNode, offset: TextSize) -> TextSize {
+/// The name token the cursor is on, after snapping to the nearest name-token
+/// boundary. `None` when the cursor isn't on (or beside) a name.
+///
+/// A cursor at a name's edge sits between two tokens, so we prefer the name on
+/// either side. The downstream `classify_*` helpers then read the offset back
+/// as `token.text_trimmed_range().start()`.
+fn snap_to_name_token(root: &RSyntaxNode, offset: TextSize) -> Option<RSyntaxToken> {
     match root.token_at_offset(offset) {
-        TokenAtOffset::None => offset,
+        TokenAtOffset::None => None,
         TokenAtOffset::Single(token) => {
             if is_name_token(&token) {
-                token.text_trimmed_range().start()
+                Some(token)
             } else if matches!(token.kind(), RSyntaxKind::COLON2 | RSyntaxKind::COLON3) {
                 // Cursor strictly inside `::` / `:::` (only multi-char operators
                 // have an interior). Snap onto the qualified symbol on its right.
-                token
-                    .next_token()
-                    .filter(is_name_token)
-                    .map(|name| name.text_trimmed_range().start())
-                    .unwrap_or(offset)
+                token.next_token().filter(is_name_token)
             } else {
-                offset
+                None
             }
         },
         TokenAtOffset::Between(left, right) => {
             if is_name_token(&left) {
-                left.text_trimmed_range().start()
+                Some(left)
             } else if is_name_token(&right) {
-                right.text_trimmed_range().start()
+                Some(right)
             } else {
-                offset
+                None
             }
         },
     }
