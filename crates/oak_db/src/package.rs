@@ -5,6 +5,7 @@ use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
 
+use crate::file_revision::report_untracked_if_zero;
 use crate::Db;
 use crate::Package;
 
@@ -26,10 +27,8 @@ impl Package {
             return namespace.clone();
         }
 
-        // Reading `namespace_revision` makes this memo depend on it even though
-        // the value isn't used here: bumping the revision is what forces a
-        // re-read.
-        let _ = self.namespace_revision(db);
+        // Depend on `namespace_revision()` so a bump forces a re-read
+        report_untracked_if_zero(db, self.namespace_revision(db));
 
         let Some(dir) = self
             .description_path(db)
@@ -93,7 +92,8 @@ impl Package {
     /// `Version:` / `Collate:` re-runs this query but backdates there.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn description(self, db: &dyn Db) -> Option<Description> {
-        let _ = self.description_revision(db);
+        // Depend on `description_revision()` so a bump forces a re-read
+        report_untracked_if_zero(db, self.description_revision(db));
 
         let path = self.description_path(db).as_path()?;
         let text = match fs::read_to_string(path.as_std_path()) {
