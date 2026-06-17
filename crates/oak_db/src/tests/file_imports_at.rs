@@ -231,6 +231,34 @@ fn test_package_namespace_and_base_layers_always_visible() {
 }
 
 #[test]
+fn test_package_script_top_level_resolves_as_standalone_script() {
+    // A `data-raw/` file carries a package back-pointer but lives in
+    // `scripts`, not `files`. At top level it must narrow like a standalone
+    // script and never take the package path, which would log the spurious
+    // "back-pointer but not in its files" warning from #1270.
+    let mut db = TestDb::new();
+    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+    let pkg = install_workspace_package(&mut db, "pkg");
+
+    let r_file = make_package_file(&mut db, "/workspace/pkg/R/a.R", "internal <- 1\n", pkg);
+    let source = "library(dplyr)\nx <- 1\n";
+    let data_raw = make_package_file(&mut db, "/workspace/pkg/data-raw/prep.R", source, pkg);
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![data_raw]);
+
+    // Before the `library()` call: nothing attached, and no `R/` `File`
+    // layers (the script isn't part of the package's namespace).
+    let before = data_raw.imports_at(&db, TextSize::from(0));
+    assert_eq!(attached_packages(&before), Vec::<Package>::new());
+    assert_eq!(package_files(&before), Vec::<File>::new());
+
+    // After the call: dplyr attached, still no `R/` `File` layers.
+    let after = data_raw.imports_at(&db, TextSize::from(source.len() as u32));
+    assert_eq!(attached_packages(&after), vec![dplyr]);
+    assert_eq!(package_files(&after), Vec::<File>::new());
+}
+
+#[test]
 fn test_testthat_top_level_library_narrows_by_offset() {
     // A test file's own top-level `library()` call narrows like a script's:
     // invisible before the call, visible after. Helpers, the package, and
