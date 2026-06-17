@@ -56,7 +56,8 @@ pub(crate) struct PackageEntry {
 /// `NAMESPACE` is only stat'd here, never read or parsed. The lazy
 /// [`oak_db::Package::namespace`] query does the parse. `DESCRIPTION` is read
 /// and parsed because the walk needs the `Package:` name (the workspace
-/// directory name isn't authoritative) and the `Collate:` order to sort
+/// directory name isn't authoritative, unlike an installed package's folder
+/// name) and the `Collate:` order to sort
 /// `R/*.R`. The parsed `collation` only orders this walk's files. It isn't
 /// pushed to salsa. [`oak_db::Package::version`] and
 /// [`oak_db::Package::collation`] re-read `DESCRIPTION` lazily off the

@@ -93,7 +93,7 @@ impl Package {
     /// parses it. Lazy and tracked so we only pay the read and the R-parse
     /// for packages whose imports actually get resolved. Parsing every
     /// installed package's `NAMESPACE` eagerly would dominate the cost of
-    /// scanning a library with hundreds of packages, so we defer it.
+    /// scanning a library with hundreds of packages, so we defer it (#1265).
     ///
     /// A missing or unparseable `NAMESPACE` yields an empty `Namespace`.
     #[salsa::tracked(returns(ref))]
@@ -114,19 +114,17 @@ impl Package {
         };
 
         let namespace_path = dir.join("NAMESPACE");
-        let text = match fs::read_to_string(namespace_path.as_std_path()) {
-            Ok(text) => text,
+        match fs::read_to_string(namespace_path.as_std_path()) {
+            Ok(text) => Namespace::parse(&text).log_err().unwrap_or_default(),
             // A package needn't ship a `NAMESPACE`, so absence is the normal
             // case and stays quiet. A file that exists but can't be read is
             // logged so the failure isn't silently read as "no namespace".
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Namespace::default(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Namespace::default(),
             Err(err) => {
                 log::error!("Failed to read `{namespace_path}`: {err:?}");
-                return Namespace::default();
+                Namespace::default()
             },
-        };
-
-        Namespace::parse(&text).log_err().unwrap_or_default()
+        }
     }
 
     /// The package's `Version:`, parsed lazily from `DESCRIPTION`. `None`
@@ -171,17 +169,16 @@ impl Package {
         report_untracked_if_zero(db, self.description_revision(db));
 
         let path = self.description_path(db).as_path()?;
-        let text = match fs::read_to_string(path.as_std_path()) {
-            Ok(text) => text,
+        match fs::read_to_string(path.as_std_path()) {
+            Ok(text) => Description::parse(&text).log_err(),
             // A missing `DESCRIPTION` is the normal "gone after a rescan" case
             // and stays quiet. A file that exists but can't be read is logged
             // rather than silently treated as absent.
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
             Err(err) => {
                 log::error!("Failed to read `{path}`: {err:?}");
-                return None;
+                None
             },
-        };
-        Description::parse(&text).log_err()
+        }
     }
 }
