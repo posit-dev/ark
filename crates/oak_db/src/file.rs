@@ -84,7 +84,7 @@ impl File {
         // isn't otherwise used here: bumping the revision is what forces a re-read.
         let _ = self.revision(db);
 
-        let Some(path) = self.path(db).as_path() else {
+        let FilePath::File(path) = self.path(db) else {
             // Our virtual documents (e.g. untitled://) are push-based, the
             // editor writes them to the source override field via
             // `upsert_editor`. If we ever do lazy virtual documents, that is
@@ -94,7 +94,7 @@ impl File {
             return String::new();
         };
 
-        match fs::read_to_string(path.as_std_path()) {
+        match fs::read_to_string(path.as_path().as_std_path()) {
             Ok(text) => text,
             Err(err) => {
                 // A file we were asked to analyze but can't read (permissions,
