@@ -26,6 +26,8 @@ use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
 use oak_semantic::library::Library;
 use stdext::result::ResultExt;
+use tokio::runtime::Handle;
+use tokio::runtime::RuntimeFlavor;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task::JoinHandle;
@@ -349,10 +351,10 @@ impl GlobalState {
                             state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
-                            state_handlers::did_open(params, &mut self.world)?;
+                            block_for_write(|| state_handlers::did_open(params, &mut self.world))?;
                         },
                         LspNotification::DidChangeTextDocument(params) => {
-                            state_handlers::did_change(params, &mut self.lsp_state, &mut self.world)?;
+                            block_for_write(|| state_handlers::did_change(params, &mut self.lsp_state, &mut self.world))?;
                         },
                         LspNotification::DidSaveTextDocument(_params) => {
                             // Currently ignored
@@ -477,11 +479,13 @@ impl GlobalState {
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
-                let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
-                    &mut self.world.db,
-                    scan,
-                    &editor_owned,
-                );
+                let followups = block_for_write(|| {
+                    self.lsp_state.oak_scheduler.apply_scan_completed(
+                        &mut self.world.db,
+                        scan,
+                        &editor_owned,
+                    )
+                });
                 lsp::log_info!("Dispatching {n} followup scan requests", n = followups.len());
                 dispatch_scan_requests(&self.events_tx, followups);
 
@@ -843,6 +847,24 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
         MessageType::WARNING => log::warn!("{message}"),
         _ => log::info!("{message}"),
     };
+}
+
+/// Run a blocking Salsa write without stranding the runtime.
+///
+/// Salsa writes may block the current thread until it gains exclusive access to
+/// the DB. This requires processing/cancelling background tasks that hold DB
+/// clones, e.g. diagnostics tasks. If the dispatching of these tasks lives in
+/// tokio tasks, there is a risk of deadlock. We call `block_in_place()` to let
+/// Tokio know the thread is about to potentially block, allowing tasks to be
+/// scheduled on other worker threads.
+///
+/// `block_in_place()` panics on a current-thread runtime, which the tests use, so
+/// fall back to calling `f` directly there.
+fn block_for_write<T>(f: impl FnOnce() -> T) -> T {
+    match Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(f),
+        _ => f(),
+    }
 }
 
 /// Spawn a blocking task
