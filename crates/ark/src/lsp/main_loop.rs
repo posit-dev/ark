@@ -449,6 +449,8 @@ impl GlobalState {
             },
 
             Event::OakScanCompleted(scan) => {
+                lsp::log_info!("Received `OakScanCompleted`");
+
                 // This scan ran on a background task, but it sends its result
                 // back here so the write happens on the main loop. Keep it that
                 // way: Only the main loop should write to the oak DB (not
@@ -475,6 +477,7 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
+                lsp::log_info!("Dispatching {n} followup scan requests", n = followups.len());
                 dispatch_scan_requests(&self.events_tx, followups);
 
                 // Warm the workspace index once the scan settles. Editor
@@ -486,13 +489,15 @@ impl GlobalState {
                 }
             },
         }
+        lsp::log_info!("Finished handling event in {}ms", loop_tick.elapsed().as_millis());
 
-        // TODO Make this threshold configurable by the client
+        // TODO: Make this threshold configurable by the client
         if loop_tick.elapsed() > std::time::Duration::from_millis(50) {
-            lsp::log_info!("Handler took {}ms", loop_tick.elapsed().as_millis());
+            lsp::log_info!("Handler took more than 50ms");
         }
 
         if salsa::plumbing::current_revision(&self.world.db) != old_revision {
+            lsp::log_info!("World state revision advanced");
             diagnostics_refresh_all(&self.world);
         }
 
@@ -940,8 +945,6 @@ async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagno
 }
 
 fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
-    tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
-
     // Deduplicate tasks by keeping only the last one for each URI. We use a
     // `HashMap` so only the last insertion is retained. This is effectively a
     // way of cancelling diagnostics tasks for outdated documents.
@@ -949,6 +952,9 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
         .into_iter()
         .map(|task| (task.file.wire_url().clone(), task))
         .collect();
+
+    tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
+    lsp::log_info!("Processing {n} diagnostic tasks", n = batch.len());
 
     // Each file is its own blocking task. `spawn_blocking()` catches salsa
     // cancellation, so a pass cancelled by a concurrent edit just produces no
@@ -979,7 +985,15 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
         .components()
         .any(|c| c.as_os_str() == "testthat");
 
+    let now = std::time::Instant::now();
+    lsp::log_info!("Generating diagnostics for file: {uri}");
+
     let diagnostics = generate_diagnostics(file.file(), state, testthat);
+
+    lsp::log_info!(
+        "Finished diagnostics for file: {uri} in {:.0?}",
+        now.elapsed()
+    );
 
     RefreshDiagnosticsResult {
         uri,
@@ -1027,7 +1041,10 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
 /// passes spawned by that same write force the same memos and finish the job.
 fn warm_workspace_index(db: OakDatabase) {
     spawn_blocking(move || {
+        let now = std::time::Instant::now();
+        lsp::log_info!("Starting workspace index warmup");
         indexer::warm(&db);
+        lsp::log_info!("Finished workspace index warmup ({:.0?})", now.elapsed());
         Ok(None)
     })
 }
