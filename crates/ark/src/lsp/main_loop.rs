@@ -325,6 +325,11 @@ impl GlobalState {
         // handlers that mutate those still refresh explicitly.
         let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
+        lsp::log_info!(
+            "Entering handler with {n} outstanding Salsa db holds",
+            n = self.world.db.outstanding_holds()
+        );
+
         match event {
             Event::Lsp(msg) => match msg {
                 LspMessage::Notification(notif) => {
