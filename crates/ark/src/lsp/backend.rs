@@ -47,6 +47,7 @@ use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
+use crate::lsp::main_loop::LoopHandles;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
@@ -232,9 +233,9 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
-    /// Handle to main loop. Drop it to cancel the loop, all associated tasks,
-    /// and drop all owned state.
-    _main_loop: tokio::task::JoinSet<()>,
+    /// Handle to the LSP loops. Drop it to shut the loops down and drop all
+    /// owned state.
+    _main_loop: LoopHandles,
 }
 
 impl Backend {
