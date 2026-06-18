@@ -372,15 +372,16 @@ impl GlobalState {
         // handlers that mutate those still refresh explicitly.
         let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
-        lsp::log_info!(
-            "Entering handler with {n} outstanding Salsa db holds",
-            n = self.world.db.outstanding_holds()
-        );
+        lsp::log_info!("Processing next event");
 
         match event {
             Event::Lsp(msg) => match msg {
                 LspMessage::Notification(notif) => {
                     lsp::log_info!("{notif:#?}");
+                    lsp::log_info!(
+                        "Entering notification handler with {n} outstanding Salsa db holds",
+                        n = self.world.db.outstanding_holds()
+                    );
 
                     match notif {
                         LspNotification::Initialized(_params) => {
@@ -529,7 +530,12 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                lsp::log_info!("Dispatching {n} followup scan requests", n = followups.len());
+                lsp::log_info!(
+                    "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
+                    n = followups.len(),
+                    n_holds = self.world.db.outstanding_holds(),
+                );
+
                 dispatch_scan_requests(&self.events_tx, followups);
 
                 // Warm the workspace index once the scan settles. Editor
