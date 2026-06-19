@@ -6,6 +6,7 @@
 //
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -15,12 +16,17 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
+use aether_url::UrlId;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
+use oak_scan::ScanCompleted;
+use oak_scan::ScanRequest;
+use oak_scan::ScanScheduler;
 use oak_semantic::library::Library;
+use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -88,6 +94,7 @@ type TaskList<T> = futures::stream::FuturesUnordered<Pin<Box<dyn AnyhowJoinHandl
 pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
+    OakScanCompleted(ScanCompleted),
 }
 
 #[derive(Debug)]
@@ -151,8 +158,9 @@ pub(crate) struct GlobalState {
     events_rx: TokioUnboundedReceiver<Event>,
 }
 
-/// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
-/// exclusive handlers.
+/// Non-cloneable, per-session state mutated only by exclusive handlers.
+/// Sits alongside [`WorldState`] (which is cloneable for snapshot
+/// handlers); state that can't be cloned lives here instead.
 pub(crate) struct LspState {
     /// The set of tree-sitter document parsers managed by the `GlobalState`.
     pub(crate) parsers: HashMap<Url, tree_sitter::Parser>,
@@ -162,6 +170,11 @@ pub(crate) struct LspState {
 
     /// Channel for sending notifications to Console (e.g., document changes for DAP)
     pub(crate) console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
+
+    /// Coordinator for asynchronous workspace scans. Mutated only from
+    /// main-loop handlers. Must be out of [`WorldState`] because the scheduler
+    /// is not clonable.
+    pub(crate) oak_scheduler: ScanScheduler,
 }
 
 /// State for the auxiliary loop
@@ -191,16 +204,6 @@ impl GlobalState {
         _r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
-        // Transmission channel for the main loop events. Shared with the
-        // tower-lsp backend and the Jupyter kernel.
-        let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
-
-        let lsp_state = LspState {
-            parsers: HashMap::new(),
-            capabilities: Capabilities::default(),
-            console_notification_tx,
-        };
-
         // FIXME: We shouldn't call R code in the kernel to figure this out
         let library_paths = crate::r_task(|| -> anyhow::Result<Vec<String>> {
             Ok(harp::RFunction::new("base", ".libPaths")
@@ -223,8 +226,34 @@ impl GlobalState {
 
         let library = Library::new(library_paths);
 
+        Self::from_parts(
+            client,
+            console_notification_tx,
+            WorldState::new(db, library),
+        )
+    }
+
+    /// Assemble the state around an already-built `WorldState`. Splitting this
+    /// out from [`GlobalState::new`] lets tests construct a state without the
+    /// R `.libPaths()` lookup that `new` does.
+    fn from_parts(
+        client: Client,
+        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
+        world: WorldState,
+    ) -> Self {
+        // Transmission channel for the main loop events. Shared with the
+        // tower-lsp backend and the Jupyter kernel.
+        let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
+
+        let lsp_state = LspState {
+            parsers: HashMap::new(),
+            capabilities: Capabilities::default(),
+            console_notification_tx,
+            oak_scheduler: ScanScheduler::new(),
+        };
+
         Self {
-            world: WorldState::new(db, library),
+            world,
             lsp_state,
             client,
             events_tx,
@@ -299,13 +328,13 @@ impl GlobalState {
                             handlers::handle_initialized(&self.client, &self.lsp_state).await?;
                         },
                         LspNotification::DidChangeWorkspaceFolders(params) => {
-                            state_handlers::did_change_workspace_folders(params, &mut self.world)?;
+                            state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
                         },
                         LspNotification::DidChangeWatchedFiles(params) => {
-                            state_handlers::did_change_watched_files(params, &mut self.world)?;
+                            state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
                             state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
@@ -336,7 +365,7 @@ impl GlobalState {
 
                     match request {
                         LspRequest::Initialize(params) => {
-                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
+                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?;
                         },
                         LspRequest::WorkspaceSymbol(params) => {
                             respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
@@ -420,6 +449,25 @@ impl GlobalState {
                     }
                 }
             },
+
+            Event::OakScanCompleted(scan) => {
+                // Recompute editor-owned files at apply time, not at spawn
+                // time: a buffer may have opened or closed since the scan
+                // kicked off. The buffer-drain inside `apply_scan_completed` uses
+                // this set as its watcher-event `skip` argument.
+                let editor_owned: HashSet<UrlId> = self.world
+                    .documents
+                    .keys()
+                    .map(|url| UrlId::from_url(url.clone()))
+                    .collect();
+
+                let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
+                    &mut self.world.db,
+                    scan,
+                    &editor_owned,
+                );
+                dispatch_scan_requests(&self.events_tx, followups);
+            },
         }
 
         // TODO Make this threshold configurable by the client
@@ -452,6 +500,54 @@ impl GlobalState {
     }
 }
 
+/// Test-only methods for driving the main loop without R or a live LSP
+/// connection. Kept here, next to the loop they exercise, so the pump uses the
+/// real `handle_event()` and the private channels rather than a reconstruction.
+#[cfg(test)]
+impl GlobalState {
+    /// Build a state with an empty db and no R library paths. Takes a `client`
+    /// because the struct holds one, but the event paths exercised in tests
+    /// never touch it.
+    pub(crate) fn new_test(client: Client) -> Self {
+        let (console_notification_tx, _) = tokio_unbounded_channel::<ConsoleNotification>();
+        let world = WorldState::new(OakDatabase::new(), Library::new(vec![]));
+        Self::from_parts(client, console_notification_tx, world)
+    }
+
+    /// Run `event` through the real `handle_event`, then pump the scan
+    /// completions it spawns until the scheduler goes idle. This is what
+    /// `main_loop()` does, minus the surrounding `loop`.
+    pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
+        self.handle_event(event).await.unwrap();
+        while self.lsp_state.oak_scheduler.has_pending_scans() {
+            let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
+    pub(crate) fn world(&self) -> &WorldState {
+        &self.world
+    }
+}
+
+/// Spawn each [`ScanRequest`] on a blocking task. Each task runs the
+/// pure-I/O [`ScanRequest::run`] and ships the [`ScanCompleted`] back
+/// to the main loop as [`Event::OakScanCompleted`], where the scheduler
+/// then applies it.
+pub(super) fn dispatch_scan_requests(
+    events_tx: &TokioUnboundedSender<Event>,
+    requests: Vec<ScanRequest>,
+) {
+    for req in requests {
+        let tx = events_tx.clone();
+        spawn_blocking(move || {
+            let scan = req.run();
+            tx.send(Event::OakScanCompleted(scan)).log_err();
+            Ok(None)
+        });
+    }
+}
+
 /// Respond to a request from the LSP
 ///
 /// We receive requests from the LSP client with a response channel. Once we
@@ -476,10 +572,8 @@ fn respond<T>(
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
     let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
-        Ok(response) => {
-            let response = response.map(into_lsp_response);
-            RequestResponse::Result(response)
-        },
+        Ok(Ok(t)) => RequestResponse::Result(Ok(into_lsp_response(t))),
+        Ok(Err(e)) => RequestResponse::Result(Err(e)),
         Err(err) => {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
@@ -1047,10 +1141,14 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
             continue;
         }
 
+        // The task sits in the indexer queue off the main loop.
+        // `legacy_snapshot()` hands it a detached oak db so it can't pin the
+        // live one against the main loop's next `set_*` (diagnostics read only
+        // non-oak state).
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
                 uri: uri.clone(),
-                state: state.clone(),
+                state: state.legacy_snapshot(),
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }

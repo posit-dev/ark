@@ -26,9 +26,9 @@ mod inputs;
 mod library;
 mod lookup;
 mod packages;
+mod scheduler;
 mod stale;
 mod watch;
-mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -36,5 +36,8 @@ mod tests;
 pub use inputs::DbScan;
 pub use inputs::FileEntry;
 pub use inputs::RootExt;
+pub use scheduler::ScanCompleted;
+pub use scheduler::ScanRequest;
+pub use scheduler::ScanScheduler;
 pub use watch::FileEvent;
 pub use watch::FileEventKind;

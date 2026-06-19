@@ -1,29 +1,13 @@
-//! Surgical updates from file-watcher events.
+//! Surgical single-file updates from file-watcher events.
 //!
-//! The workspace scanner ([`crate::workspace`]) is the bulk path: it
-//! walks an entire root and rebuilds packages and scripts. The helpers
-//! here handle one file event at a time, so a burst of file watcher
-//! notifications doesn't trigger a full rescan per event.
 //!
-//! [`apply_watcher_events`] is the entry point used by drivers (the LSP,
-//! tests, eventually anything else that gets a stream of file events).
-//! Drivers translate their native event type into [`FileEvent`] and
-//! call in, and `apply_watcher_events` does the routing:
-//!
-//! - DESCRIPTION events fall back to
-//!   [`crate::workspace::rescan_workspace_root`] on the containing
-//!   workspace root, deduped within the batch. A `DESCRIPTION` add or
-//!   removal can promote or demote a whole directory, which is too
-//!   tangled for a one-file update.
-//!
-//! - R file events route through [`add_watched_file`] (Created / Changed) or
-//!   [`remove_watched_file`] (Deleted). The `editor_owned` set lets the driver hold
-//!   back URLs whose contents it owns (the LSP uses this for files
-//!   the editor has open).
+//! Dispatch (DESCRIPTION rescan vs surgical add/remove, plus mid-scan
+//! buffering) lives on [`crate::ScanScheduler`]. This module just exposes
+//! [`add_watched_file`] / [`remove_watched_file`] for the scheduler to call
+//! after it has decided a single event can apply surgically against the live
+//! root.
 
-use std::collections::HashSet;
 use std::path::Path;
-use std::path::PathBuf;
 
 use aether_url::UrlId;
 use oak_db::Db;
@@ -58,70 +42,6 @@ pub enum FileEventKind {
     Created,
     Changed,
     Deleted,
-}
-
-/// Apply a batch of file events to the oak input tree.
-///
-/// DESCRIPTION events are deduped to one rescan per containing root.
-/// R-file events route through [`add_watched_file`] / [`remove_watched_file`]. URLs
-/// in `editor_owned` are not touched even if their event is for an R file;
-/// callers use this to defer to an in-memory source of truth (e.g.
-/// the LSP's editor buffers).
-pub(crate) fn apply_watcher_events<DB: Db + DbInputs>(
-    db: &mut DB,
-    events: Vec<FileEvent>,
-    editor_owned: &HashSet<UrlId>,
-) {
-    let roots = workspace_root_paths(db);
-    let mut stale_roots: HashSet<Root> = HashSet::new();
-
-    for event in events {
-        let Ok(path) = event.url.to_file_path() else {
-            continue;
-        };
-
-        if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
-            if let Some(root) = roots
-                .iter()
-                .find(|(root_path, _)| path.starts_with(root_path))
-                .map(|(_, root)| *root)
-            {
-                stale_roots.insert(root);
-            }
-            continue;
-        }
-
-        if editor_owned.contains(&event.url) {
-            continue;
-        }
-
-        match event.kind {
-            FileEventKind::Created | FileEventKind::Changed => match std::fs::read_to_string(&path)
-            {
-                Ok(contents) => add_watched_file(db, event.url, contents),
-                Err(err) => log::warn!("Skipped watched file {}: {err:?}", path.display()),
-            },
-            FileEventKind::Deleted => remove_watched_file(db, event.url),
-        }
-    }
-
-    for root in stale_roots {
-        crate::workspace::rescan_workspace_root(db, root);
-    }
-}
-
-fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(PathBuf, Root)> {
-    db.workspace_roots()
-        .roots(db)
-        .iter()
-        .filter_map(|root| match root.path(db).to_file_path() {
-            Ok(path) => Some((path, *root)),
-            Err(err) => {
-                log::warn!("Can't get file path of workspace root, skipping: {err:?}");
-                None
-            },
-        })
-        .collect()
 }
 
 /// React to a Created or Changed event on an R file. Idempotent: if a `File`

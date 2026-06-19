@@ -8,11 +8,14 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 
 use aether_url::UrlId;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_scan::DbScan;
+use oak_scan::ScanRequest;
+use oak_scan::ScanScheduler;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
@@ -26,14 +29,127 @@ use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::document::Document;
+use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::WorldState;
-use crate::lsp::state_handlers::did_change_watched_files;
-use crate::lsp::state_handlers::did_change_workspace_folders;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
+
+/// Local sync wrappers around the async-shaped scheduler API. Tests
+/// don't need the timing flexibility, so each operation kicks off
+/// any scans, drains them on the current thread, and returns. Each
+/// call constructs a fresh `LspState` (which owns the scheduler)
+/// because tests assert post-quiescent state; carrying scheduler
+/// state across calls only matters for mid-flight timing assertions,
+/// which live in `oak_scan`'s scheduler tests.
+fn set_workspace_paths(state: &mut WorldState, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
+    let mut lsp_state = test_lsp_state();
+    let reqs = lsp_state
+        .oak_scheduler
+        .set_workspace_paths(&mut state.db, paths, editor_owned);
+    drain(
+        &mut state.db,
+        &mut lsp_state.oak_scheduler,
+        reqs,
+        editor_owned,
+    );
+}
+
+fn editor_owned_of(state: &WorldState) -> HashSet<UrlId> {
+    state
+        .documents
+        .keys()
+        .map(|u| UrlId::from_url(u.clone()))
+        .collect()
+}
+
+fn did_change_watched_files(
+    params: DidChangeWatchedFilesParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let mut lsp_state = test_lsp_state();
+    run_handler_to_quiescence(state, &mut lsp_state, |state, lsp_state, events_tx| {
+        crate::lsp::state_handlers::did_change_watched_files(params, state, lsp_state, events_tx)
+    })
+}
+
+fn did_change_workspace_folders(
+    params: DidChangeWorkspaceFoldersParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let mut lsp_state = test_lsp_state();
+    run_handler_to_quiescence(state, &mut lsp_state, |state, lsp_state, events_tx| {
+        crate::lsp::state_handlers::did_change_workspace_folders(
+            params, state, lsp_state, events_tx,
+        )
+    })
+}
+
+/// Drive a production handler that dispatches its scans through `events_tx`,
+/// then pump the resulting `OakScanCompleted` events to quiescence on a local
+/// runtime. Production does this pumping in the main loop's event handler;
+/// the tests have to stand up the same machinery (tokio runtime so
+/// `spawn_blocking` works, aux channel so `send_auxiliary` doesn't panic, an
+/// events channel to receive completions).
+fn run_handler_to_quiescence<F>(
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    handler: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(&mut WorldState, &mut LspState, &TokioUnboundedSender<Event>) -> anyhow::Result<()>,
+{
+    let _aux = init_aux_for_test();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+
+    rt.block_on(async {
+        handler(state, lsp_state, &events_tx)?;
+        let editor_owned = editor_owned_of(state);
+        while lsp_state.oak_scheduler.has_pending_scans() {
+            let Some(Event::OakScanCompleted(scan)) = events_rx.recv().await else {
+                break;
+            };
+            let followups =
+                lsp_state
+                    .oak_scheduler
+                    .apply_scan_completed(&mut state.db, scan, &editor_owned);
+            dispatch_scan_requests(&events_tx, followups);
+        }
+        Ok(())
+    })
+}
+
+fn test_lsp_state() -> LspState {
+    LspState {
+        parsers: HashMap::new(),
+        capabilities: Capabilities::default(),
+        console_notification_tx: tokio::sync::mpsc::unbounded_channel().0,
+        oak_scheduler: ScanScheduler::new(),
+    }
+}
+
+/// Inline drain loop: oak_scan keeps its equivalent crate-private so
+/// it can't leak into production callers. The implementation here is
+/// just `ScanRequest::run` + `apply_scan_completed` until the request queue
+/// empties.
+fn drain(
+    db: &mut oak_db::OakDatabase,
+    scheduler: &mut ScanScheduler,
+    mut requests: Vec<ScanRequest>,
+    editor_owned: &HashSet<UrlId>,
+) {
+    while let Some(req) = requests.pop() {
+        let result = req.run();
+        requests.extend(scheduler.apply_scan_completed(db, result, editor_owned));
+    }
+}
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     fs::create_dir_all(dir.join("R")).unwrap();
@@ -60,9 +176,7 @@ fn workspace_state(workspace: &Path) -> WorldState {
         .workspace
         .folders
         .push(Url::from_file_path(workspace).unwrap());
-    state
-        .db
-        .set_workspace_paths(&[workspace.to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut state, &[workspace.to_path_buf()], &HashSet::new());
     state
 }
 
@@ -407,7 +521,8 @@ fn test_did_change_workspace_folders_removes_folder() {
         .workspace
         .folders
         .push(Url::from_file_path(second.path()).unwrap());
-    state.db.set_workspace_paths(
+    set_workspace_paths(
+        &mut state,
         &[first.path().to_path_buf(), second.path().to_path_buf()],
         &HashSet::new(),
     );
@@ -523,16 +638,10 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // to orphan, editor-owned) → close → file leaves orphan, lands in
     // stale. Without the `close_editor` hook in `did_close`, the file
     // would zombie in orphan with the editor's last content.
-    let mut aux_rx = init_aux_for_test();
-
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
-    let mut lsp_state = LspState {
-        parsers: HashMap::new(),
-        capabilities: Capabilities::default(),
-        console_notification_tx: tokio::sync::mpsc::unbounded_channel().0,
-    };
+    let mut lsp_state = test_lsp_state();
 
     let r_path = tmp.path().join("pkg/R/a.R");
     let url = Url::from_file_path(&r_path).unwrap();
@@ -558,6 +667,11 @@ fn test_did_close_releases_orphan_file_to_stale() {
     .unwrap();
     let file = state.db.file_by_url(&url_id).unwrap();
     assert!(state.db.orphan_root().files(&state.db).contains(&file));
+
+    // Init the aux channel here, after the workspace-folders churn: the
+    // handler wrapper resets the channel each call (it stands up its own to
+    // satisfy `spawn_blocking`), so grab the receiver only once that's done.
+    let mut aux_rx = init_aux_for_test();
 
     // Now close the buffer. File should move from orphan to stale.
     let params = DidCloseTextDocumentParams {

@@ -33,9 +33,6 @@ use crate::lookup::package_by_url;
 use crate::stale::remove_from_stale_files;
 use crate::stale::remove_from_stale_packages;
 use crate::stale::stale_file_by_url;
-use crate::watch;
-use crate::watch::FileEvent;
-use crate::workspace;
 
 /// Description of one R file the scanner wants to register.
 ///
@@ -56,6 +53,10 @@ pub struct FileEntry {
 
 /// Extension methods on the database for scanner orchestration and
 /// placement-aware updates that don't have a natural `Root` receiver.
+///
+/// Workspace-level orchestration (path diff, watcher dispatch, rescan
+/// coalescing) lives on [`crate::ScanScheduler`] instead, since it
+/// needs scheduler state that can't be kept in salsa inputs.
 pub trait DbScan: Db + DbInputs {
     /// Reconcile `LibraryRoots` to exactly `paths`.
     ///
@@ -71,25 +72,18 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// Order in `LibraryRoots.roots` follows `paths`, matching R's
     /// `.libPaths()` precedence.
+    ///
+    /// **Why this is sync while workspaces go through
+    /// [`crate::ScanScheduler`].** Libraries are scanned exactly
+    /// once at LSP init today. Workspaces churn (folders open and
+    /// close at any time) and have a file watcher pushing events
+    /// mid-scan, so the workspace path needs the buffering /
+    /// stale-result machinery the scheduler exists for. Libraries
+    /// have neither, so the extra plumbing buys nothing. If
+    /// `.libPaths()` ever becomes mutable mid-session (e.g. user
+    /// runs `.libPaths(...)` in the console), this should join
+    /// the scheduler.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
-
-    /// Reconcile `WorkspaceRoots` to exactly `paths`.
-    ///
-    /// - Paths already present as a `Root`: untouched. No fs walk, no salsa
-    ///   churn. The file watcher handles in-folder changes.
-    ///
-    /// - New paths: scanned (`DESCRIPTION` files at any depth, honouring
-    ///   `.gitignore`, plus top-level R scripts) and added.
-    ///
-    /// - Removed paths: their `Root` is evicted. Files whose URLs are in
-    ///   `editor_owned` move to [`oak_db::OrphanRoot`] (analysis-visible: the
-    ///   buffer is still open). Everything else moves to [`oak_db::StaleRoot`]
-    ///   for entity reuse if the path comes back.
-    fn set_workspace_paths(&mut self, paths: &[PathBuf], editor_owned: &HashSet<UrlId>);
-
-    /// Rescan one workspace root. Used as the coarse fallback when
-    /// `DESCRIPTION` events change the package classification of a directory.
-    fn rescan_workspace_root(&mut self, root: Root);
 
     /// Upsert the editor's view of a file. Used by the LSP layer to apply
     /// `didOpen` / `didChange` content for any URL the editor touches.
@@ -112,44 +106,19 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If the file lives in [`OrphanRoot`] (placed there by
     /// [`Self::upsert_editor`] because the URL didn't belong to a live root, or
-    /// by `set_workspace_paths()` eviction routing for an open buffer in a
-    /// removed workspace), it gets moved to [`StaleRoot`]. Future
+    /// by workspace eviction routing for an open buffer in a removed
+    /// workspace), it gets moved to [`StaleRoot`]. Future
     /// [`Self::upsert_editor`] for the same URL resurrects the entity from
     /// stale instead of minting a fresh one.
     ///
     /// If the file is in a live workspace / library container, the call is a
     /// no-op.
     fn close_editor(&mut self, url: &UrlId);
-
-    /// React to a Created or Changed watcher event on an R file. Classifies the
-    /// URL against the current workspace tree and either creates a new `File`
-    /// or updates an existing one's content. Files outside every workspace, or
-    /// inside a package's non-`R/` subdir, are skipped.
-    fn add_watched_file(&mut self, url: UrlId, contents: String);
-
-    /// React to a Deleted watcher event. Unlinks the file from whichever
-    /// container holds it (package files, root scripts, or orphan).
-    fn remove_watched_file(&mut self, url: UrlId);
-
-    /// Apply a batch of file-watcher events. Routes DESCRIPTION events to a
-    /// coarse rescan of the containing workspace root (deduped within the
-    /// batch), and R-file events to per-file add / remove. URLs in `editor_owned` are
-    /// left alone, so callers can defer to an in-memory source of truth (e.g.
-    /// the editor's open buffers).
-    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, editor_owned: &HashSet<UrlId>);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
     fn set_library_paths(&mut self, paths: &[PathBuf]) {
         crate::library::set_library_paths(self, paths);
-    }
-
-    fn set_workspace_paths(&mut self, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
-        crate::workspace::set_workspace_paths(self, paths, editor_owned);
-    }
-
-    fn rescan_workspace_root(&mut self, root: Root) {
-        workspace::rescan_workspace_root(self, root);
     }
 
     fn upsert_editor(&mut self, url: UrlId, contents: String) -> File {
@@ -191,18 +160,6 @@ impl<DB: Db + DbInputs> DbScan for DB {
         if let Some(stale_files) = with_cow_insert(stale.files(self), file) {
             stale.set_files(self).to(stale_files);
         }
-    }
-
-    fn add_watched_file(&mut self, url: UrlId, contents: String) {
-        watch::add_watched_file(self, url, contents);
-    }
-
-    fn remove_watched_file(&mut self, url: UrlId) {
-        watch::remove_watched_file(self, url);
-    }
-
-    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, editor_owned: &HashSet<UrlId>) {
-        watch::apply_watcher_events(self, events, editor_owned);
     }
 }
 
