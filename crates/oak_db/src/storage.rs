@@ -20,11 +20,20 @@ pub struct OakDatabase {
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
     stale_root: Arc<OnceLock<StaleRoot>>,
+    // Clone counter that represents how many background readers have cloned the database
+    holds: Arc<()>,
 }
 
 impl OakDatabase {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    // Number of live clones of this db (always >= 1, the caller itself). A
+    // write through `&mut db` parks until this reaches 1, so a value > 1 here
+    // means a write right now would block on that many outstanding handles.
+    pub fn outstanding_holds(&self) -> usize {
+        Arc::strong_count(&self.holds)
     }
 }
 
