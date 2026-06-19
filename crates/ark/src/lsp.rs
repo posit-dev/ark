@@ -5,7 +5,6 @@
 //
 //
 
-pub(crate) mod ark_file;
 pub mod backend;
 pub mod capabilities;
 pub mod code_action;
@@ -32,6 +31,7 @@ pub mod input_boundaries;
 pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
+pub(crate) mod open_file;
 
 pub mod find_references;
 pub mod rename;

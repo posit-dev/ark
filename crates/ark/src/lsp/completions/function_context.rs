@@ -10,9 +10,9 @@ use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
-use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
-use crate::lsp::ark_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::BinaryOperatorType;

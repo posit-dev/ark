@@ -11,7 +11,7 @@ fn test_wire_url_open_buffer_keeps_verbatim_url() {
     let file = state
         .db
         .upsert_editor(FilePath::from_url(&url), "x <- 1\n".to_string());
-    state.insert_ark_file(url.clone(), file, None);
+    state.insert_open_file(url.clone(), file, None);
     assert_eq!(state.wire_url(file), url);
 }
 

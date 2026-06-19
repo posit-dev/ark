@@ -5,6 +5,7 @@
 //
 //
 
+use oak_db::File;
 use serde::Deserialize;
 use serde::Serialize;
 use tower_lsp::lsp_types::Position;
@@ -14,9 +15,9 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp;
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspResult;
 use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -41,7 +42,7 @@ pub struct HelpTopicResponse {
 
 pub(crate) fn help_topic(
     db: &dyn ArkDb,
-    file: &ArkFile,
+    file: File,
     point: Point,
 ) -> LspResult<Option<HelpTopicResponse>> {
     let tree = file.tree_sitter(db);
@@ -51,7 +52,7 @@ pub(crate) fn help_topic(
         return Ok(None);
     };
 
-    let text = node.node_to_string(file.contents(db))?;
+    let text = node.node_to_string(file.source_text(db))?;
     let response = HelpTopicResponse { topic: text };
 
     lsp::log_info!(

@@ -62,7 +62,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::state::open_file_uris;
+use crate::lsp::state::open_file_wire_urls;
 use crate::lsp::state::WorldState;
 
 // Handlers that mutate the world state
@@ -232,7 +232,7 @@ pub(crate) fn did_open(
     let version = params.text_document.version;
 
     let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
-    state.insert_ark_file(uri.clone(), file, Some(version));
+    state.insert_open_file(uri.clone(), file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -251,16 +251,14 @@ pub(crate) fn did_change(
     let new_version = params.text_document.version;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = state.open_files.get_mut(&key) else {
-        return Err(anyhow!("Can't find document for URI {uri}"));
-    };
+    let file = state.open_file(uri)?;
 
     // Reject out-of-order change notifications. The spec allows version numbers
     // to skip values but requires them to increase monotonically. A lower
     // version means we've lost sync and can't keep our state consistent.
     // Currently panicking, but in principle we should shut the LSP down in an
     // orderly fashion.
-    if let Some(old_version) = file.version {
+    if let Some(old_version) = file.version() {
         if new_version < old_version {
             panic!(
                 "out-of-sync change notification: currently at {old_version}, got {new_version}"
@@ -269,11 +267,14 @@ pub(crate) fn did_change(
     }
 
     // Fold the edits into the new buffer text and push it into `oak`
-    let new_contents =
-        apply_content_changes(file.contents(&state.db), &params.content_changes, encoding);
+    let new_contents = apply_content_changes(
+        file.source_text(&state.db).as_str(),
+        &params.content_changes,
+        encoding,
+    );
     state.db.upsert_editor(key.clone(), new_contents);
 
-    file.version = Some(new_version);
+    state.open_file_mut(uri)?.set_version(Some(new_version));
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -395,7 +396,7 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(open_file_uris(state), client, state)
+    update_config(open_file_wire_urls(state), client, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
 }
@@ -406,7 +407,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.ark_file_mut(uri) else {
+    let Ok(doc) = state.open_file_mut(uri) else {
         return;
     };
 
@@ -416,13 +417,14 @@ pub(crate) fn did_change_formatting_options(
     // than the latter: it does not allow the tab size to differ from the
     // indent size, as in the R core sources. So we just ignore the less
     // rich updates in this case.
-    if doc.config.indent.indent_size != doc.config.indent.tab_width {
+    if doc.config().indent.indent_size != doc.config().indent.tab_width {
         return;
     }
 
-    doc.config.indent.indent_size = opts.tab_size as usize;
-    doc.config.indent.tab_width = opts.tab_size as usize;
-    doc.config.indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
+    let indent = &mut doc.config_mut().indent;
+    indent.indent_size = opts.tab_size as usize;
+    indent.tab_width = opts.tab_size as usize;
+    indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
 
     // TODO:
     // `trim_trailing_whitespace`
@@ -498,8 +500,8 @@ async fn update_config(
         let head = std::mem::replace(&mut remaining, tail);
 
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.ark_file_mut(&uri) {
-                (mapping.set)(&mut doc.config, value);
+            if let Ok(doc) = state.open_file_mut(&uri) {
+                (mapping.set)(doc.config_mut(), value);
             }
         }
     }

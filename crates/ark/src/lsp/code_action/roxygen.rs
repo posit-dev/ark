@@ -1,27 +1,51 @@
+use oak_db::File;
 use tower_lsp::lsp_types;
 
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::code_action::code_action;
-use crate::lsp::code_action::code_action_workspace_text_edit;
-use crate::lsp::code_action::CodeActions;
+use crate::lsp::code_action::CodeActionEdit;
+use crate::lsp::code_action::CodeActionTextEdit;
 use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::get_line;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
 
-pub(crate) fn roxygen_documentation(
+/// A roxygen template to insert, in tree-sitter coordinates.
+pub(crate) struct RoxygenEdit {
+    pub(crate) position: tree_sitter::Point,
+    pub(crate) documentation: String,
+}
+
+/// Build the "Generate a roxygen template" code action for `range`, if the
+/// cursor is on a documentable function definition.
+pub(crate) fn to_code_action(
     db: &dyn ArkDb,
-    file: &ArkFile,
-    actions: &mut CodeActions,
+    file: File,
     range: tree_sitter::Range,
     capabilities: &Capabilities,
-) -> Option<()> {
+) -> Option<CodeActionEdit> {
     if !capabilities.code_action_literal_support() {
-        // This code action returns literal `CodeAction`s, so must have support for them
         return None;
     }
 
+    let edit = roxygen_documentation(db, file, range)?;
+
+    Some(CodeActionEdit::new(
+        "Generate a roxygen template".to_string(),
+        lsp_types::CodeActionKind::EMPTY,
+        vec![CodeActionTextEdit::insertion(
+            edit.position,
+            edit.documentation,
+        )],
+    ))
+}
+
+pub(crate) fn roxygen_documentation(
+    db: &dyn ArkDb,
+    file: File,
+    range: tree_sitter::Range,
+) -> Option<RoxygenEdit> {
     // For cursors (the common case), start and end points are the same.
     // For selections, we require that the start point be touching the function name.
     let start = range.start_point;
@@ -63,7 +87,11 @@ pub(crate) fn roxygen_documentation(
 
     // Fairly simple detection of existing `#'` on the previous line (but starting at the
     // same `column` offset), which tells us not to provide this code action
-    if let Some(previous_line) = file.get_line(db, position.row.saturating_sub(1)) {
+    if let Some(previous_line) = get_line(
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        position.row.saturating_sub(1),
+    ) {
         if let Some(previous_line) = previous_line.get(position.column..) {
             let mut previous_line = previous_line.bytes();
 
@@ -90,29 +118,22 @@ pub(crate) fn roxygen_documentation(
 
     for child in parameters.children_by_field_name("parameter", &mut cursor) {
         let parameter_name = child.child_by_field_name("name")?;
-        let parameter_name = parameter_name.node_to_string(file.contents(db)).ok()?;
+        let parameter_name = parameter_name
+            .node_to_string(file.source_text(db).as_str())
+            .ok()?;
         parameter_names.push(parameter_name);
     }
 
     let indent_size = position.column;
     let documentation = documentation_builder(parameter_names, indent_size);
 
-    // We insert the documentation string at the start position of the function name.
-    // This handles the indentation of the first documentation line, and makes new line
-    // handling trivial (we just add a new line to every documentation line).
-    let position = file
-        .lsp_position_from_tree_sitter_point(db, position)
-        .ok()?;
-    let range = lsp_types::Range::new(position, position);
-    let edit = lsp_types::TextEdit::new(range, documentation);
-    let edit =
-        code_action_workspace_text_edit(file.url.clone(), file.version, vec![edit], capabilities);
-
-    actions.add_action(code_action(
-        "Generate a roxygen template".to_string(),
-        lsp_types::CodeActionKind::EMPTY,
-        edit,
-    ))
+    // The documentation string is inserted at the start position of the function
+    // name. This handles the indentation of the first documentation line, and makes
+    // new line handling trivial (we just add a new line to every documentation line).
+    Some(RoxygenEdit {
+        position,
+        documentation,
+    })
 }
 
 fn documentation_builder(parameter_names: Vec<String>, indent_size: usize) -> String {
@@ -160,19 +181,21 @@ fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use tower_lsp::lsp_types::CodeActionOrCommand;
-    use tower_lsp::lsp_types::DocumentChanges;
-    use tower_lsp::lsp_types::OneOf;
     use tower_lsp::lsp_types::Position;
     use tree_sitter::Point;
     use tree_sitter::Range;
     use url::Url;
 
+    use super::roxygen_documentation;
     use crate::fixtures::point_and_offset_from_cursor;
-    use crate::lsp::ark_file::test_ark_file;
     use crate::lsp::capabilities::Capabilities;
-    use crate::lsp::code_action::roxygen::roxygen_documentation;
-    use crate::lsp::code_action::CodeActions;
+    use crate::lsp::code_action::code_actions;
+    use crate::lsp::open_file::test_open_file;
+
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn point_range(point: Point, byte: usize) -> Range {
         Range {
@@ -188,49 +211,17 @@ mod tests {
     }
 
     fn roxygen_documentation_test(text: &str, position: Position) -> String {
-        let mut actions = CodeActions::new();
-
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
-        roxygen_documentation(
-            &db,
-            &file,
-            &mut actions,
-            point_range(point, offset),
-            &capabilities,
-        );
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset)).unwrap();
 
-        let mut actions = actions.into_response();
-        assert_eq!(actions.len(), 1);
+        // The edit is a zero-width insertion at the function name, in tree-sitter
+        // coordinates. The test inputs are ASCII, so the column matches the LSP character.
+        assert_eq!(edit.position.row as u32, position.line);
+        assert_eq!(edit.position.column as u32, position.character);
 
-        let CodeActionOrCommand::CodeAction(action) = actions.pop().unwrap() else {
-            panic!("Unexpected");
-        };
-        let workspace_edit = action.edit.unwrap();
-
-        let document_changes = workspace_edit.document_changes.unwrap();
-        let DocumentChanges::Edits(mut text_document_edits) = document_changes else {
-            panic!("Unexpected");
-        };
-        assert_eq!(text_document_edits.len(), 1);
-
-        let mut text_document_edit = text_document_edits.pop().unwrap();
-        assert_eq!(text_document_edit.text_document.uri, file.url);
-        assert_eq!(text_document_edit.edits.len(), 1);
-
-        let OneOf::Left(text_edit) = text_document_edit.edits.pop().unwrap() else {
-            panic!("Unexpected");
-        };
-        assert_eq!(text_edit.range.start.line, position.line);
-        assert_eq!(text_edit.range.start.character, position.character);
-        assert_eq!(text_edit.range.end, text_edit.range.start);
-
-        text_edit.new_text
+        edit.documentation
     }
 
     #[test]
@@ -286,12 +277,6 @@ mod tests {
 
     #[test]
     fn test_no_action_when_on_local_function() {
-        let mut actions = CodeActions::new();
-
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let text = "
 outer <- function(a, b = 2) {
   in@ner <- function(a, b, c) {}
@@ -299,77 +284,42 @@ outer <- function(a, b = 2) {
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
-        roxygen_documentation(
-            &db,
-            &file,
-            &mut actions,
-            point_range(point, offset),
-            &capabilities,
-        );
-        let actions = actions.into_response();
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_when_documentation_on_previous_line() {
-        let mut actions = CodeActions::new();
-
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let text = "
 #' Title
 f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
-        roxygen_documentation(
-            &db,
-            &file,
-            &mut actions,
-            point_range(point, offset),
-            &capabilities,
-        );
-        let actions = actions.into_response();
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_when_cursor_is_after_function_name() {
-        let mut actions = CodeActions::new();
-
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         // This is just how tree-sitter works, it uses a half open range of `[)`.
         let text = "
 fn@ <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, file) = test_open_file(&text);
 
-        roxygen_documentation(
-            &db,
-            &ark_file,
-            &mut actions,
-            point_range(point, offset),
-            &capabilities,
-        );
-        let actions = actions.into_response();
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_without_code_action_literal_support() {
-        let mut actions = CodeActions::new();
-
         // NOTE: `with_code_action_literal_support(false)`
         let capabilities = Capabilities::default()
             .with_code_action_literal_support(false)
@@ -380,23 +330,20 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, open_file) = test_open_file(&text);
 
-        roxygen_documentation(
+        let actions = code_actions(
             &db,
-            &ark_file,
-            &mut actions,
+            open_file.file(),
             point_range(point, offset),
             &capabilities,
-        );
-        let actions = actions.into_response();
+        )
+        .into_response(&db, &open_file, ENCODING, &capabilities);
         assert!(actions.is_empty());
     }
 
     #[test]
     fn test_uses_hash_map_of_text_edits_without_document_changes_support() {
-        let mut actions = CodeActions::new();
-
         let uri = Url::parse("file:///test.R").unwrap();
 
         // NOTE: `with_workspace_edit_document_changes(false)`
@@ -409,17 +356,15 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, ark_file) = test_ark_file(&text);
+        let (db, open_file) = test_open_file(&text);
 
-        roxygen_documentation(
+        let mut actions = code_actions(
             &db,
-            &ark_file,
-            &mut actions,
+            open_file.file(),
             point_range(point, offset),
             &capabilities,
-        );
-
-        let mut actions = actions.into_response();
+        )
+        .into_response(&db, &open_file, ENCODING, &capabilities);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = actions.pop().unwrap() else {

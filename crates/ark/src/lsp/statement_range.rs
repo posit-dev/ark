@@ -5,8 +5,10 @@
 //
 //
 
+use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
+use oak_db::File;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
@@ -18,10 +20,11 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspResult;
 use crate::lsp::db::parse_tree_sitter;
 use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -102,14 +105,23 @@ impl ArkStatementRangeResponse {
     fn into_lsp_response(
         self,
         db: &dyn ArkDb,
-        file: &ArkFile,
+        file: File,
+        encoding: PositionEncoding,
     ) -> anyhow::Result<StatementRangeResponse> {
         match self {
             ArkStatementRangeResponse::Success(response) => {
                 // Tree-sitter `Point`s to LSP `Position`s
-                let start =
-                    file.lsp_position_from_tree_sitter_point(db, response.range.start_point)?;
-                let end = file.lsp_position_from_tree_sitter_point(db, response.range.end_point)?;
+                let line_index = file.line_index(db);
+                let start = lsp_position_from_tree_sitter_point(
+                    response.range.start_point,
+                    line_index,
+                    encoding,
+                )?;
+                let end = lsp_position_from_tree_sitter_point(
+                    response.range.end_point,
+                    line_index,
+                    encoding,
+                )?;
                 let range = lsp_types::Range { start, end };
                 Ok(StatementRangeResponse::Success(StatementRangeSuccess {
                     range,
@@ -137,22 +149,23 @@ static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwra
 
 pub(crate) fn statement_range(
     db: &dyn ArkDb,
-    file: &ArkFile,
+    file: File,
     point: Point,
+    encoding: PositionEncoding,
 ) -> LspResult<Option<StatementRangeResponse>> {
     let root = file.tree_sitter(db).root_node();
-    let contents = file.contents(db);
+    let contents = file.source_text(db).as_str();
 
     // Initial check to see if we are in a roxygen2 comment, in which case we parse a
     // subdocument containing the `@examples` or `@examplesIf` section and locate a
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some(response) = find_roxygen_statement_range(&root, contents, point)? {
-        return Ok(Some(response.into_lsp_response(db, file)?));
+        return Ok(Some(response.into_lsp_response(db, file, encoding)?));
     }
 
     if let Some(response) = find_statement_range(&root, point.row)? {
-        return Ok(Some(response.into_lsp_response(db, file)?));
+        return Ok(Some(response.into_lsp_response(db, file, encoding)?));
     }
 
     Ok(None)

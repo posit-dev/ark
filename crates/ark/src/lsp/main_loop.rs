@@ -39,7 +39,6 @@ use url::Url;
 use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -50,6 +49,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
+use crate::lsp::open_file::OpenFile;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -898,7 +898,7 @@ pub(crate) struct RefreshDiagnosticsTask {
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
     state: WorldState,
     /// The file to diagnose, built against the live oak at enqueue time.
-    file: ArkFile,
+    file: OpenFile,
 }
 
 #[derive(Debug)]
@@ -947,7 +947,7 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     // way of cancelling diagnostics tasks for outdated documents.
     let batch: HashMap<_, _> = batch
         .into_iter()
-        .map(|task| (task.file.url.clone(), task))
+        .map(|task| (task.file.wire_url().clone(), task))
         .collect();
 
     // Each file is its own blocking task. `spawn_blocking()` catches salsa
@@ -967,8 +967,8 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
     let RefreshDiagnosticsTask { file, state } = task;
-    let uri = file.url.clone();
-    let version = file.version;
+    let uri = file.wire_url().clone();
+    let version = file.version();
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
     // Special case testthat-specific behaviour. This is a simple stopgap
@@ -979,7 +979,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
         .components()
         .any(|c| c.as_os_str() == "testthat");
 
-    let diagnostics = generate_diagnostics(file, state, testthat);
+    let diagnostics = generate_diagnostics(file.file(), state, testthat);
 
     RefreshDiagnosticsResult {
         uri,
@@ -1000,7 +1000,7 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     );
 
     for file in state.open_files.values() {
-        if !ExtUrl::should_diagnose(&file.url) {
+        if !ExtUrl::should_diagnose(file.wire_url()) {
             continue;
         }
 
@@ -1066,9 +1066,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
-        state.insert_ark_file(uri.clone(), file, None);
+        state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.ark_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 
@@ -1090,9 +1090,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
-        state.insert_ark_file(uri.clone(), file, None);
+        state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.ark_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 

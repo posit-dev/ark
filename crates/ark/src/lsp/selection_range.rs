@@ -5,12 +5,16 @@
 //
 //
 
+use aether_lsp_utils::proto::PositionEncoding;
+use oak_db::File;
 use tower_lsp::lsp_types;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
 use tree_sitter::Tree;
 
+use crate::lsp::db::ArkDb;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -104,16 +108,18 @@ fn range_default(node: Node) -> Range {
 }
 
 pub(crate) fn convert_selection_range_from_tree_sitter_to_lsp(
-    db: &dyn crate::lsp::db::ArkDb,
-    file: &crate::lsp::ark_file::ArkFile,
+    db: &dyn ArkDb,
+    file: File,
+    encoding: PositionEncoding,
     selection: SelectionRange,
 ) -> anyhow::Result<lsp_types::SelectionRange> {
-    let range = file.lsp_range_from_tree_sitter_range(db, selection.range)?;
+    let range = lsp_range_from_tree_sitter_range(selection.range, file.line_index(db), encoding)?;
 
     // If there is a parent, convert it and box it
     let parent = match selection.parent {
         Some(selection) => {
-            let selection = convert_selection_range_from_tree_sitter_to_lsp(db, file, *selection)?;
+            let selection =
+                convert_selection_range_from_tree_sitter_to_lsp(db, file, encoding, *selection)?;
             Some(Box::new(selection))
         },
         None => None,

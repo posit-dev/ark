@@ -9,6 +9,8 @@
 
 use std::result::Result::Ok;
 
+use aether_lsp_utils::proto::PositionEncoding;
+use oak_db::File;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
 use tower_lsp::lsp_types::DocumentSymbolParams;
@@ -19,10 +21,11 @@ use tower_lsp::lsp_types::SymbolKind;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
-use crate::lsp::ark_file::ArkFile;
 use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::string::StringExt;
@@ -140,13 +143,15 @@ struct Section {
 struct CollectContext {
     top_level: bool,
     include_assignments_in_blocks: bool,
+    encoding: PositionEncoding,
 }
 
 impl CollectContext {
-    fn new() -> Self {
+    fn new(encoding: PositionEncoding) -> Self {
         Self {
             top_level: true,
             include_assignments_in_blocks: false,
+            encoding,
         }
     }
 }
@@ -156,7 +161,7 @@ pub(crate) fn document_symbols(
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let uri = &params.text_document.uri;
-    let file = state.ark_file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     let ast = file.tree_sitter(db);
 
@@ -164,11 +169,11 @@ pub(crate) fn document_symbols(
     let root_node = ast.root_node();
     let mut result = Vec::new();
 
-    let mut ctx = CollectContext::new();
+    let mut ctx = CollectContext::new(state.config.position_encoding);
     ctx.include_assignments_in_blocks = state.config.symbols.include_assignments_in_blocks;
 
     // Extract and process all symbols from the AST
-    if let Err(err) = collect_symbols(&mut ctx, &root_node, &file, db, &mut result) {
+    if let Err(err) = collect_symbols(&mut ctx, db, file, &root_node, &mut result) {
         log::error!("Failed to collect symbols: {err:?}");
         return Ok(Vec::new());
     }
@@ -179,18 +184,18 @@ pub(crate) fn document_symbols(
 /// Collect all document symbols from a node recursively
 fn collect_symbols(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     match node.node_type() {
         NodeType::Program => {
-            collect_list_sections(ctx, node, file, db, symbols)?;
+            collect_list_sections(ctx, db, file, node, symbols)?;
         },
 
         NodeType::BracedExpression => {
-            collect_list_sections(ctx, node, file, db, symbols)?;
+            collect_list_sections(ctx, db, file, node, symbols)?;
         },
 
         NodeType::IfStatement => {
@@ -200,37 +205,37 @@ fn collect_symbols(
             // } else {
             //   x <- top_level_assignment
             // }
-            collect_if_statement(ctx, node, file, db, symbols)?;
+            collect_if_statement(ctx, db, file, node, symbols)?;
         },
 
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
         NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
-            collect_assignment(ctx, node, file, db, symbols)?;
+            collect_assignment(ctx, db, file, node, symbols)?;
         },
 
         NodeType::ForStatement => {
-            collect_for_statement(ctx, node, file, db, symbols)?;
+            collect_for_statement(ctx, db, file, node, symbols)?;
         },
 
         NodeType::WhileStatement => {
-            collect_while_statement(ctx, node, file, db, symbols)?;
+            collect_while_statement(ctx, db, file, node, symbols)?;
         },
 
         NodeType::RepeatStatement => {
-            collect_repeat_statement(ctx, node, file, db, symbols)?;
+            collect_repeat_statement(ctx, db, file, node, symbols)?;
         },
 
         NodeType::Call => {
             let old = ctx.top_level;
             ctx.top_level = false;
-            collect_call(ctx, node, file, db, symbols)?;
+            collect_call(ctx, db, file, node, symbols)?;
             ctx.top_level = old;
         },
 
         NodeType::FunctionDefinition => {
             let old = ctx.top_level;
             ctx.top_level = false;
-            collect_function(ctx, node, file, db, symbols)?;
+            collect_function(ctx, db, file, node, symbols)?;
             ctx.top_level = old;
         },
         // For all other node types, no symbols need to be added
@@ -242,19 +247,19 @@ fn collect_symbols(
 
 fn collect_if_statement(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(condition) = node.child_by_field_name("condition") {
-        collect_symbols(ctx, &condition, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &condition, symbols)?;
     }
     if let Some(consequent) = node.child_by_field_name("consequence") {
-        collect_symbols(ctx, &consequent, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &consequent, symbols)?;
     }
     if let Some(alternative) = node.child_by_field_name("alternative") {
-        collect_symbols(ctx, &alternative, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &alternative, symbols)?;
     }
 
     Ok(())
@@ -262,19 +267,19 @@ fn collect_if_statement(
 
 fn collect_for_statement(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(variable) = node.child_by_field_name("variable") {
-        collect_symbols(ctx, &variable, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &variable, symbols)?;
     }
     if let Some(iterator) = node.child_by_field_name("iterator") {
-        collect_symbols(ctx, &iterator, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &iterator, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &body, symbols)?;
     }
 
     Ok(())
@@ -282,16 +287,16 @@ fn collect_for_statement(
 
 fn collect_while_statement(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(condition) = node.child_by_field_name("condition") {
-        collect_symbols(ctx, &condition, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &condition, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &body, symbols)?;
     }
 
     Ok(())
@@ -299,13 +304,13 @@ fn collect_while_statement(
 
 fn collect_repeat_statement(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &body, symbols)?;
     }
 
     Ok(())
@@ -313,16 +318,16 @@ fn collect_repeat_statement(
 
 fn collect_function(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(parameters) = node.child_by_field_name("parameters") {
-        collect_function_parameters(ctx, &parameters, file, db, symbols)?;
+        collect_function_parameters(ctx, db, file, &parameters, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &body, symbols)?;
     }
 
     Ok(())
@@ -375,18 +380,18 @@ fn collect_function(
 ///   (`bar` in this case) would be pulled at top-level.
 fn collect_sections<F>(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
     mut handle_child: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(
         &mut CollectContext,
-        &Node,
-        &ArkFile,
         &dyn ArkDb,
+        File,
+        &Node,
         &mut Vec<DocumentSymbol>,
     ) -> anyhow::Result<()>,
 {
@@ -400,7 +405,7 @@ where
 
     for child in node.children(&mut cursor) {
         if let NodeType::Comment = child.node_type() {
-            let comment_text = child.node_as_str(file.contents(db))?;
+            let comment_text = child.node_as_str(file.source_text(db))?;
 
             // If we have a section comment, add it to our stack and close any sections if needed
             if let Some((level, title)) = parse_comment_as_section(comment_text) {
@@ -410,10 +415,10 @@ where
                     // Set end position for the section being closed
                     if let Some(section) = active_sections.last_mut() {
                         let pos =
-                            point_end_of_previous_row(child.start_position(), file.contents(db));
+                            point_end_of_previous_row(child.start_position(), file.source_text(db));
                         section.end_position = Some(pos);
                     }
-                    finalize_section(&mut active_sections, symbols, file, db)?;
+                    finalize_section(&mut active_sections, symbols, db, file, ctx.encoding)?;
                 }
 
                 let section = Section {
@@ -434,11 +439,11 @@ where
 
         if active_sections.is_empty() {
             // If no active section, extend current vector of symbols
-            handle_child(ctx, &child, file, db, symbols)?;
+            handle_child(ctx, db, file, &child, symbols)?;
         } else {
             // Otherwise create new store of symbols for the current section
             let mut child_symbols = Vec::new();
-            handle_child(ctx, &child, file, db, &mut child_symbols)?;
+            handle_child(ctx, db, file, &child, &mut child_symbols)?;
 
             // Nest them inside last section
             if !child_symbols.is_empty() {
@@ -457,11 +462,11 @@ where
         if let Some(section) = active_sections.last_mut() {
             let mut pos = node.end_position();
             if pos.row > section.start_position.row {
-                pos = point_end_of_previous_row(pos, file.contents(db));
+                pos = point_end_of_previous_row(pos, file.source_text(db));
             }
             section.end_position = Some(pos);
         }
-        finalize_section(&mut active_sections, symbols, file, db)?;
+        finalize_section(&mut active_sections, symbols, db, file, ctx.encoding)?;
     }
 
     Ok(())
@@ -469,19 +474,19 @@ where
 
 fn collect_list_sections(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
-    collect_sections(ctx, node, file, db, symbols, collect_symbols)
+    collect_sections(ctx, db, file, node, symbols, collect_symbols)
 }
 
 fn collect_call(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     let Some(callee) = node.child_by_field_name("function") else {
@@ -489,22 +494,22 @@ fn collect_call(
     };
 
     if callee.is_identifier() {
-        let fun_symbol = callee.node_as_str(file.contents(db))?;
+        let fun_symbol = callee.node_as_str(file.source_text(db))?;
         if fun_symbol == "test_that" {
-            return collect_call_test_that(ctx, node, file, db, symbols);
+            return collect_call_test_that(ctx, db, file, node, symbols);
         }
     }
 
-    collect_call_arguments(ctx, node, file, db, symbols)?;
+    collect_call_arguments(ctx, db, file, node, symbols)?;
 
     Ok(())
 }
 
 fn collect_call_arguments(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     let Some(arguments) = node.child_by_field_name("arguments") else {
@@ -513,11 +518,11 @@ fn collect_call_arguments(
 
     collect_sections(
         ctx,
-        &arguments,
-        file,
         db,
+        file,
+        &arguments,
         symbols,
-        |ctx, child, file, db, symbols| {
+        |ctx, db, file, child, symbols| {
             let Some(arg_value) = child.child_by_field_name("value") else {
                 return Ok(());
             };
@@ -525,13 +530,13 @@ fn collect_call_arguments(
             // If this is a named function, collect it as a method (new node in the tree)
             if arg_value.kind() == "function_definition" {
                 if let Some(arg_fun) = child.child_by_field_name("name") {
-                    collect_method(ctx, &arg_fun, &arg_value, file, db, symbols)?;
+                    collect_method(ctx, db, file, &arg_fun, &arg_value, symbols)?;
                     return Ok(());
                 };
                 // else fallthrough
             }
 
-            collect_symbols(ctx, &arg_value, file, db, symbols)?;
+            collect_symbols(ctx, db, file, &arg_value, symbols)?;
 
             Ok(())
         },
@@ -540,18 +545,18 @@ fn collect_call_arguments(
 
 fn collect_function_parameters(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     collect_sections(
         ctx,
-        node,
-        file,
         db,
+        file,
+        node,
         symbols,
-        |_ctx, _child, _file, _db, _symbols| {
+        |_ctx, _db, _file, _child, _symbols| {
             // We only collect sections and don't recurse inside parameters
             Ok(())
         },
@@ -560,22 +565,25 @@ fn collect_function_parameters(
 
 fn collect_method(
     ctx: &mut CollectContext,
+    db: &dyn ArkDb,
+    file: File,
     arg_fun: &Node,
     arg_value: &Node,
-    file: &ArkFile,
-    db: &dyn ArkDb,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if !arg_fun.is_identifier_or_string() {
         return Ok(());
     }
-    let arg_name = arg_fun.node_to_string(file.contents(db))?;
+    let arg_name = arg_fun.node_to_string(file.source_text(db))?;
 
-    let start = file.lsp_position_from_tree_sitter_point(db, arg_value.start_position())?;
-    let end = file.lsp_position_from_tree_sitter_point(db, arg_value.end_position())?;
+    let line_index = file.line_index(db);
+    let start =
+        lsp_position_from_tree_sitter_point(arg_value.start_position(), line_index, ctx.encoding)?;
+    let end =
+        lsp_position_from_tree_sitter_point(arg_value.end_position(), line_index, ctx.encoding)?;
 
     let mut children = vec![];
-    collect_symbols(ctx, arg_value, file, db, &mut children)?;
+    collect_symbols(ctx, db, file, arg_value, &mut children)?;
 
     let mut symbol = new_symbol_node(arg_name, SymbolKind::METHOD, Range { start, end }, children);
 
@@ -592,9 +600,9 @@ fn collect_method(
 // https://github.com/posit-dev/positron/issues/1428
 fn collect_call_test_that(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     let Some(arguments) = node.child_by_field_name("arguments") else {
@@ -619,15 +627,17 @@ fn collect_call_test_that(
     let mut cursor = arguments.walk();
     for child in arguments.children_by_field_name("argument", &mut cursor) {
         if let Some(value) = child.child_by_field_name("value") {
-            collect_symbols(ctx, &value, file, db, &mut children)?;
+            collect_symbols(ctx, db, file, &value, &mut children)?;
         }
     }
 
-    let name = string.node_as_str(file.contents(db))?;
+    let name = string.node_as_str(file.source_text(db))?;
     let name = name.to_string();
 
-    let start = file.lsp_position_from_tree_sitter_point(db, node.start_position())?;
-    let end = file.lsp_position_from_tree_sitter_point(db, node.end_position())?;
+    let line_index = file.line_index(db);
+    let start =
+        lsp_position_from_tree_sitter_point(node.start_position(), line_index, ctx.encoding)?;
+    let end = lsp_position_from_tree_sitter_point(node.end_position(), line_index, ctx.encoding)?;
 
     let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Range { start, end }, children);
     symbols.push(symbol);
@@ -637,9 +647,9 @@ fn collect_call_test_that(
 
 fn collect_assignment(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     let (NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -658,27 +668,30 @@ fn collect_assignment(
     // If a function, collect symbol as function
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
     if function {
-        return collect_assignment_with_function(ctx, node, file, db, symbols);
+        return collect_assignment_with_function(ctx, db, file, node, symbols);
     }
 
     if ctx.top_level || ctx.include_assignments_in_blocks {
         // Collect as generic object, but typically only if we're at top-level. Assigned
         // objects in nested functions and blocks cause the outline to become
         // too busy.
-        let name = lhs.node_to_string(file.contents(db))?;
+        let name = lhs.node_to_string(file.source_text(db))?;
 
-        let start = file.lsp_position_from_tree_sitter_point(db, node.start_position())?;
-        let end = file.lsp_position_from_tree_sitter_point(db, node.end_position())?;
+        let line_index = file.line_index(db);
+        let start =
+            lsp_position_from_tree_sitter_point(node.start_position(), line_index, ctx.encoding)?;
+        let end =
+            lsp_position_from_tree_sitter_point(node.end_position(), line_index, ctx.encoding)?;
 
         // Now recurse into RHS
         let mut children = Vec::new();
-        collect_symbols(ctx, &rhs, file, db, &mut children)?;
+        collect_symbols(ctx, db, file, &rhs, &mut children)?;
 
         let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
         symbols.push(symbol);
     } else {
         // Recurse into RHS
-        collect_symbols(ctx, &rhs, file, db, symbols)?;
+        collect_symbols(ctx, db, file, &rhs, symbols)?;
     }
 
     Ok(())
@@ -686,9 +699,9 @@ fn collect_assignment(
 
 fn collect_assignment_with_function(
     ctx: &mut CollectContext,
-    node: &Node,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     // check for lhs, rhs
@@ -702,21 +715,22 @@ fn collect_assignment_with_function(
     let mut cursor = parameters.walk();
     for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
         let name = parameter.child_by_field_name("name").into_result()?;
-        let name = name.node_to_string(file.contents(db))?;
+        let name = name.node_to_string(file.source_text(db))?;
         arguments.push(name);
     }
 
-    let name = lhs.node_to_string(file.contents(db))?;
+    let name = lhs.node_to_string(file.source_text(db))?;
     let detail = format!("function({})", arguments.join(", "));
 
+    let line_index = file.line_index(db);
     let range = Range {
-        start: file.lsp_position_from_tree_sitter_point(db, lhs.start_position())?,
-        end: file.lsp_position_from_tree_sitter_point(db, rhs.end_position())?,
+        start: lsp_position_from_tree_sitter_point(lhs.start_position(), line_index, ctx.encoding)?,
+        end: lsp_position_from_tree_sitter_point(rhs.end_position(), line_index, ctx.encoding)?,
     };
 
     // Process the function body to extract child symbols
     let mut children = Vec::new();
-    collect_symbols(ctx, &rhs, file, db, &mut children)?;
+    collect_symbols(ctx, db, file, &rhs, &mut children)?;
 
     let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
     symbol.detail = Some(detail);
@@ -729,16 +743,18 @@ fn collect_assignment_with_function(
 fn finalize_section(
     active_sections: &mut Vec<Section>,
     symbols: &mut Vec<DocumentSymbol>,
-    file: &ArkFile,
     db: &dyn ArkDb,
+    file: File,
+    encoding: PositionEncoding,
 ) -> anyhow::Result<()> {
     if let Some(section) = active_sections.pop() {
         let start_pos = section.start_position;
         let end_pos = section.end_position.unwrap_or(section.start_position);
 
+        let line_index = file.line_index(db);
         let range = Range {
-            start: file.lsp_position_from_tree_sitter_point(db, start_pos)?,
-            end: file.lsp_position_from_tree_sitter_point(db, end_pos)?,
+            start: lsp_position_from_tree_sitter_point(start_pos, line_index, encoding)?,
+            end: lsp_position_from_tree_sitter_point(end_pos, line_index, encoding)?,
         };
 
         let symbol = new_symbol(section.title, SymbolKind::STRING, range);
@@ -774,6 +790,7 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use oak_scan::DbScan;
     use tower_lsp::lsp_types::Position;
 
@@ -782,12 +799,22 @@ mod tests {
     use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::util::test_path;
 
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
-        let (db, file) = crate::lsp::ark_file::test_ark_file(code);
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
         let node = file.tree_sitter(&db).root_node();
 
         let mut symbols = Vec::new();
-        collect_symbols(&mut CollectContext::new(), &node, &file, &db, &mut symbols).unwrap();
+        collect_symbols(
+            &mut CollectContext::new(ENCODING),
+            &db,
+            file.file(),
+            &node,
+            &mut symbols,
+        )
+        .unwrap();
         symbols
     }
 
@@ -1136,7 +1163,7 @@ outer <- 4
 
     #[test]
     fn test_symbol_nested_assignments_enabled() {
-        let (db, file) = crate::lsp::ark_file::test_ark_file(
+        let (db, file) = crate::lsp::open_file::test_open_file(
             "
 local({
   inner1 <- 1
@@ -1150,11 +1177,11 @@ outer <- 4
         );
         let node = file.tree_sitter(&db).root_node();
 
-        let ctx = &mut CollectContext::new();
+        let ctx = &mut CollectContext::new(ENCODING);
         ctx.include_assignments_in_blocks = true;
 
         let mut symbols = Vec::new();
-        collect_symbols(ctx, &node, &file, &db, &mut symbols).unwrap();
+        collect_symbols(ctx, &db, file.file(), &node, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
     }

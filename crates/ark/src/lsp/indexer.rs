@@ -380,19 +380,19 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::lsp::ark_file::test_ark_file;
+    use crate::lsp::open_file::test_open_file;
 
     macro_rules! test_index {
         ($code:expr) => {
-            let (db, file) = test_ark_file($code);
+            let (db, file) = test_open_file($code);
             let tree = file.tree_sitter(&db);
-            let contents = file.contents(&db);
+            let contents = file.source_text(&db);
             let root = tree.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(contents, &node, &mut entries);
+                let _ = index_node(contents.as_str(), &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };
