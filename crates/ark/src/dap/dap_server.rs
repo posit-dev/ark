@@ -462,8 +462,10 @@ impl DapHandler {
         drop(state);
 
         let console_events = if is_debugging {
+            log::trace!("DAP: Disconnect while debugging, injecting `Quit` to exit the browser");
             vec![DapConsoleEvent::DebugCommand(DebugRequest::Quit)]
         } else {
+            log::trace!("DAP: Disconnect while not debugging, no `Quit` needed");
             vec![]
         };
 
