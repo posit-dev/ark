@@ -372,8 +372,6 @@ impl GlobalState {
         // handlers that mutate those still refresh explicitly.
         let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
-        lsp::log_info!("Processing next event");
-
         match event {
             Event::Lsp(msg) => match msg {
                 LspMessage::Notification(notif) => {
@@ -993,17 +991,14 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 /// newer one and publish last, leaving diagnostics computed from the older
 /// console scopes or config until the next refresh.
 async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
-    loop {
-        let Some(task) = rx.recv().await else {
-            lsp::log_warn!("process_diagnostics_queue: channel closed, task exiting");
-            return;
-        };
+    while let Some(task) = rx.recv().await {
         let mut batch = vec![task];
         while let Ok(task) = rx.try_recv() {
             batch.push(task);
         }
         process_diagnostics_batch(batch);
     }
+    lsp::log_warn!("process_diagnostics_queue: channel closed, task exiting");
 }
 
 fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
