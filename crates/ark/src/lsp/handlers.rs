@@ -481,12 +481,13 @@ pub(crate) fn handle_code_action(
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 
-    let code_actions = code_actions(db, file, range, encoding, &lsp_state.capabilities);
+    let actions = code_actions(db, file.file(), range, &lsp_state.capabilities);
+    let response = actions.into_response(db, file, encoding, &lsp_state.capabilities);
 
-    if code_actions.is_empty() {
+    if response.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(code_actions))
+        Ok(Some(response))
     }
 }
 
