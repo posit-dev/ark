@@ -127,6 +127,9 @@ pub(crate) fn roxygen_documentation(
     let indent_size = position.column;
     let documentation = documentation_builder(parameter_names, indent_size);
 
+    // The documentation string is inserted at the start position of the function
+    // name. This handles the indentation of the first documentation line, and makes
+    // new line handling trivial (we just add a new line to every documentation line).
     Some(RoxygenEdit {
         position,
         documentation,
