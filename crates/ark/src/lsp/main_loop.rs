@@ -29,6 +29,7 @@ use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task::JoinHandle;
+use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::MessageType;
@@ -39,6 +40,7 @@ use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::ark_file::ArkFile;
+use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
@@ -593,6 +595,12 @@ fn respond<T>(
     let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
         Ok(Ok(t)) => RequestResponse::Result(Ok(into_lsp_response(t))),
         Ok(Err(e)) => RequestResponse::Result(Err(e)),
+        Err(err) if err.downcast_ref::<salsa::Cancelled>().is_some() => {
+            // A salsa write cancelled an oak query while the handler ran.
+            // Report `ContentModified` so the client knows the content moved
+            // under us and re-requests.
+            RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified())))
+        },
         Err(err) => {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
@@ -1029,11 +1037,17 @@ mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
     use salsa::Database;
+    use tower_lsp::jsonrpc;
     use url::Url;
 
     use super::catch_cancellation;
     use super::refresh_diagnostics;
+    use super::respond;
+    use super::tokio_unbounded_channel;
     use super::RefreshDiagnosticsTask;
+    use crate::lsp::backend::LspError;
+    use crate::lsp::backend::LspResponse;
+    use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1063,6 +1077,41 @@ mod tests {
             state: snapshot,
         };
         assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
+    }
+
+    /// A `salsa::Cancelled` re-raised out of a request handler (by `r_task`,
+    /// after catching it on the R thread) must not crash the LSP. `respond`
+    /// recognises the payload and answers `ContentModified` so the client
+    /// re-requests, rather than taking the panic-is-a-crash path.
+    #[test]
+    fn test_cancelled_request_reports_content_modified() {
+        let mut state = WorldState::default();
+        let uri = Url::parse("file:///test.R").unwrap();
+        let file = state
+            .db
+            .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
+        state.insert_ark_file(uri.clone(), file, None);
+
+        let file = state.ark_file(&uri).unwrap();
+        let snapshot = state.diagnostics_snapshot();
+        snapshot.db.cancellation_token().cancel();
+
+        let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
+        respond(
+            response_tx,
+            || {
+                let _ = file.tree_sitter(&snapshot.db);
+                Ok(LspResponse::Hover(None))
+            },
+            |response| response,
+        )
+        .unwrap();
+
+        let response = response_rx.try_recv().unwrap();
+        let RequestResponse::Result(Err(LspError::JsonRpc(error))) = response else {
+            panic!("Expected a jsonrpc error response");
+        };
+        assert_eq!(error.code, jsonrpc::ErrorCode::ContentModified);
     }
 
     /// The central diagnostics refresh keys off the oak revision advancing

@@ -191,10 +191,6 @@ impl RTaskStartInfo {
 // running, so borrowing is allowed even though we send it to another
 // thread. See also `Crossbeam::thread::ScopedThreadBuilder` (from which
 // `r_task()` is adapted) for a similar approach.
-//
-// Don't run oak (salsa) queries inside `f`. `f` executes on the R thread, and a
-// `salsa::Cancelled` unwind there would cross R's C frames, which is UB. Pull
-// whatever you need out of oak before the `r_task()`, on the calling thread.
 
 pub fn r_task<'env, F, T>(f: F) -> T
 where
@@ -222,13 +218,17 @@ where
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
 
-    // The result of `f` will be stored here.
-    let result = SharedOption::default();
+    // Stores the outcome of `f`. We catch any unwind on the R thread instead of
+    // letting it escape the closure: the closure runs inside `r_sandbox`'s
+    // `try_catch`, and a Rust unwind crossing those C frames is UB. The payload
+    // is ferried back and re-raised below, on the calling thread.
+    let result: SharedOption<std::thread::Result<T>> = SharedOption::default();
 
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            *result.lock().unwrap() = Some(f());
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            *result.lock().unwrap() = Some(caught);
         };
 
         // Move `f` to heap and erase its lifetime so we can send it to
@@ -286,9 +286,14 @@ where
         }
     }
 
-    // Retrieve closure result from the synchronized shared option.
-    // If we get here without panicking we know the result was assigned.
-    return result.lock().unwrap().take().unwrap();
+    // The closure ran to completion: it caught its own unwind, and an R-level
+    // error would have panicked above. Re-raise on this thread any panic the
+    // closure caught on the R thread.
+    let caught = result.lock().unwrap().take().unwrap();
+    match caught {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// An async task to be run on the R thread.
