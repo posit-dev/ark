@@ -217,3 +217,30 @@ fn test_package_namespace_and_base_layers_always_visible() {
     let layers = file.imports_at(&db, TextSize::from(0));
     assert!(attached_packages(&layers).contains(&base));
 }
+
+#[test]
+fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
+    // A `library()` inside a file that's `source()`d from a function body is
+    // forwarded by the builder as an `Attach` scoped to that `source()` call,
+    // so its `Package` layer is visible inside the function (the lazy / EOF
+    // view) but not at file scope before or after it.
+    let mut db = TestDb::new();
+    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+
+    let helpers = make_file(&mut db, "w/helpers.R", "library(dplyr)\n");
+    let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n}\nafter\n";
+    let script = make_file(&mut db, "w/script.R", script_src);
+
+    let root = workspace_root(&db, "w");
+    root.set_scripts(&mut db).to(vec![helpers, script]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let at = |needle: &str| {
+        let offset = TextSize::from(script_src.find(needle).unwrap() as u32);
+        attached_packages(&script.imports_at(&db, offset))
+    };
+
+    assert!(!at("before").contains(&dplyr));
+    assert!(at("source").contains(&dplyr));
+    assert!(!at("after").contains(&dplyr));
+}

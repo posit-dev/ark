@@ -6,12 +6,21 @@ use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
+use crate::Definition;
 use crate::File;
 use crate::Package;
 use crate::Root;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
     File::new(db, file_path(path), contents.to_string(), None)
+}
+
+/// Resolve at `offset`, asserting exactly one definition. Most cases are
+/// unambiguous; the ambiguous ones (e.g. `if`/`else`) have their own test.
+fn resolve_one(db: &TestDb, file: File, offset: TextSize) -> Definition<'_> {
+    let defs = file.resolve_at(db, offset);
+    assert_eq!(defs.len(), 1);
+    defs[0]
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
@@ -61,7 +70,7 @@ fn test_resolves_function_parameter_at_use_site() {
 
     // Cursor on the second `x` (the use inside the function body).
     let offset = TextSize::from(source.rfind('x').unwrap() as u32);
-    let def = file.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, file, offset);
 
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "x");
@@ -79,7 +88,7 @@ fn test_resolves_local_let_inside_function() {
 
     // Cursor on the second `y` (the use after the local binding).
     let offset = TextSize::from(source.rfind('y').unwrap() as u32);
-    let def = file.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, file, offset);
 
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "y");
@@ -96,7 +105,7 @@ fn test_resolves_file_top_level_binding() {
     let file = make_file(&mut db, "a.R", source);
 
     let offset = TextSize::from(source.rfind('x').unwrap() as u32);
-    let def = file.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, file, offset);
 
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "x");
@@ -114,7 +123,7 @@ fn test_function_body_falls_through_to_file_top_level() {
     let file = make_file(&mut db, "a.R", source);
 
     let offset = TextSize::from(source.rfind('x').unwrap() as u32);
-    let def = file.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, file, offset);
 
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "x");
@@ -134,9 +143,7 @@ fn test_resolves_source_forwarded_name_to_origin_file() {
 
     let analysis_source = analysis.contents(&db).clone();
     let offset = TextSize::from(analysis_source.find("helper()").unwrap() as u32);
-    let def = analysis
-        .resolve_at(&db, offset)
-        .expect("should resolve via source() forwarding");
+    let def = resolve_one(&db, analysis, offset);
 
     assert_eq!(def.file(&db), helpers);
     assert_eq!(def.name(&db).text(&db).as_str(), "helper");
@@ -157,7 +164,7 @@ fn test_resolves_package_sibling_predecessor() {
     // in `b`'s own exports, then walks visible imports and reaches `a`
     // (a predecessor sibling).
     let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
-    let def = b.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, b, offset);
 
     assert_eq!(def.file(&db), a);
     assert_eq!(def.name(&db).text(&db).as_str(), "shared");
@@ -179,7 +186,7 @@ fn test_local_after_source_shadows_forwarded_entry() {
 
     let analysis_source = analysis.contents(&db).clone();
     let offset = TextSize::from(analysis_source.rfind("foo").unwrap() as u32);
-    let def = analysis.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, analysis, offset);
 
     assert_eq!(def.file(&db), analysis);
     assert_eq!(def.name(&db).text(&db).as_str(), "foo");
@@ -206,7 +213,7 @@ fn test_source_after_local_overrides_local() {
 
     let analysis_source = analysis.contents(&db).clone();
     let offset = TextSize::from(analysis_source.rfind("foo").unwrap() as u32);
-    let def = analysis.resolve_at(&db, offset).expect("should resolve");
+    let def = resolve_one(&db, analysis, offset);
 
     assert_eq!(def.file(&db), helpers);
     assert_eq!(def.name(&db).text(&db).as_str(), "foo");
@@ -219,7 +226,7 @@ fn test_unbound_name_returns_none() {
     let file = make_file(&mut db, "a.R", source);
 
     let offset = TextSize::from(0);
-    assert!(file.resolve_at(&db, offset).is_none());
+    assert!(file.resolve_at(&db, offset).is_empty());
 }
 
 #[test]
@@ -230,5 +237,104 @@ fn test_offset_not_on_any_use_returns_none() {
 
     // Cursor on the `<-` operator, not on any identifier use.
     let offset = TextSize::from(source.find("<-").unwrap() as u32);
-    assert!(file.resolve_at(&db, offset).is_none());
+    assert!(file.resolve_at(&db, offset).is_empty());
 }
+
+#[test]
+fn test_top_level_use_between_defs_binds_reaching_def() {
+    // A use sitting between two top-level defs of the same name binds to the
+    // earlier (reaching) def, not the later one. The EOF `exports()` view
+    // would wrongly pick `foo <- 2`.
+    let mut db = TestDb::new();
+    let source = "foo <- 1\nfoo\nfoo <- 2\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("\nfoo\n").unwrap() as u32 + 1);
+    let def = resolve_one(&db, file, offset);
+
+    assert_eq!(def.file(&db), file);
+    let range = def.name_range(&db).expect("local has a name range");
+    assert_eq!(usize::from(range.start()), source.find("foo <- 1").unwrap());
+}
+
+#[test]
+fn test_top_level_use_after_redefinition_binds_latest_def() {
+    // A use after both defs binds to the latest one, the same answer the EOF
+    // view gives. Guards against over-correcting the reaching-def fix.
+    let mut db = TestDb::new();
+    let source = "foo <- 1\nfoo <- 2\nfoo\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
+    let def = resolve_one(&db, file, offset);
+
+    let range = def.name_range(&db).expect("local has a name range");
+    assert_eq!(usize::from(range.start()), source.find("foo <- 2").unwrap());
+}
+
+#[test]
+fn test_cursor_on_assignment_target_resolves_to_itself() {
+    // Cursor on the `foo` being bound, not a use of it: navigate to self.
+    let mut db = TestDb::new();
+    let source = "foo <- 1\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let def = resolve_one(&db, file, TextSize::from(0));
+
+    assert_eq!(def.file(&db), file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "foo");
+    let range = def.name_range(&db).expect("local has a name range");
+    assert_eq!(usize::from(range.start()), 0);
+}
+
+#[test]
+fn test_cursor_on_parameter_declaration_resolves_to_itself() {
+    let mut db = TestDb::new();
+    let source = "f <- function(x) 1\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    // Cursor on the `x` parameter declaration.
+    let offset = TextSize::from(source.find("(x)").unwrap() as u32 + 1);
+    let def = resolve_one(&db, file, offset);
+
+    let range = def.name_range(&db).expect("local has a name range");
+    assert_eq!(range.start(), offset);
+}
+
+#[test]
+fn test_top_level_conditional_reports_both_arm_defs() {
+    // A name defined on both arms of an `if`/`else` is ambiguous at the use:
+    // either arm could have run, so both defs are reported.
+    let mut db = TestDb::new();
+    let source = "if (cond) foo <- 1 else foo <- 2\nfoo\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
+    let defs = file.resolve_at(&db, offset);
+
+    let starts: Vec<usize> = defs
+        .iter()
+        .map(|d| usize::from(d.name_range(&db).expect("local has a name range").start()))
+        .collect();
+    assert_eq!(defs.len(), 2);
+    assert!(starts.contains(&source.find("foo <- 1").unwrap()));
+    assert!(starts.contains(&source.find("foo <- 2").unwrap()));
+}
+
+// Package-layer resolution, pending. `resolve` / `resolve_at` walk only
+// `ImportLayer::File`; the `From` / `Package` layers (`library()`, NAMESPACE
+// `importFrom`, the base search path) are deferred, see the TODOs in
+// `file_resolve.rs`. These scenarios came from the old goto-def `LegacyDb`
+// suite, which only asserted them as unsupported (resolved to `None`). When
+// package layers land, add them here on `resolve_at`:
+//
+// - `library(pkg)` in a script makes a `pkg` export resolve at a later use.
+// - `importFrom(dplyr, mutate)` in a package's NAMESPACE makes `mutate` resolve.
+// - a package file resolves base symbols (e.g. `cat`).
+// - a standalone script resolves base / default-attached symbols.
+// - a script's search path is identical at top level and in a function body.
+// - `library()` attached inside a sourced file is visible to a function body
+//   that runs after the `source()`.
+//
+// Resolving package symbols also needs a navigable location for installed
+// package files, which aren't `oak_db::File` entities yet.

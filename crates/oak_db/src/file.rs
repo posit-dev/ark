@@ -75,6 +75,19 @@ impl File {
         ))
     }
 
+    /// Line index for this file, mapping byte offsets to `(line, column)`.
+    ///
+    /// Computed straight from `contents`, so it doesn't depend on a syntax
+    /// tree. The LSP needs it for every offset <-> position translation. No
+    /// `lru`: it's small and almost every request needs it, so it stays
+    /// resident for the file's lifetime. Follows ty and rust-analyzer, which
+    /// both compute the line index as a query off the source text rather than
+    /// storing it on the file input.
+    #[salsa::tracked(returns(ref))]
+    pub fn line_index(self, db: &dyn Db) -> biome_line_index::LineIndex {
+        biome_line_index::LineIndex::new(self.contents(db))
+    }
+
     /// Build this file's `SemanticIndex` from the parse tree.
     ///
     /// This is a coarse query that invalidates downstream on every edit

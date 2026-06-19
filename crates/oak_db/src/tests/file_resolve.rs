@@ -290,10 +290,11 @@ fn test_definition_id_stable_across_def_id_renumber_local_path() {
     let files = setup_workspace(&mut db, &[("w/a.R", content1)]);
     let file = files[0];
 
-    let id1 = file
-        .resolve_at(&db, TextSize::from(use1 as u32))
-        .expect("use of x resolves to its function-scope binding")
-        .as_id();
+    let id1 = {
+        let defs = file.resolve_at(&db, TextSize::from(use1 as u32));
+        assert_eq!(defs.len(), 1);
+        defs[0].as_id()
+    };
 
     // Prepend an unrelated binding inside the function so x's DefinitionId
     // shifts 0 -> 1 within the function scope.
@@ -301,10 +302,11 @@ fn test_definition_id_stable_across_def_id_renumber_local_path() {
     let use2 = content2.find("\nx\n").expect("standalone use of x") + 1;
     file.set_contents(&mut db).to(content2.to_string());
 
-    let id2 = file
-        .resolve_at(&db, TextSize::from(use2 as u32))
-        .expect("use of x still resolves")
-        .as_id();
+    let id2 = {
+        let defs = file.resolve_at(&db, TextSize::from(use2 as u32));
+        assert_eq!(defs.len(), 1);
+        defs[0].as_id()
+    };
 
     assert_eq!(id1, id2);
 }

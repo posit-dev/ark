@@ -2594,6 +2594,7 @@ dependencies = [
  "aether_path",
  "air_r_parser",
  "air_r_syntax",
+ "biome_line_index",
  "biome_rowan",
  "camino",
  "compact_str",
@@ -2621,11 +2622,14 @@ dependencies = [
 name = "oak_ide"
 version = "0.1.0"
 dependencies = [
+ "aether_path",
  "air_r_parser",
  "air_r_syntax",
  "anyhow",
  "biome_rowan",
  "oak_core",
+ "oak_db",
+ "oak_scan",
  "oak_semantic",
  "url",
 ]

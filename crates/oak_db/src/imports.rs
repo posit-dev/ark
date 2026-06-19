@@ -52,6 +52,18 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let target_path = resolve_relative_to(&anchor, path)?;
+        // TODO: a `source()` target outside every workspace root never becomes
+        // a `File`, so `file_by_path()` misses it and the names it injects stay
+        // invisible. Minting can't happen here, so the work belongs on the
+        // write side in `oak_scan`. We should carry the resolved path on the
+        // directive even when no `File` exists (today the miss returns `None`
+        // and drops it), then have `oak_scan` enumerate source directives after
+        // a scan, mint an `OrphanRoot` `File` from disk for each
+        // out-of-workspace target, and iterate for `source()` chains. A file
+        // watcher is only needed for freshness (re-reading after an external
+        // edit), plus GC to drop the orphan once the directive goes away.
+        // TODO(diagnostics): Until we support out-of-workspace sourced files,
+        // should we at least lint so user knows that we can't analyse the file?
         let file = self.db.file_by_path(&target_path)?;
 
         let names: Vec<String> = file
