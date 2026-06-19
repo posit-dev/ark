@@ -1,159 +1,206 @@
 use std::collections::HashSet;
 
-use aether_syntax::RSyntaxNode;
-use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::DefinitionId;
+use biome_rowan::TextSize;
+use oak_db::all_files;
+use oak_db::Db;
+use oak_db::Definition;
+use oak_db::File;
+use oak_db::Identifier;
+use oak_db::MemberKind;
+use oak_db::Name;
 use oak_semantic::ScopeId;
 
-use crate::FilePosition;
 use crate::FileRange;
-use crate::Identifier;
 
-/// Result of [`find_references`].
+/// Find all references to the symbol at `offset` in `file`.
 ///
-/// TODO(salsa): the `locally_scoped` flag is temporary infrastructure. It
-/// exists today because cross-file references are handled outside the semantic
-/// index by a separate textual workspace scan, and the caller needs to know
-/// whether to run that scan. When cross-file resolution lands,
-/// [`find_references`] becomes a single salsa-aware query and the
-/// locally-scoped optimization moves inside it as an internal short-circuit, at
-/// which point this field disappears.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct References {
-    /// In-file occurrences of the target binding, in source order.
-    pub ranges: Vec<FileRange>,
-    /// Whether the target binding is entirely locally scoped. When `true`, no
-    /// cross-file references are possible (function-local bindings aren't
-    /// visible to other files) so callers can skip any workspace-wide candidate
-    /// scan. When `false` the target is at file scope, the symbol is unbound,
-    /// or the cursor doesn't resolve to a binding at all: all cases where
-    /// cross-file matches are possible.
-    pub locally_scoped: bool,
+/// Uses `resolve_at()` to confirm each candidate: a textual mention of the
+/// same name is only included when it resolves to the same definition set.
+/// Member-name cursors (`$`/`@` RHS) and namespace-access cursors (`pkg::sym`
+/// RHS) fall back to a structural cross-file scan.
+pub fn find_references(
+    db: &dyn Db,
+    file: File,
+    offset: TextSize,
+    include_declaration: bool,
+) -> Vec<FileRange> {
+    let Some(ident) = Identifier::classify(db, file, offset) else {
+        return Vec::new();
+    };
+
+    match ident {
+        Identifier::Variable { .. } => {
+            find_variable_references(db, file, offset, include_declaration)
+        },
+        Identifier::Member { name, kind, .. } => {
+            find_member_references(db, file, name.text(db).as_str(), kind)
+        },
+        Identifier::NamespaceAccess {
+            namespace, name, ..
+        } => {
+            // TODO(namespace-refs): also union the bare-name references, the
+            // inverse of the bridge in `find_variable_references`. When
+            // `namespace` is a workspace package, resolve `name` to its
+            // definition and run the variable path. Installed-package symbols
+            // wait on package resolution (see `find_namespace_references`).
+            find_namespace_references(
+                db,
+                file,
+                namespace.text(db).as_str(),
+                name.text(db).as_str(),
+            )
+        },
+    }
 }
 
-/// Find all in-file references to the symbol at offset.
-///
-/// The target is usually a single def. It grows when a use is reached by
-/// conditional defs, or when a free variable picks up multiple visible
-/// defs from an enclosing scope.
-///
-/// Returns empty ranges for:
-/// - Non-identifier cursors (no `Identifier::classify` match).
-/// - `pkg::sym` namespace access. TODO(salsa).
-/// - Truly free variables. These are handled by the ark-layer cross-file
-///   fallback, TODO(salsa).
-///
-/// TODO(salsa): switch the candidate pool to a textual scan so the same
-/// `candidates -> refine via name resolution` path works for intra-file
-/// and cross-file uniformly (r-a / ty's approach).
-///
-/// TODO(places): `foo$bar` / `foo@bar` member accesses aren't tracked by
-/// the semantic index, so cursor on a member name returns empty here.
-pub fn find_references(
-    index: &SemanticIndex,
-    root: &RSyntaxNode,
-    position: &FilePosition,
+fn find_variable_references(
+    db: &dyn Db,
+    file: File,
+    offset: TextSize,
     include_declaration: bool,
-) -> References {
-    let Some(ident) = Identifier::classify(index, root, position.offset) else {
-        return References {
-            ranges: Vec::new(),
-            locally_scoped: false,
-        };
+) -> Vec<FileRange> {
+    let Some((name, _, target_defs)) = file.resolve_variable_at(db, offset) else {
+        return Vec::new();
     };
-
-    // Compute the cursor's reaching defs. Same operation we'll run on
-    // every candidate use below.
-    let (target_defs, name): (HashSet<(ScopeId, DefinitionId)>, String) = match ident {
-        Identifier::Definition {
-            scope_id,
-            def_id,
-            name,
-            ..
-        } => (
-            std::iter::once((scope_id, def_id)).collect(),
-            name.to_string(),
-        ),
-        Identifier::Use {
-            scope_id,
-            use_id,
-            name,
-            ..
-        } => (
-            index.reaching_definitions(scope_id, use_id).collect(),
-            name.to_string(),
-        ),
-        Identifier::NamespaceAccess { .. } => {
-            return References {
-                ranges: Vec::new(),
-                locally_scoped: false,
-            };
-        },
-    };
-
     if target_defs.is_empty() {
-        return References {
-            ranges: Vec::new(),
-            locally_scoped: false,
-        };
+        return Vec::new();
     }
 
-    // All target defs in scopes other than the file scope means the
-    // binding can only be referenced from within this file.
     let file_scope = ScopeId::from(0);
-    let locally_scoped = target_defs.iter().all(|(scope, _)| *scope != file_scope);
+    let locally_scoped = target_defs.iter().all(|d| d.scope(db) != file_scope);
 
-    let mut results: Vec<FileRange> = Vec::new();
+    let files = if locally_scoped {
+        vec![file]
+    } else {
+        all_matching_files(db, name.text(db).as_str())
+    };
 
-    // Definition sites come straight from `target_defs`.
+    // Rust-Analyzer does a pure text search across all files, then resolves
+    // each occurrences. We are more aligned with ty: we filter files by a text
+    // search, but then we walk a post-parse tree. ty walks a raw AST, we walk
+    // the index via `uses_of()`. The latter is more to the point.
+
+    // A candidate is a reference when it resolves to the same binding as the cursor.
+    let target_set: HashSet<Definition<'_>> = target_defs.iter().copied().collect();
+
+    let mut results = Vec::new();
+
+    for file in files {
+        for range in file.uses_of(db, name) {
+            let candidate_defs = file.resolve_at(db, range.start());
+            if candidate_defs.iter().any(|d| target_set.contains(d)) {
+                results.push(FileRange { file, range });
+            }
+        }
+    }
+
+    // Bare `foo` and `pkg::foo` name the same binding when `foo` is a
+    // package-level definition, so include the qualified sites too. Locally
+    // scoped symbols (params, locals) can't be reached through `::`.
+    if !locally_scoped {
+        collect_package_qualified_uses(db, &target_defs, name, &mut results);
+    }
+
     if include_declaration {
-        for &(scope_id, def_id) in &target_defs {
-            let def = &index.definitions(scope_id)[def_id];
-            results.push(FileRange {
-                file: position.file.clone(),
-                range: def.range(),
-            });
+        for def in &target_defs {
+            if let Some(range) = def.name_range(db) {
+                results.push(FileRange {
+                    file: def.file(db),
+                    range,
+                });
+            }
         }
     }
 
-    // Walk all uses in every scope and check for each use of the same name
-    // whether its binding set intersects the target.
-    for scope_id in index.scope_ids() {
-        let symbols = index.symbols(scope_id);
-        let Some(symbol_id) = symbols.id(&name) else {
-            // The scope doesn't have any uses for that symbol
-            continue;
-        };
+    sort_file_ranges(&mut results, db, file);
+    results
+}
 
-        for (use_id, use_site) in index.uses(scope_id).iter() {
-            if use_site.symbol() != symbol_id {
-                continue;
-            }
-            let intersects = index
-                .reaching_definitions(scope_id, use_id)
-                .any(|d| target_defs.contains(&d));
-            if !intersects {
-                continue;
-            }
-            results.push(FileRange {
-                file: position.file.clone(),
-                range: use_site.range(),
-            });
+/// Add `pkg::name` / `pkg:::name` sites for a package-level binding.
+///
+/// Bare `name` and `pkg::name` are the same symbol when `name` is defined in
+/// package `pkg`, so a reference search from the bare name should surface the
+/// qualified sites too. We take the symbol's owning package from the target
+/// definitions and scan structurally. The `pkg::` qualifier is itself the
+/// confirmation that it's the right symbol, so unlike the bare-name path this
+/// needs no re-resolution.
+///
+/// TODO(namespace-refs): the reverse (cursor on `pkg::name` also finding bare
+/// `name`) is unimplemented in the `NamespaceAccess` arm of `find_references`.
+/// Installed-package symbols bridge in neither direction until package
+/// resolution lands (see `find_namespace_references`).
+fn collect_package_qualified_uses<'db>(
+    db: &'db dyn Db,
+    target_defs: &[Definition<'db>],
+    name: Name<'db>,
+    results: &mut Vec<FileRange>,
+) {
+    // The cursor resolves to one binding, so its definitions all share a single
+    // owning package. Find the first one.
+    let Some(package) = target_defs.iter().find_map(|def| def.file(db).package(db)) else {
+        // The symbol resolves to a definition in a script, there can't be
+        // namespace references to it
+        return;
+    };
+    let package = package.name(db);
+
+    let name = name.text(db);
+    for file in all_matching_files(db, name.as_str()) {
+        for range in file.namespace_uses_of(db, package, name.as_str()) {
+            results.push(FileRange { file, range });
+        }
+    }
+}
+
+fn find_member_references(db: &dyn Db, file: File, name: &str, kind: MemberKind) -> Vec<FileRange> {
+    let mut results = Vec::new();
+
+    for file in all_matching_files(db, name) {
+        for range in file.member_uses_of(db, name, kind) {
+            results.push(FileRange { file, range });
         }
     }
 
-    // Defs are emitted in `target_defs` (HashSet) iteration order, which
-    // is non-deterministic. Sort by start offset so callers see source
-    // order regardless of how we collected results.
-    //
-    // TODO(salsa): once cross-file resolution lands, this becomes
-    // file-then-offset: current file first, then other files in some
-    // stable order (probably alphabetical by URL), with source order
-    // preserved within each file.
-    results.sort_by_key(|r| r.range.start());
+    sort_file_ranges(&mut results, db, file);
+    results
+}
 
-    References {
-        ranges: results,
-        locally_scoped,
+fn find_namespace_references(
+    db: &dyn Db,
+    primary: File,
+    namespace: &str,
+    name: &str,
+) -> Vec<FileRange> {
+    let mut results = Vec::new();
+
+    for file in all_matching_files(db, name) {
+        for range in file.namespace_uses_of(db, namespace, name) {
+            results.push(FileRange { file, range });
+        }
     }
+
+    sort_file_ranges(&mut results, db, primary);
+    results
+}
+
+/// Every db file whose contents mention `text`.
+fn all_matching_files(db: &dyn Db, text: &str) -> Vec<File> {
+    all_files(db)
+        .iter()
+        .filter(|&&f| f.contents(db).contains(text))
+        .copied()
+        .collect()
+}
+
+/// Sort current file first, then other files alphabetically by URL, with
+/// source order within each file. Deduplicates identical (file, range) pairs.
+fn sort_file_ranges(ranges: &mut Vec<FileRange>, db: &dyn Db, primary: File) {
+    ranges.sort_by_cached_key(|r| {
+        (
+            r.file != primary,
+            r.file.path(db).to_url().to_string(),
+            r.range.start(),
+        )
+    });
+    ranges.dedup_by(|a, b| a.file == b.file && a.range == b.range);
 }

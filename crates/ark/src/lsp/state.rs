@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
@@ -127,39 +126,6 @@ impl WorldState {
         doc.url = uri;
         self.documents.insert(key, doc);
     }
-}
-
-pub(crate) fn with_document<T, F>(
-    path: &Path,
-    state: &WorldState,
-    mut callback: F,
-) -> anyhow::Result<T>
-where
-    F: FnMut(&Document) -> anyhow::Result<T>,
-{
-    let mut fallback = || {
-        let contents = std::fs::read_to_string(path)?;
-        let document = Document::new(contents.as_str(), None);
-        callback(&document)
-    };
-
-    // If we have a cached copy of the document (because we're monitoring it)
-    // then use that; otherwise, try to read the document from the provided
-    // path and use that instead.
-    let Some(key) = FilePath::from_path_buf(path.to_path_buf()) else {
-        log::info!(
-            "couldn't construct file path from {}; reading from disk instead",
-            path.display()
-        );
-        return fallback();
-    };
-
-    let Ok(document) = state.get_document(&key) else {
-        log::info!("no document for path {key}; reading from disk instead");
-        return fallback();
-    };
-
-    callback(document)
 }
 
 pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {

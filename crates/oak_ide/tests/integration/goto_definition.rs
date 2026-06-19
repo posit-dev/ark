@@ -50,6 +50,20 @@ fn test_local_definition_navigates_to_binding() {
 }
 
 #[test]
+fn test_navigates_from_trailing_edge_of_identifier() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "a.R", "x <- 1\nx\n");
+
+    // Cursor at the trailing edge of the use `x` (offset 8, right after it).
+    // `classify` snaps back onto the name token before resolving. A half-open
+    // `contains` would otherwise miss the use whose range ends at 8.
+    let targets = goto_definition(&db, file, TextSize::from(8u32));
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+    assert_eq!(targets[0].full_range, range(0, 1));
+}
+
+#[test]
 fn test_navigates_across_source_directive() {
     let mut db = OakDatabase::new();
     let helpers = upsert(&mut db, "helpers.R", "helper <- function() 1\n");

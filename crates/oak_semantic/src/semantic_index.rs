@@ -188,6 +188,24 @@ impl SemanticIndex {
         Some((scope, id, use_site))
     }
 
+    /// All use sites for `name`, across every scope in the file. The
+    /// many-sites counterpart to [`use_at`](Self::use_at), with the same
+    /// `(ScopeId, UseId, &Use)` element.
+    pub fn uses_of(&self, name: &str) -> Vec<(ScopeId, UseId, &Use)> {
+        let mut uses = Vec::new();
+        for scope_id in self.scope_ids() {
+            let Some(symbol_id) = self.symbols(scope_id).id(name) else {
+                continue;
+            };
+            for (use_id, use_site) in self.uses(scope_id).iter() {
+                if use_site.symbol() == symbol_id {
+                    uses.push((scope_id, use_id, use_site));
+                }
+            }
+        }
+        uses
+    }
+
     /// Iterate direct child scopes of `scope`.
     pub fn child_scope_ids(&self, scope_id: ScopeId) -> ChildScopeIdsIter<'_> {
         let descendants = &self.scopes[scope_id].descendants;

@@ -8,8 +8,6 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use anyhow::anyhow;
-use oak_semantic::semantic_index::SemanticIndex;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::Parser;
@@ -37,9 +35,6 @@ pub struct Document {
     /// The document's AST.
     pub ast: Tree,
 
-    /// The Rowan R syntax tree.
-    pub parse: aether_parser::Parse,
-
     /// Index of new lines and non-UTF-8 characters in `contents`. Used for converting
     /// between line/col [tower_lsp::Position]s with a specified [PositionEncoding] to
     /// [biome_text_size::TextSize] offsets.
@@ -61,7 +56,6 @@ impl std::fmt::Debug for Document {
         f.debug_struct("Document")
             .field("contents", &self.contents)
             .field("ast", &self.ast)
-            .field("parse", &self.parse)
             .finish()
     }
 }
@@ -69,7 +63,7 @@ impl std::fmt::Debug for Document {
 impl Document {
     pub fn new(contents: &str, version: Option<i32>) -> Self {
         // A one-shot parser, assumes the `Document` won't be incrementally reparsed.
-        // Useful for testing, `with_document()`, and `index_file()`.
+        // Useful for testing and `index_file()`.
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_r::LANGUAGE.into())
@@ -84,8 +78,7 @@ impl Document {
         // Legacy Tree-Sitter AST
         let ast = parser.parse(contents.as_str(), None).unwrap();
 
-        // Preferred Rowan AST and accompanying line index
-        let parse = aether_parser::parse(&contents, Default::default());
+        // Line index for position conversions
         let line_index = biome_line_index::LineIndex::new(&contents);
 
         Self {
@@ -93,7 +86,6 @@ impl Document {
             contents,
             version,
             ast,
-            parse,
             line_index,
             // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
             // once/if Ark becomes an independent LSP
@@ -184,7 +176,6 @@ impl Document {
 
         // Rebuild everything once at the end
         self.line_index = biome_line_index::LineIndex::new(&self.contents);
-        self.parse = aether_parser::parse(&self.contents, Default::default());
         self.ast = parser.parse(self.contents.as_str(), None).unwrap();
         self.version = Some(new_version);
     }
@@ -214,22 +205,6 @@ impl Document {
         let line_end_byte: usize = line_end.into();
 
         self.contents.get(line_start_byte..line_end_byte)
-    }
-
-    /// Accessor that returns an annotated `RSyntaxNode` type.
-    /// More convenient than the generic `biome_rowan::SyntaxNode<L>` type.
-    /// Returns an error if the document has parse errors.
-    pub fn syntax(&self) -> anyhow::Result<aether_syntax::RSyntaxNode> {
-        if self.parse.has_error() {
-            return Err(anyhow!("Document has parse errors"));
-        }
-        Ok(self.parse.syntax())
-    }
-
-    /// TODO(salsa) Recomputed every time for now, but we'll track this with
-    /// Salsa soon.
-    pub fn semantic_index(&self) -> SemanticIndex {
-        oak_semantic::build_index(&self.parse.tree(), oak_semantic::NoopImportsResolver)
     }
 
     pub fn tree_sitter_point_from_lsp_position(
@@ -293,23 +268,6 @@ mod tests {
         let document = Document::new("\n\n# hi there", None);
         let root = document.ast.root_node();
         assert_eq!(root.start_position(), Point::new(0, 0));
-    }
-
-    #[test]
-    fn test_aether_syntax_integration() {
-        let document = Document::new("foo <- 1 + 2", None);
-
-        let syntax = document.parse.syntax();
-        let len: u32 = syntax.text_range_with_trivia().len().into();
-        assert!(len > 0);
-
-        let syntax2 = document.syntax().unwrap();
-        assert_eq!(
-            syntax.text_range_with_trivia(),
-            syntax2.text_range_with_trivia()
-        );
-
-        assert!(!document.parse.has_error());
     }
 
     #[test]
@@ -426,8 +384,5 @@ mod tests {
         use crate::lsp::traits::node::NodeExt;
         let node = root.find_smallest_spanning_node(Point::new(0, 3));
         assert!(node.is_some(), "Should find spanning node at end of 'lib'");
-
-        // The Rowan tree contains the updated document
-        assert_eq!(document.syntax().unwrap().text_with_trivia(), "lib");
     }
 }

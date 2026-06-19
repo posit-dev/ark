@@ -6,6 +6,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
 
+use crate::db::root_by_file;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
@@ -158,11 +159,16 @@ impl File {
 
     /// The root containing this file, if any.
     ///
-    /// If the file has a registered [`Package`], asks the db which live
-    /// root holds it via [`Db::root_by_package`]. Otherwise falls back to a
-    /// URL-prefix lookup against [`WorkspaceRoots`] (orphan files live
-    /// under a workspace root or nowhere). Library files normally have
-    /// a package; the `root_by_package` branch covers them too.
+    /// Packaged files ask the db which live root holds the package via
+    /// [`Db::root_by_package`]. That branch covers library files too, which
+    /// normally have a package. It also keeps the common case cheap: it
+    /// depends on each root's package list, not its full file set.
+    ///
+    /// Unpackaged files go through `root_by_file()`, the deepest root whose
+    /// scan actually reached the file. If no scan reached it (an editor
+    /// buffer opened before any scan, so it sits in orphan), we fall back
+    /// to a URL-prefix lookup so the file still resolves to the workspace
+    /// folder it lives under.
     ///
     /// Returns `None` if the file's package was evicted to
     /// [`StaleRoot`] (no live root contains it), or if the file is in
@@ -175,14 +181,15 @@ impl File {
         if let Some(pkg) = self.package(db) {
             return db.root_by_package(pkg);
         }
-        root_by_path(db, self.path(db))
+        root_by_file(db, self).or_else(|| root_by_path(db, self.path(db)))
     }
 }
 
 /// Find the workspace `Root` whose path is the longest-prefix ancestor
 /// of `path`. Returns `None` for virtual documents and for paths outside
 /// every workspace folder. Private helper: the only caller is
-/// [`File::root`] (for files without a registered package).
+/// [`File::root`], as the fallback for an orphan file no scan has reached
+/// yet (path prefix is all we have until a scan lands).
 fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
     let path = path.as_path()?;

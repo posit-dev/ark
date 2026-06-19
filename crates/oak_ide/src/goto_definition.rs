@@ -1,6 +1,7 @@
 use biome_rowan::TextSize;
 use oak_db::Db;
 use oak_db::File;
+use oak_db::Identifier;
 
 use crate::NavigationTarget;
 
@@ -12,8 +13,17 @@ use crate::NavigationTarget;
 /// [`NavigationTarget`] in its own file's coordinates, so an ambiguous name
 /// (e.g. defined on both arms of an `if`/`else`) yields several. Empty means
 /// the name isn't reachable, rather than guessing by name across the workspace.
+///
+/// `classify` snaps the cursor to the name token first, so a cursor resting on
+/// the trailing edge of an identifier still resolves. `range.start()` is the
+/// snapped offset `resolve_at` expects. A member name (`$`/`@` RHS) has no
+/// binding to jump to, so it yields nothing.
 pub fn goto_definition(db: &dyn Db, file: File, offset: TextSize) -> Vec<NavigationTarget> {
-    file.resolve_at(db, offset)
+    let Some(Identifier::Variable { range, .. }) = Identifier::classify(db, file, offset) else {
+        return Vec::new();
+    };
+
+    file.resolve_at(db, range.start())
         .into_iter()
         .filter_map(|def| {
             let range = def.name_range(db)?;

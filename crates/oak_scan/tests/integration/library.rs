@@ -362,6 +362,53 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
 }
 
 #[test]
+fn test_all_files_emits_shared_file_once_under_deepest_root() {
+    use oak_db::all_files;
+    use oak_scan::FileEntry;
+
+    let mut db = OakDatabase::new();
+    let short = empty_library_root(&db, "/lib");
+    let long = empty_library_root(&db, "/lib/sub");
+    let desc_path = file_path("/lib/sub/DESCRIPTION");
+    let r_path = file_path("/lib/sub/R/a.R");
+    let files = vec![FileEntry {
+        path: r_path,
+        contents: "f <- function() NULL\n".to_string(),
+    }];
+
+    // Same DESCRIPTION scanned from both roots reuses one `Package`, so
+    // both roots' `packages` vecs list it and its files are reachable from
+    // both. The deepest root owns them.
+    let p1 = short.set_package(
+        &mut db,
+        desc_path.clone(),
+        "pkg".to_string(),
+        None,
+        Namespace::default(),
+        files.clone(),
+        Vec::new(),
+        None,
+    );
+    register_package(&mut db, short, p1);
+    let p2 = long.set_package(
+        &mut db,
+        desc_path,
+        "pkg".to_string(),
+        None,
+        Namespace::default(),
+        files,
+        Vec::new(),
+        None,
+    );
+    register_package(&mut db, long, p2);
+    assert_eq!(p1, p2);
+
+    let file = p1.files(&db)[0];
+    assert_eq!(file.root(&db), Some(long));
+    assert_eq!(all_files(&db), &vec![file]);
+}
+
+#[test]
 fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     // Mirrors the doc claim in `eviction.rs`: an editor-open file that
     // was evicted to `OrphanRoot` should come back into `pkg.files`
