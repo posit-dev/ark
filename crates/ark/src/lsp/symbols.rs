@@ -60,12 +60,18 @@ pub(crate) fn symbols(
     state: &WorldState,
 ) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
-    indexer::map(|uri, symbol, entry| {
+    indexer::map(db, |uri, symbol, entry| {
         if !symbol.fuzzy_matches(query) {
             return;
         }
+
+        let Some(range) = indexer::index_range_to_lsp_range(db, uri, entry.range, encoding) else {
+            return;
+        };
 
         match &entry.data {
             IndexEntryData::Function { name, arguments: _ } => {
@@ -74,7 +80,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::FUNCTION,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -89,7 +95,7 @@ pub(crate) fn symbols(
                         kind: SymbolKind::STRING,
                         location: Location {
                             uri: uri.clone(),
-                            range: entry.range,
+                            range,
                         },
                         tags: None,
                         deprecated: None,
@@ -104,7 +110,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::VARIABLE,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -118,7 +124,7 @@ pub(crate) fn symbols(
                     kind: SymbolKind::METHOD,
                     location: Location {
                         uri: uri.clone(),
-                        range: entry.range,
+                        range,
                     },
                     tags: None,
                     deprecated: None,
@@ -778,13 +784,12 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 
 #[cfg(test)]
 mod tests {
+    use oak_scan::DbScan;
     use tower_lsp::lsp_types::Position;
 
     use super::*;
     use crate::lsp::config::LspConfig;
     use crate::lsp::config::WorkspaceSymbolsConfig;
-    use crate::lsp::document::Document;
-    use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::util::test_path;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
@@ -1167,8 +1172,6 @@ outer <- 4
     #[test]
     fn test_workspace_symbols_include_comment_sections() {
         fn run(include_comment_sections: bool) -> Vec<String> {
-            let _guard = ResetIndexerGuard;
-
             let code = "# Section ----\nfoo <- 1";
 
             let config = LspConfig {
@@ -1177,17 +1180,15 @@ outer <- 4
                 },
                 ..Default::default()
             };
-            let state = WorldState {
+            let mut state = WorldState {
                 config,
                 ..Default::default()
             };
-
-            // Index the document
-            let doc = Document::new(code, None);
             let uri = test_path("test.R");
-            indexer::update(&doc, &uri).unwrap();
+            state
+                .db
+                .upsert_editor(aether_path::FilePath::from_url(&uri), code.to_string());
 
-            // Query for all symbols
             let params = WorkspaceSymbolParams {
                 query: "Section".to_string(),
                 ..Default::default()

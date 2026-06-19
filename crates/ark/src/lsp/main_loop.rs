@@ -46,7 +46,6 @@ use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
-use crate::lsp::document::Document;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
@@ -189,6 +188,10 @@ struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
+    /// Last non-empty diagnostics published per file. A refresh re-runs every
+    /// open file, but most runs produce the same result, so we skip the publish
+    /// when it matches what the client already has.
+    published_diagnostics: HashMap<Url, Vec<Diagnostic>>,
 }
 
 impl GlobalState {
@@ -317,6 +320,14 @@ impl GlobalState {
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
 
+        // Diagnostics read the oak database (workspace symbols, imports,
+        // resolved definitions), so any handler that writes to oak invalidates
+        // them. Rather than have each write site remember to refresh, we watch
+        // the oak revision across the whole tick: if a handler advanced it,
+        // refresh centrally. Config and console state live outside oak, so
+        // handlers that mutate those still refresh explicitly.
+        let old_revision = salsa::plumbing::current_revision(&self.world.db);
+
         match event {
             Event::Lsp(msg) => match msg {
                 LspMessage::Notification(notif) => {
@@ -346,15 +357,6 @@ impl GlobalState {
                         },
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.lsp_state, &mut self.world)?;
-                        },
-                        LspNotification::DidCreateFiles(params) => {
-                            state_handlers::did_create_files(params, &self.world)?;
-                        },
-                        LspNotification::DidDeleteFiles(params) => {
-                            state_handlers::did_delete_files(params, &self.world)?;
-                        },
-                        LspNotification::DidRenameFiles(params) => {
-                            state_handlers::did_rename_files(params, &mut self.world)?;
                         },
                     }
                 },
@@ -476,15 +478,14 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                if followups.is_empty() {
-                    // The scan settled (no more follow-ups). `apply_scan_completed()`
-                    // was an oak write: it cancelled in-flight diagnostics and changed
-                    // the workspace symbols diagnostics resolve against. Recompute
-                    // diagnostics for the open files so they reflect the indexed
-                    // workspace and any cancelled pass is refreshed.
-                    diagnostics_refresh_all(&self.world);
-                } else {
-                    dispatch_scan_requests(&self.events_tx, followups);
+                dispatch_scan_requests(&self.events_tx, followups);
+
+                // Warm the workspace index once the scan settles. Editor
+                // writes don't need to re-warm: they imply an open document,
+                // and the diagnostics passes they trigger force the same
+                // memos.
+                if !self.lsp_state.oak_scheduler.has_pending_scans() {
+                    warm_workspace_index(self.world.db.clone());
                 }
             },
         }
@@ -492,6 +493,10 @@ impl GlobalState {
         // TODO Make this threshold configurable by the client
         if loop_tick.elapsed() > std::time::Duration::from_millis(50) {
             lsp::log_info!("Handler took {}ms", loop_tick.elapsed().as_millis());
+        }
+
+        if salsa::plumbing::current_revision(&self.world.db) != old_revision {
+            diagnostics_refresh_all(&self.world);
         }
 
         Ok(())
@@ -671,6 +676,7 @@ impl AuxiliaryState {
             client,
             auxiliary_event_rx,
             tasks,
+            published_diagnostics: HashMap::new(),
         }
     }
 
@@ -684,9 +690,7 @@ impl AuxiliaryState {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
                 AuxiliaryEvent::SpawnedTask(handle) => self.tasks.push(Box::pin(handle)),
                 AuxiliaryEvent::PublishDiagnostics(uri, diagnostics, version) => {
-                    self.client
-                        .publish_diagnostics(uri, diagnostics, version)
-                        .await
+                    self.publish_diagnostics(uri, diagnostics, version).await
                 },
                 AuxiliaryEvent::Shutdown => break,
             }
@@ -719,6 +723,38 @@ impl AuxiliaryState {
                 },
             }
         }
+    }
+
+    /// Publish diagnostics for `uri`, skipping the client round-trip when the
+    /// set is identical to what we last sent for that file. Only non-empty
+    /// sets are remembered, and an absent entry counts as empty. So an empty
+    /// result is published only when it clears diagnostics the client is
+    /// currently showing, and the map stays bounded by the files on screen
+    /// with diagnostics.
+    async fn publish_diagnostics(
+        &mut self,
+        uri: Url,
+        diagnostics: Vec<Diagnostic>,
+        version: Option<i32>,
+    ) {
+        let unchanged = match self.published_diagnostics.get(&uri) {
+            Some(old) => diagnostics == *old,
+            None => diagnostics.is_empty(),
+        };
+        if unchanged {
+            return;
+        }
+
+        if diagnostics.is_empty() {
+            self.published_diagnostics.remove(&uri);
+        } else {
+            self.published_diagnostics
+                .insert(uri.clone(), diagnostics.clone());
+        }
+
+        self.client
+            .publish_diagnostics(uri, diagnostics, version)
+            .await
     }
 
     async fn log(&self, level: MessageType, message: String) {
@@ -854,21 +890,6 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 }
 
 #[derive(Debug)]
-#[expect(clippy::large_enum_variant)]
-pub(crate) enum IndexerQueueTask {
-    Indexer(IndexerTask),
-    Diagnostics(RefreshDiagnosticsTask),
-}
-
-#[derive(Debug)]
-pub enum IndexerTask {
-    Create { uri: Url },
-    Delete { uri: Url },
-    Rename { uri: Url, new: Url },
-    Update { uri: Url, document: Document },
-}
-
-#[derive(Debug)]
 pub(crate) struct RefreshDiagnosticsTask {
     /// Snapshot carrying the live oak plus the session context the diagnostics
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
@@ -884,131 +905,34 @@ struct RefreshDiagnosticsResult {
     version: Option<i32>,
 }
 
-fn summarize_indexer_task(batch: &[IndexerTask]) -> String {
-    let mut counts = std::collections::HashMap::new();
-    for task in batch {
-        let type_name = match task {
-            IndexerTask::Create { .. } => "Create",
-            IndexerTask::Delete { .. } => "Delete",
-            IndexerTask::Rename { .. } => "Rename",
-            IndexerTask::Update { .. } => "Update",
-        };
-        *counts.entry(type_name).or_insert(0) += 1;
-    }
-
-    let mut summary = String::new();
-    for (task_type, count) in counts.iter() {
-        use std::fmt::Write;
-        let _ = write!(summary, "{task_type}: {count} ");
-    }
-
-    summary.trim_end().to_string()
-}
-
-static INDEXER_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<IndexerQueueTask>> =
+static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDiagnosticsTask>> =
     LazyLock::new(|| {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(process_indexer_queue(rx));
+        tokio::spawn(process_diagnostics_queue(rx));
         tx
     });
 
-/// Process indexer and diagnostics tasks
+/// Process diagnostics refresh tasks.
 ///
-/// Diagnostics need an up-to-date index to be accurate, so we synchronise
-/// indexing and diagnostics tasks using a simple queue.
+/// Tasks are batched and deduplicated per URL (only the last task per URL is
+/// processed), so stale-version diagnostics get superseded within a batch.
 ///
-/// - We make sure to refresh diagnostics after every indexer updates.
-/// - Indexer tasks are batched together, same for diagnostics tasks.
-/// - Cancellation is simply dealt with by deduplicating tasks for the same URI,
-///   retaining only the most recent one.
+/// Batches triggered by an oak write can't publish out of order. Each pass
+/// holds a db snapshot, and a salsa write blocks until all snapshots drop, so
+/// by the time the write completes and the newer batch is enqueued, any older
+/// pass has either unwound with `Cancelled` or already produced its result.
 ///
-/// Ideally we'd process indexer tasks continually without making them dependent
-/// on diagnostics tasks. The current setup blocks the queue loop while
-/// diagnostics are running, but it has the benefit that rounds of diagnostic
-/// refreshes don't race against each other. The frontend will receive all
-/// results in order, ensuring that diagnostics for an outdated version are
-/// eventually replaced by the most up-to-date diagnostics.
-///
-/// Note that this setup will be entirely replaced in the future by Salsa
-/// dependencies. Diagnostics refreshes will depend on indexer results in a
-/// natural way and they will be cancelled automatically as document updates
-/// arrive.
-async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>) {
-    let mut diagnostics_batch = Vec::new();
-    let mut indexer_batch = Vec::new();
-
+/// FIXME: Batches triggered without an oak write (console inputs, diagnostics
+/// config) have no such barrier. An older pass can run concurrently with the
+/// newer one and publish last, leaving diagnostics computed from the older
+/// console scopes or config until the next refresh.
+async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
-        let mut tasks = vec![task];
-
-        // Process diagnostics at least every 10 iterations if indexer tasks
-        // keep coming in, so the user gets intermediate diagnostics refreshes
-        for _ in 0..10 {
-            while let Ok(task) = rx.try_recv() {
-                tasks.push(task);
-            }
-
-            // Separate by type
-            for task in std::mem::take(&mut tasks) {
-                match task {
-                    IndexerQueueTask::Indexer(indexer_task) => indexer_batch.push(indexer_task),
-                    IndexerQueueTask::Diagnostics(diagnostic_task) => {
-                        diagnostics_batch.push(diagnostic_task)
-                    },
-                }
-            }
-
-            // No more indexer tasks, let's do diagnostics
-            if indexer_batch.is_empty() {
-                break;
-            }
-
-            // Process indexer tasks first so diagnostics tasks work with an
-            // up-to-date index
-            process_indexer_batch(std::mem::take(&mut indexer_batch)).await;
+        let mut batch = vec![task];
+        while let Ok(task) = rx.try_recv() {
+            batch.push(task);
         }
-
-        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch));
-    }
-}
-
-async fn process_indexer_batch(batch: Vec<IndexerTask>) {
-    tracing::trace!(
-        "Processing {n} indexer tasks ({summary})",
-        n = batch.len(),
-        summary = summarize_indexer_task(&batch)
-    );
-
-    for task in batch {
-        let result: anyhow::Result<()> = async {
-            match &task {
-                IndexerTask::Create { uri } => {
-                    indexer::create(uri)?;
-                },
-
-                IndexerTask::Update { uri, document } => {
-                    indexer::update(document, uri)?;
-                },
-
-                IndexerTask::Delete { uri } => {
-                    indexer::delete(uri)?;
-                },
-
-                IndexerTask::Rename {
-                    uri: old_uri,
-                    new: new_uri,
-                } => {
-                    indexer::rename(old_uri, new_uri)?;
-                },
-            }
-
-            Ok(())
-        }
-        .await;
-
-        if let Err(err) = result {
-            tracing::warn!("Can't process indexer task: {err}");
-            continue;
-        }
+        process_diagnostics_batch(batch);
     }
 }
 
@@ -1063,116 +987,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
 
 /// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
 fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
-    match salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)) {
-        Ok(value) => Some(value),
-        Err(cancelled) => {
-            log::trace!("Salsa query {cancelled}");
-            None
-        },
-    }
-}
-
-pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
-    lsp::log_info!("Initial indexing started");
-
-    let uris: Vec<Url> = folders
-        .into_iter()
-        .flat_map(|folder| {
-            walkdir::WalkDir::new(folder)
-                .into_iter()
-                .filter_entry(indexer::filter_entry)
-                .filter_map(|entry| {
-                    let entry = match entry {
-                        Ok(e) => e,
-                        Err(_) => return None,
-                    };
-
-                    if !entry.file_type().is_file() {
-                        return None;
-                    }
-                    let path = entry.path();
-
-                    // Only index R files
-                    let ext = path.extension().unwrap_or_default();
-                    if ext != "r" && ext != "R" {
-                        return None;
-                    }
-
-                    if let Ok(uri) = url::Url::from_file_path(path) {
-                        Some(uri)
-                    } else {
-                        tracing::warn!("Can't convert path to URI: {:?}", path);
-                        None
-                    }
-                })
-        })
-        .collect();
-
-    index_create(uris, state);
-}
-
-pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Create { uri }))
-            .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
-    }
-
-    diagnostics_refresh_all(&state);
-}
-
-pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        if !ExtUrl::is_indexable(&uri) {
-            continue;
-        }
-
-        let document = match state.get_document(&FilePath::from_url(&uri)) {
-            Ok(doc) => doc.clone(),
-            Err(err) => {
-                tracing::warn!("Can't get document '{uri}' for indexing: {err:?}");
-                continue;
-            },
-        };
-
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Update {
-                document,
-                uri,
-            }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
-}
-
-pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
-    for uri in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Delete { uri }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
-}
-
-pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
-    for (old, new) in uris {
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Indexer(IndexerTask::Rename {
-                uri: old,
-                new,
-            }))
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
-    }
-
-    // Refresh all diagnostics since the indexer results for one file may affect
-    // other files
-    diagnostics_refresh_all(&state);
+    salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)).ok()
 }
 
 pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
@@ -1194,13 +1009,32 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
             },
         };
 
-        INDEXER_QUEUE
-            .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
+        DIAGNOSTICS_QUEUE
+            .send(RefreshDiagnosticsTask {
                 file,
                 state: state.diagnostics_snapshot(),
-            }))
+            })
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
+}
+
+/// Build the per-file workspace symbol indexes on a background thread so
+/// main-loop consumers triggered by the user (workspace symbols, workspace
+/// completions) find them already computed. The first run after a workspace
+/// scan does the real work, parsing and walking each file. Later runs only
+/// revalidate the per-file memos.
+///
+/// Mirrors rust-analyzer's cache warming: spawned when a workspace scan
+/// settles, the analogue of r-a's transitions to quiescence (initial VFS scan,
+/// workspace reload, etc). Unlike r-a we don't restart a warmup that gets
+/// cancelled (`spawn_blocking()` swallows the unwind). A cancelling write can
+/// only come from an editor buffer, so a document is open, and the diagnostics
+/// passes spawned by that same write force the same memos and finish the job.
+fn warm_workspace_index(db: OakDatabase) {
+    spawn_blocking(move || {
+        indexer::warm(&db);
+        Ok(None)
+    })
 }
 
 #[cfg(test)]
@@ -1243,5 +1077,21 @@ mod tests {
             state: snapshot,
         };
         assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
+    }
+
+    /// The central diagnostics refresh keys off the oak revision advancing
+    /// across a loop tick, so an oak write must bump the revision. This pins
+    /// that assumption: if a salsa upgrade changed it, the refresh would
+    /// silently stop firing.
+    #[test]
+    fn test_oak_write_advances_revision() {
+        let mut state = WorldState::default();
+        let before = salsa::plumbing::current_revision(&state.db);
+        state.db.upsert_editor(
+            FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
+            "x <- 1".to_string(),
+        );
+        let after = salsa::plumbing::current_revision(&state.db);
+        assert_ne!(before, after);
     }
 }

@@ -147,6 +147,34 @@ pub fn all_files(db: &dyn Db) -> Vec<File> {
     files
 }
 
+/// Files eligible for the workspace symbol index: workspace-root scripts and
+/// package files, plus orphan editor buffers. Library roots are excluded, so
+/// installed package symbols don't leak into e.g. workspace symbols.
+#[salsa::tracked(returns(ref))]
+pub fn workspace_files(db: &dyn Db) -> Vec<File> {
+    let mut files: Vec<File> = Vec::new();
+
+    for &root in db.live_roots() {
+        match root {
+            LiveRoot::Workspace(r) => collect_root_files(db, &mut files, r),
+            LiveRoot::Library(_) => {},
+            LiveRoot::Orphan(orphan) => files.extend(orphan.files(db).iter().copied()),
+        }
+    }
+
+    files
+}
+
+fn collect_root_files(db: &dyn Db, files: &mut Vec<File>, r: Root) {
+    let owned = |f: File| root_by_file(db, f) == Some(r);
+    files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));
+
+    for &pkg in r.packages(db) {
+        let pkg_files = pkg.files(db).iter().chain(pkg.scripts(db));
+        files.extend(pkg_files.copied().filter(|&f| owned(f)));
+    }
+}
+
 /// Implementation of [`Db::file_by_path`]. Walks the per-root indices.
 ///
 /// Not itself salsa-tracked (its `&FilePath` argument isn't a salsa

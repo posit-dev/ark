@@ -18,8 +18,6 @@ use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
-use tower_lsp::lsp_types::CreateFilesParams;
-use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
@@ -29,10 +27,6 @@ use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
 use tower_lsp::lsp_types::FileChangeType;
-use tower_lsp::lsp_types::FileOperationFilter;
-use tower_lsp::lsp_types::FileOperationPattern;
-use tower_lsp::lsp_types::FileOperationPatternKind;
-use tower_lsp::lsp_types::FileOperationRegistrationOptions;
 use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
@@ -40,7 +34,6 @@ use tower_lsp::lsp_types::ImplementationProviderCapability;
 use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::OneOf;
-use tower_lsp::lsp_types::RenameFilesParams;
 use tower_lsp::lsp_types::RenameOptions;
 use tower_lsp::lsp_types::SelectionRangeProviderCapability;
 use tower_lsp::lsp_types::ServerCapabilities;
@@ -103,7 +96,6 @@ pub(crate) fn initialize(
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
-    let mut folders: Vec<String> = Vec::new();
     let mut workspace_paths: Vec<PathBuf> = Vec::new();
 
     for uri in workspace_uris {
@@ -137,22 +129,16 @@ pub(crate) fn initialize(
                     },
                 }
             }
-            if let Some(path_str) = path.to_str() {
-                folders.push(path_str.to_string());
-            }
         }
     }
 
-    // Start first round of indexing. `state.documents` is empty at init since
-    // no `didOpen` has fired yet, but build the set through the same shape we
-    // use elsewhere so the call site reads consistently.
+    // Kick off the initial workspace scan
     let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
     let requests =
         lsp_state
             .oak_scheduler
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
-    lsp::main_loop::index_start(folders, state.clone());
 
     let result = InitializeResult {
         server_info: Some(ServerInfo {
@@ -207,28 +193,11 @@ pub(crate) fn initialize(
                     supported: Some(true),
                     change_notifications: Some(OneOf::Left(true)),
                 }),
-                file_operations: {
-                    let r_file_filter = FileOperationFilter {
-                        scheme: Some(String::from("file")),
-                        pattern: FileOperationPattern {
-                            glob: String::from("**/*.{r,R}"),
-                            matches: Some(FileOperationPatternKind::File),
-                            options: None,
-                        },
-                    };
-                    Some(lsp_types::WorkspaceFileOperationsServerCapabilities {
-                        did_create: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_delete: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_rename: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter],
-                        }),
-                        ..Default::default()
-                    })
-                },
+                // We don't register `file_operations`. Disk changes reach us
+                // through `didChangeWatchedFiles` from every source (editor, git,
+                // terminal), so it's the single channel that keeps the index
+                // current. A rename arrives there as delete + create.
+                file_operations: None,
             }),
             document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                 first_trigger_character: String::from("\n"),
@@ -280,8 +249,6 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    lsp::main_loop::diagnostics_refresh_all(state);
-
     Ok(())
 }
 
@@ -304,8 +271,6 @@ pub(crate) fn did_change(
     let new_contents = document.contents.to_string();
     let path = FilePath::from_url(uri);
     state.db.upsert_editor(path, new_contents);
-
-    lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -342,65 +307,8 @@ pub(crate) fn did_close(
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
 
-    // `close_editor` is an oak write, so it cancels any diagnostics pass in
-    // flight for the other open files. Re-enqueue them so a cancelled pass
-    // isn't silently dropped. The closed file was removed above, so it isn't
-    // refreshed (we already cleared it with the empty publish).
-    lsp::main_loop::diagnostics_refresh_all(state);
-
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_create_files(
-    params: CreateFilesParams,
-    state: &WorldState,
-) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_create(uris, state.clone());
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_delete_files(
-    params: DeleteFilesParams,
-    state: &WorldState,
-) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_delete(uris, state.clone());
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_rename_files(
-    params: RenameFilesParams,
-    state: &mut WorldState,
-) -> anyhow::Result<()> {
-    let uri_pairs = params
-        .files
-        .iter()
-        .filter_map(|file| {
-            let old_url = parse_uri_or_none(&file.old_uri)?;
-            let new_url = parse_uri_or_none(&file.new_uri)?;
-            Some((old_url, new_url))
-        })
-        .collect();
-
-    lsp::main_loop::index_rename(uri_pairs, state.clone());
     Ok(())
 }
 
@@ -411,23 +319,17 @@ pub(crate) fn did_change_watched_files(
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    // Editor owns the contents of files it has open: Oak should ignore
-    // disk-side events for those URLs.
+    // Editor owns the contents of files it has open: ignore disk-side events
+    // for those URLs. Their content comes from `did_open` / `did_change`.
     let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
 
     let events: Vec<FileEvent> = params
         .changes
-        .into_iter()
-        .filter_map(|e| {
-            let kind = match e.typ {
-                FileChangeType::CREATED => FileEventKind::Created,
-                FileChangeType::CHANGED => FileEventKind::Changed,
-                FileChangeType::DELETED => FileEventKind::Deleted,
-                _ => return None,
-            };
+        .iter()
+        .filter_map(|change| {
             Some(FileEvent {
-                path: FilePath::from_url(&e.uri),
-                kind,
+                path: FilePath::from_url(&change.uri),
+                kind: file_event_kind(change.typ)?,
             })
         })
         .collect();
@@ -437,7 +339,17 @@ pub(crate) fn did_change_watched_files(
             .oak_scheduler
             .apply_watcher_events(&mut state.db, events, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
+
     Ok(())
+}
+
+fn file_event_kind(kind: FileChangeType) -> Option<FileEventKind> {
+    match kind {
+        FileChangeType::CREATED => Some(FileEventKind::Created),
+        FileChangeType::CHANGED => Some(FileEventKind::Changed),
+        FileChangeType::DELETED => Some(FileEventKind::Deleted),
+        _ => None,
+    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -474,16 +386,6 @@ pub(crate) fn did_change_workspace_folders(
             .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
     dispatch_scan_requests(events_tx, requests);
     Ok(())
-}
-
-fn parse_uri_or_none(uri: &str) -> Option<url::Url> {
-    match url::Url::parse(uri) {
-        Ok(url) => Some(url),
-        Err(err) => {
-            log::warn!("Failed to parse URI '{uri}': {err}");
-            None
-        },
-    }
 }
 
 pub(crate) async fn did_change_configuration(
