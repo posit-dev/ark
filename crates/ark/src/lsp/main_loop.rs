@@ -1101,7 +1101,7 @@ mod tests {
         respond(
             response_tx,
             || {
-                let _ = file.file().tree_sitter(&snapshot.db);
+                let _ = file.tree_sitter(&snapshot.db);
                 Ok(LspResponse::Hover(None))
             },
             |response| response,

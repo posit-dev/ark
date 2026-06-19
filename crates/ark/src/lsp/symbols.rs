@@ -804,7 +804,7 @@ mod tests {
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
         let (db, file) = crate::lsp::open_file::test_open_file(code);
-        let node = file.file().tree_sitter(&db).root_node();
+        let node = file.tree_sitter(&db).root_node();
 
         let mut symbols = Vec::new();
         collect_symbols(
@@ -1175,7 +1175,7 @@ a <- function() {
 outer <- 4
 ",
         );
-        let node = file.file().tree_sitter(&db).root_node();
+        let node = file.tree_sitter(&db).root_node();
 
         let ctx = &mut CollectContext::new(ENCODING);
         ctx.include_assignments_in_blocks = true;

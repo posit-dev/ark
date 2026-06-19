@@ -386,8 +386,8 @@ mod tests {
     macro_rules! test_index {
         ($code:expr) => {
             let (db, file) = test_open_file($code);
-            let tree = file.file().tree_sitter(&db);
-            let contents = file.file().source_text(&db);
+            let tree = file.tree_sitter(&db);
+            let contents = file.source_text(&db);
             let root = tree.root_node();
             let mut cursor = root.walk();
 

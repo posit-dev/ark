@@ -270,7 +270,7 @@ pub(crate) fn did_change(
 
     // Fold the edits into the new buffer text and push it into `oak`
     let new_contents = apply_content_changes(
-        file.file().source_text(&state.db).as_str(),
+        file.source_text(&state.db).as_str(),
         &params.content_changes,
         encoding,
     );

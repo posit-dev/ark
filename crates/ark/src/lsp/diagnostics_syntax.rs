@@ -450,7 +450,7 @@ mod tests {
         let library = Library::default();
         let context = DiagnosticContext::new(&db, &None, &library, open_file.file(), ENCODING);
         let diagnostics =
-            syntax_diagnostics(open_file.file().tree_sitter(&db).root_node(), &context).unwrap();
+            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

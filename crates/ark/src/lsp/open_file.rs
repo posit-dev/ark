@@ -1,11 +1,14 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
+use oak_db::Db;
 use oak_db::File;
 use tower_lsp::lsp_types;
 use url::Url;
 
 use crate::lsp::config::DocumentConfig;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 
 /// An editor-managed buffer: the salsa `File` plus the editor and transport
 /// state that should not cross into the analysis layer.
@@ -30,6 +33,20 @@ impl OpenFile {
     pub(crate) fn file(&self) -> File {
         self.file
     }
+
+    /// `OpenFile` forwards the salsa read queries so a caller holding a buffer
+    /// can ask for its text, line index, or tree directly instead of reaching
+    /// through `file()`.
+    pub(crate) fn source_text<'db>(&self, db: &'db dyn Db) -> &'db String {
+        self.file.source_text(db)
+    }
+    pub(crate) fn line_index<'db>(&self, db: &'db dyn Db) -> &'db biome_line_index::LineIndex {
+        self.file.line_index(db)
+    }
+    pub(crate) fn tree_sitter<'db>(&self, db: &'db dyn ArkDb) -> &'db tree_sitter::Tree {
+        self.file.tree_sitter(db)
+    }
+
     pub(crate) fn version(&self) -> Option<i32> {
         self.version
     }
@@ -166,7 +183,7 @@ mod tests {
     fn test_tree_sitter_point_from_lsp_position_wide_encoding() {
         // The emoji is 4 UTF-8 bytes and 2 UTF-16 bytes
         let (db, file) = test_open_file("😃a");
-        let line_index = file.file().line_index(&db);
+        let line_index = file.line_index(&db);
 
         let point = tree_sitter_point_from_lsp_position(
             lsp_types::Position::new(0, 2),
@@ -188,7 +205,7 @@ mod tests {
     #[test]
     fn test_lsp_position_from_tree_sitter_point_wide_encoding() {
         let (db, file) = test_open_file("😃a");
-        let line_index = file.file().line_index(&db);
+        let line_index = file.line_index(&db);
 
         let position =
             lsp_position_from_tree_sitter_point(Point::new(0, 4), line_index, ENCODING).unwrap();
@@ -203,7 +220,7 @@ mod tests {
     fn test_utf8_position_roundtrip_multibyte() {
         // `é` is 2 bytes
         let (db, file) = test_open_file("é\n");
-        let line_index = file.file().line_index(&db);
+        let line_index = file.line_index(&db);
         let encoding = PositionEncoding::Utf8;
 
         let lsp_position = lsp_types::Position::new(0, 2);

@@ -45,7 +45,7 @@ pub(crate) fn code_actions(
 
     if let Some(edit) = roxygen_documentation(db, file.file(), range) {
         if let Ok(position) =
-            lsp_position_from_tree_sitter_point(edit.position, file.file().line_index(db), encoding)
+            lsp_position_from_tree_sitter_point(edit.position, file.line_index(db), encoding)
         {
             let range = lsp_types::Range::new(position, position);
             let text_edit = lsp_types::TextEdit::new(range, edit.documentation);

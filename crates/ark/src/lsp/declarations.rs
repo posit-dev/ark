@@ -99,46 +99,31 @@ mod test {
     fn test_declare_args() {
         let (db, file) = test_open_file("");
         assert_match!(
-            top_level_declare_args(
-                file.file().tree_sitter(&db),
-                file.file().source_text(&db).as_str()
-            ),
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()),
             None
         );
 
         let (db, file) = test_open_file("declare()");
         assert_match!(
-            top_level_declare_args(
-                file.file().tree_sitter(&db),
-                file.file().source_text(&db).as_str()
-            ),
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()),
             Some(_)
         );
 
         let (db, file) = test_open_file("~declare()");
         assert_match!(
-            top_level_declare_args(
-                file.file().tree_sitter(&db),
-                file.file().source_text(&db).as_str()
-            ),
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()),
             Some(_)
         );
 
         let (db, file) = test_open_file("# foo\n#bar\n\ndeclare()");
         assert_match!(
-            top_level_declare_args(
-                file.file().tree_sitter(&db),
-                file.file().source_text(&db).as_str()
-            ),
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()),
             Some(_)
         );
 
         let (db, file) = test_open_file("# foo\nbar\n\ndeclare()");
         assert_match!(
-            top_level_declare_args(
-                file.file().tree_sitter(&db),
-                file.file().source_text(&db).as_str()
-            ),
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()),
             None
         );
     }
@@ -146,35 +131,26 @@ mod test {
     #[test]
     fn test_declare_ark_args() {
         let (db, file) = test_open_file("declare()");
-        let decls = top_level_declare_args(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        )
-        .unwrap();
+        let decls =
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()).unwrap();
         assert_match!(
-            declare_ark_args(decls, file.file().source_text(&db).as_str()),
+            declare_ark_args(decls, file.source_text(&db).as_str()),
             None
         );
 
         let (db, file) = test_open_file("declare(ark())");
-        let decls = top_level_declare_args(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        )
-        .unwrap();
+        let decls =
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()).unwrap();
         assert_match!(
-            declare_ark_args(decls, file.file().source_text(&db).as_str()),
+            declare_ark_args(decls, file.source_text(&db).as_str()),
             Some(_)
         );
 
         let (db, file) = test_open_file("declare(foo, ark())");
-        let decls = top_level_declare_args(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        )
-        .unwrap();
+        let decls =
+            top_level_declare_args(file.tree_sitter(&db), file.source_text(&db).as_str()).unwrap();
         assert_match!(
-            declare_ark_args(decls, file.file().source_text(&db).as_str()),
+            declare_ark_args(decls, file.source_text(&db).as_str()),
             Some(_)
         );
     }
@@ -182,45 +158,27 @@ mod test {
     #[test]
     fn test_declare_diagnostics() {
         let (db, file) = test_open_file("");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(decls.diagnostics);
 
         let (db, file) = test_open_file("declare(ark(diagnostics(enable = TRUE)))");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(decls.diagnostics);
 
         let (db, file) = test_open_file("declare(ark(diagnostics(enable = NULL)))");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(decls.diagnostics);
 
         let (db, file) = test_open_file("declare(ark(diagnostics(enable = invalid())))");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(decls.diagnostics);
 
         let (db, file) = test_open_file("~declare()");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(decls.diagnostics);
 
         let (db, file) = test_open_file("declare(ark(diagnostics(enable = FALSE)))");
-        let decls = top_level_declare(
-            file.file().tree_sitter(&db),
-            file.file().source_text(&db).as_str(),
-        );
+        let decls = top_level_declare(file.tree_sitter(&db), file.source_text(&db).as_str());
         assert!(!decls.diagnostics);
     }
 }

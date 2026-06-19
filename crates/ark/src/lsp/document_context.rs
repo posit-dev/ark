@@ -137,9 +137,9 @@ impl TestDocument {
         trigger: Option<String>,
     ) -> DocumentContext<'_> {
         DocumentContext::new(
-            self.file.file().tree_sitter(&self.db),
-            self.file.file().source_text(&self.db).as_str(),
-            self.file.file().line_index(&self.db),
+            self.file.tree_sitter(&self.db),
+            self.file.source_text(&self.db).as_str(),
+            self.file.line_index(&self.db),
             self.encoding,
             point,
             trigger,

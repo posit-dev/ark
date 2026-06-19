@@ -304,7 +304,7 @@ mod tests {
         file: &OpenFile,
         encoding: PositionEncoding,
     ) {
-        let line_index = file.file().line_index(&*db).clone();
+        let line_index = file.line_index(&*db).clone();
         let edits = edits
             .into_iter()
             .map(|edit| TextEdit {
@@ -313,7 +313,7 @@ mod tests {
             })
             .collect();
 
-        let mut contents = file.file().source_text(&*db).clone();
+        let mut contents = file.source_text(&*db).clone();
         let mut line_index = line_index;
         from_proto::apply_text_edits(&mut contents, edits, &mut line_index, encoding);
         file.file().set_source_text_override(db).to(Some(contents));
@@ -370,7 +370,7 @@ mod tests {
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
         assert_eq!(
-            file.file().source_text(&db),
+            file.source_text(&db),
             "foo +\n  bar +\n  baz + qux |>\nfoofy()"
         );
 
@@ -379,7 +379,7 @@ mod tests {
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
         assert_eq!(
-            file.file().source_text(&db),
+            file.source_text(&db),
             "foo +\n  bar +\n  baz + qux |>\n  foofy()"
         );
     }
@@ -394,7 +394,7 @@ mod tests {
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
         assert_eq!(
-            file.file().source_text(&db),
+            file.source_text(&db),
             "foo +\n  bar(\n    x\n  ) +\n  baz\n  "
         );
     }
@@ -421,7 +421,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "deep()()[] +\n  deep()()[]");
+        assert_eq!(file.source_text(&db), "deep()()[] +\n  deep()()[]");
     }
 
     #[test]
@@ -436,10 +436,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(
-            file.file().source_text(&db),
-            "deep(\n)()[] +\n  deep(\n)()[]"
-        );
+        assert_eq!(file.source_text(&db), "deep(\n)()[] +\n  deep(\n)()[]");
     }
 
     #[test]
@@ -450,7 +447,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "foo() +\n  bar() +\n  baz()");
+        assert_eq!(file.source_text(&db), "foo() +\n  bar() +\n  baz()");
 
         // Indenting the first two lines doesn't change the text
         let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
@@ -472,7 +469,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "{\n  bar\n}");
+        assert_eq!(file.source_text(&db), "{\n  bar\n}");
 
         let (mut db, file) = crate::lsp::open_file::test_open_file("function() {\nbar\n}");
 
@@ -480,7 +477,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "function() {\n  bar\n}");
+        assert_eq!(file.source_text(&db), "function() {\n  bar\n}");
     }
 
     #[test]
@@ -491,7 +488,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "{\n}");
+        assert_eq!(file.source_text(&db), "{\n}");
     }
 
     #[test]
@@ -503,7 +500,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(file.file().source_text(&db), "{\n  \n}");
+        assert_eq!(file.source_text(&db), "{\n  \n}");
     }
 
     #[test]
@@ -515,10 +512,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(
-            file.file().source_text(&db),
-            "function(\n        ) {\n  foo\n}"
-        );
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  foo\n}");
     }
 
     #[test]
@@ -529,10 +523,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(
-            file.file().source_text(&db),
-            "function(\n        ) {\n  \n}"
-        );
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  \n}");
     }
 
     #[test]
@@ -544,10 +535,7 @@ mod tests {
             .unwrap()
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
-        assert_eq!(
-            file.file().source_text(&db),
-            "function() {\n  ({\n  }\n  )\n}"
-        );
+        assert_eq!(file.source_text(&db), "function() {\n  ({\n  }\n  )\n}");
     }
 
     #[test]
@@ -561,7 +549,7 @@ mod tests {
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
         assert_eq!(
-            file.file().source_text(&db),
+            file.source_text(&db),
             "{\n  {\n    ({\n    }\n    )\n  }\n}"
         );
     }
@@ -625,13 +613,13 @@ mod tests {
     fn test_indent_snapshot() {
         let orig = read_text_asset("lsp/snapshots/indent.R");
         let (mut db, file) = crate::lsp::open_file::test_open_file(&orig);
-        let n_lines = file.file().source_text(&db).matches('\n').count();
+        let n_lines = file.source_text(&db).matches('\n').count();
         for i in 0..n_lines {
             if let Some(edit) = indent_edit(&db, file.file(), &file.config().indent, i).unwrap() {
                 apply_text_edits(edit, &mut db, &file, ENCODING);
             }
         }
-        let result = file.file().source_text(&db).to_string();
+        let result = file.source_text(&db).to_string();
         write_asset("lsp/snapshots/indent.R", &result);
         if orig != result {
             panic!("Indentation snapshots have changed.\nPlease see git diff.");
