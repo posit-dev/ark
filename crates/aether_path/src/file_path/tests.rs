@@ -24,6 +24,25 @@ fn test_virtual_preserves_bytes() {
 }
 
 #[test]
+fn test_file_name_returns_basename_for_file_arm() {
+    let file = FilePath::from_url(&url("file:///C:/a/b/foo.R"));
+    assert_eq!(file.file_name().as_deref(), Some("foo.R"));
+}
+
+#[test]
+fn test_file_name_returns_last_segment_for_virtual_arm() {
+    // Query and fragment are dropped; the segment is percent-decoded.
+    let ark = FilePath::from_url(&url("ark://namespace/foo%20bar.R?cell=2#frag"));
+    assert_eq!(ark.file_name().as_deref(), Some("foo bar.R"));
+}
+
+#[test]
+fn test_file_name_is_none_for_cannot_be_a_base_uri() {
+    let untitled = FilePath::from_url(&url("untitled:Untitled-1"));
+    assert_eq!(untitled.file_name(), None);
+}
+
+#[test]
 #[cfg(not(windows))]
 fn test_abs_path_normalises_dot_dot() {
     let path = AbsPathBuf::from_utf8_path_buf(Utf8PathBuf::from("/a/./b/../c")).unwrap();

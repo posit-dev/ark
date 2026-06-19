@@ -12,11 +12,13 @@
 //! is the job of secondary canonical-path indexes at the specific call
 //! sites that need it, never of this type.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use percent_encoding::percent_decode_str;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -99,6 +101,29 @@ impl FilePath {
         match self {
             Self::Virtual(u) => Some(u),
             Self::File(_) => None,
+        }
+    }
+
+    /// File name (final path component) of this identity, percent-decoded.
+    ///
+    /// For the `File` arm it's the path basename. For the `Virtual` arm it's
+    /// the last path segment of the URI, dropping any query and fragment.
+    /// `None` for URIs like `untitled:Untitled-1`, which have no path structure
+    /// to take a segment from.
+    pub fn file_name(&self) -> Option<Cow<'_, str>> {
+        match self {
+            Self::File(p) => p.as_path().file_name().map(Cow::Borrowed),
+            Self::Virtual(u) => {
+                let last = u
+                    .as_url()
+                    .path_segments()?
+                    .next_back()
+                    // A trailing slash (`.../foo/`) yields a final empty segment,
+                    // meaning the URL points at a directory. Drop it so we return
+                    // `None` rather than `""`.
+                    .filter(|seg| !seg.is_empty())?;
+                percent_decode_str(last).decode_utf8().warn_on_err()
+            },
         }
     }
 }
