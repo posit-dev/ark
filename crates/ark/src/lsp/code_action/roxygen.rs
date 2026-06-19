@@ -183,13 +183,12 @@ fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
     use tower_lsp::lsp_types::CodeActionOrCommand;
-    use tower_lsp::lsp_types::DocumentChanges;
-    use tower_lsp::lsp_types::OneOf;
     use tower_lsp::lsp_types::Position;
     use tree_sitter::Point;
     use tree_sitter::Range;
     use url::Url;
 
+    use super::roxygen_documentation;
     use crate::fixtures::point_and_offset_from_cursor;
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::code_actions;
@@ -212,40 +211,17 @@ mod tests {
     }
 
     fn roxygen_documentation_test(text: &str, position: Position) -> String {
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let (db, file) = test_open_file(&text);
 
-        let mut actions = code_actions(&db, file.file(), point_range(point, offset), &capabilities)
-            .into_response(&db, &file, ENCODING, &capabilities);
-        assert_eq!(actions.len(), 1);
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset)).unwrap();
 
-        let CodeActionOrCommand::CodeAction(action) = actions.pop().unwrap() else {
-            panic!("Unexpected");
-        };
-        let workspace_edit = action.edit.unwrap();
+        // The edit is a zero-width insertion at the function name, in tree-sitter
+        // coordinates. The test inputs are ASCII, so the column matches the LSP character.
+        assert_eq!(edit.position.row as u32, position.line);
+        assert_eq!(edit.position.column as u32, position.character);
 
-        let document_changes = workspace_edit.document_changes.unwrap();
-        let DocumentChanges::Edits(mut text_document_edits) = document_changes else {
-            panic!("Unexpected");
-        };
-        assert_eq!(text_document_edits.len(), 1);
-
-        let mut text_document_edit = text_document_edits.pop().unwrap();
-        assert_eq!(text_document_edit.text_document.uri, *file.wire_url());
-        assert_eq!(text_document_edit.edits.len(), 1);
-
-        let OneOf::Left(text_edit) = text_document_edit.edits.pop().unwrap() else {
-            panic!("Unexpected");
-        };
-        assert_eq!(text_edit.range.start.line, position.line);
-        assert_eq!(text_edit.range.start.character, position.character);
-        assert_eq!(text_edit.range.end, text_edit.range.start);
-
-        text_edit.new_text
+        edit.documentation
     }
 
     #[test]
@@ -301,10 +277,6 @@ mod tests {
 
     #[test]
     fn test_no_action_when_on_local_function() {
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let text = "
 outer <- function(a, b = 2) {
   in@ner <- function(a, b, c) {}
@@ -314,17 +286,12 @@ outer <- function(a, b = 2) {
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let (db, file) = test_open_file(&text);
 
-        let actions = code_actions(&db, file.file(), point_range(point, offset), &capabilities)
-            .into_response(&db, &file, ENCODING, &capabilities);
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_when_documentation_on_previous_line() {
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         let text = "
 #' Title
 f@n <- function(a, b) {}
@@ -333,33 +300,22 @@ f@n <- function(a, b) {}
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let (db, file) = test_open_file(&text);
 
-        let actions = code_actions(&db, file.file(), point_range(point, offset), &capabilities)
-            .into_response(&db, &file, ENCODING, &capabilities);
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_when_cursor_is_after_function_name() {
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(true);
-
         // This is just how tree-sitter works, it uses a half open range of `[)`.
         let text = "
 fn@ <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, open_file) = test_open_file(&text);
+        let (db, file) = test_open_file(&text);
 
-        let actions = code_actions(
-            &db,
-            open_file.file(),
-            point_range(point, offset),
-            &capabilities,
-        )
-        .into_response(&db, &open_file, ENCODING, &capabilities);
-        assert!(actions.is_empty());
+        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        assert!(edit.is_none());
     }
 
     #[test]
