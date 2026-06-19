@@ -42,7 +42,7 @@ use crate::treesitter::NodeTypeExt;
 /// SAFETY: Requires access to the R runtime.
 pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
-    let ast = &context.document.ast;
+    let ast = &context.tree;
 
     // Find the node closest to the completion point.
     let node = ast.root_node();
@@ -106,7 +106,7 @@ pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Opti
         if parent.node_type() == NodeType::Arguments {
             // If the cursor lies upon a named argument, use that as an override.
             if let Some(name) = node.child_by_field_name("name") {
-                let name = name.node_to_string(context.document.contents.as_str())?;
+                let name = name.node_to_string(context.contents)?;
                 active_argument = Some(name);
             }
 
@@ -115,7 +115,7 @@ pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Opti
             for child in children {
                 if let Some(name) = child.child_by_field_name("name") {
                     // If this is a named argument, add it to the list.
-                    let name = name.node_to_string(context.document.contents.as_str())?;
+                    let name = name.node_to_string(context.contents)?;
                     explicit_parameters.push(name);
 
                     // Subtract 1 from the number of unnamed arguments, as
@@ -165,7 +165,7 @@ pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Opti
     // before asking the R session for a definition? Which should take precedence?
 
     // Try to figure out what R object it's associated with.
-    let code = callee.node_to_string(context.document.contents.as_str())?;
+    let code = callee.node_to_string(context.contents)?;
 
     let object = harp::parse_eval(code.as_str(), RParseEvalOptions {
         forbid_function_calls: true,
@@ -205,14 +205,14 @@ pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Opti
     // Get the help documentation associated with this function.
     let help = if callee.is_namespace_operator() {
         let package = callee.child_by_field_name("lhs").into_result()?;
-        let package = package.node_to_string(context.document.contents.as_str())?;
+        let package = package.node_to_string(context.contents)?;
 
         let name = callee.child_by_field_name("rhs").into_result()?;
-        let name = name.node_to_string(context.document.contents.as_str())?;
+        let name = name.node_to_string(context.contents)?;
 
         RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
     } else {
-        let name = callee.node_to_string(context.document.contents.as_str())?;
+        let name = callee.node_to_string(context.contents)?;
         RHtmlHelp::from_function(name.as_str(), None)
     };
 
@@ -509,8 +509,7 @@ mod tests {
     use tower_lsp::lsp_types::ParameterLabel;
 
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::document::Document;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
 
@@ -518,8 +517,8 @@ mod tests {
     fn test_basic_signature_help() {
         crate::r_task(|| {
             let (text, point) = point_from_cursor("library(@)");
-            let document = Document::new(&text, None);
-            let context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
             let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
@@ -542,15 +541,15 @@ mod tests {
     fn test_no_signature_help_outside_parentheses() {
         crate::r_task(|| {
             let (text, point) = point_from_cursor("library@()");
-            let document = Document::new(&text, None);
-            let context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
-            let document = Document::new(&text, None);
-            let context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
@@ -577,8 +576,8 @@ fn <- function(
             harp::parse_eval_global(fun).unwrap();
 
             let (text, point) = point_from_cursor("fn(@)");
-            let document = Document::new(&text, None);
-            let context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
             let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
 

@@ -43,7 +43,7 @@ fn completions_from_single_colon(
 }
 
 fn is_single_colon(context: &DocumentContext) -> bool {
-    let Ok(text) = context.node.node_as_str(&context.document.contents) else {
+    let Ok(text) = context.node.node_as_str(context.contents) else {
         return false;
     };
     text.eq(":")

@@ -168,7 +168,7 @@ fn completions_from_document_function_arguments(
             continue;
         }
 
-        let parameter = node.node_as_str(&context.document.contents)?.to_string();
+        let parameter = node.node_as_str(context.contents)?.to_string();
         match completion_item_from_scope_parameter(parameter.as_str(), context) {
             Ok(item) => completions.push(item),
             Err(err) => log::error!("{err:?}"),
@@ -185,7 +185,7 @@ fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
         lhs.is_identifier_or_string().into_result()?;
 
         let value = lhs
-            .node_as_str(&context.document.contents)?
+            .node_as_str(context.contents)?
             .to_string();
         matches!(value.as_str(), "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within").into_result()?;
 

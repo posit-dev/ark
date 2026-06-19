@@ -36,6 +36,7 @@ use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 
+use crate::lsp::ark_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::function_context::FunctionRefUsage;
@@ -100,7 +101,7 @@ pub(super) fn completion_item_from_assignment(
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
-    let label = lhs.node_as_str(&context.document.contents)?.to_string();
+    let label = lhs.node_as_str(context.contents)?.to_string();
 
     // TODO: Resolve functions that exist in-document here.
     let mut item = completion_item(label.clone(), CompletionData::ScopeVariable {
@@ -123,7 +124,7 @@ pub(super) fn completion_item_from_assignment(
     // benefit from the logic in completion_item_from_function() :(
     if rhs.node_type() == NodeType::FunctionDefinition {
         if let Some(parameters) = rhs.child_by_field_name("parameters") {
-            let parameters = parameters.node_as_str(&context.document.contents)?;
+            let parameters = parameters.node_as_str(context.contents)?;
             item.detail = Some(join!(label, parameters));
         }
 
@@ -644,9 +645,8 @@ fn completion_item_from_dot_dot_dot(
 
     item.kind = Some(CompletionItemKind::FIELD);
 
-    let position = context
-        .document
-        .lsp_position_from_tree_sitter_point(context.point)?;
+    let position =
+        lsp_position_from_tree_sitter_point(context.point, context.line_index, context.encoding)?;
 
     let range = Range {
         start: position,

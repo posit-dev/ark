@@ -43,8 +43,8 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
             return Ok(None);
         }
 
-        let package = lhs.node_to_string(context.document.contents.as_str())?;
-        let topic = rhs.node_to_string(context.document.contents.as_str())?;
+        let package = lhs.node_to_string(context.contents)?;
+        let topic = rhs.node_to_string(context.contents)?;
         return Ok(Some(HoverContext::QualifiedTopic { package, topic }));
     }
 
@@ -59,7 +59,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
         }
 
         // otherwise, use it
-        let topic = node.node_to_string(context.document.contents.as_str())?;
+        let topic = node.node_to_string(context.contents)?;
         return Ok(Some(HoverContext::Topic { topic }));
     }
 
