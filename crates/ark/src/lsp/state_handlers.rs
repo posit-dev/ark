@@ -62,7 +62,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::state::open_file_uris;
+use crate::lsp::state::open_file_wire_urls;
 use crate::lsp::state::WorldState;
 
 // Handlers that mutate the world state
@@ -396,7 +396,7 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(open_file_uris(state), client, state)
+    update_config(open_file_wire_urls(state), client, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
 }

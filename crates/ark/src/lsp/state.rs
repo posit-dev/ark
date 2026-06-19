@@ -140,7 +140,7 @@ impl WorldState {
     }
 }
 
-pub(crate) fn open_file_uris(state: &WorldState) -> Vec<Url> {
+pub(crate) fn open_file_wire_urls(state: &WorldState) -> Vec<Url> {
     state
         .open_files
         .values()
