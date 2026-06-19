@@ -1,8 +1,15 @@
+use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::File;
+use tower_lsp::lsp_types;
 
+use crate::lsp::capabilities::Capabilities;
+use crate::lsp::code_action::code_action;
+use crate::lsp::code_action::code_action_workspace_text_edit;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::open_file::get_line;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
+use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -11,6 +18,39 @@ use crate::treesitter::NodeTypeExt;
 pub(crate) struct RoxygenEdit {
     pub(crate) position: tree_sitter::Point,
     pub(crate) documentation: String,
+}
+
+/// Build the "Generate a roxygen template" code action for `range`, if the
+/// cursor is on a documentable function definition.
+pub(crate) fn to_code_action(
+    db: &dyn ArkDb,
+    file: &OpenFile,
+    range: tree_sitter::Range,
+    encoding: PositionEncoding,
+    capabilities: &Capabilities,
+) -> Option<lsp_types::CodeAction> {
+    if !capabilities.code_action_literal_support() {
+        return None;
+    }
+
+    let edit = roxygen_documentation(db, file.file(), range)?;
+
+    let position =
+        lsp_position_from_tree_sitter_point(edit.position, file.line_index(db), encoding).ok()?;
+    let range = lsp_types::Range::new(position, position);
+    let text_edit = lsp_types::TextEdit::new(range, edit.documentation);
+    let workspace_edit = code_action_workspace_text_edit(
+        file.wire_url().clone(),
+        file.version(),
+        vec![text_edit],
+        capabilities,
+    );
+
+    Some(code_action(
+        "Generate a roxygen template".to_string(),
+        lsp_types::CodeActionKind::EMPTY,
+        workspace_edit,
+    ))
 }
 
 pub(crate) fn roxygen_documentation(

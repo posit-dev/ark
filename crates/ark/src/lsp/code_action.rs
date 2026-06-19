@@ -15,9 +15,7 @@ use tree_sitter::Range;
 use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::code_action::roxygen::roxygen_documentation;
 use crate::lsp::db::ArkDb;
-use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::open_file::OpenFile;
 
 mod roxygen;
@@ -37,30 +35,8 @@ pub(crate) fn code_actions(
 ) -> lsp_types::CodeActionResponse {
     let mut actions = CodeActions::new();
 
-    // Our code actions return literal `CodeAction`s, so bail if the client
-    // can't accept them.
-    if !capabilities.code_action_literal_support() {
-        return actions.into_response();
-    }
-
-    if let Some(edit) = roxygen_documentation(db, file.file(), range) {
-        if let Ok(position) =
-            lsp_position_from_tree_sitter_point(edit.position, file.line_index(db), encoding)
-        {
-            let range = lsp_types::Range::new(position, position);
-            let text_edit = lsp_types::TextEdit::new(range, edit.documentation);
-            let workspace_edit = code_action_workspace_text_edit(
-                file.wire_url().clone(),
-                file.version(),
-                vec![text_edit],
-                capabilities,
-            );
-            actions.add_action(code_action(
-                "Generate a roxygen template".to_string(),
-                lsp_types::CodeActionKind::EMPTY,
-                workspace_edit,
-            ));
-        }
+    if let Some(action) = roxygen::to_code_action(db, file, range, encoding, capabilities) {
+        actions.add_action(action);
     }
 
     actions.into_response()
