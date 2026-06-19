@@ -136,7 +136,7 @@ pub(crate) fn find(db: &dyn ArkDb, symbol: &str) -> Option<IndexEntry> {
 #[salsa::tracked(returns(ref))]
 fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
     let tree = file.tree_sitter(db);
-    let contents = file.contents(db).as_str();
+    let contents = file.source_text(db).as_str();
 
     let root = tree.root_node();
     let mut cursor = root.walk();

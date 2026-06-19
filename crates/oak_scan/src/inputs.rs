@@ -24,6 +24,7 @@ use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
+use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Root;
 use oak_package_metadata::namespace::Namespace;
@@ -36,19 +37,18 @@ use crate::stale::stale_file_by_path;
 
 /// Description of one R file the scanner wants to register.
 ///
-/// `contents` is the on-disk snapshot at scan time. It's used as the
-/// initial content whenever the helper mints a new `File` entity, i.e.
-/// the first time a URL is seen, whether at the initial scan or on a
-/// later rescan that discovers a newly-created file.
+/// `revision` is the file's mtime read during the walk. It drives cache
+/// invalidation for the lazy `source_text` query, so a rescan that finds a
+/// newer mtime forces the next `source_text` to re-read from disk.
 ///
 /// If a `File` already exists at this URL (scanner-created from an
 /// earlier scan, or VFS-created via `didOpen`), the helpers reuse that
-/// entity and leave its content alone. `set_contents` (driven by the
-/// VFS) is the authoritative way to update content.
+/// entity. The editor override set by `upsert_editor` is authoritative
+/// for open buffers.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub path: FilePath,
-    pub contents: String,
+    pub revision: FileRevision,
 }
 
 /// Extension methods on the database for scanner orchestration and
@@ -123,21 +123,21 @@ impl<DB: Db + DbInputs> DbScan for DB {
 
     fn upsert_editor(&mut self, path: FilePath, contents: String) -> File {
         if let Some(existing) = self.file_by_path(&path) {
-            existing.set_contents(self).to(contents);
+            existing.set_source_text_override(self).to(Some(contents));
             return existing;
         }
 
         // Resurrect a previously-closed buffer from stale. The didOpen
         // content overwrites whatever the stale entity carried.
         if let Some(stale) = stale_file_by_path(self, &path) {
-            stale.set_contents(self).to(contents);
+            stale.set_source_text_override(self).to(Some(contents));
             stale.set_package(self).to(None);
             remove_from_stale_files(self, stale);
             add_to_orphan_files(self, stale);
             return stale;
         }
 
-        let file = File::new(self, path, contents, None);
+        let file = File::new(self, path, FileRevision::zero(), Some(contents), None);
         add_to_orphan_files(self, file);
         file
     }
@@ -146,6 +146,11 @@ impl<DB: Db + DbInputs> DbScan for DB {
         let Some(file) = self.file_by_path(path) else {
             return;
         };
+
+        // Clear the editor override so the disk contents becomes the source of
+        // truth again. This immediately invalidates queries that depend on
+        // `source_text`, because the latter depends on the override.
+        file.set_source_text_override(self).to(None);
 
         let orphan = self.orphan_root();
         let Some(orphan_files) = with_cow_remove(orphan.files(self), file) else {
@@ -324,16 +329,18 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     }
 
     if let Some(stale) = stale_file_by_path(db, &entry.path) {
-        // Resurrecting an evicted File. Restore disk contents (the editor-owned
-        // variant lives in `orphan_root` instead; this branch only sees
-        // scanner-discovered files).
-        stale.set_contents(db).to(entry.contents);
+        // Resurrecting an evicted File. A resurrected scanner file is
+        // disk-backed, so clear any stale override and update the revision.
+        // The editor-owned variant lives in `orphan_root` instead; this branch
+        // only sees scanner-discovered files.
+        stale.set_revision(db).to(entry.revision);
+        stale.set_source_text_override(db).to(None);
         stale.set_package(db).to(package);
         remove_from_stale_files(db, stale);
         return stale;
     }
 
-    File::new(db, entry.path, entry.contents, package)
+    File::new(db, entry.path, entry.revision, None, package)
 }
 
 /// Remove `file` from whichever of `pkg.files` / `pkg.scripts` holds it.

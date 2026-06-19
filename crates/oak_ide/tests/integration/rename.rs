@@ -3,6 +3,7 @@
 use aether_path::FilePath;
 use oak_db::DbInputs;
 use oak_db::File;
+use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
@@ -256,7 +257,13 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
         .map(|(name, contents)| {
             let url =
                 FilePath::from_url(&Url::parse(&format!("file:///project/pkg/R/{name}")).unwrap());
-            File::new(db, url, contents.to_string(), Some(pkg))
+            File::new(
+                db,
+                url,
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
         })
         .collect();
     pkg.set_files(db).to(created.clone());
@@ -271,7 +278,13 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
 fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
     let pkg = empty_package(db, "file:///lib/pkg/DESCRIPTION", Some("1.0".to_string()));
     let url = FilePath::from_url(&Url::parse("file:///lib/pkg/R/foo.R").unwrap());
-    let file = File::new(db, url, contents.to_string(), Some(pkg));
+    let file = File::new(
+        db,
+        url,
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(pkg),
+    );
     pkg.set_files(db).to(vec![file]);
 
     let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());

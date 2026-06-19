@@ -9,12 +9,19 @@ use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::Definition;
 use crate::File;
+use crate::FileRevision;
 use crate::Package;
 use crate::Root;
 use crate::RootKind;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_path(path), contents.to_string(), None)
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 /// Resolve at `offset`, asserting exactly one definition. Most cases are
@@ -26,7 +33,13 @@ fn resolve_one(db: &TestDb, file: File, offset: TextSize) -> Definition<'_> {
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_path(path), contents.to_string(), Some(package))
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(package),
+    )
 }
 
 /// Set up a workspace root with the given scripts (top-level files with
@@ -143,7 +156,7 @@ fn test_resolves_source_forwarded_name_to_origin_file() {
     let helpers = files[0];
     let analysis = files[1];
 
-    let analysis_source = analysis.contents(&db).clone();
+    let analysis_source = analysis.source_text(&db).clone();
     let offset = TextSize::from(analysis_source.find("helper()").unwrap() as u32);
     let def = resolve_one(&db, analysis, offset);
 
@@ -186,7 +199,7 @@ fn test_local_after_source_shadows_forwarded_entry() {
     ]);
     let analysis = files[1];
 
-    let analysis_source = analysis.contents(&db).clone();
+    let analysis_source = analysis.source_text(&db).clone();
     let offset = TextSize::from(analysis_source.rfind("foo").unwrap() as u32);
     let def = resolve_one(&db, analysis, offset);
 
@@ -213,7 +226,7 @@ fn test_source_after_local_overrides_local() {
     let helpers = files[0];
     let analysis = files[1];
 
-    let analysis_source = analysis.contents(&db).clone();
+    let analysis_source = analysis.source_text(&db).clone();
     let offset = TextSize::from(analysis_source.rfind("foo").unwrap() as u32);
     let def = resolve_one(&db, analysis, offset);
 
@@ -377,7 +390,15 @@ fn install_package(
     );
     let pkg_files: Vec<File> = files
         .iter()
-        .map(|(path, contents)| File::new(db, file_path(path), contents.to_string(), Some(pkg)))
+        .map(|(path, contents)| {
+            File::new(
+                db,
+                file_path(path),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
         .collect();
     pkg.set_files(db).to(pkg_files);
     root.set_packages(db).to(vec![pkg]);
@@ -403,7 +424,7 @@ fn test_library_call_makes_pkg_export_resolve() {
     let (_ws_root, files) =
         setup_workspace_scripts(&mut db, "ws", &[("ws/script.R", "library(mypkg)\nfoo\n")]);
     let script = files[0];
-    let source = script.contents(&db).clone();
+    let source = script.source_text(&db).clone();
 
     // Cursor on `foo` (the use after `library(mypkg)`).
     let offset = TextSize::from(source.rfind("foo").unwrap() as u32);
@@ -473,7 +494,8 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
     let ws_file = File::new(
         &db,
         file_path("workspace/mypkg/R/a.R"),
-        source.to_string(),
+        FileRevision::zero(),
+        Some(source.to_string()),
         Some(ws_pkg),
     );
     ws_pkg.set_files(&mut db).to(vec![ws_file]);
@@ -523,7 +545,8 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
     let ws_file = File::new(
         &db,
         file_path("workspace/mypkg/R/a.R"),
-        "baz\n".to_string(),
+        FileRevision::zero(),
+        Some("baz\n".to_string()),
         Some(ws_pkg),
     );
     ws_pkg.set_files(&mut db).to(vec![ws_file]);

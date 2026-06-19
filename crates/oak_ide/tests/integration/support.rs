@@ -5,6 +5,7 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_db::DbInputs;
 use oak_db::File;
+use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
@@ -119,7 +120,8 @@ fn install_pkg(
     let file = File::new(
         db,
         FilePath::from_url(&file_url),
-        contents.to_string(),
+        FileRevision::zero(),
+        Some(contents.to_string()),
         Some(pkg),
     );
     pkg.set_files(db).to(vec![file]);

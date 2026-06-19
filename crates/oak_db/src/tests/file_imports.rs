@@ -8,6 +8,7 @@ use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
 
@@ -52,7 +53,13 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
     let base = packages[0];
     let stats = packages[1];
 
-    let file = File::new(&db, file_path("a.R"), "x <- 1\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     let layers = file.imports(&db);
 
     // Only `stats` and `base` are registered in this test; the other
@@ -77,7 +84,8 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
     let file = File::new(
         &db,
         file_path("a.R"),
-        "library(dplyr)\nlibrary(ggplot2)\n".to_string(),
+        FileRevision::zero(),
+        Some("library(dplyr)\nlibrary(ggplot2)\n".to_string()),
         None,
     );
     let layers = file.imports(&db);
@@ -99,7 +107,13 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
 fn test_script_attach_to_unregistered_package_drops_layer() {
     let db = TestDb::new();
     // No `dplyr` in any library root.
-    let file = File::new(&db, file_path("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
 
     let layers = file.imports(&db);
     assert!(layers.is_empty());
@@ -137,13 +151,15 @@ fn test_package_file_emits_namespace_and_collation_layers() {
     let first = File::new(
         &db,
         file_path("w/pkg/R/_a.R"),
-        "first <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("first <- 1\n".to_string()),
         Some(pkg),
     );
     let second = File::new(
         &db,
         file_path("w/pkg/R/b.R"),
-        "second <- 2\n".to_string(),
+        FileRevision::zero(),
+        Some("second <- 2\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![first, second]);
@@ -209,25 +225,29 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
     let r_file = File::new(
         &db,
         file_path("w/pkg/R/a.R"),
-        "f <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
         Some(pkg),
     );
     let helper = File::new(
         &db,
         file_path("w/pkg/tests/testthat/helper-b.R"),
-        "h <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
         Some(pkg),
     );
     let setup = File::new(
         &db,
         file_path("w/pkg/tests/testthat/setup-c.R"),
-        "s <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("s <- 1\n".to_string()),
         Some(pkg),
     );
     let test_foo = File::new(
         &db,
         file_path("w/pkg/tests/testthat/test-foo.R"),
-        "test_that('x', expect_true(TRUE))\n".to_string(),
+        FileRevision::zero(),
+        Some("test_that('x', expect_true(TRUE))\n".to_string()),
         Some(pkg),
     );
     // A sibling test file. Each test file runs in its own environment, so
@@ -235,7 +255,8 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
     let test_bar = File::new(
         &db,
         file_path("w/pkg/tests/testthat/test-bar.R"),
-        "test_that('y', expect_true(TRUE))\n".to_string(),
+        FileRevision::zero(),
+        Some("test_that('y', expect_true(TRUE))\n".to_string()),
         Some(pkg),
     );
 
@@ -280,13 +301,15 @@ fn test_package_r_file_does_not_take_testthat_path() {
     let r_file = File::new(
         &db,
         file_path("w/pkg/R/a.R"),
-        "f <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
         Some(pkg),
     );
     let helper = File::new(
         &db,
         file_path("w/pkg/tests/testthat/helper-b.R"),
-        "h <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![r_file]);
@@ -324,13 +347,15 @@ fn test_testthat_file_includes_top_level_library_calls() {
     let r_file = File::new(
         &db,
         file_path("w/pkg/R/a.R"),
-        "f <- 1\n".to_string(),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
         Some(pkg),
     );
     let test_foo = File::new(
         &db,
         file_path("w/pkg/tests/testthat/test-foo.R"),
-        "library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string(),
+        FileRevision::zero(),
+        Some("library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![r_file]);
@@ -377,7 +402,13 @@ fn test_imports_is_cached_per_file() {
     let mut db = TestDb::new();
     let _ = install_packages(&mut db, &["dplyr"]);
 
-    let file = File::new(&db, file_path("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
     let _ = file.imports(&db);
     let _ = file.imports(&db);
 

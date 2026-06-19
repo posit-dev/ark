@@ -302,7 +302,7 @@ mod tests {
         let mut contents = file.contents(&*db).to_string();
         let mut line_index = file.line_index(&*db).clone();
         from_proto::apply_text_edits(&mut contents, edits, &mut line_index, encoding);
-        file.file.set_contents(db).to(contents);
+        file.file.set_source_text_override(db).to(Some(contents));
     }
 
     #[test]

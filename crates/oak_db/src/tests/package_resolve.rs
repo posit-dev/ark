@@ -8,6 +8,7 @@ use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::PackageVisibility;
@@ -39,7 +40,15 @@ fn setup_package(
 
     let file_entities: Vec<File> = files
         .iter()
-        .map(|(path, contents)| File::new(db, file_path(path), contents.to_string(), Some(pkg)))
+        .map(|(path, contents)| {
+            File::new(
+                db,
+                file_path(path),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
         .collect();
     pkg.set_files(db).to(file_entities.clone());
     root.set_packages(db).to(vec![pkg]);
@@ -205,7 +214,8 @@ fn test_reexport_via_import_from_resolves_to_source() {
     let tibble_file = File::new(
         &db,
         file_path("workspace/tibble/R/tibble.R"),
-        "tibble <- function() 1\n".to_string(),
+        FileRevision::zero(),
+        Some("tibble <- function() 1\n".to_string()),
         Some(tibble),
     );
     tibble.set_files(&mut db).to(vec![tibble_file]);
@@ -231,7 +241,8 @@ fn test_reexport_via_import_from_resolves_to_source() {
     let dplyr_file = File::new(
         &db,
         file_path("workspace/dplyr/R/reexport.R"),
-        "tibble::tibble\n".to_string(),
+        FileRevision::zero(),
+        Some("tibble::tibble\n".to_string()),
         Some(dplyr),
     );
     dplyr.set_files(&mut db).to(vec![dplyr_file]);

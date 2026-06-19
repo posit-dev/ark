@@ -57,6 +57,7 @@ ego-tree = "0.11.0"
 embed-resource = "3.0.9"
 env_logger = "0.11.10"
 etcetera = "0.11.0"
+filetime = "0.2.23"
 flate2 = "1.1.9"
 futures = "0.3.32"
 harp = { path = "crates/harp" }

@@ -7,6 +7,7 @@ use crate::tests::test_db::workspace_root;
 use crate::Db;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::OakDatabase;
 use crate::Package;
 use crate::Root;
@@ -44,7 +45,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
 }
 
 fn make_script(db: &mut OakDatabase, name: &str) -> File {
-    File::new(db, file_path(name), String::new(), None)
+    File::new(db, file_path(name), FileRevision::zero(), None, None)
 }
 
 #[test]

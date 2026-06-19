@@ -229,7 +229,7 @@ fn test_scan_workspace_pkg_scripts_findable_via_file_by_path() {
 
     let path = FilePath::from_path_buf(tmp.path().join("pkg/tests/testthat/test-x.R")).unwrap();
     let file = db.file_by_path(&path).expect("script must be findable");
-    assert_eq!(file.contents(&db), "expect_true(TRUE)\n");
+    assert_eq!(file.source_text(&db), "expect_true(TRUE)\n");
     // Package backpointer is set to the containing package.
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(file.package(&db), Some(pkg));
@@ -315,7 +315,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
         .file_by_path(&path)
         .expect("script should be findable after scan");
     // The scanner inherited the orphan's edits rather than re-reading disk.
-    assert_eq!(file.contents(&db), "edited_version <- 2\n");
+    assert_eq!(file.source_text(&db), "edited_version <- 2\n");
     // The orphan reference is dropped when the file is promoted into a
     // workspace container.
     assert!(!db.orphan_root().files(&db).contains(&file));
@@ -335,7 +335,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let file = db.file_by_path(&path).expect("package file findable");
-    assert_eq!(file.contents(&db), "edited <- 2\n");
+    assert_eq!(file.source_text(&db), "edited <- 2\n");
 }
 
 #[test]
@@ -496,7 +496,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     assert_eq!(file, after_remove);
     assert_eq!(after_remove.package(&db), None);
     assert!(db.orphan_root().files(&db).contains(&after_remove));
-    assert_eq!(after_remove.contents(&db), "edited <- 2\n");
+    assert_eq!(after_remove.source_text(&db), "edited <- 2\n");
 
     // Workspace folder re-added. File snaps back into pkg.files, same
     // entity, editor content preserved (the scan's disk snapshot
@@ -505,7 +505,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     let after_readd = db.file_by_path(&path).unwrap();
     assert_eq!(file, after_readd);
     assert!(after_readd.package(&db).is_some());
-    assert_eq!(after_readd.contents(&db), "edited <- 2\n");
+    assert_eq!(after_readd.source_text(&db), "edited <- 2\n");
     // Orphan reference cleaned up by `upsert_root_file`.
     assert!(!db.orphan_root().files(&db).contains(&after_readd));
 }
@@ -607,7 +607,7 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
     let path = FilePath::from_path_buf(r_path.clone()).unwrap();
     let file = db.file_by_path(&path).unwrap();
-    assert_eq!(file.contents(&db), "v2\n");
+    assert_eq!(file.source_text(&db), "v2\n");
 }
 
 #[test]

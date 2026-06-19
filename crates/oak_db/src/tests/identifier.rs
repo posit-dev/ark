@@ -10,13 +10,20 @@ use biome_rowan::TextSize;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::TestDb;
 use crate::File;
+use crate::FileRevision;
 use crate::Identifier;
 use crate::MemberKind;
 use crate::Name;
 use crate::NamespacePart;
 
 fn make_file(db: &mut TestDb, contents: &str) -> File {
-    File::new(db, file_path("a.R"), contents.to_string(), None)
+    File::new(
+        db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 fn offset(n: u32) -> TextSize {

@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Arc;
 
 use aether_path::FilePath;
@@ -10,15 +11,19 @@ use crate::db::root_by_file;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
+use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::Root;
 
 /// A source file tracked by Salsa.
 ///
-/// Content is pushed into Salsa by the LSP layer, the database never does I/O.
-/// This matches rust-analyzer's push model and avoids tying parsing to
-/// disk/network I/O inside a Salsa query.
+/// The file's content is not stored directly. Instead, `source_text()` is a
+/// lazy tracked query that returns either the editor's in-memory buffer
+/// (`source_text_override`) or reads the file from disk. The `revision` input
+/// drives cache invalidation for the disk-read path: bumping it forces
+/// `source_text()` to re-read the file without storing the bytes as a salsa
+/// input.
 ///
 /// The `path` field is a [`FilePath`], so the type system enforces "everything
 /// inside Salsa is a canonical path".
@@ -35,9 +40,10 @@ use crate::Root;
 /// expected to agree. A file with `package == Some(pkg)` should live in
 /// `pkg.files`. A file with `package == None` should live in either some
 /// `root.scripts` or `orphan_root().files`. The salsa setters (`set_path`,
-/// `set_contents`, `set_package`) are `pub` because field visibility couples to
-/// setter visibility in salsa but calling `set_package` directly leaves the
-/// file in its old bucket and silently breaks this invariant.
+/// `set_revision`, `set_source_text_override`, `set_package`) are `pub` because
+/// field visibility couples to setter visibility in salsa but calling
+/// `set_package` directly leaves the file in its old bucket and silently breaks
+/// this invariant.
 ///
 /// The scanner crate (`oak_scan`) wraps these setters in helpers that
 /// maintain placement (move the file between `pkg.files`,
@@ -48,8 +54,9 @@ use crate::Root;
 pub struct File {
     #[returns(ref)]
     pub path: FilePath,
+    pub revision: FileRevision,
     #[returns(ref)]
-    pub contents: String,
+    pub source_text_override: Option<String>,
     /// **Placement invariant.** Call this setter only through
     /// `oak_scan`'s helpers; see the type-level doc above.
     pub package: Option<Package>,
@@ -57,6 +64,49 @@ pub struct File {
 
 #[salsa::tracked]
 impl File {
+    /// The file's source text. Returns the editor's in-memory buffer if one is
+    /// set (`source_text_override`), otherwise reads from disk.
+    ///
+    /// Tracked and LRU-bounded so the string isn't pinned forever the way an
+    /// input field would be. The body reads `revision` and
+    /// `source_text_override` through `db`, so salsa invalidates this memo when
+    /// the watcher bumps the revision or the editor sets/clears the override,
+    /// and a re-read picks up the new bytes.
+    ///
+    /// A virtual path or an unreadable file yields empty text (matches ty).
+    #[salsa::tracked(returns(ref), lru = 128)]
+    pub fn source_text(self, db: &dyn Db) -> String {
+        if let Some(text) = self.source_text_override(db) {
+            return text.clone();
+        }
+
+        // Reading `revision` makes this memo depend on it even though the value
+        // isn't otherwise used here: bumping the revision is what forces a re-read.
+        let _ = self.revision(db);
+
+        let FilePath::File(path) = self.path(db) else {
+            // Our virtual documents (e.g. untitled://) are push-based, the
+            // editor writes them to the source override field via
+            // `upsert_editor`. If we ever do lazy virtual documents, that is
+            // where we'd hook them up. Until then it would be unexpected to
+            // reach here.
+            log::warn!("Can't read virtual document `{}`", self.path(db));
+            return String::new();
+        };
+
+        match fs::read_to_string(path.as_path().as_std_path()) {
+            Ok(text) => text,
+            Err(err) => {
+                // A file we were asked to analyze but can't read (permissions,
+                // transient I/O) becomes empty source. Log so the failure isn't
+                // wholly silent, otherwise downstream diagnostics and symbols
+                // would just come back empty with no explanation.
+                log::error!("Failed to read `{path}`: {err:?}");
+                String::new()
+            },
+        }
+    }
+
     /// Parse this file's contents into an R syntax tree.
     ///
     /// Crate-internal: kept `pub(crate)` so downstream crates can't take a
@@ -71,14 +121,14 @@ impl File {
     #[salsa::tracked(returns(ref), lru = 128)]
     pub(crate) fn parse(self, db: &dyn Db) -> OakParse {
         OakParse::new(aether_parser::parse(
-            self.contents(db),
+            self.source_text(db).as_str(),
             aether_parser::RParserOptions::default(),
         ))
     }
 
     /// Line index for this file, mapping byte offsets to `(line, column)`.
     ///
-    /// Computed straight from `contents`, so it doesn't depend on a syntax
+    /// Computed straight from `source_text()`, so it doesn't depend on a syntax
     /// tree. The LSP needs it for every offset <-> position translation. No
     /// `lru`: it's small and almost every request needs it, so it stays
     /// resident for the file's lifetime. Follows ty and rust-analyzer, which
@@ -86,7 +136,7 @@ impl File {
     /// storing it on the file input.
     #[salsa::tracked(returns(ref))]
     pub fn line_index(self, db: &dyn Db) -> biome_line_index::LineIndex {
-        biome_line_index::LineIndex::new(self.contents(db))
+        biome_line_index::LineIndex::new(self.source_text(db).as_str())
     }
 
     /// Build this file's `SemanticIndex` from the parse tree.

@@ -23,6 +23,7 @@ use crate::inputs::with_cow_filter;
 use crate::inputs::with_cow_push;
 use crate::inputs::FileEntry;
 use crate::packages::classify_in_package;
+use crate::packages::file_revision;
 use crate::packages::is_r_file;
 use crate::packages::read_description_name;
 use crate::packages::PackagePlacement;
@@ -50,16 +51,22 @@ pub enum FileEventKind {
 /// `<pkg>/R/*.R`, `pkg.scripts` for other R files under a package
 /// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
 /// every package. Mirrors the placement the bulk scanner would pick.
-pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath, contents: String) {
-    if let Some(existing) = db.file_by_path(&path) {
-        existing.set_contents(db).to(contents);
-        return;
-    }
-
+pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
     let Some(fs_path) = path.as_path() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
         return;
     };
+
+    let revision = file_revision(fs_path.as_std_path());
+
+    if let Some(existing) = db.file_by_path(&path) {
+        // Bump the revision and leave any editor override in place: if the
+        // file is open in the editor, the override still wins in
+        // `source_text`, so the on-disk change is ignored until the buffer
+        // closes. Otherwise the bump forces the next `source_text` to re-read.
+        existing.set_revision(db).to(revision);
+        return;
+    }
 
     let Some(placement) = classify(db, fs_path) else {
         // Either the URL falls outside every workspace, or it lives
@@ -67,7 +74,7 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath, c
         return;
     };
 
-    let entry = FileEntry { path, contents };
+    let entry = FileEntry { path, revision };
     let file = upsert_root_file(db, placement.package_backpointer(), entry);
     append_to_container(db, file, placement);
 }
