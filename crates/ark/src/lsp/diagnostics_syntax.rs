@@ -437,7 +437,6 @@ mod tests {
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 
-    use crate::lsp::db::FileArkExt;
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
     use crate::lsp::open_file::test_open_file;

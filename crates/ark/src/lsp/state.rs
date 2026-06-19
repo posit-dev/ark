@@ -106,26 +106,13 @@ impl WorldState {
         }
     }
 
-    /// Get a clone of the stored [`OpenFile`] for a request.
-    ///
-    /// `OpenFile` is cheap to clone: the analysis handle is a salsa id and the
-    /// protocol fields are small. Handlers want an owned value because the
-    /// `r_task` ones move it across a thread boundary.
-    pub(crate) fn open_file(&self, uri: &Url) -> anyhow::Result<OpenFile> {
+    /// The stored [`OpenFile`] for a request.
+    pub(crate) fn open_file(&self, uri: &Url) -> anyhow::Result<&OpenFile> {
         let key = FilePath::from_url(uri);
         let Some(open_file) = self.open_files.get(&key) else {
             return Err(anyhow!("Can't find document for URI {uri}"));
         };
-        Ok(open_file.clone())
-    }
-
-    /// The salsa [`File`] handle for an open document.
-    pub(crate) fn file(&self, uri: &Url) -> anyhow::Result<File> {
-        let key = FilePath::from_url(uri);
-        let Some(file) = self.open_files.get(&key) else {
-            return Err(anyhow!("Can't find document for URI {uri}"));
-        };
-        Ok(file.file())
+        Ok(open_file)
     }
 
     /// URL to put on the wire for `file`. Open buffers keep the editor's

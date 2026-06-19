@@ -26,7 +26,10 @@ fn test_diagnostics_published_through_refresh_snapshot() {
         // Mirror `diagnostics_refresh_all`: fetch the `File` from the live
         // state, then hand the worker the `diagnostics_snapshot`. The snapshot's
         // oak must still serve that file.
-        let file = state.file(&uri).expect("file is open in live state");
+        let file = state
+            .open_file(&uri)
+            .expect("file is open in live state")
+            .file();
 
         let snapshot = state.diagnostics_snapshot();
         generate_diagnostics(file, snapshot, false)

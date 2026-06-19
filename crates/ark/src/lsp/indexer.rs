@@ -380,7 +380,6 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::lsp::db::FileArkExt;
     use crate::lsp::open_file::test_open_file;
 
     macro_rules! test_index {

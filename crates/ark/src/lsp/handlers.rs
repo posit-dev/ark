@@ -188,7 +188,7 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let file = state.file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     match folding_range(db, file) {
         Ok(foldings) => Ok(Some(foldings)),
@@ -214,7 +214,7 @@ pub(crate) fn handle_completion(
     state: &WorldState,
 ) -> LspResult<Option<CompletionResponse>> {
     let uri = params.text_document_position.text_document.uri;
-    let file = state.file(&uri)?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -255,7 +255,7 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let file = state.file(&uri)?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -298,7 +298,7 @@ pub(crate) fn handle_signature_help(
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let file = state.file(&uri)?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -345,7 +345,7 @@ pub(crate) fn handle_selection_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
     let uri = &params.text_document.uri;
-    let file = state.file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -416,7 +416,7 @@ pub(crate) fn handle_statement_range(
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
     let uri = &params.text_document.uri;
-    let file = state.file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -430,7 +430,7 @@ pub(crate) fn handle_help_topic(
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
     let uri = &params.text_document.uri;
-    let file = state.file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -481,7 +481,7 @@ pub(crate) fn handle_code_action(
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 
-    let code_actions = code_actions(db, &file, range, encoding, &lsp_state.capabilities);
+    let code_actions = code_actions(db, file, range, encoding, &lsp_state.capabilities);
 
     if code_actions.is_empty() {
         Ok(None)

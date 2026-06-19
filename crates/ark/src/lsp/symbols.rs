@@ -161,7 +161,7 @@ pub(crate) fn document_symbols(
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let uri = &params.text_document.uri;
-    let file = state.file(uri)?;
+    let file = state.open_file(uri)?.file();
     let db = &state.db;
     let ast = file.tree_sitter(db);
 

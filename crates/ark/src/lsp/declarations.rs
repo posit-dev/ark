@@ -89,7 +89,6 @@ fn ark_diagnostics_args<'tree>(ark_args: Node<'tree>, contents: &str) -> Option<
 mod test {
     use stdext::assert_match;
 
-    use crate::lsp::db::FileArkExt;
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;
     use crate::lsp::declarations::top_level_declare_args;

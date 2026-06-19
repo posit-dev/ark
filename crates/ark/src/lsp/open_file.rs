@@ -7,7 +7,9 @@ use tower_lsp::lsp_types;
 use url::Url;
 
 use crate::lsp::config::DocumentConfig;
+#[cfg(test)]
 use crate::lsp::db::ArkDb;
+#[cfg(test)]
 use crate::lsp::db::FileArkExt;
 
 /// An editor-managed buffer: the salsa `File` plus the editor and transport
@@ -35,14 +37,19 @@ impl OpenFile {
     }
 
     /// `OpenFile` forwards the salsa read queries so a caller holding a buffer
-    /// can ask for its text, line index, or tree directly instead of reaching
-    /// through `file()`.
+    /// can ask for its text or line index directly instead of reaching through
+    /// `file()`.
     pub(crate) fn source_text<'db>(&self, db: &'db dyn Db) -> &'db String {
         self.file.source_text(db)
     }
     pub(crate) fn line_index<'db>(&self, db: &'db dyn Db) -> &'db biome_line_index::LineIndex {
         self.file.line_index(db)
     }
+
+    /// Lib handlers reach the tree-sitter tree through the raw `File`. Only test
+    /// helpers hold an `OpenFile` and want the tree directly, so this forwarder
+    /// is test-only.
+    #[cfg(test)]
     pub(crate) fn tree_sitter<'db>(&self, db: &'db dyn ArkDb) -> &'db tree_sitter::Tree {
         self.file.tree_sitter(db)
     }

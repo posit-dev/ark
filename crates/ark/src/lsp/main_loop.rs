@@ -1048,7 +1048,6 @@ mod tests {
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
-    use crate::lsp::db::FileArkExt;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1069,7 +1068,7 @@ mod tests {
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
         state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.open_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 
@@ -1093,7 +1092,7 @@ mod tests {
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
         state.insert_open_file(uri.clone(), file, None);
 
-        let file = state.open_file(&uri).unwrap();
+        let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.db.cancellation_token().cancel();
 

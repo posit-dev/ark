@@ -10,7 +10,6 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 #[cfg(test)]
-use crate::lsp::db::FileArkExt;
 #[cfg(test)]
 use crate::lsp::open_file::test_open_file;
 #[cfg(test)]
