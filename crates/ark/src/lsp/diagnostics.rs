@@ -1137,7 +1137,6 @@ mod tests {
     use oak_package_metadata::namespace::Namespace;
     use oak_semantic::library::Library;
     use oak_semantic::package::Package;
-    use once_cell::sync::Lazy;
     use stdext::SortedVec;
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
@@ -1146,9 +1145,6 @@ mod tests {
     use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
-
-    // Default state that includes installed packages and default scopes.
-    static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(current_state);
 
     fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<lsp_types::Diagnostic> {
         super::generate_diagnostics(doc, state, false)
@@ -1174,7 +1170,7 @@ foo
 
 1 }";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document, current_state());
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1198,7 +1194,7 @@ foo
                 2 # hi there
             )";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1208,7 +1204,7 @@ foo
         r_task(|| {
             let text = "base::";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document, current_state());
             assert_eq!(diagnostics.len(), 1);
             let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
@@ -1221,7 +1217,7 @@ foo
             let text = "..1 + ..2 + 3";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document, current_state());
 
             assert!(diagnostics.is_empty());
         })
@@ -1264,7 +1260,7 @@ foo
                 y + x + z
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1278,7 +1274,7 @@ foo
                 y + x
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1293,7 +1289,7 @@ foo
             ";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
@@ -1312,7 +1308,7 @@ foo
                 identity(~foo)
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1329,7 +1325,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1349,7 +1345,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1370,7 +1366,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1390,7 +1386,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1408,7 +1404,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1423,7 +1419,7 @@ foo
 
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(document.clone(), current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1444,7 +1440,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1454,7 +1450,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         });
@@ -1468,7 +1464,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1479,7 +1475,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         });
@@ -1493,7 +1489,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1504,7 +1500,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         });
@@ -1523,7 +1519,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1535,7 +1531,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1546,7 +1542,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 1
             );
         });
@@ -1563,7 +1559,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1576,7 +1572,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         });
@@ -1589,7 +1585,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         });
@@ -1605,7 +1601,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1617,7 +1613,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
 
@@ -1628,7 +1624,7 @@ foo
             ";
             let document = Document::new(code, None);
             assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                generate_diagnostics(document.clone(), current_state()).len(),
                 0
             );
         })
@@ -1659,7 +1655,8 @@ foo
             // Simulate a search path with `library` in scope
             let console_scopes = vec![vec!["library".to_string()]];
 
-            // Whereas `DEFAULT_STATE` contains base package attached, this world state
+            // Whereas `current_state()` returns a state with the base package
+            // attached, this world state
             // only contains `mockpkg` as installed package and `library()` on
             // the search path.
             let state = WorldState {
@@ -1861,7 +1858,7 @@ foo
             let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
 
             // Simulate a world state with the penguins package installed and attached
-            let mut state = DEFAULT_STATE.clone();
+            let mut state = current_state();
             state.library = library;
             state.console_scopes = vec![vec!["library".to_string()]];
 

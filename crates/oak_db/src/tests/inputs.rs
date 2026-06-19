@@ -20,6 +20,7 @@ fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     root.set_packages(db).to(vec![pkg]);
@@ -34,6 +35,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         name.to_string(),
         Some("1.0.0".to_string()),
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

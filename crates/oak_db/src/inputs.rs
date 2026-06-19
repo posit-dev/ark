@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use aether_url::UrlId;
 use oak_package_metadata::namespace::Namespace;
 
@@ -124,13 +126,16 @@ pub struct OrphanRoot {
     /// **Placement invariant.** Files here must have `package(db) ==
     /// None`. Call this setter only through `oak_scan`'s helpers,
     /// which keep the back-pointer and the container in sync.
+    ///
+    /// Unordered: these are unanchored files looked up by URL, with no
+    /// collation chain among them, so membership is all that matters.
     #[returns(ref)]
-    pub files: Vec<File>,
+    pub files: HashSet<File>,
 }
 
 impl OrphanRoot {
     pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, vec![])
+        Self::new(db, HashSet::new())
     }
 }
 
@@ -161,15 +166,17 @@ impl OrphanRoot {
 /// of them gets pulled back into a live container.
 #[salsa::input]
 pub struct StaleRoot {
+    /// Unordered: entity-reuse storage looked up by URL, no collation chain,
+    /// so membership is all that matters.
     #[returns(ref)]
-    pub files: Vec<File>,
+    pub files: HashSet<File>,
     #[returns(ref)]
     pub packages: Vec<Package>,
 }
 
 impl StaleRoot {
     pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, vec![], vec![])
+        Self::new(db, HashSet::new(), vec![])
     }
 }
 
@@ -205,11 +212,22 @@ pub struct Package {
     /// package's files.
     ///
     /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`. Call this setter only through
-    /// `oak_scan`'s helpers, which keep the back-pointer and the
-    /// container in sync.
+    /// `package(db) == Some(self)`, and a file with
+    /// `package == Some(self)` must live here or in [`Self::scripts`].
+    /// Call this setter only through `oak_scan`'s helpers, which keep
+    /// the back-pointer and the container in sync.
     #[returns(ref)]
     pub files: Vec<File>,
+    /// Other R files inside the package directory that aren't part of the
+    /// loadable namespace: `tests/`, `inst/`, `data-raw/`, etc. These get LSP
+    /// analysis (parse, semantic index) but aren't loaded with the package, so
+    /// name resolution treats them as standalone scripts that just happen to
+    /// live next to the package's code.
+    ///
+    /// **Placement invariant.** Same as [`Self::files`]: backpointer
+    /// stays `Some(self)`, file lives in one of the two containers.
+    #[returns(ref)]
+    pub scripts: Vec<File>,
     /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
     /// present. `None` when the field is absent (R defaults to
     /// alphabetical load order). Changes only when `DESCRIPTION`

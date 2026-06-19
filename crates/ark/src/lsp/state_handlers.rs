@@ -5,8 +5,14 @@
 //
 //
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use aether_url::UrlId;
 use anyhow::anyhow;
+use oak_scan::DbScan;
+use oak_scan::FileEvent;
+use oak_scan::FileEventKind;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
@@ -16,10 +22,13 @@ use tower_lsp::lsp_types::CreateFilesParams;
 use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
+use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
+use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FileOperationFilter;
 use tower_lsp::lsp_types::FileOperationPattern;
 use tower_lsp::lsp_types::FileOperationPatternKind;
@@ -86,49 +95,55 @@ pub(crate) fn initialize(
     lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> LspResult<InitializeResult> {
+    let workspace_uris = effective_workspace_uris(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();
-    if let Some(workspace_folders) = params.workspace_folders {
-        for folder in workspace_folders.iter() {
-            state.workspace.folders.push(folder.uri.clone());
-            if let Ok(path) = folder.uri.to_file_path() {
-                // Try to load package from this workspace folder and set as
-                // root if found. This means we're dealing with a package
-                // source.
-                if state.root.is_none() {
-                    match Package::load_from_folder(&path) {
-                        Ok(Some(pkg)) => {
-                            log::info!(
-                                "Root: Loaded package `{pkg}` from {path} as project root",
-                                pkg = pkg.description().name,
-                                path = path.display()
-                            );
-                            state.root = Some(SourceRoot::Package(pkg));
-                        },
-                        Ok(None) => {
-                            log::info!(
-                                "Root: No package found at {path}, treating as folder of scripts",
-                                path = path.display()
-                            );
-                        },
-                        Err(err) => {
-                            log::warn!(
-                                "Root: Error loading package at {path}: {err}",
-                                path = path.display()
-                            );
-                        },
-                    }
+    let mut workspace_paths: Vec<PathBuf> = Vec::new();
+
+    for uri in workspace_uris {
+        state.workspace.folders.push(uri.clone());
+        if let Ok(path) = uri.to_file_path() {
+            workspace_paths.push(path.clone());
+            // Try to load package from this workspace folder and set as
+            // root if found. This means we're dealing with a package
+            // source.
+            if state.root.is_none() {
+                match Package::load_from_folder(&path) {
+                    Ok(Some(pkg)) => {
+                        log::info!(
+                            "Root: Loaded package `{pkg}` from {path} as project root",
+                            pkg = pkg.description().name,
+                            path = path.display()
+                        );
+                        state.root = Some(SourceRoot::Package(pkg));
+                    },
+                    Ok(None) => {
+                        log::info!(
+                            "Root: No package found at {path}, treating as folder of scripts",
+                            path = path.display()
+                        );
+                    },
+                    Err(err) => {
+                        log::warn!(
+                            "Root: Error loading package at {path}: {err}",
+                            path = path.display()
+                        );
+                    },
                 }
-                if let Some(path_str) = path.to_str() {
-                    folders.push(path_str.to_string());
-                }
+            }
+            if let Some(path_str) = path.to_str() {
+                folders.push(path_str.to_string());
             }
         }
     }
 
-    // Start first round of indexing
+    // Start first round of indexing. We are initializing, so no documents have
+    // been opened yet and nothing is editor-owned.
+    state
+        .db
+        .set_workspace_paths(&workspace_paths, &HashSet::new());
     lsp::main_loop::index_start(folders, state.clone());
 
     Ok(InitializeResult {
@@ -216,6 +231,19 @@ pub(crate) fn initialize(
     })
 }
 
+/// Resolve the effective workspace folders from `InitializeParams`.
+///
+/// We read only `workspaceFolders`, the modern field , without falling back to
+/// the deprecated `rootUri`. An empty or absent list means single-file mode.
+pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
+    params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .map(|folder| folder.uri.clone())
+        .collect()
+}
+
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
@@ -235,6 +263,10 @@ pub(crate) fn did_open(
 
     lsp_state.parsers.insert(uri.clone(), parser);
     state.documents.insert(uri.clone(), document.clone());
+
+    state
+        .db
+        .upsert_editor(UrlId::from_url(uri.clone()), contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -259,6 +291,11 @@ pub(crate) fn did_change(
         .ok_or(anyhow!("No parser for {uri}"))?;
 
     document.on_did_change(parser, &params);
+
+    let new_contents = document.contents.to_string();
+    state
+        .db
+        .upsert_editor(UrlId::from_url(uri.clone()), new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -293,6 +330,8 @@ pub(crate) fn did_close(
         .parsers
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
+
+    state.db.close_editor(&UrlId::from_url(uri.clone()));
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
@@ -347,6 +386,76 @@ pub(crate) fn did_rename_files(
         .collect();
 
     lsp::main_loop::index_rename(uri_pairs, state.clone());
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_watched_files(
+    params: DidChangeWatchedFilesParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    // Editor owns the contents of files it has open: Oak should ignore
+    // disk-side events for those URLs.
+    let editor_owned: HashSet<UrlId> = state
+        .documents
+        .keys()
+        .map(|url| UrlId::from_url(url.clone()))
+        .collect();
+
+    let events: Vec<FileEvent> = params
+        .changes
+        .into_iter()
+        .filter_map(|e| {
+            let kind = match e.typ {
+                FileChangeType::CREATED => FileEventKind::Created,
+                FileChangeType::CHANGED => FileEventKind::Changed,
+                FileChangeType::DELETED => FileEventKind::Deleted,
+                _ => return None,
+            };
+            Some(FileEvent {
+                url: UrlId::from_url(e.uri),
+                kind,
+            })
+        })
+        .collect();
+
+    state.db.apply_watcher_events(events, &editor_owned);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_workspace_folders(
+    params: DidChangeWorkspaceFoldersParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let removed: HashSet<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+    state.workspace.folders.retain(|uri| !removed.contains(uri));
+
+    for folder in params.event.added {
+        if !state.workspace.folders.contains(&folder.uri) {
+            state.workspace.folders.push(folder.uri);
+        }
+    }
+
+    let workspace_paths: Vec<PathBuf> = state
+        .workspace
+        .folders
+        .iter()
+        .filter_map(|uri| uri.to_file_path().ok())
+        .collect();
+
+    // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
+    // open buffers keep getting analysed even when their workspace
+    // folder goes away.
+    let editor_owned: HashSet<UrlId> = state
+        .documents
+        .keys()
+        .map(|url| UrlId::from_url(url.clone()))
+        .collect();
+
+    state
+        .db
+        .set_workspace_paths(&workspace_paths, &editor_owned);
     Ok(())
 }
 

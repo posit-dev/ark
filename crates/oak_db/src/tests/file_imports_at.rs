@@ -33,6 +33,7 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
             Some("1.0.0".to_string()),
             Namespace::default(),
             Vec::new(),
+            Vec::new(),
             None,
         );
         root.set_packages(db).to(vec![pkg]);
@@ -53,6 +54,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
         name.to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

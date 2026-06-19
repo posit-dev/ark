@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
@@ -36,6 +38,7 @@ fn test_file_by_url_finds_workspace_package_file() {
         None,
         Namespace::default(),
         vec![],
+        Vec::new(),
         None,
     );
     let file = File::new(&db, file_url("proj/R/foo.R"), String::new(), Some(pkg));
@@ -57,6 +60,7 @@ fn test_file_by_url_finds_library_package_file() {
         Some("1.0.0".to_string()),
         Namespace::default(),
         vec![],
+        Vec::new(),
         None,
     );
     let file = File::new(&db, file_url("libs/foo/R/a.R"), String::new(), Some(pkg));
@@ -71,7 +75,9 @@ fn test_file_by_url_finds_library_package_file() {
 fn test_file_by_url_finds_orphan_file() {
     let mut db = TestDb::new();
     let file = File::new(&db, file_url("untitled.R"), String::new(), None);
-    db.orphan_root().set_files(&mut db).to(vec![file]);
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([file]));
 
     assert_eq!(db.file_by_url(&file_url("untitled.R")), Some(file));
 }

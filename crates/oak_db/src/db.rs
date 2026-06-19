@@ -172,8 +172,8 @@ fn root_depth(db: &dyn Db, root: Root) -> usize {
 }
 
 /// Per-root URL -> File index. Salsa caches one map per `Root`;
-/// reads only `root.scripts`, `root.packages`, and each
-/// `pkg.files` reachable from this root. Adding or removing a file
+/// reads `root.scripts`, `root.packages`, each `pkg.files`, and each
+/// `pkg.scripts` reachable from this root. Adding or removing a file
 /// in *this* root invalidates this entry; other roots stay cached.
 #[salsa::tracked(returns(ref))]
 fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, File> {
@@ -183,6 +183,9 @@ fn root_url_index(db: &dyn Db, root: Root) -> FxHashMap<UrlId, File> {
     }
     for &pkg in root.packages(db) {
         for &file in pkg.files(db) {
+            map.insert(file.url(db).clone(), file);
+        }
+        for &file in pkg.scripts(db) {
             map.insert(file.url(db).clone(), file);
         }
     }

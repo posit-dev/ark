@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -60,28 +61,6 @@ fn test_scan_library_discovers_package() {
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name(&db), "dplyr");
     assert_eq!(packages[0].version(&db), &Some("1.0.0".to_string()),);
-
-    let files = packages[0].files(&db).clone();
-    assert_eq!(files.len(), 2);
-    // Alphabetical by basename: mutate.R, select.R.
-    assert!(files[0].url(&db).as_url().path().ends_with("mutate.R"));
-    assert!(files[1].url(&db).as_url().path().ends_with("select.R"));
-}
-
-#[test]
-fn test_scan_library_files_are_findable_by_url() {
-    let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
-    let mut db = OakDatabase::new();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-
-    let r_path = tmp.path().join("pkg").join("R").join("a.R");
-    let url = UrlId::from_file_path(&r_path).unwrap();
-    let file = db
-        .file_by_url(&url)
-        .expect("scanned file should be findable");
-    assert_eq!(file.contents(&db), "x <- 1\n");
 }
 
 #[test]
@@ -155,23 +134,6 @@ fn test_rescan_preserves_package_identity_by_description_name() {
 }
 
 #[test]
-fn test_rescan_preserves_file_identity_by_url() {
-    use salsa::plumbing::AsId;
-
-    let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
-    let mut db = OakDatabase::new();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let file_id_1 = db.library_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let file_id_2 = db.library_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
-
-    assert_eq!(file_id_1, file_id_2);
-}
-
-#[test]
 fn test_rescan_renamed_package_dir_keeps_package_identity() {
     // Identity is `(root, DESCRIPTION name)`, not the directory path.
     // Renaming the package directory but keeping the same DESCRIPTION
@@ -238,35 +200,6 @@ fn test_set_library_paths_removed_path_evicts_root() {
 }
 
 #[test]
-fn test_set_library_paths_re_add_preserves_file_identity() {
-    // The motivating case for `StaleRoot`. Adding, removing, then re-adding
-    // a library path returns the same `File` entity for files at the same
-    // URL, so downstream salsa caches stay warm and don't bloat on every
-    // workspace folder toggle.
-    use salsa::plumbing::AsId;
-
-    let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
-    let mut db = OakDatabase::new();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let file_id_before = db.library_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
-
-    db.set_library_paths(&[]);
-    // After removal, the file is not reachable through analysis.
-    let r_path = tmp.path().join("pkg").join("R").join("a.R");
-    let url = UrlId::from_file_path(&r_path).unwrap();
-    assert!(db.file_by_url(&url).is_none());
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let file_id_after = db.library_roots().roots(&db)[0].packages(&db)[0].files(&db)[0].as_id();
-
-    assert_eq!(file_id_before, file_id_after);
-    // And it's findable again.
-    assert!(db.file_by_url(&url).is_some());
-}
-
-#[test]
 fn test_set_library_paths_re_add_preserves_package_identity() {
     use salsa::plumbing::AsId;
 
@@ -290,26 +223,19 @@ fn test_set_library_paths_re_add_preserves_package_identity() {
 
 #[test]
 fn test_set_library_paths_stale_invisible_to_analysis() {
-    // Stale files/packages must not show up in `file_by_url` /
-    // `package_by_name`. They're entity-reuse storage, not part of the
-    // analysis universe.
+    // A stale package must not show up in `package_by_name`. Stale is
+    // entity-reuse storage, not part of the analysis universe.
     let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("dplyr"), "dplyr", &[("a.R", "x <- 1\n")]);
+    write_package(&tmp.path().join("dplyr"), "dplyr", &[]);
     let mut db = OakDatabase::new();
 
     db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let r_path = tmp.path().join("dplyr").join("R").join("a.R");
-    let url = UrlId::from_file_path(&r_path).unwrap();
-    assert!(db.file_by_url(&url).is_some());
     assert!(db.package_by_name("dplyr").is_some());
 
     db.set_library_paths(&[]);
 
-    // Both lookups miss; the entities are in stale, not in the live universe.
-    assert!(db.file_by_url(&url).is_none());
+    // The lookup misses; the package is in stale, not the live universe.
     assert!(db.package_by_name("dplyr").is_none());
-    // But the stale buckets do hold them.
-    assert_eq!(db.stale_root().files(&db).len(), 1);
     assert_eq!(db.stale_root().packages(&db).len(), 1);
 }
 
@@ -319,7 +245,7 @@ fn test_set_library_paths_stale_no_duplicates_across_cycles() {
     // re-add the entity comes back out of stale, so by the time we
     // remove it again there's only one copy to push back in.
     let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    write_package(&tmp.path().join("pkg"), "pkg", &[]);
     let mut db = OakDatabase::new();
 
     for _ in 0..3 {
@@ -327,30 +253,7 @@ fn test_set_library_paths_stale_no_duplicates_across_cycles() {
         db.set_library_paths(&[]);
     }
 
-    let stale = db.stale_root();
-    assert_eq!(stale.files(&db).len(), 1);
-    assert_eq!(stale.packages(&db).len(), 1);
-}
-
-#[test]
-fn test_set_library_paths_resurrected_file_picks_up_disk_contents() {
-    // Eviction doesn't snapshot disk contents. When a file is
-    // resurrected from stale, it should reflect the current disk state,
-    // not whatever it had when evicted.
-    let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "v1\n")]);
-    let mut db = OakDatabase::new();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    db.set_library_paths(&[]);
-
-    let r_path = tmp.path().join("pkg").join("R").join("a.R");
-    fs::write(&r_path, "v2\n").unwrap();
-
-    db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let url = UrlId::from_file_path(&r_path).unwrap();
-    let file = db.file_by_url(&url).unwrap();
-    assert_eq!(file.contents(&db), "v2\n");
+    assert_eq!(db.stale_root().packages(&db).len(), 1);
 }
 
 // --- nested-root resolution (longest-path-wins) ---
@@ -400,6 +303,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, short, p1);
@@ -411,6 +315,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );
@@ -435,6 +340,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, long, p1);
@@ -446,6 +352,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );
@@ -472,7 +379,9 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     // Editor opens the file before any scan -> orphan.
     let r_url = file_url("/lib/pkg/R/a.R");
     let file = File::new(&db, r_url.clone(), "editor content".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![file]);
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([file]));
     assert_eq!(file.package(&db), None);
 
     // Now a library scan picks up the same URL as part of a package.
@@ -487,6 +396,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
             url: r_url.clone(),
             contents: "disk content".to_string(),
         }],
+        Vec::new(),
         None,
     );
 
@@ -520,6 +430,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         None,
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     register_package(&mut db, old, p1);
@@ -537,6 +448,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         "pkg".to_string(),
         None,
         Namespace::default(),
+        Vec::new(),
         Vec::new(),
         None,
     );

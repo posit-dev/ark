@@ -24,6 +24,7 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
         Some("1.0.0".to_string()),
         Namespace::default(),
         Vec::new(),
+        Vec::new(),
         None,
     );
     root.set_packages(db).to(vec![pkg]);
@@ -129,6 +130,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         "pkg".to_string(),
         None,
         namespace,
+        Vec::new(),
         Vec::new(),
         None,
     );

@@ -25,10 +25,10 @@ use salsa::Setter;
 use walkdir::WalkDir;
 
 use crate::inputs::RootExt;
-use crate::packages::read_package;
+use crate::packages::read_package_metadata;
 
 /// Reconcile `LibraryRoots` to exactly `paths`. Called through
-/// [`crate::DbExt::set_library_paths`]. Order in `LibraryRoots.roots`
+/// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
 /// follows `paths`, matching R's `.libPaths()` precedence.
 pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf]) {
     let new: Vec<(PathBuf, UrlId)> = paths
@@ -82,7 +82,7 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId
         if !entry.file_type().is_dir() {
             continue;
         }
-        let Some(pkg) = read_package(entry.path()) else {
+        let Some(pkg) = read_package_metadata(entry.path()) else {
             continue;
         };
         packages.push(root.set_package(
@@ -92,6 +92,7 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, path: &Path, url: UrlId
             pkg.version,
             pkg.namespace,
             pkg.files,
+            pkg.scripts,
             pkg.collation,
         ));
     }

@@ -18,6 +18,8 @@ use std::sync::RwLock;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use oak_db::OakDatabase;
+use oak_scan::DbScan;
 use oak_semantic::library::Library;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
@@ -216,10 +218,13 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&library_paths);
+
         let library = Library::new(library_paths);
 
         Self {
-            world: WorldState::new(library),
+            world: WorldState::new(db, library),
             lsp_state,
             client,
             events_tx,
@@ -293,14 +298,14 @@ impl GlobalState {
                         LspNotification::Initialized(_params) => {
                             handlers::handle_initialized(&self.client, &self.lsp_state).await?;
                         },
-                        LspNotification::DidChangeWorkspaceFolders(_params) => {
-                            // TODO: Restart indexer with new folders.
+                        LspNotification::DidChangeWorkspaceFolders(params) => {
+                            state_handlers::did_change_workspace_folders(params, &mut self.world)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
                         },
-                        LspNotification::DidChangeWatchedFiles(_params) => {
-                            // TODO: Re-index the changed files.
+                        LspNotification::DidChangeWatchedFiles(params) => {
+                            state_handlers::did_change_watched_files(params, &mut self.world)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
                             state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
@@ -635,6 +640,19 @@ fn send_auxiliary(event: AuxiliaryEvent) {
             log::warn!("LSP is shut down, can't send event:\n{err:?}");
         }
     })
+}
+
+/// Initialise the auxiliary channel for unit tests that exercise LSP
+/// handlers calling `publish_diagnostics` / `log` / similar.
+///
+/// Production wires the sender during `AuxiliaryState::start`. Tests don't
+/// run that path, so `with_auxiliary_tx` would panic. This sets a sender
+/// into the static and returns the receiver so tests can assert on events.
+#[cfg(test)]
+pub(crate) fn init_aux_for_test() -> TokioUnboundedReceiver<AuxiliaryEvent> {
+    let (tx, rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+    *AUXILIARY_EVENT_TX.write().unwrap() = Some(tx);
+    rx
 }
 
 /// Send a message to the LSP client. This is non-blocking and treated on a

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
@@ -14,6 +15,9 @@ use crate::lsp::inputs::source_root::SourceRoot;
 /// code. This is a pure value. There is no interior mutability in this data
 /// structure. It can be cloned and safely sent to other threads.
 pub(crate) struct WorldState {
+    /// Salsa input tree for Oak queries.
+    pub(crate) db: OakDatabase,
+
     /// Watched documents
     pub(crate) documents: HashMap<Url, Document>,
 
@@ -66,8 +70,9 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(library: Library) -> Self {
+    pub(crate) fn new(db: OakDatabase, library: Library) -> Self {
         Self {
+            db,
             library,
             ..Default::default()
         }

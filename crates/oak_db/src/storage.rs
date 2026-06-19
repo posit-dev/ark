@@ -31,6 +31,12 @@ impl OakDatabase {
 #[salsa::db]
 impl salsa::Database for OakDatabase {}
 
+impl std::fmt::Debug for OakDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OakDatabase").finish_non_exhaustive()
+    }
+}
+
 #[salsa::db]
 impl DbInputs for OakDatabase {
     fn workspace_roots(&self) -> WorkspaceRoots {
