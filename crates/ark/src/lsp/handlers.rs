@@ -185,8 +185,9 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let document = state.get_document(&FilePath::from_url(uri))?;
-    match folding_range(document) {
+    let file = state.ark_file(uri)?;
+    let db = &state.db;
+    match folding_range(db, &file) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
             lsp::log_error!("{err:?}");
@@ -316,23 +317,25 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
+    let uri = &params.text_document.uri;
+    let file = state.ark_file(uri)?;
+    let db = &state.db;
 
     // Get tree-sitter points to return selection ranges for
     let points = params
         .positions
         .into_iter()
-        .map(|position| document.tree_sitter_point_from_lsp_position(position))
+        .map(|position| file.tree_sitter_point_from_lsp_position(db, position))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let Some(selections) = selection_range(&document.ast, points) else {
+    let Some(selections) = selection_range(file.tree_sitter(db), points) else {
         return Ok(None);
     };
 
     // Convert tree-sitter points to LSP positions everywhere
     let selections = selections
         .into_iter()
-        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, document))
+        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(db, &file, selection))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(selections))
@@ -380,9 +383,11 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    statement_range(document, point)
+    let uri = &params.text_document.uri;
+    let file = state.ark_file(uri)?;
+    let db = &state.db;
+    let point = file.tree_sitter_point_from_lsp_position(db, params.position)?;
+    statement_range(db, &file, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -390,9 +395,11 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let document = state.get_document(&FilePath::from_url(&params.text_document.uri))?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    help_topic(point, document)
+    let uri = &params.text_document.uri;
+    let file = state.ark_file(uri)?;
+    let db = &state.db;
+    let point = file.tree_sitter_point_from_lsp_position(db, params.position)?;
+    help_topic(db, &file, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -401,10 +408,11 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let doc = state.get_document(&FilePath::from_url(&ctxt.text_document.uri))?;
-    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
-
-    indent_edit(doc, point.row)
+    let uri = &ctxt.text_document.uri;
+    let file = state.ark_file(uri)?;
+    let db = &state.db;
+    let point = file.tree_sitter_point_from_lsp_position(db, ctxt.position)?;
+    indent_edit(db, &file, point.row)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -414,10 +422,11 @@ pub(crate) fn handle_code_action(
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
-    let doc = state.get_document(&FilePath::from_url(&uri))?;
-    let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
+    let file = state.ark_file(&uri)?;
+    let db = &state.db;
+    let range = file.tree_sitter_range_from_lsp_range(db, params.range)?;
 
-    let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
+    let code_actions = code_actions(db, &file, range, &lsp_state.capabilities);
 
     if code_actions.is_empty() {
         Ok(None)

@@ -18,7 +18,6 @@ use std::sync::RwLock;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
@@ -29,7 +28,6 @@ use oak_semantic::library::Library;
 use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
-use tokio::task;
 use tokio::task::JoinHandle;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Diagnostic;
@@ -40,6 +38,7 @@ use url::Url;
 use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
+use crate::lsp::ark_file::ArkFile;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
@@ -451,6 +450,22 @@ impl GlobalState {
             },
 
             Event::OakScanCompleted(scan) => {
+                // This scan ran on a background task, but it sends its result
+                // back here so the write happens on the main loop. Keep it that
+                // way: Only the main loop should write to the oak DB (not
+                // enforced by types unfortunately). Consequences of infringement:
+                //
+                // - It would deadlock on writes. Salsa makes a writer block
+                //   until every other snapshot handle has dropped (`clones ==
+                //   1`), and the main loop holds a handle that never drops. So a
+                //   background writer would wait forever.
+                //
+                // - It would panic on reads. A salsa write cancels every
+                //   in-flight read. The main loop is the sole writer and runs
+                //   serially, so it never wraps its own reads in
+                //   `catch_cancellation()`. A background write would cancel those
+                //   reads out from under it, causing a cancellation panic.
+
                 // Recompute editor-owned files at apply time, not at spawn
                 // time: a buffer may have opened or closed since the scan
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
@@ -461,7 +476,16 @@ impl GlobalState {
                     scan,
                     &editor_owned,
                 );
-                dispatch_scan_requests(&self.events_tx, followups);
+                if followups.is_empty() {
+                    // The scan settled (no more follow-ups). `apply_scan_completed()`
+                    // was an oak write: it cancelled in-flight diagnostics and changed
+                    // the workspace symbols diagnostics resolve against. Recompute
+                    // diagnostics for the open files so they reflect the indexed
+                    // workspace and any cancelled pass is refreshed.
+                    diagnostics_refresh_all(&self.world);
+                } else {
+                    dispatch_scan_requests(&self.events_tx, followups);
+                }
             },
         }
 
@@ -779,12 +803,19 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
 ///
 /// Can optionally return an event for the auxiliary loop (i.e. a log message or
 /// diagnostics publication).
+///
+/// Salsa cancellation is handled here so callers don't have to. A `set_*` on
+/// the main loop cancels concurrent oak queries by unwinding with `Cancelled`.
+/// We swallow that into `Ok(None)`, so a cancelled task is a quiet no-op
+/// instead of a logged "task panicked". The write that cancelled it enqueues
+/// its own follow-up. Any other panic still surfaces on join.
 pub(crate) fn spawn_blocking<Handler>(handler: Handler)
 where
     Handler: FnOnce() -> anyhow::Result<Option<AuxiliaryEvent>>,
     Handler: Send + 'static,
 {
-    let handle = tokio::task::spawn_blocking(handler);
+    let handle =
+        tokio::task::spawn_blocking(move || catch_cancellation(handler).unwrap_or(Ok(None)));
 
     // Send the join handle to the auxiliary loop so it can log any errors
     // or panics
@@ -839,8 +870,11 @@ pub enum IndexerTask {
 
 #[derive(Debug)]
 pub(crate) struct RefreshDiagnosticsTask {
-    uri: Url,
+    /// Snapshot carrying the live oak plus the session context the diagnostics
+    /// walk reads. See [`WorldState::diagnostics_snapshot`].
     state: WorldState,
+    /// The file to diagnose, built against the live oak at enqueue time.
+    file: ArkFile,
 }
 
 #[derive(Debug)]
@@ -933,7 +967,7 @@ async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>
             process_indexer_batch(std::mem::take(&mut indexer_batch)).await;
         }
 
-        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch)).await;
+        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch));
     }
 }
 
@@ -978,47 +1012,63 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
     }
 }
 
-async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
+fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
 
     // Deduplicate tasks by keeping only the last one for each URI. We use a
     // `HashMap` so only the last insertion is retained. This is effectively a
     // way of cancelling diagnostics tasks for outdated documents.
-    let batch: std::collections::HashMap<_, _> = batch
+    let batch: HashMap<_, _> = batch
         .into_iter()
-        .map(|task| (task.uri, task.state))
+        .map(|task| (task.file.url.clone(), task))
         .collect();
 
-    let mut futures = FuturesUnordered::new();
-
-    for (uri, state) in batch {
-        futures.push(task::spawn_blocking(move || {
-            let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
-
-            if let Some(document) = state.documents.get(&FilePath::from_url(&uri)) {
-                // Special case testthat-specific behaviour. This is a simple
-                // stopgap approach that has some false positives (e.g. when we
-                // work on testthat itself the flag will always be true), but
-                // that shouldn't have much practical impact.
-                let testthat = Path::new(uri.path())
-                    .components()
-                    .any(|c| c.as_os_str() == "testthat");
-
-                let diagnostics = generate_diagnostics(document.clone(), state.clone(), testthat);
-                Some(RefreshDiagnosticsResult {
-                    uri,
-                    diagnostics,
-                    version: document.version,
-                })
-            } else {
-                None
-            }
-        }));
+    // Each file is its own blocking task. `spawn_blocking()` catches salsa
+    // cancellation, so a pass cancelled by a concurrent edit just produces no
+    // event. The publish happens via the returned [`AuxiliaryEvent`].
+    for (_uri, task) in batch {
+        lsp::spawn_blocking(move || {
+            let result = refresh_diagnostics(task);
+            Ok(Some(AuxiliaryEvent::PublishDiagnostics(
+                result.uri,
+                result.diagnostics,
+                result.version,
+            )))
+        });
     }
+}
 
-    // Publish results as they complete
-    while let Some(Ok(Some(result))) = futures.next().await {
-        publish_diagnostics(result.uri, result.diagnostics, result.version);
+fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
+    let RefreshDiagnosticsTask { file, state } = task;
+    let uri = file.url.clone();
+    let version = file.version;
+    let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
+
+    // Special case testthat-specific behaviour. This is a simple stopgap
+    // approach that has some false positives (e.g. when we work on testthat
+    // itself the flag will always be true), but that shouldn't have much
+    // practical impact.
+    let testthat = Path::new(uri.path())
+        .components()
+        .any(|c| c.as_os_str() == "testthat");
+
+    let diagnostics = generate_diagnostics(file, state, testthat);
+
+    RefreshDiagnosticsResult {
+        uri,
+        diagnostics,
+        version,
+    }
+}
+
+/// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
+fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
+    match salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => Some(value),
+        Err(cancelled) => {
+            log::trace!("Salsa query {cancelled}");
+            None
+        },
     }
 }
 
@@ -1068,7 +1118,7 @@ pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
             .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
     }
 
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
@@ -1095,7 +1145,7 @@ pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
@@ -1107,7 +1157,7 @@ pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
 pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
@@ -1122,10 +1172,10 @@ pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
-    diagnostics_refresh_all(state);
+    diagnostics_refresh_all(&state);
 }
 
-pub(crate) fn diagnostics_refresh_all(state: WorldState) {
+pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     tracing::trace!(
         "Refreshing diagnostics for {n} documents",
         n = state.documents.len()
@@ -1136,15 +1186,62 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
             continue;
         }
 
-        // The task sits in the indexer queue off the main loop.
-        // `legacy_snapshot()` hands it a detached oak db so it can't pin the
-        // live one against the main loop's next `set_*` (diagnostics read only
-        // non-oak state).
+        let file = match state.ark_file(&document.url) {
+            Ok(file) => file,
+            Err(err) => {
+                tracing::warn!("Can't build ArkFile for '{}': {err:?}", document.url);
+                continue;
+            },
+        };
+
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
-                uri: document.url.clone(),
-                state: state.legacy_snapshot(),
+                file,
+                state: state.diagnostics_snapshot(),
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_path::FilePath;
+    use oak_scan::DbScan;
+    use salsa::Database;
+    use url::Url;
+
+    use super::catch_cancellation;
+    use super::refresh_diagnostics;
+    use super::RefreshDiagnosticsTask;
+    use crate::lsp::document::Document;
+    use crate::lsp::state::WorldState;
+
+    /// A salsa cancellation during the pass is swallowed into `None` by
+    /// `catch_cancellation`, the wrapper `spawn_blocking` applies to every task,
+    /// rather than unwinding and killing the task.
+    ///
+    /// `cancellation_token().cancel()` arms local cancellation on the snapshot's
+    /// oak, so the first salsa query in `generate_diagnostics` (the `tree_sitter`
+    /// fetch) unwinds with `salsa::Cancelled`, the same payload a concurrent
+    /// `set_*` produces. The unwind fires before any R, so no `r_task` here.
+    #[test]
+    fn test_cancelled_diagnostics_pass_is_caught() {
+        let mut state = WorldState::default();
+        let uri = Url::parse("file:///test.R").unwrap();
+        let code = "foo";
+        state.insert_document(uri.clone(), Document::new(code, None));
+        state
+            .db
+            .upsert_editor(FilePath::from_url(&uri), code.to_string());
+
+        let file = state.ark_file(&uri).unwrap();
+        let snapshot = state.diagnostics_snapshot();
+        snapshot.db.cancellation_token().cancel();
+
+        let task = RefreshDiagnosticsTask {
+            file,
+            state: snapshot,
+        };
+        assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
     }
 }

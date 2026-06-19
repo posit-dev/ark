@@ -280,7 +280,7 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
+    lsp::main_loop::diagnostics_refresh_all(state);
 
     Ok(())
 }
@@ -341,6 +341,12 @@ pub(crate) fn did_close(
 
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
+
+    // `close_editor` is an oak write, so it cancels any diagnostics pass in
+    // flight for the other open files. Re-enqueue them so a cancelled pass
+    // isn't silently dropped. The closed file was removed above, so it isn't
+    // refreshed (we already cleared it with the empty publish).
+    lsp::main_loop::diagnostics_refresh_all(state);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
@@ -605,7 +611,7 @@ async fn update_config(
     // Refresh diagnostics if the configuration changed
     if state.config.diagnostics != diagnostics_config {
         tracing::info!("Refreshing diagnostics after configuration changed");
-        lsp::main_loop::diagnostics_refresh_all(state.clone());
+        lsp::main_loop::diagnostics_refresh_all(state);
     }
 
     Ok(())
@@ -623,7 +629,7 @@ pub(crate) fn did_change_console_inputs(
     // during package development in conjunction with `devtools::load_all()`.
     // Ideally diagnostics would not rely on these though, and we wouldn't need
     // to refresh from here.
-    lsp::diagnostics_refresh_all(state.clone());
+    lsp::diagnostics_refresh_all(state);
 
     Ok(())
 }

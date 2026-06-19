@@ -191,6 +191,10 @@ impl RTaskStartInfo {
 // running, so borrowing is allowed even though we send it to another
 // thread. See also `Crossbeam::thread::ScopedThreadBuilder` (from which
 // `r_task()` is adapted) for a similar approach.
+//
+// Don't run oak (salsa) queries inside `f`. `f` executes on the R thread, and a
+// `salsa::Cancelled` unwind there would cross R's C frames, which is UB. Pull
+// whatever you need out of oak before the `r_task()`, on the calling thread.
 
 pub fn r_task<'env, F, T>(f: F) -> T
 where
