@@ -61,7 +61,7 @@ impl File {
     #[salsa::tracked(returns(ref), cycle_result = exports_cycle_result)]
     pub fn exports(self, db: &dyn Db) -> FileExports {
         let mut entries: HashMap<String, ExportEntry> = HashMap::new();
-        for (name, def) in self.semantic_index(db).exports() {
+        for (name, (_def_id, def)) in self.semantic_index(db).exports() {
             let entry = match def.kind() {
                 DefinitionKind::Import {
                     file: target_url,

@@ -126,14 +126,14 @@ impl SemanticIndex {
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
     /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn exports(&self) -> FxHashMap<&str, &Definition> {
+    pub fn exports(&self) -> FxHashMap<&str, (DefinitionId, &Definition)> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
         let mut exports = FxHashMap::default();
-        for (_id, def) in self.definitions[file_scope].iter() {
+        for (id, def) in self.definitions[file_scope].iter() {
             let name = symbols.symbol(def.symbol()).name();
-            exports.insert(name, def);
+            exports.insert(name, (id, def));
         }
 
         exports

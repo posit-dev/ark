@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use biome_rowan::TextSize;
-use oak_semantic::DefinitionId;
 use oak_semantic::ScopeId;
 
 use crate::Db;
@@ -93,8 +92,9 @@ impl<'db> File {
     ///    visible subset of attaches / collation predecessors.
     ///
     /// Not `#[salsa::tracked]` because keying on `(self, offset)` would
-    /// balloon the cache. `Definition` creation delegates to the tracked
-    /// [`File::resolve_export()`] and [`File::intern_definition()`].
+    /// balloon the cache. The `Definition` entities it returns are minted by
+    /// the tracked [`File::definitions()`], so they stay cached and
+    /// identity-stable even though this lookup isn't.
     pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Option<Definition<'db>> {
         let index = self.semantic_index(db);
         let (use_scope, _use_id, use_site) = index.use_at(offset)?;
@@ -111,12 +111,7 @@ impl<'db> File {
         let file_scope = ScopeId::from(0);
         if let Some((binding_scope, def_id, _def)) = index.resolve(&name, use_scope) {
             if binding_scope != file_scope {
-                return Some(self.intern_definition(
-                    db,
-                    binding_scope,
-                    def_id,
-                    Name::new(db, name.as_str()),
-                ));
+                return self.definition(db, binding_scope, def_id);
             }
         }
 
@@ -173,23 +168,13 @@ impl<'db> File {
 
             match current_file.exports(db).get(current_name.as_ref())? {
                 ExportEntry::Local => {
-                    // Fetch exports again, this time through the semantic index
-                    // to get the volatile `kind` field that the firewall query
-                    // `File::exports()` doesn't expose.
-                    let kind = current_file
-                        .semantic_index(db)
-                        .exports()
-                        .get(current_name.as_ref())
-                        .map(|def| def.kind().clone())?;
-
-                    let file_scope = ScopeId::from(0);
-                    return Some(Definition::new(
-                        db,
-                        current_file,
-                        file_scope,
-                        Name::new(db, current_name.as_ref()),
-                        kind,
-                    ));
+                    // Look up the file-scope binding through the semantic index
+                    // to recover its `def_id`, then fetch the interned
+                    // definition. `exports()` returns the last-wins
+                    // definitions, so this is the right binding for the name.
+                    let index = current_file.semantic_index(db);
+                    let def_id = index.exports().get(current_name.as_ref())?.0;
+                    return current_file.definition(db, ScopeId::from(0), def_id);
                 },
 
                 ExportEntry::Import { file, name } => {
@@ -198,23 +183,5 @@ impl<'db> File {
                 },
             }
         }
-    }
-
-    /// Intern the salsa-tracked `Definition` entity for a binding identified
-    /// by `(scope, def_id)` in this file's semantic index. Wraps
-    /// `Definition::new` in a tracked context, which is required to construct
-    /// tracked structs.
-    #[salsa::tracked]
-    fn intern_definition(
-        self,
-        db: &'db dyn Db,
-        scope: ScopeId,
-        def_id: DefinitionId,
-        name: Name<'db>,
-    ) -> Definition<'db> {
-        let kind = self.semantic_index(db).definitions(scope)[def_id]
-            .kind()
-            .clone();
-        Definition::new(db, self, scope, name, kind)
     }
 }

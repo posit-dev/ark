@@ -272,6 +272,141 @@ fn test_definition_id_stable_across_body_edits() {
 }
 
 #[test]
+fn test_definition_id_stable_across_def_id_renumber_local_path() {
+    // The function-scope local path looks up its `Definition` from the single
+    // mint site `File::definitions`, whose identity is `(file, scope, name)`.
+    // `def_id` is only the lookup key, never part of identity, so prepending
+    // an unrelated binding inside the function (which renumbers x's `def_id`)
+    // leaves x's salsa id unchanged. This is the same stability the export
+    // path has in `test_definition_id_stable_across_body_edits`, now extended
+    // to the local path.
+    use biome_rowan::TextSize;
+    use salsa::plumbing::AsId;
+
+    let content1 = "f <- function() {\nx <- 1\nx\n}\n";
+    let use1 = content1.find("\nx\n").expect("standalone use of x") + 1;
+
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", content1)]);
+    let file = files[0];
+
+    let id1 = file
+        .resolve_at(&db, TextSize::from(use1 as u32))
+        .expect("use of x resolves to its function-scope binding")
+        .as_id();
+
+    // Prepend an unrelated binding inside the function so x's DefinitionId
+    // shifts 0 -> 1 within the function scope.
+    let content2 = "f <- function() {\nw <- 0\nx <- 1\nx\n}\n";
+    let use2 = content2.find("\nx\n").expect("standalone use of x") + 1;
+    file.set_contents(&mut db).to(content2.to_string());
+
+    let id2 = file
+        .resolve_at(&db, TextSize::from(use2 as u32))
+        .expect("use of x still resolves")
+        .as_id();
+
+    assert_eq!(id1, id2);
+}
+
+#[test]
+fn test_definitions_mints_distinct_entities_for_same_name_redefinition() {
+    // Two file-scope `x` bindings share the `(file, scope, name)` id-fields.
+    // The single mint site must create two distinct salsa entities rather than
+    // collide or panic; salsa disambiguates same-id-field tracked structs by
+    // creation order. Resolving `x` forces the mint of both (via `definitions`)
+    // and must land on the last definition (offset 7).
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\nx <- 2\n")]);
+    let file = files[0];
+
+    let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
+    assert_eq!(def.name(&db).text(&db).as_str(), "x");
+    let range = def.name_range(&db).expect("local binding has a name range");
+    assert_eq!(usize::from(range.start()), 7);
+}
+
+#[test]
+fn test_position_shift_keeps_id_and_does_not_invalidate_identity_consumers() {
+    // A pure position shift (prepend a comment, no binding added or removed)
+    // moves the binding's AstPtr but leaves `(file, scope, name)` and its
+    // ordinal unchanged, so the salsa id is stable. A downstream query that
+    // reads only identity therefore stays cached across the rebuild; only
+    // consumers of `kind` (the moved AstPtr) would re-run.
+    use salsa::plumbing::AsId;
+
+    use crate::Db;
+    use crate::Definition;
+
+    #[salsa::tracked]
+    fn name_len<'db>(db: &'db dyn Db, def: Definition<'db>) -> usize {
+        def.name(db).text(db).len()
+    }
+
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);
+    let file = files[0];
+
+    let (id1, range1) = {
+        let def = file.resolve(&db, name(&db, "x")).expect("x resolves");
+        let _ = name_len(&db, def);
+        (def.as_id(), def.name_range(&db))
+    };
+    assert_eq!(db.executions("name_len"), 1);
+
+    // Pure position shift: x moves down a line, no binding added or removed.
+    file.set_contents(&mut db)
+        .to("# comment\nx <- 1\n".to_string());
+
+    let (id2, range2) = {
+        let def = file.resolve(&db, name(&db, "x")).expect("x still resolves");
+        let _ = name_len(&db, def);
+        (def.as_id(), def.name_range(&db))
+    };
+
+    // Same entity, and the name range moved (it really was a position shift).
+    assert_eq!(id1, id2);
+    assert_ne!(range1, range2);
+    // The identity-only consumer was not re-executed by the position shift.
+    assert_eq!(db.executions("name_len"), 1);
+}
+
+#[test]
+fn test_same_name_sibling_insertion_churns_later_definition_id() {
+    // TRACKING TEST for a known boundary, not a guarantee to preserve.
+    //
+    // Identity is `(file, scope, name)` plus salsa's creation-order
+    // disambiguator among same-name siblings. Inserting *another* `x` earlier
+    // in the scope shifts the ordinals of the later `x` definitions, so their
+    // salsa ids churn even though their position-stability would otherwise
+    // hold. This matches ty's `push_additional_definition` ordering. The test
+    // exists to notice if salsa's disambiguation ever changes.
+    use salsa::plumbing::AsId;
+
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\nx <- 2\n")]);
+    let file = files[0];
+
+    // `resolve` is last-wins, so it returns the final `x` (`x <- 2`), ordinal 1.
+    let id1 = file
+        .resolve(&db, name(&db, "x"))
+        .expect("x resolves")
+        .as_id();
+
+    // Insert another `x` at the top. The final `x` is still last-wins, but its
+    // ordinal among same-name siblings shifts from 1 to 2.
+    file.set_contents(&mut db)
+        .to("x <- 0\nx <- 1\nx <- 2\n".to_string());
+
+    let id2 = file
+        .resolve(&db, name(&db, "x"))
+        .expect("x still resolves")
+        .as_id();
+
+    assert_ne!(id1, id2);
+}
+
+#[test]
 fn test_resolve_unbound_name_in_package_does_not_cycle() {
     // Without exports-only sibling chase, A's `resolve` would walk into
     // B's `resolve`, which would walk back into A via B's imports
