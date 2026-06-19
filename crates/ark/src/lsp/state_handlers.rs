@@ -251,9 +251,7 @@ pub(crate) fn did_change(
     let new_version = params.text_document.version;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = state.open_files.get_mut(&key) else {
-        return Err(anyhow!("Can't find document for URI {uri}"));
-    };
+    let file = state.open_file(uri)?;
 
     // Reject out-of-order change notifications. The spec allows version numbers
     // to skip values but requires them to increase monotonically. A lower
@@ -276,7 +274,7 @@ pub(crate) fn did_change(
     );
     state.db.upsert_editor(key.clone(), new_contents);
 
-    file.set_version(Some(new_version));
+    state.open_file_mut(uri)?.set_version(Some(new_version));
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
