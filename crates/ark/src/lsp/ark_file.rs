@@ -18,15 +18,29 @@ use crate::lsp::db::FileArkExt;
 
 /// Editor-managed buffer state, paired with its `oak_db::File`.
 ///
-/// `ArkFile` and `OakDatabase` are sibling fields on `WorldState`, so an
-/// `ArkFile` cannot hold a reference to the database. That's why the methods
-/// below take `db` as an argument instead of storing a reference, which is the
-/// Salsa convention anyway.
-#[derive(Debug)]
+/// This is a temporary structure during the transition to pure Oak handlers.
+///
+/// The methods take `db` as a parameter rather than holding it. `ArkFile` lives
+/// in `WorldState`, and the db is a sibling field there, so a stored borrow of
+/// it would be self-referential, which safe Rust forbids. Passing `db` per call
+/// is the salsa idiom anyway (`file.parse(db)`).
+#[derive(Clone, Debug)]
 pub(crate) struct ArkFile {
     pub(crate) file: File,
     pub(crate) version: Option<i32>,
     pub(crate) config: DocumentConfig,
+    // The editor's verbatim URL. We store it rather than recompute it from
+    // `file`'s path so the bytes the frontend sent round-trip exactly. It lives
+    // on `ArkFile` so it travels with owned values for callers that can't
+    // easily access `WorldState::open_files`: the diagnostics task on a worker
+    // thread (`RefreshDiagnosticsTask`) and `code_action/roxygen.rs`, which
+    // builds a `WorkspaceEdit` keyed by URL.
+    //
+    // TODO: this is a stopgap that goes away with `ArkFile`. Once handlers are
+    // pure Oak, they return `File`-keyed results (diagnostics, the edit targets
+    // in a `WorkspaceEdit`) and the wire URL gets attached at the transport
+    // boundary from a map of open editor URLs owned by the LSP layer. In that
+    // design the verbatim URL never travels through the analysis layer.
     pub(crate) url: Url,
     pub(crate) encoding: PositionEncoding,
 }
@@ -160,4 +174,61 @@ pub(crate) fn test_ark_file(code: &str) -> (oak_db::OakDatabase, ArkFile) {
         encoding: PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
     };
     (db, file)
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use super::*;
+
+    #[test]
+    fn test_tree_sitter_point_from_lsp_position_wide_encoding() {
+        // The emoji is 4 UTF-8 bytes and 2 UTF-16 bytes
+        // `test_ark_file` defaults to UTF-16, the encoding under test here.
+        let (db, ark_file) = test_ark_file("😃a");
+
+        let point = ark_file
+            .tree_sitter_point_from_lsp_position(&db, lsp_types::Position::new(0, 2))
+            .unwrap();
+        assert_eq!(point, Point::new(0, 4));
+
+        let point = ark_file
+            .tree_sitter_point_from_lsp_position(&db, lsp_types::Position::new(0, 3))
+            .unwrap();
+        assert_eq!(point, Point::new(0, 5));
+    }
+
+    #[test]
+    fn test_lsp_position_from_tree_sitter_point_wide_encoding() {
+        let (db, ark_file) = test_ark_file("😃a");
+
+        let position = ark_file
+            .lsp_position_from_tree_sitter_point(&db, Point::new(0, 4))
+            .unwrap();
+        assert_eq!(position, lsp_types::Position::new(0, 2));
+
+        let position = ark_file
+            .lsp_position_from_tree_sitter_point(&db, Point::new(0, 5))
+            .unwrap();
+        assert_eq!(position, lsp_types::Position::new(0, 3));
+    }
+
+    #[test]
+    fn test_utf8_position_roundtrip_multibyte() {
+        // `é` is 2 bytes
+        let (db, mut ark_file) = test_ark_file("é\n");
+        ark_file.encoding = PositionEncoding::Utf8;
+
+        let lsp_position = lsp_types::Position::new(0, 2);
+        let point = ark_file
+            .tree_sitter_point_from_lsp_position(&db, lsp_position)
+            .unwrap();
+        assert_eq!(point, Point::new(0, 2));
+
+        let roundtrip_position = ark_file
+            .lsp_position_from_tree_sitter_point(&db, point)
+            .unwrap();
+        assert_eq!(roundtrip_position, lsp_position);
+    }
 }

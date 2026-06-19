@@ -13,7 +13,6 @@ use tower_lsp::lsp_types::TextEdit;
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
-use crate::lsp::document::Document;
 use crate::lsp::rename::prepare_rename;
 use crate::lsp::rename::rename;
 use crate::lsp::util::test_path;
@@ -48,9 +47,8 @@ fn make_rename_params(
 #[test]
 fn test_prepare_rename_returns_range_and_placeholder() {
     let code = "foo <- 1\nfoo\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_prepare_params(uri, 0, 0);
     let result = prepare_rename(params, &state).unwrap().unwrap();
@@ -69,9 +67,8 @@ fn test_prepare_rename_returns_range_and_placeholder() {
 #[test]
 fn test_prepare_rename_on_namespace_access_returns_none() {
     let code = "dplyr::mutate\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_prepare_params(uri, 0, 7);
     assert!(prepare_rename(params, &state).unwrap().is_none());
@@ -80,9 +77,8 @@ fn test_prepare_rename_on_namespace_access_returns_none() {
 #[test]
 fn test_rename_emits_edits_for_def_and_uses() {
     let code = "foo <- 1\nfoo + foo\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri.clone(), 0, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
@@ -113,16 +109,14 @@ fn test_rename_excludes_independent_binding_in_other_file() {
     // file2 has its own separate `foo` -- rename of file1's `foo` should
     // NOT touch file2's independent binding.
     let code1 = "foo <- 1\nfoo\n";
-    let doc1 = Document::new(code1, None);
     let uri1 = test_path("a.R");
-    let mut state = make_state(&uri1, &doc1);
+    let mut state = make_state(&uri1, code1);
 
     // file2 has its own separate `foo` -- rename of file1's `foo` should
     // NOT touch file2's independent binding.
     let code2 = "foo <- 99\nfoo\n";
-    let doc2 = Document::new(code2, None);
     let uri2 = test_path("b.R");
-    insert_file(&mut state, &uri2, &doc2);
+    insert_file(&mut state, &uri2, code2);
 
     let params = make_rename_params(uri1.clone(), 0, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
@@ -139,14 +133,12 @@ fn test_rename_cross_file_via_source() {
     // helpers.R defines `helper`; script.R sources it and uses it.
     // After registering both in a workspace root, rename spans both files.
     let code1 = "helper <- function() 1\n";
-    let doc1 = Document::new(code1, None);
     let uri1 = test_path("helpers.R");
-    let mut state = make_state(&uri1, &doc1);
+    let mut state = make_state(&uri1, code1);
 
     let code2 = "source(\"helpers.R\")\nhelper\n";
-    let doc2 = Document::new(code2, None);
     let uri2 = test_path("script.R");
-    insert_file(&mut state, &uri2, &doc2);
+    insert_file(&mut state, &uri2, code2);
 
     // Register both files in a workspace root whose path is the temp
     // directory. `anchor_dir` uses the root path as the anchor, so
@@ -194,9 +186,8 @@ fn test_rename_cross_file_via_source() {
 #[test]
 fn test_rename_to_reserved_word_errors() {
     let code = "foo <- 1\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri, 0, 0, "if");
     let err = rename(params, &state).unwrap_err();
@@ -206,9 +197,8 @@ fn test_rename_to_reserved_word_errors() {
 #[test]
 fn test_rename_to_name_with_space_wraps_in_backticks() {
     let code = "foo <- 1\nfoo\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri.clone(), 0, 0, "new name");
     let edit = rename(params, &state).unwrap().unwrap();
@@ -219,9 +209,8 @@ fn test_rename_to_name_with_space_wraps_in_backticks() {
 #[test]
 fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
     let code = "foo <- 1\nfoo\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri.clone(), 0, 0, "1foo");
     let edit = rename(params, &state).unwrap().unwrap();
@@ -232,9 +221,8 @@ fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
 #[test]
 fn test_rename_to_empty_name_errors() {
     let code = "foo <- 1\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri, 0, 0, "");
     let err = rename(params, &state).unwrap_err();
@@ -244,9 +232,8 @@ fn test_rename_to_empty_name_errors() {
 #[test]
 fn test_rename_to_name_with_backtick_errors() {
     let code = "foo <- 1\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
-    let state = make_state(&uri, &doc);
+    let state = make_state(&uri, code);
 
     let params = make_rename_params(uri, 0, 0, "foo`bar");
     let err = rename(params, &state).unwrap_err();

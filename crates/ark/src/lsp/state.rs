@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
-use oak_db::Db;
+use oak_db::File;
 use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
 use crate::lsp::ark_file::ArkFile;
+use crate::lsp::config::DocumentConfig;
 use crate::lsp::config::LspConfig;
-use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
 
 #[derive(Clone, Default, Debug)]
@@ -21,9 +21,9 @@ pub(crate) struct WorldState {
     pub(crate) db: OakDatabase,
 
     /// Watched documents, keyed on the normalised [`FilePath`] form.
-    /// The verbatim editor URL is preserved on each [`Document::url`]
+    /// The verbatim editor URL is preserved on each [`ArkFile::url`]
     /// for wire output.
-    pub(crate) documents: HashMap<FilePath, Document>,
+    pub(crate) open_files: HashMap<FilePath, ArkFile>,
 
     /// Watched folders
     pub(crate) workspace: Workspace,
@@ -82,19 +82,12 @@ impl WorldState {
         }
     }
 
-    pub(crate) fn get_document(&self, path: &FilePath) -> anyhow::Result<&Document> {
-        if let Some(doc) = self.documents.get(path) {
-            Ok(doc)
+    pub(crate) fn ark_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut ArkFile> {
+        let key = FilePath::from_url(uri);
+        if let Some(ark_file) = self.open_files.get_mut(&key) {
+            Ok(ark_file)
         } else {
-            Err(anyhow!("Can't find document for path {path}"))
-        }
-    }
-
-    pub(crate) fn get_document_mut(&mut self, path: &FilePath) -> anyhow::Result<&mut Document> {
-        if let Some(doc) = self.documents.get_mut(path) {
-            Ok(doc)
-        } else {
-            Err(anyhow!("Can't find document for path {path}"))
+            Err(anyhow!("Can't find document for URI {uri}"))
         }
     }
 
@@ -108,49 +101,47 @@ impl WorldState {
             root: self.root.clone(),
             library: self.library.clone(),
             config: self.config.clone(),
-            documents: HashMap::new(),
+            open_files: HashMap::new(),
             virtual_documents: HashMap::new(),
             workspace: Workspace::default(),
         }
     }
 
-    /// Build an [`ArkFile`] for a request.
+    /// Get a clone of the stored [`ArkFile`] for a request.
     ///
-    /// Most fields come from the legacy `Document` struct, namely `version`,
-    /// `config`, and `url`. The `encoding` comes from the world config instead.
-    /// The analysis handle comes from the matching `oak_db::File`.
-    ///
-    /// The `Document` and the `File` are kept in sync by the editor bridge,
-    /// which calls `upsert_editor()` on every `did_open` and `did_change`. So a
-    /// `File` exists whenever a `Document` does.
+    /// `ArkFile` is cheap to clone: the analysis handle is a salsa id and the
+    /// protocol fields are small. Handlers want an owned value because the
+    /// `r_task` ones move it across a thread boundary.
     pub(crate) fn ark_file(&self, uri: &Url) -> anyhow::Result<ArkFile> {
         let key = FilePath::from_url(uri);
-        let document = self.get_document(&key)?;
-        let Some(file) = self.db.file_by_path(&key) else {
-            return Err(anyhow!("No `oak_db` file for URI {uri}"));
+        let Some(ark_file) = self.open_files.get(&key) else {
+            return Err(anyhow!("Can't find document for URI {uri}"));
         };
-        Ok(ArkFile {
-            file,
-            version: document.version,
-            config: document.config.clone(),
-            url: document.url.clone(),
-            encoding: self.config.position_encoding,
-        })
+        Ok(ark_file.clone())
     }
 
-    /// Insert a document, keying on the normalised [`FilePath`] and
-    /// stashing the verbatim editor URL on [`Document::url`] for wire
-    /// output.
-    pub(crate) fn insert_document(&mut self, uri: Url, mut doc: Document) {
+    /// Register an editor buffer in `open_files`, keying on the normalised
+    /// [`FilePath`] and stashing the verbatim editor URL on [`ArkFile::url`] for
+    /// wire output.
+    ///
+    /// The caller is in charge of pushing the contents into `oak` via
+    /// `upsert_editor()` and handing us the resulting [`File`].
+    pub(crate) fn insert_ark_file(&mut self, uri: Url, file: File, version: Option<i32>) {
         let key = FilePath::from_url(&uri);
-        doc.url = uri;
-        self.documents.insert(key, doc);
+        let ark_file = ArkFile {
+            file,
+            version,
+            config: DocumentConfig::default(),
+            url: uri,
+            encoding: self.config.position_encoding,
+        };
+        self.open_files.insert(key, ark_file);
     }
 }
 
-pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
+pub(crate) fn open_file_uris(state: &WorldState) -> Vec<Url> {
     state
-        .documents
+        .open_files
         .values()
         .map(|doc| doc.url.clone())
         .collect()

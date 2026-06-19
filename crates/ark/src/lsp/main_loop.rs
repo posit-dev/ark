@@ -140,9 +140,8 @@ pub(crate) struct GlobalState {
     /// (clones) to handlers.
     world: WorldState,
 
-    /// The state containing LSP configuration and tree-sitter parsers for
-    /// documents contained in the `WorldState`. Only used in exclusive ref
-    /// handlers, and is not cloneable.
+    /// The non-cloneable, per-session LSP state. Only used in exclusive ref
+    /// handlers.
     lsp_state: LspState,
 
     /// LSP client shared with tower-lsp and the log loop
@@ -160,9 +159,6 @@ pub(crate) struct GlobalState {
 /// Sits alongside [`WorldState`] (which is cloneable for snapshot
 /// handlers); state that can't be cloned lives here instead.
 pub(crate) struct LspState {
-    /// The set of tree-sitter document parsers managed by the `GlobalState`.
-    pub(crate) parsers: HashMap<Url, tree_sitter::Parser>,
-
     /// Capabilities negotiated with the client
     pub(crate) capabilities: Capabilities,
 
@@ -248,7 +244,6 @@ impl GlobalState {
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
 
         let lsp_state = LspState {
-            parsers: HashMap::new(),
             capabilities: Capabilities::default(),
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
@@ -347,7 +342,7 @@ impl GlobalState {
                             state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
-                            state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
+                            state_handlers::did_open(params, &mut self.world)?;
                         },
                         LspNotification::DidChangeTextDocument(params) => {
                             state_handlers::did_change(params, &mut self.lsp_state, &mut self.world)?;
@@ -356,7 +351,7 @@ impl GlobalState {
                             // Currently ignored
                         },
                         LspNotification::DidCloseTextDocument(params) => {
-                            state_handlers::did_close(params, &mut self.lsp_state, &mut self.world)?;
+                            state_handlers::did_close(params, &mut self.world)?;
                         },
                     }
                 },
@@ -472,7 +467,7 @@ impl GlobalState {
                 // time: a buffer may have opened or closed since the scan
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
-                let editor_owned: HashSet<FilePath> = self.world.documents.keys().cloned().collect();
+                let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
                     &mut self.world.db,
                     scan,
@@ -993,25 +988,17 @@ fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
 pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     tracing::trace!(
         "Refreshing diagnostics for {n} documents",
-        n = state.documents.len()
+        n = state.open_files.len()
     );
 
-    for document in state.documents.values() {
-        if !ExtUrl::should_diagnose(&document.url) {
+    for file in state.open_files.values() {
+        if !ExtUrl::should_diagnose(&file.url) {
             continue;
         }
 
-        let file = match state.ark_file(&document.url) {
-            Ok(file) => file,
-            Err(err) => {
-                tracing::warn!("Can't build ArkFile for '{}': {err:?}", document.url);
-                continue;
-            },
-        };
-
         DIAGNOSTICS_QUEUE
             .send(RefreshDiagnosticsTask {
-                file,
+                file: file.clone(),
                 state: state.diagnostics_snapshot(),
             })
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
@@ -1047,7 +1034,6 @@ mod tests {
     use super::catch_cancellation;
     use super::refresh_diagnostics;
     use super::RefreshDiagnosticsTask;
-    use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
@@ -1063,10 +1049,10 @@ mod tests {
         let mut state = WorldState::default();
         let uri = Url::parse("file:///test.R").unwrap();
         let code = "foo";
-        state.insert_document(uri.clone(), Document::new(code, None));
-        state
+        let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
+        state.insert_ark_file(uri.clone(), file, None);
 
         let file = state.ark_file(&uri).unwrap();
         let snapshot = state.diagnostics_snapshot();

@@ -45,7 +45,6 @@ use tower_lsp::lsp_types::WorkDoneProgressOptions;
 use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp::lsp_types::WorkspaceServerCapabilities;
 use tracing::Instrument;
-use tree_sitter::Parser;
 use url::Url;
 
 use crate::console::ConsoleNotification;
@@ -55,7 +54,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::document::Document;
+use crate::lsp::content_changes::apply_content_changes;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -63,7 +62,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::state::workspace_uris;
+use crate::lsp::state::open_file_uris;
 use crate::lsp::state::WorldState;
 
 // Handlers that mutate the world state
@@ -133,7 +132,7 @@ pub(crate) fn initialize(
     }
 
     // Kick off the initial workspace scan
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
     let requests =
         lsp_state
             .oak_scheduler
@@ -226,25 +225,14 @@ pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let contents = params.text_document.text.as_str();
+    let contents = params.text_document.text;
     let uri = params.text_document.uri;
     let version = params.text_document.version;
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-
-    let document = Document::new_with_parser(contents, &mut parser, Some(version));
-
-    lsp_state.parsers.insert(uri.clone(), parser);
-    state.insert_document(uri.clone(), document.clone());
-
-    let path = FilePath::from_url(&uri);
-    state.db.upsert_editor(path, contents.to_string());
+    let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
+    state.insert_ark_file(uri.clone(), file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -259,25 +247,38 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let document = state.get_document_mut(&FilePath::from_url(uri))?;
+    let key = FilePath::from_url(uri);
+    let new_version = params.text_document.version;
+    let encoding = state.config.position_encoding;
 
-    let parser = lsp_state
-        .parsers
-        .get_mut(uri)
-        .ok_or(anyhow!("No parser for {uri}"))?;
+    let Some(file) = state.open_files.get_mut(&key) else {
+        return Err(anyhow!("Can't find document for URI {uri}"));
+    };
 
-    document.on_did_change(parser, &params);
+    // Reject out-of-order change notifications. The spec allows version numbers
+    // to skip values but requires them to increase monotonically. A lower
+    // version means we've lost sync and can't keep our state consistent.
+    // Currently panicking, but in principle we should shut the LSP down in an
+    // orderly fashion.
+    if let Some(old_version) = file.version {
+        if new_version < old_version {
+            panic!(
+                "out-of-sync change notification: currently at {old_version}, got {new_version}"
+            );
+        }
+    }
 
-    let new_contents = document.contents.to_string();
-    let path = FilePath::from_url(uri);
-    state.db.upsert_editor(path, new_contents);
+    // Fold the edits into the new buffer text and push it into `oak`
+    let new_contents =
+        apply_content_changes(file.contents(&state.db), &params.content_changes, encoding);
+    state.db.upsert_editor(key.clone(), new_contents);
+
+    file.version = Some(new_version);
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
         .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(FilePath::from_url(
-            uri,
-        )))
+        .send(ConsoleNotification::DidChangeDocument(key))
         .log_err();
 
     Ok(())
@@ -286,7 +287,6 @@ pub(crate) fn did_change(
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = params.text_document.uri;
@@ -295,14 +295,9 @@ pub(crate) fn did_close(
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
 
     state
-        .documents
+        .open_files
         .remove(&FilePath::from_url(&uri))
         .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
-
-    lsp_state
-        .parsers
-        .remove(&uri)
-        .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
     let path = FilePath::from_url(&uri);
     state.db.close_editor(&path);
@@ -321,7 +316,7 @@ pub(crate) fn did_change_watched_files(
 ) -> anyhow::Result<()> {
     // Editor owns the contents of files it has open: ignore disk-side events
     // for those URLs. Their content comes from `did_open` / `did_change`.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
     let events: Vec<FileEvent> = params
         .changes
@@ -378,7 +373,7 @@ pub(crate) fn did_change_workspace_folders(
     // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
     // open buffers keep getting analysed even when their workspace
     // folder goes away.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
     let requests =
         lsp_state
@@ -400,7 +395,7 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(workspace_uris(state), client, state)
+    update_config(open_file_uris(state), client, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
 }
@@ -411,7 +406,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.get_document_mut(&FilePath::from_url(uri)) else {
+    let Ok(doc) = state.ark_file_mut(uri) else {
         return;
     };
 
@@ -502,9 +497,8 @@ async fn update_config(
         let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
         let head = std::mem::replace(&mut remaining, tail);
 
-        let path = FilePath::from_url(&uri);
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.get_document_mut(&path) {
+            if let Ok(doc) = state.ark_file_mut(&uri) {
                 (mapping.set)(&mut doc.config, value);
             }
         }

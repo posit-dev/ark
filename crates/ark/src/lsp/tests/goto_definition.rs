@@ -7,7 +7,6 @@ use url::Url;
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
-use crate::lsp::document::Document;
 use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::state::WorldState;
 use crate::lsp::util::test_path;
@@ -24,11 +23,11 @@ fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinition
 }
 
 /// A state with several open files, each mirrored into `oak` like `did_open`
-/// does, so `source()` targets resolve through `file_by_url`.
+/// does, so `source()` targets resolve through `file_by_path`.
 fn make_state_with(files: &[(&Url, &str)]) -> WorldState {
     let mut state = WorldState::default();
     for (uri, code) in files {
-        insert_file(&mut state, uri, &Document::new(code, None));
+        insert_file(&mut state, uri, code);
     }
     state
 }
@@ -36,7 +35,7 @@ fn make_state_with(files: &[(&Url, &str)]) -> WorldState {
 #[test]
 fn test_goto_definition() {
     let uri = test_path("test.R");
-    let state = make_state(&uri, &Document::new("foo <- 42\nprint(foo)\n", None));
+    let state = make_state(&uri, "foo <- 42\nprint(foo)\n");
 
     let params = make_params(uri, 1, 6);
 
@@ -51,7 +50,7 @@ fn test_goto_definition() {
 #[test]
 fn test_goto_definition_prefers_local_symbol() {
     let uri = test_path("file.R");
-    let state = make_state(&uri, &Document::new("foo <- 1\nfoo\n", None));
+    let state = make_state(&uri, "foo <- 1\nfoo\n");
 
     let params = make_params(uri.clone(), 1, 0);
 
@@ -69,7 +68,7 @@ fn test_unbound_identifier_returns_none() {
     // A free identifier with no reachable binding returns `None`, matching how
     // rust-analyzer and ty handle the same case.
     let uri = test_path("file.R");
-    let state = make_state(&uri, &Document::new("foo\n", None));
+    let state = make_state(&uri, "foo\n");
 
     let params = make_params(uri, 0, 0);
     assert_eq!(goto_definition(params, &state).unwrap(), None);
@@ -79,7 +78,7 @@ fn test_unbound_identifier_returns_none() {
 fn test_cursor_on_operator_returns_none() {
     // Cursor on `<-`, not on an identifier use: nothing to resolve.
     let uri = test_path("file.R");
-    let state = make_state(&uri, &Document::new("foo <- 1\n", None));
+    let state = make_state(&uri, "foo <- 1\n");
 
     // Cursor on the `<` of `<-` at column 4.
     let params = make_params(uri, 0, 4);
