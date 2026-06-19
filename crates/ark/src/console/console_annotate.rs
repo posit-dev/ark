@@ -940,9 +940,10 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     // If there are no breakpoints for this file, return NULL to signal no
     // annotation needed. Scope the mutable borrow so we can re-borrow after.
     let annotated = {
-        let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri_id) else {
+        let Some(entry) = dap_guard.breakpoints.get_mut(&uri_id) else {
             return Ok(harp::r_null());
         };
+        let breakpoints = &mut entry.breakpoints;
         if breakpoints.is_empty() {
             return Ok(harp::r_null());
         }
@@ -960,8 +961,10 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     // Remove disabled breakpoints. Their verification state is now stale since
     // they weren't injected during this annotation. If the user re-enables
     // them, they'll be treated as new unverified breakpoints.
-    if let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri_id) {
-        breakpoints.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
+    if let Some(entry) = dap_guard.breakpoints.get_mut(&uri_id) {
+        entry
+            .breakpoints
+            .retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
     Ok(RObject::from(annotated).sexp)

@@ -1431,7 +1431,12 @@ impl DummyArkFrontend {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        let uri_id = UrlId::from_file_path(file.path()).unwrap().to_string();
+
+        // R side `path_to_file_uri()` applies `normalizePath()`, which resolves
+        // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
+        // in tests, we also canonicalize here.
+        let canonical = file.path().canonicalize().unwrap();
+        let uri_id = UrlId::from_file_path(&canonical).unwrap().to_string();
         let filename = file
             .path()
             .file_name()
@@ -1822,7 +1827,12 @@ impl SourceFile {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        let url = UrlId::from_file_path(file.path()).unwrap();
+
+        // R side `path_to_file_uri()` applies `normalizePath()`, which resolves
+        // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
+        // in tests, we also canonicalize here.
+        let canonical = file.path().canonicalize().unwrap();
+        let url = UrlId::from_file_path(&canonical).unwrap();
         let uri_id = url.to_string();
 
         // Extract file name

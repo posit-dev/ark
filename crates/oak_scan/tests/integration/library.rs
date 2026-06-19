@@ -267,9 +267,7 @@ fn test_set_library_paths_stale_no_duplicates_across_cycles() {
 // and is the realistic trigger -- depends on.
 
 fn file_url(s: &str) -> UrlId {
-    // Bypass `UrlId::from_file_path`'s canonicalization (these paths
-    // don't exist on disk).
-    UrlId::from_canonical(Url::parse(&format!("file://{s}")).unwrap())
+    UrlId::from_url(Url::parse(&format!("file://{s}")).unwrap())
 }
 
 fn empty_library_root(db: &OakDatabase, path: &str) -> Root {

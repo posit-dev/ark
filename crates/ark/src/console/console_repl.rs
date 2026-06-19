@@ -1534,7 +1534,7 @@ impl Console {
                 let breakpoints = uri_id
                     .as_ref()
                     .and_then(|uri_id| dap_guard.breakpoints.get_mut(uri_id))
-                    .map(|(_, v)| v.as_mut_slice());
+                    .map(|entry| entry.breakpoints.as_mut_slice());
 
                 match PendingInputs::read(&code, loc, breakpoints) {
                     Ok(ParseResult::Success(inputs)) => {

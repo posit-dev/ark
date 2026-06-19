@@ -125,7 +125,7 @@ pub(super) fn file_url(name: &str) -> UrlId {
     } else {
         Url::parse(&format!("file:///{name}")).unwrap()
     };
-    UrlId::from_canonical(url)
+    UrlId::from_url(url)
 }
 
 /// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each
