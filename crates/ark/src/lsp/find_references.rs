@@ -30,7 +30,7 @@ pub(crate) fn find_references(
         .iter()
         .filter_map(|fr| {
             let range = to_proto::range(fr.range, fr.file.line_index(db), encoding).log_err()?;
-            Some(Location::new(fr.file.path(db).to_url(), range))
+            Some(Location::new(state.wire_url(fr.file), range))
         })
         .collect();
 

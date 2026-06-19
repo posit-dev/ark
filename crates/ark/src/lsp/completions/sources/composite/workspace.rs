@@ -69,13 +69,15 @@ fn completions_from_workspace(
     let token = token.as_str();
 
     // get entries from the index
-    indexer::map(&state.db, |uri, symbol, entry| {
+    indexer::map(&state.db, |file, symbol, entry| {
         if !symbol.fuzzy_matches(token) {
             return;
         }
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
+                let uri = state.wire_url(file);
+
                 let fun_context = match completion_context.function_context() {
                     Ok(fun_context) => fun_context,
                     Err(err) => {

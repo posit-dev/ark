@@ -1,3 +1,4 @@
+use aether_path::FilePath;
 use assert_matches::assert_matches;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::GotoDefinitionParams;
@@ -61,6 +62,24 @@ fn test_goto_definition_prefers_local_symbol() {
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
+}
+
+#[test]
+fn test_target_uri_is_verbatim() {
+    // The doubled slash normalises away in `FilePath`, so the target URI is
+    // only correct if it comes from the buffer's verbatim URL.
+    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
+    let state = make_state(&uri, "foo <- 1\nfoo\n");
+
+    let params = make_params(uri.clone(), 1, 0);
+
+    assert_matches!(
+        goto_definition(params, &state).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links[0].target_uri, uri);
+        }
+    );
+    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
 }
 
 #[test]

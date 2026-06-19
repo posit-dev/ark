@@ -120,6 +120,18 @@ impl WorldState {
         Ok(ark_file.clone())
     }
 
+    /// URL to put on the wire for `file`. Open buffers keep the editor's
+    /// verbatim URL so the frontend sees the URI it sent us. Files that were
+    /// never opened in the editor (disk-scanned files, resolution targets) have
+    /// no verbatim URL, so synthesise one from the normalised path.
+    pub(crate) fn wire_url(&self, file: File) -> Url {
+        let path = file.path(&self.db);
+        self.open_files
+            .get(path)
+            .map(|ark_file| ark_file.url.clone())
+            .unwrap_or_else(|| path.to_url())
+    }
+
     /// Register an editor buffer in `open_files`, keying on the normalised
     /// [`FilePath`] and stashing the verbatim editor URL on [`ArkFile::url`] for
     /// wire output.

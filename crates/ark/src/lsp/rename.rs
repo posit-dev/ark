@@ -66,7 +66,7 @@ pub(crate) fn rename(
     let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
     for range in ranges {
         let line_index = range.file.line_index(db);
-        let target_url = range.file.path(db).to_url();
+        let target_url = state.wire_url(range.file);
         let range = to_proto::range(range.range, line_index, encoding)?;
         changes.entry(target_url).or_default().push(TextEdit {
             range,

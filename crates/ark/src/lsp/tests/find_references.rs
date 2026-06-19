@@ -1,3 +1,4 @@
+use aether_path::FilePath;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::ReferenceContext;
@@ -168,6 +169,24 @@ fn test_cross_file_dollar_kind() {
     assert!(!locs
         .iter()
         .any(|l| l.uri == uri2 && l.range == range((2, 0), (2, 3))));
+}
+
+#[test]
+fn test_locations_use_verbatim_url() {
+    // The doubled slash survives in the editor's URL but `FilePath` normalises
+    // it away, so a path round-trip would change it. Locations must carry the
+    // exact URI the editor opened the buffer with.
+    let code = "foo <- 1\nfoo\n";
+    let uri = lsp_types::Url::parse("file:///C:/proj//foo.R").unwrap();
+    let state = make_state(&uri, code);
+
+    let params = make_params(uri.clone(), 1, 0, true);
+    let locs = find_references(params, &state).unwrap();
+
+    assert!(!locs.is_empty());
+    assert!(locs.iter().all(|loc| loc.uri == uri));
+    // Confirm the round-trip really would have differed, so the check above bites.
+    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
 }
 
 #[test]

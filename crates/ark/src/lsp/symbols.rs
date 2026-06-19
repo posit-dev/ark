@@ -64,24 +64,23 @@ pub(crate) fn symbols(
     let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
-    indexer::map(db, |uri, symbol, entry| {
+    indexer::map(db, |file, symbol, entry| {
         if !symbol.fuzzy_matches(query) {
             return;
         }
 
-        let Some(range) = indexer::index_range_to_lsp_range(db, uri, entry.range, encoding) else {
+        let Some(range) = indexer::index_range_to_lsp_range(db, file, entry.range, encoding) else {
             return;
         };
+
+        let uri = state.wire_url(file);
 
         match &entry.data {
             IndexEntryData::Function { name, arguments: _ } => {
                 info.push(SymbolInformation {
                     name: name.to_string(),
                     kind: SymbolKind::FUNCTION,
-                    location: Location {
-                        uri: uri.clone(),
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
@@ -93,10 +92,7 @@ pub(crate) fn symbols(
                     info.push(SymbolInformation {
                         name: title.to_string(),
                         kind: SymbolKind::STRING,
-                        location: Location {
-                            uri: uri.clone(),
-                            range,
-                        },
+                        location: Location { uri, range },
                         tags: None,
                         deprecated: None,
                         container_name: None,
@@ -108,10 +104,7 @@ pub(crate) fn symbols(
                 info.push(SymbolInformation {
                     name: name.clone(),
                     kind: SymbolKind::VARIABLE,
-                    location: Location {
-                        uri: uri.clone(),
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
@@ -122,10 +115,7 @@ pub(crate) fn symbols(
                 info.push(SymbolInformation {
                     name: name.clone(),
                     kind: SymbolKind::METHOD,
-                    location: Location {
-                        uri: uri.clone(),
-                        range,
-                    },
+                    location: Location { uri, range },
                     tags: None,
                     deprecated: None,
                     container_name: None,
