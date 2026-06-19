@@ -13,6 +13,7 @@ use crate::ExportEntry;
 use crate::File;
 use crate::ImportLayer;
 use crate::Name;
+use crate::PackageVisibility;
 
 #[salsa::tracked]
 impl<'db> File {
@@ -29,12 +30,11 @@ impl<'db> File {
     ///    `source()`-forwarded entries. `ExportEntry::Import` is chased
     ///    through `exports(target)` until it lands on a `Local`. Cycles in
     ///    `source()` resolve to empty exports via `exports`'s `cycle_fn`.
-    /// 2. **`imports()` walk**: each `ImportLayer::File` sibling is checked
-    ///    via its own exports chain only (not its full `resolve`). Sibling
-    ///    package files would otherwise cycle through each other's
-    ///    `imports`, and R's namespace semantics don't transitively include
-    ///    siblings' imports anyway. Package-level layers (`From`,
-    ///    `Package`) are deferred to PR 4.
+    /// 2. **`imports()` walk**: each layer is checked in priority order.
+    ///    `File` siblings are checked via their exports chain only (not their
+    ///    full `resolve`), to avoid the cycle that recursing would create.
+    ///    `Package` and `From` layers call [`Package::resolve`] with
+    ///    `Exported` visibility.
     ///
     /// The returned `Definition` is keyed by `(file, scope, name)`, so
     /// downstream queries that only depend on identity stay cached across
@@ -62,16 +62,36 @@ impl<'db> File {
         // and the installed-package search path appear in this file's own
         // `imports()` directly, as `From` / `Package` layers, so finding
         // them does not require walking through siblings.
-        //
-        // TODO(sources): consume `From` and `Package` layers here. Today
-        // resolve only walks `ImportLayer::File`.
-        // Requires materializing installed-package files as `oak_db::File`
-        // entities first.
         for layer in self.imports(db) {
-            if let ImportLayer::File(target) = layer {
-                if let Some(def) = target.resolve_export(db, name) {
-                    return Some(def);
-                }
+            match layer {
+                ImportLayer::File(target) => {
+                    if let Some(def) = target.resolve_export(db, name) {
+                        return Some(def);
+                    }
+                },
+                ImportLayer::Package(pkg) => {
+                    if let Some(def) = pkg
+                        .resolve(db, name, PackageVisibility::Exported)
+                        .into_iter()
+                        .next()
+                    {
+                        return Some(def);
+                    }
+                },
+                ImportLayer::From(map) => {
+                    let name_str = name.text(db).as_str();
+                    if let Some(pkg_name) = map.get(name_str) {
+                        if let Some(pkg) = db.package_by_name(pkg_name) {
+                            if let Some(def) = pkg
+                                .resolve(db, name, PackageVisibility::Exported)
+                                .into_iter()
+                                .next()
+                            {
+                                return Some(def);
+                            }
+                        }
+                    }
+                },
             }
         }
 
@@ -129,12 +149,31 @@ impl<'db> File {
 
         // Top level: collation predecessors / other visible files (exports-only
         // chase, same as `resolve`'s imports walk). Avoids the sibling cycle and
-        // matches R's namespace semantics. TODO: Package-level layers.
+        // matches R's namespace semantics.
         for layer in self.imports_at(db, offset) {
-            if let ImportLayer::File(target) = layer {
-                if let Some(def) = target.resolve_export(db, name) {
-                    return vec![def];
-                }
+            match layer {
+                ImportLayer::File(target) => {
+                    if let Some(def) = target.resolve_export(db, name) {
+                        return vec![def];
+                    }
+                },
+                ImportLayer::Package(pkg) => {
+                    let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                    if !defs.is_empty() {
+                        return defs;
+                    }
+                },
+                ImportLayer::From(map) => {
+                    let name_str = name.text(db).as_str();
+                    if let Some(pkg_name) = map.get(name_str) {
+                        if let Some(pkg) = db.package_by_name(pkg_name) {
+                            let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                            if !defs.is_empty() {
+                                return defs;
+                            }
+                        }
+                    }
+                },
             }
         }
 
@@ -164,7 +203,11 @@ impl<'db> File {
     /// `Import` entries through target exports until a `Local` is found. Cycles
     /// resolve to `None` via `exports`'s `cycle_fn`.
     #[salsa::tracked]
-    fn resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Option<Definition<'db>> {
+    pub(crate) fn resolve_export(
+        self,
+        db: &'db dyn Db,
+        name: Name<'db>,
+    ) -> Option<Definition<'db>> {
         let mut current_file = self;
         let mut current_name: Rc<str> = Rc::from(name.text(db).as_str());
 

@@ -8,27 +8,31 @@ use oak_db::File;
 use oak_db::Identifier;
 use oak_db::MemberKind;
 use oak_db::Name;
+use oak_db::PackageVisibility;
+use oak_db::RootKind;
 use oak_semantic::ScopeId;
 
 use crate::FileRange;
 
 /// Find all references to the symbol at `offset` in `file`.
 ///
-/// Uses `resolve_at()` to confirm each candidate: a textual mention of the
-/// same name is only included when it resolves to the same definition set.
-/// Member-name cursors (`$`/`@` RHS) and namespace-access cursors (`pkg::sym`
-/// RHS) fall back to a structural cross-file scan.
+/// Uses `resolve_at()` to confirm each candidate: a textual mention of the same
+/// name is only included when it resolves to the same definition set. A
+/// `pkg::sym` cursor on a package we know about resolves `sym` to its
+/// definition and runs the same confirmation path. Member-name cursors (`$`/`@`
+/// RHS) and `pkg::sym` cursors on an unknown package fall back to a structural
+/// cross-file scan.
 pub fn find_references(
     db: &dyn Db,
     file: File,
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    let Some(ident) = Identifier::classify(db, file, offset) else {
+    let Some(identifier) = Identifier::classify(db, file, offset) else {
         return Vec::new();
     };
 
-    match ident {
+    let mut refs = match identifier {
         Identifier::Variable { .. } => {
             find_variable_references(db, file, offset, include_declaration)
         },
@@ -37,20 +41,25 @@ pub fn find_references(
         },
         Identifier::NamespaceAccess {
             namespace, name, ..
-        } => {
-            // TODO(namespace-refs): also union the bare-name references, the
-            // inverse of the bridge in `find_variable_references`. When
-            // `namespace` is a workspace package, resolve `name` to its
-            // definition and run the variable path. Installed-package symbols
-            // wait on package resolution (see `find_namespace_references`).
-            find_namespace_references(
-                db,
-                file,
-                namespace.text(db).as_str(),
-                name.text(db).as_str(),
-            )
-        },
-    }
+        } => find_namespace_references(db, file, namespace, name, include_declaration),
+    };
+
+    // Installed-package sources are read-only, so references there are noise we
+    // drop. The one exception is the package the cursor sits in: when the user
+    // has navigated into a library, they want references within that same
+    // package. Workspace hits are on the other hand always kept.
+    let cursor_package = file.package(db);
+    refs.retain(|reference| {
+        !is_library_file(db, reference.file) || reference.file.package(db) == cursor_package
+    });
+
+    refs
+}
+
+/// Whether `file` belongs to an installed (library) package root.
+fn is_library_file(db: &dyn Db, file: File) -> bool {
+    file.root(db)
+        .is_some_and(|root| root.kind(db) == RootKind::Library)
 }
 
 fn find_variable_references(
@@ -62,6 +71,17 @@ fn find_variable_references(
     let Some((name, _, target_defs)) = file.resolve_variable_at(db, offset) else {
         return Vec::new();
     };
+    collect_definition_references(db, file, name, target_defs, include_declaration)
+}
+
+/// Find every reference that resolves to the same binding as `target_defs`.
+fn collect_definition_references<'db>(
+    db: &'db dyn Db,
+    file: File,
+    name: Name<'db>,
+    target_defs: Vec<Definition<'db>>,
+    include_declaration: bool,
+) -> Vec<FileRange> {
     if target_defs.is_empty() {
         return Vec::new();
     }
@@ -125,10 +145,9 @@ fn find_variable_references(
 /// confirmation that it's the right symbol, so unlike the bare-name path this
 /// needs no re-resolution.
 ///
-/// TODO(namespace-refs): the reverse (cursor on `pkg::name` also finding bare
-/// `name`) is unimplemented in the `NamespaceAccess` arm of `find_references`.
-/// Installed-package symbols bridge in neither direction until package
-/// resolution lands (see `find_namespace_references`).
+/// The reverse direction (cursor on `pkg::name` also finding bare `name`) runs
+/// through [`find_namespace_references`], which resolves `name` in `pkg` and
+/// hands the definitions to `collect_definition_references`.
 fn collect_package_qualified_uses<'db>(
     db: &'db dyn Db,
     target_defs: &[Definition<'db>],
@@ -165,16 +184,37 @@ fn find_member_references(db: &dyn Db, file: File, name: &str, kind: MemberKind)
     results
 }
 
-fn find_namespace_references(
-    db: &dyn Db,
+/// References for a `pkg::name` cursor.
+///
+/// When we know `pkg` (a workspace or installed package in the db), resolve
+/// `name` against it and run the path shared with bare variables. We resolve
+/// with `Internal` visibility because `::` and `:::` name the same binding for
+/// a references search, so we want the definition whether or not it is
+/// exported.
+///
+/// When `pkg` is unknown (e.g. an installed package not loaded into the db),
+/// there is no definition to compare against, so fall back to a structural scan
+/// that matches `pkg::name` sites by text.
+fn find_namespace_references<'db>(
+    db: &'db dyn Db,
     primary: File,
-    namespace: &str,
-    name: &str,
+    namespace: Name<'db>,
+    name: Name<'db>,
+    include_declaration: bool,
 ) -> Vec<FileRange> {
+    if let Some(package) = db.package_by_name(namespace.text(db).as_str()) {
+        let defs = package.resolve(db, name, PackageVisibility::Internal);
+        if !defs.is_empty() {
+            return collect_definition_references(db, primary, name, defs, include_declaration);
+        }
+    }
+
     let mut results = Vec::new();
 
-    for file in all_matching_files(db, name) {
-        for range in file.namespace_uses_of(db, namespace, name) {
+    let namespace = namespace.text(db);
+    let name = name.text(db);
+    for file in all_matching_files(db, name.as_str()) {
+        for range in file.namespace_uses_of(db, namespace.as_str(), name.as_str()) {
             results.push(FileRange { file, range });
         }
     }

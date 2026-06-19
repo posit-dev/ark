@@ -8,6 +8,7 @@ mod identifier;
 mod imports;
 mod inputs;
 mod name;
+mod package_resolve;
 mod parse;
 mod storage;
 
@@ -34,4 +35,5 @@ pub use inputs::RootKind;
 pub use inputs::StaleRoot;
 pub use inputs::WorkspaceRoots;
 pub use name::Name;
+pub use package_resolve::PackageVisibility;
 pub use storage::OakDatabase;

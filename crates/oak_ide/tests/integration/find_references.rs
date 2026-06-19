@@ -9,53 +9,17 @@
 //! then by source offset), so tests assert the full result vector rather than
 //! membership.
 
-use aether_path::FilePath;
-use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_db::DbInputs;
-use oak_db::File;
 use oak_db::OakDatabase;
-use oak_db::Package;
-use oak_db::Root;
-use oak_db::RootKind;
 use oak_ide::find_references;
-use oak_ide::FileRange;
-use oak_package_metadata::namespace::Namespace;
-use oak_scan::DbScan;
-use salsa::Setter;
-use url::Url;
 
-fn file_url(name: &str) -> Url {
-    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
-    // synthesize one for tests. Linux is happy with rootless paths.
-    if cfg!(windows) {
-        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
-    } else {
-        Url::parse(&format!("file:///project/R/{name}")).unwrap()
-    }
-}
-
-fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
-    db.upsert_editor(FilePath::from_url(&file_url(name)), contents.to_string())
-}
-
-fn offset(n: u32) -> TextSize {
-    TextSize::from(n)
-}
-
-fn range(start: u32, end: u32) -> TextRange {
-    TextRange::new(TextSize::from(start), TextSize::from(end))
-}
-
-/// Project results down to in-file ranges, for single-file tests.
-fn ranges(refs: &[FileRange]) -> Vec<TextRange> {
-    refs.iter().map(|r| r.range).collect()
-}
-
-/// Project results down to (file, range) pairs, for cross-file tests.
-fn pairs(refs: &[FileRange]) -> Vec<(File, TextRange)> {
-    refs.iter().map(|r| (r.file, r.range)).collect()
-}
+use crate::support::install_library_package;
+use crate::support::install_workspace_package;
+use crate::support::offset;
+use crate::support::pairs;
+use crate::support::range;
+use crate::support::ranges;
+use crate::support::upsert;
 
 // --- Local resolution ---
 
@@ -231,14 +195,12 @@ fn test_unbound_use_returns_empty() {
 
 #[test]
 fn test_namespace_rhs_returns_namespace_scan() {
-    // Cursor on `mutate` RHS of `::` uses the structural namespace scan: it
-    // matches `dplyr::mutate` across files but not `tidyr::mutate` (different
-    // namespace) nor a bare `mutate()` call (installed packages aren't in the
-    // resolution graph, so there's no shared definition to compare against).
-    //
-    // TODO(namespace-refs): once `resolve` consumes the `Package` / `From`
-    // import layers, a bare `mutate` will resolve to dplyr's `mutate` and
-    // belong here.
+    // Cursor on `mutate` RHS of `::` with no `dplyr` package in the db falls
+    // back to the structural namespace scan: it matches `dplyr::mutate` across
+    // files but not `tidyr::mutate` (different namespace) nor a bare `mutate()`
+    // call (no package to resolve through, so there's no shared definition to
+    // compare against). The resolve-and-bridge path is exercised by
+    // `test_namespace_access_bridges_to_bare_name`.
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "a.R", "dplyr::mutate\n");
     let file2 = upsert(&mut db, "b.R", "dplyr::mutate\ntidyr::mutate\nmutate()\n");
@@ -349,8 +311,8 @@ fn test_package_symbol_bridges_to_namespace_access() {
     // same binding. `script.R`'s bare `foo` doesn't resolve to `pkg` (no
     // attach), so it isn't included.
     let mut db = OakDatabase::new();
-    let pkg_files = build_workspace_package(&mut db, &[("foo.R", "foo <- function() 1\n")]);
-    let foo_file = pkg_files[0];
+    let foo_file =
+        install_workspace_package(&mut db, "pkg", &["foo"], "foo.R", "foo <- function() 1\n");
     let script = upsert(&mut db, "script.R", "pkg::foo()\nfoo\n");
 
     // Cursor on the def `foo` at offset 0.
@@ -364,38 +326,122 @@ fn test_package_symbol_bridges_to_namespace_access() {
     ]);
 }
 
-// --- helpers for root / package wiring ---
+#[test]
+fn test_namespace_access_bridges_to_bare_name() {
+    // The inverse of `test_package_symbol_bridges_to_namespace_access`: a cursor
+    // on `mypkg::foo` resolves `foo` in `mypkg` and runs the variable path, so
+    // it surfaces the bare `foo` use that attaches `mypkg` too. `script.R` does
+    // `library(mypkg)`, so its bare `foo` resolves to the same binding. `mypkg`
+    // is a workspace package, so its editable def is included.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_workspace_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nmypkg::foo()\nfoo\n");
 
-/// Build a workspace package holding `files` (name, contents), each with the
-/// package back-pointer set, and register it under a workspace root. Returns
-/// the created `File`s in order.
-fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<File> {
-    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION");
-    let created: Vec<File> = files
-        .iter()
-        .map(|(name, contents)| {
-            let url =
-                FilePath::from_url(&Url::parse(&format!("file:///project/pkg/R/{name}")).unwrap());
-            File::new(db, url, contents.to_string(), Some(pkg))
-        })
-        .collect();
-    pkg.set_files(db).to(created.clone());
+    // Cursor on the `foo` in `mypkg::foo` (offset 22).
+    let refs = find_references(&db, script, offset(22), true);
 
-    let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
-    db.workspace_roots().set_roots(db).to(vec![root]);
-    created
+    // script.R (primary) first: the `mypkg::foo` qualified site (22..25) then the
+    // bare `foo` use (28..31). Then `mypkg`'s def in a.R (0..3).
+    assert_eq!(pairs(&refs), vec![
+        (script, range(22, 25)),
+        (script, range(28, 31)),
+        (pkg_file, range(0, 3)),
+    ]);
 }
 
-fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
-    Package::new(
-        db,
-        FilePath::from_url(&Url::parse(description_url).unwrap()),
-        "pkg".to_string(),
-        None,
-        Namespace::default(),
-        vec![],
-        vec![],
-        None,
-    )
+#[test]
+fn test_namespace_access_excludes_installed_package_def() {
+    // Same shape as the workspace bridge, but `mypkg` is an *installed* package.
+    // Its source is read-only, so the def in a.R is dropped. Only the workspace
+    // sites in script.R survive: the `mypkg::foo` qualified site and the bare
+    // `foo` use that resolves through the attach.
+    let mut db = OakDatabase::new();
+    let _pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nmypkg::foo()\nfoo\n");
+
+    let refs = find_references(&db, script, offset(22), true);
+    assert_eq!(pairs(&refs), vec![
+        (script, range(22, 25)),
+        (script, range(28, 31)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_installed_package_finds_references() {
+    // The cursor is in installed-package source itself: the user has navigated
+    // into `mypkg` and runs find-references on its `foo`. Here library hits are
+    // wanted, so the exclusion is lifted. We get the def and the sibling use
+    // inside `mypkg`, plus the bare `foo` in the workspace script that attaches
+    // it.
+    let mut db = OakDatabase::new();
+    let pkg_file = install_library_package(
+        &mut db,
+        "mypkg",
+        &["foo"],
+        "a.R",
+        "foo <- function() 1\nfoo()\n",
+    );
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    // Cursor on the def `foo` at offset 0 inside the package file.
+    let refs = find_references(&db, pkg_file, offset(0), true);
+
+    // a.R (primary, the library file) first: def (0..3) then the sibling use
+    // `foo()` (20..23). Then the workspace use in script.R (15..18).
+    assert_eq!(pairs(&refs), vec![
+        (pkg_file, range(0, 3)),
+        (pkg_file, range(20, 23)),
+        (script, range(15, 18)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_installed_package_excludes_other_packages() {
+    // Cursor in `mypkg` source again, but now a *second* installed package,
+    // `otherpkg`, also calls `mypkg::foo`. References within `mypkg` and in the
+    // workspace are kept, but the hit inside `otherpkg` is dropped: it's
+    // read-only source the user didn't navigate into.
+    let mut db = OakDatabase::new();
+    let mypkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 1\n");
+    let _otherpkg_file = install_library_package(&mut db, "otherpkg", &[], "b.R", "mypkg::foo()\n");
+    let script = upsert(&mut db, "script.R", "mypkg::foo()\n");
+
+    // Cursor on the def `foo` at offset 0 inside `mypkg`.
+    let refs = find_references(&db, mypkg_file, offset(0), true);
+
+    // `mypkg`'s def (primary) and the workspace `mypkg::foo` site. `otherpkg`'s
+    // `mypkg::foo` is excluded.
+    assert_eq!(pairs(&refs), vec![
+        (mypkg_file, range(0, 3)),
+        (script, range(7, 10)),
+    ]);
+}
+
+#[test]
+fn test_cross_package_references_via_library() {
+    // A script attaches `mypkg` and uses its exported `foo`. The use resolves
+    // through the package layer to the binding in the package file, confirming
+    // the cross-package resolution feeds `resolve_at`. The def lives in an
+    // installed package, so it is excluded from the results: only the script
+    // use is reported, with or without `include_declaration`.
+    let mut db = OakDatabase::new();
+    let _pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    let use_start = "library(mypkg)\n".len() as u32;
+    let refs = find_references(&db, script, offset(use_start), true);
+    assert_eq!(pairs(&refs), vec![(
+        script,
+        range(use_start, use_start + 3)
+    )]);
+
+    let refs = find_references(&db, script, offset(use_start), false);
+    assert_eq!(pairs(&refs), vec![(
+        script,
+        range(use_start, use_start + 3)
+    )]);
 }

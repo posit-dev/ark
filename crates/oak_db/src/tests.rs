@@ -8,5 +8,6 @@ mod file_resolve_at;
 mod file_root;
 mod identifier;
 mod inputs;
+mod package_resolve;
 mod resolver;
 mod test_db;

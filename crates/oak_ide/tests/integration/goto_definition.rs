@@ -6,32 +6,13 @@
 //! by `oak_db`'s `file_resolve_at` / `file_resolve` tests, and the use-def
 //! logic by `oak_semantic`; we don't re-test it here.
 
-use aether_path::FilePath;
-use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_db::File;
 use oak_db::OakDatabase;
 use oak_ide::goto_definition;
-use oak_scan::DbScan;
-use url::Url;
 
-fn file_url(name: &str) -> Url {
-    // `Url::to_file_path` on Windows requires a drive-letter prefix, so
-    // synthesize one for tests. Linux is happy with rootless paths.
-    if cfg!(windows) {
-        Url::parse(&format!("file:///C:/project/R/{name}")).unwrap()
-    } else {
-        Url::parse(&format!("file:///project/R/{name}")).unwrap()
-    }
-}
-
-fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
-    db.upsert_editor(FilePath::from_url(&file_url(name)), contents.to_string())
-}
-
-fn range(start: u32, end: u32) -> TextRange {
-    TextRange::new(TextSize::from(start), TextSize::from(end))
-}
+use crate::support::install_library_package;
+use crate::support::range;
+use crate::support::upsert;
 
 #[test]
 fn test_local_definition_navigates_to_binding() {
@@ -79,4 +60,28 @@ fn test_navigates_across_source_directive() {
     assert_eq!(target.file, helpers);
     assert_eq!(target.name, "helper");
     assert_eq!(target.full_range, range(0, 6));
+}
+
+#[test]
+fn test_navigates_to_package_export_via_library_call() {
+    // The package-layer wiring (`resolve_at` -> `Package::resolve`) must survive
+    // the handler's projection to a `NavigationTarget`. db-layer tests assert
+    // `def.file`/`def.name`; this pins down that a package-resolved binding
+    // actually yields a jump (i.e. its `name_range` is `Some`).
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+
+    // A script attaches `mypkg`, then uses the exported `foo`.
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+    let offset = TextSize::from("library(mypkg)\n".len() as u32);
+
+    let targets = goto_definition(&db, script, offset);
+    assert_eq!(targets.len(), 1);
+    let target = &targets[0];
+
+    // Jumps into the package file, at the `foo` binding's coordinates.
+    assert_eq!(target.file, pkg_file);
+    assert_eq!(target.name, "foo");
+    assert_eq!(target.full_range, range(0, 3));
 }
