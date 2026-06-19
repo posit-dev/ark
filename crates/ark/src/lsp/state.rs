@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
 use oak_semantic::library::Library;
@@ -18,8 +19,10 @@ pub(crate) struct WorldState {
     /// Salsa input tree for Oak queries.
     pub(crate) db: OakDatabase,
 
-    /// Watched documents
-    pub(crate) documents: HashMap<Url, Document>,
+    /// Watched documents, keyed on the normalised [`FilePath`] form.
+    /// The verbatim editor URL is preserved on each [`Document::url`]
+    /// for wire output.
+    pub(crate) documents: HashMap<FilePath, Document>,
 
     /// Watched folders
     pub(crate) workspace: Workspace,
@@ -78,19 +81,19 @@ impl WorldState {
         }
     }
 
-    pub(crate) fn get_document(&self, uri: &Url) -> anyhow::Result<&Document> {
-        if let Some(doc) = self.documents.get(uri) {
+    pub(crate) fn get_document(&self, path: &FilePath) -> anyhow::Result<&Document> {
+        if let Some(doc) = self.documents.get(path) {
             Ok(doc)
         } else {
-            Err(anyhow!("Can't find document for URI {uri}"))
+            Err(anyhow!("Can't find document for path {path}"))
         }
     }
 
-    pub(crate) fn get_document_mut(&mut self, uri: &Url) -> anyhow::Result<&mut Document> {
-        if let Some(doc) = self.documents.get_mut(uri) {
+    pub(crate) fn get_document_mut(&mut self, path: &FilePath) -> anyhow::Result<&mut Document> {
+        if let Some(doc) = self.documents.get_mut(path) {
             Ok(doc)
         } else {
-            Err(anyhow!("Can't find document for URI {uri}"))
+            Err(anyhow!("Can't find document for path {path}"))
         }
     }
 
@@ -115,6 +118,15 @@ impl WorldState {
             ..self.clone()
         }
     }
+
+    /// Insert a document, keying on the normalised [`FilePath`] and
+    /// stashing the verbatim editor URL on [`Document::url`] for wire
+    /// output.
+    pub(crate) fn insert_document(&mut self, uri: Url, mut doc: Document) {
+        let key = FilePath::from_url(&uri);
+        doc.url = uri;
+        self.documents.insert(key, doc);
+    }
 }
 
 pub(crate) fn with_document<T, F>(
@@ -134,16 +146,16 @@ where
     // If we have a cached copy of the document (because we're monitoring it)
     // then use that; otherwise, try to read the document from the provided
     // path and use that instead.
-    let Ok(uri) = Url::from_file_path(path) else {
+    let Some(key) = FilePath::from_path_buf(path.to_path_buf()) else {
         log::info!(
-            "couldn't construct uri from {}; reading from disk instead",
+            "couldn't construct file path from {}; reading from disk instead",
             path.display()
         );
         return fallback();
     };
 
-    let Ok(document) = state.get_document(&uri) else {
-        log::info!("no document for uri {uri}; reading from disk instead");
+    let Ok(document) = state.get_document(&key) else {
+        log::info!("no document for path {key}; reading from disk instead");
         return fallback();
     };
 
@@ -151,8 +163,11 @@ where
 }
 
 pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
-    let uris: Vec<Url> = state.documents.iter().map(|elt| elt.0.clone()).collect();
-    uris
+    state
+        .documents
+        .values()
+        .map(|doc| doc.url.clone())
+        .collect()
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
+use aether_path::FilePath;
 use anyhow::anyhow;
 use stdext::result::ResultExt;
 use stdext::unwrap;
@@ -35,7 +36,7 @@ pub(crate) fn find_references(
     let position = params.text_document_position.position;
     let include_declaration = params.context.include_declaration;
 
-    let document = state.get_document(&uri)?;
+    let document = state.get_document(&FilePath::from_url(&uri))?;
 
     let mut locations: Vec<Location> = Vec::new();
 

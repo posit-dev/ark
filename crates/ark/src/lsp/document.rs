@@ -11,13 +11,26 @@ use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::anyhow;
 use oak_semantic::semantic_index::SemanticIndex;
 use tower_lsp::lsp_types;
+use tower_lsp::lsp_types::Url;
 use tree_sitter::Parser;
 use tree_sitter::Tree;
 
 use crate::lsp::config::DocumentConfig;
 
+/// Placeholder URL used by `Document::new`. Production paths replace
+/// this with the editor's verbatim URL via `WorldState::insert_document`.
+/// Tests that don't go through `WorldState` leave the placeholder.
+const PLACEHOLDER_URL: &str = "ark://internal/document-url-unset";
+
 #[derive(Clone)]
 pub struct Document {
+    /// The editor's URL for this document, byte-for-byte as received in
+    /// `did_open`. Used for wire output (diagnostics, etc.) so the
+    /// frontend always sees the URI it sent us, never a normalised
+    /// round-trip. `WorldState::insert_document` populates this; the
+    /// default constructor uses a placeholder.
+    pub url: Url,
+
     /// The document's textual contents.
     pub contents: String,
 
@@ -76,6 +89,7 @@ impl Document {
         let line_index = biome_line_index::LineIndex::new(&contents);
 
         Self {
+            url: Url::parse(PLACEHOLDER_URL).expect("placeholder URL parses"),
             contents,
             version,
             ast,

@@ -9,6 +9,7 @@
 
 use std::result::Result::Ok;
 
+use aether_path::FilePath;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
 use tower_lsp::lsp_types::DocumentSymbolParams;
@@ -159,7 +160,10 @@ pub(crate) fn document_symbols(
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let uri = &params.text_document.uri;
-    let doc = state.documents.get(uri).into_result()?;
+    let doc = state
+        .documents
+        .get(&FilePath::from_url(uri))
+        .into_result()?;
     let ast = &doc.ast;
 
     // Start walking from the root node

@@ -146,7 +146,7 @@ pub(crate) fn initialize(
     // Start first round of indexing. `state.documents` is empty at init since
     // no `didOpen` has fired yet, but build the set through the same shape we
     // use elsewhere so the call site reads consistently.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
     let requests =
         lsp_state
             .oak_scheduler
@@ -272,7 +272,7 @@ pub(crate) fn did_open(
     let document = Document::new_with_parser(contents, &mut parser, Some(version));
 
     lsp_state.parsers.insert(uri.clone(), parser);
-    state.documents.insert(uri.clone(), document.clone());
+    state.insert_document(uri.clone(), document.clone());
 
     let path = FilePath::from_url(&uri);
     state.db.upsert_editor(path, contents.to_string());
@@ -292,7 +292,7 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let document = state.get_document_mut(uri)?;
+    let document = state.get_document_mut(&FilePath::from_url(uri))?;
 
     let parser = lsp_state
         .parsers
@@ -331,7 +331,7 @@ pub(crate) fn did_close(
 
     state
         .documents
-        .remove(&uri)
+        .remove(&FilePath::from_url(&uri))
         .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
 
     lsp_state
@@ -407,7 +407,7 @@ pub(crate) fn did_change_watched_files(
 ) -> anyhow::Result<()> {
     // Editor owns the contents of files it has open: Oak should ignore
     // disk-side events for those URLs.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
 
     let events: Vec<FileEvent> = params
         .changes
@@ -460,7 +460,7 @@ pub(crate) fn did_change_workspace_folders(
     // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
     // open buffers keep getting analysed even when their workspace
     // folder goes away.
-    let editor_owned: HashSet<FilePath> = state.documents.keys().map(FilePath::from_url).collect();
+    let editor_owned: HashSet<FilePath> = state.documents.keys().cloned().collect();
 
     let requests =
         lsp_state
@@ -503,7 +503,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.get_document_mut(uri) else {
+    let Ok(doc) = state.get_document_mut(&FilePath::from_url(uri)) else {
         return;
     };
 
@@ -594,8 +594,9 @@ async fn update_config(
         let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
         let head = std::mem::replace(&mut remaining, tail);
 
+        let path = FilePath::from_url(&uri);
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.get_document_mut(&uri) {
+            if let Ok(doc) = state.get_document_mut(&path) {
                 (mapping.set)(&mut doc.config, value);
             }
         }
