@@ -209,7 +209,7 @@ mod tests {
         assert_eq!(text_document_edits.len(), 1);
 
         let mut text_document_edit = text_document_edits.pop().unwrap();
-        assert_eq!(text_document_edit.text_document.uri, file.wire_url);
+        assert_eq!(text_document_edit.text_document.uri, *file.wire_url());
         assert_eq!(text_document_edit.edits.len(), 1);
 
         let OneOf::Left(text_edit) = text_document_edit.edits.pop().unwrap() else {

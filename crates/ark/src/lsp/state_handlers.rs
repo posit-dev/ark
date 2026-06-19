@@ -260,7 +260,7 @@ pub(crate) fn did_change(
     // version means we've lost sync and can't keep our state consistent.
     // Currently panicking, but in principle we should shut the LSP down in an
     // orderly fashion.
-    if let Some(old_version) = file.version {
+    if let Some(old_version) = file.version() {
         if new_version < old_version {
             panic!(
                 "out-of-sync change notification: currently at {old_version}, got {new_version}"
@@ -270,13 +270,13 @@ pub(crate) fn did_change(
 
     // Fold the edits into the new buffer text and push it into `oak`
     let new_contents = apply_content_changes(
-        file.inner.source_text(&state.db).as_str(),
+        file.file().source_text(&state.db).as_str(),
         &params.content_changes,
         encoding,
     );
     state.db.upsert_editor(key.clone(), new_contents);
 
-    file.version = Some(new_version);
+    file.set_version(Some(new_version));
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -419,13 +419,14 @@ pub(crate) fn did_change_formatting_options(
     // than the latter: it does not allow the tab size to differ from the
     // indent size, as in the R core sources. So we just ignore the less
     // rich updates in this case.
-    if doc.config.indent.indent_size != doc.config.indent.tab_width {
+    if doc.config().indent.indent_size != doc.config().indent.tab_width {
         return;
     }
 
-    doc.config.indent.indent_size = opts.tab_size as usize;
-    doc.config.indent.tab_width = opts.tab_size as usize;
-    doc.config.indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
+    let indent = &mut doc.config_mut().indent;
+    indent.indent_size = opts.tab_size as usize;
+    indent.tab_width = opts.tab_size as usize;
+    indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
 
     // TODO:
     // `trim_trailing_whitespace`
@@ -502,7 +503,7 @@ async fn update_config(
 
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
             if let Ok(doc) = state.open_file_mut(&uri) {
-                (mapping.set)(&mut doc.config, value);
+                (mapping.set)(doc.config_mut(), value);
             }
         }
     }

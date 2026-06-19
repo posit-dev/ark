@@ -11,10 +11,44 @@ use crate::lsp::config::DocumentConfig;
 /// state that should not cross into the analysis layer.
 #[derive(Clone, Debug)]
 pub(crate) struct OpenFile {
-    pub(crate) inner: File,
-    pub(crate) version: Option<i32>,
-    pub(crate) config: DocumentConfig,
-    pub(crate) wire_url: Url,
+    file: File,
+    version: Option<i32>,
+    config: DocumentConfig,
+    wire_url: Url,
+}
+
+impl OpenFile {
+    pub(crate) fn new(file: File, version: Option<i32>, wire_url: Url) -> Self {
+        Self {
+            file,
+            version,
+            config: DocumentConfig::default(),
+            wire_url,
+        }
+    }
+
+    pub(crate) fn file(&self) -> File {
+        self.file
+    }
+    pub(crate) fn version(&self) -> Option<i32> {
+        self.version
+    }
+    pub(crate) fn config(&self) -> &DocumentConfig {
+        &self.config
+    }
+
+    /// The verbatim editor URL, preserved so wire output echoes the URI the
+    /// editor sent us. See [`crate::lsp::state::WorldState::wire_url`].
+    pub(crate) fn wire_url(&self) -> &Url {
+        &self.wire_url
+    }
+
+    pub(crate) fn set_version(&mut self, version: Option<i32>) {
+        self.version = version;
+    }
+    pub(crate) fn config_mut(&mut self) -> &mut DocumentConfig {
+        &mut self.config
+    }
 }
 
 /// Free functions over `LineIndex` + `PositionEncoding`, so anything holding
@@ -108,18 +142,14 @@ pub(crate) fn test_open_file(code: &str) -> (oak_db::OakDatabase, OpenFile) {
     let db = oak_db::OakDatabase::new();
     let url = Url::parse("file:///test.R").unwrap();
     let key = FilePath::from_url(&url);
-    let file = OpenFile {
-        inner: File::new(
-            &db,
-            key,
-            oak_db::FileRevision::zero(),
-            Some(code.to_string()),
-            None,
-        ),
-        version: None,
-        config: DocumentConfig::default(),
-        wire_url: url,
-    };
+    let inner = File::new(
+        &db,
+        key,
+        oak_db::FileRevision::zero(),
+        Some(code.to_string()),
+        None,
+    );
+    let file = OpenFile::new(inner, None, url);
     (db, file)
 }
 
@@ -136,7 +166,7 @@ mod tests {
     fn test_tree_sitter_point_from_lsp_position_wide_encoding() {
         // The emoji is 4 UTF-8 bytes and 2 UTF-16 bytes
         let (db, file) = test_open_file("😃a");
-        let line_index = file.inner.line_index(&db);
+        let line_index = file.file().line_index(&db);
 
         let point = tree_sitter_point_from_lsp_position(
             lsp_types::Position::new(0, 2),
@@ -158,7 +188,7 @@ mod tests {
     #[test]
     fn test_lsp_position_from_tree_sitter_point_wide_encoding() {
         let (db, file) = test_open_file("😃a");
-        let line_index = file.inner.line_index(&db);
+        let line_index = file.file().line_index(&db);
 
         let position =
             lsp_position_from_tree_sitter_point(Point::new(0, 4), line_index, ENCODING).unwrap();
@@ -173,7 +203,7 @@ mod tests {
     fn test_utf8_position_roundtrip_multibyte() {
         // `é` is 2 bytes
         let (db, file) = test_open_file("é\n");
-        let line_index = file.inner.line_index(&db);
+        let line_index = file.file().line_index(&db);
         let encoding = PositionEncoding::Utf8;
 
         let lsp_position = lsp_types::Position::new(0, 2);

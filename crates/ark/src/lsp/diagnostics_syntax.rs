@@ -448,9 +448,9 @@ mod tests {
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let (db, open_file) = test_open_file(text);
         let library = Library::default();
-        let context = DiagnosticContext::new(&db, &None, &library, open_file.inner, ENCODING);
+        let context = DiagnosticContext::new(&db, &None, &library, open_file.file(), ENCODING);
         let diagnostics =
-            syntax_diagnostics(open_file.inner.tree_sitter(&db).root_node(), &context).unwrap();
+            syntax_diagnostics(open_file.file().tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

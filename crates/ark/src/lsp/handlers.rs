@@ -449,10 +449,11 @@ pub(crate) fn handle_indent(
     let encoding = state.config.position_encoding;
 
     let db = &state.db;
-    let line_index = open_file.inner.line_index(db);
+    let line_index = open_file.file().line_index(db);
     let point = tree_sitter_point_from_lsp_position(ctxt.position, line_index, encoding)?;
 
-    let Some(edits) = indent_edit(db, open_file.inner, &open_file.config.indent, point.row)? else {
+    let Some(edits) = indent_edit(db, open_file.file(), &open_file.config().indent, point.row)?
+    else {
         return Ok(None);
     };
 
@@ -479,7 +480,7 @@ pub(crate) fn handle_code_action(
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let range =
-        tree_sitter_range_from_lsp_range(params.range, file.inner.line_index(db), encoding)?;
+        tree_sitter_range_from_lsp_range(params.range, file.file().line_index(db), encoding)?;
 
     let code_actions = code_actions(db, &file, range, encoding, &lsp_state.capabilities);
 

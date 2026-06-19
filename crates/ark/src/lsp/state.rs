@@ -7,7 +7,6 @@ use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
-use crate::lsp::config::DocumentConfig;
 use crate::lsp::config::LspConfig;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::open_file::OpenFile;
@@ -126,7 +125,7 @@ impl WorldState {
         let Some(file) = self.open_files.get(&key) else {
             return Err(anyhow!("Can't find document for URI {uri}"));
         };
-        Ok(file.inner)
+        Ok(file.file())
     }
 
     /// URL to put on the wire for `file`. Open buffers keep the editor's
@@ -137,7 +136,7 @@ impl WorldState {
         let path = file.path(&self.db);
         self.open_files
             .get(path)
-            .map(|open_file| open_file.wire_url.clone())
+            .map(|open_file| open_file.wire_url().clone())
             .unwrap_or_else(|| path.to_url())
     }
 
@@ -149,12 +148,7 @@ impl WorldState {
     /// `upsert_editor()` and handing us the resulting [`File`].
     pub(crate) fn insert_open_file(&mut self, url: Url, file: File, version: Option<i32>) {
         let key = FilePath::from_url(&url);
-        let open_file = OpenFile {
-            inner: file,
-            version,
-            config: DocumentConfig::default(),
-            wire_url: url,
-        };
+        let open_file = OpenFile::new(file, version, url);
         self.open_files.insert(key, open_file);
     }
 }
@@ -163,6 +157,6 @@ pub(crate) fn open_file_uris(state: &WorldState) -> Vec<Url> {
     state
         .open_files
         .values()
-        .map(|doc| doc.wire_url.clone())
+        .map(|doc| doc.wire_url().clone())
         .collect()
 }

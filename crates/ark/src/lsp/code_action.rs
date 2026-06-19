@@ -43,15 +43,15 @@ pub(crate) fn code_actions(
         return actions.into_response();
     }
 
-    if let Some(edit) = roxygen_documentation(db, file.inner, range) {
+    if let Some(edit) = roxygen_documentation(db, file.file(), range) {
         if let Ok(position) =
-            lsp_position_from_tree_sitter_point(edit.position, file.inner.line_index(db), encoding)
+            lsp_position_from_tree_sitter_point(edit.position, file.file().line_index(db), encoding)
         {
             let range = lsp_types::Range::new(position, position);
             let text_edit = lsp_types::TextEdit::new(range, edit.documentation);
             let workspace_edit = code_action_workspace_text_edit(
-                file.wire_url.clone(),
-                file.version,
+                file.wire_url().clone(),
+                file.version(),
                 vec![text_edit],
                 capabilities,
             );

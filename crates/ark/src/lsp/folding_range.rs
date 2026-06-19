@@ -374,7 +374,7 @@ mod tests {
 
     fn test_folding_range(code: &str) -> Vec<FoldingRange> {
         let (db, file) = crate::lsp::open_file::test_open_file(code);
-        sorted_ranges(folding_range(&db, file.inner).unwrap())
+        sorted_ranges(folding_range(&db, file.file()).unwrap())
     }
 
     fn sorted_ranges(mut ranges: Vec<FoldingRange>) -> Vec<FoldingRange> {
@@ -722,7 +722,7 @@ function() {
         let (db, file) = crate::lsp::open_file::test_open_file(code);
 
         // Handle the expected parse error
-        match folding_range(&db, file.inner) {
+        match folding_range(&db, file.file()) {
             Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
             Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
         }
@@ -737,10 +737,10 @@ function() {
 \ttab char";
         let (db, file) = crate::lsp::open_file::test_open_file(code);
 
-        assert_eq!(count_leading_whitespaces(&db, file.inner, 0), 0);
-        assert_eq!(count_leading_whitespaces(&db, file.inner, 1), 2);
-        assert_eq!(count_leading_whitespaces(&db, file.inner, 2), 4);
-        assert_eq!(count_leading_whitespaces(&db, file.inner, 3), 1); // Tab counts as 1 char
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 0), 0);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 1), 2);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 2), 4);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 3), 1); // Tab counts as 1 char
     }
 
     #[test]

@@ -947,7 +947,7 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     // way of cancelling diagnostics tasks for outdated documents.
     let batch: HashMap<_, _> = batch
         .into_iter()
-        .map(|task| (task.file.wire_url.clone(), task))
+        .map(|task| (task.file.wire_url().clone(), task))
         .collect();
 
     // Each file is its own blocking task. `spawn_blocking()` catches salsa
@@ -967,8 +967,8 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 
 fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
     let RefreshDiagnosticsTask { file, state } = task;
-    let uri = file.wire_url.clone();
-    let version = file.version;
+    let uri = file.wire_url().clone();
+    let version = file.version();
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
     // Special case testthat-specific behaviour. This is a simple stopgap
@@ -979,7 +979,7 @@ fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult
         .components()
         .any(|c| c.as_os_str() == "testthat");
 
-    let diagnostics = generate_diagnostics(file.inner, state, testthat);
+    let diagnostics = generate_diagnostics(file.file(), state, testthat);
 
     RefreshDiagnosticsResult {
         uri,
@@ -1000,7 +1000,7 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     );
 
     for file in state.open_files.values() {
-        if !ExtUrl::should_diagnose(&file.wire_url) {
+        if !ExtUrl::should_diagnose(file.wire_url()) {
             continue;
         }
 
@@ -1101,7 +1101,7 @@ mod tests {
         respond(
             response_tx,
             || {
-                let _ = file.inner.tree_sitter(&snapshot.db);
+                let _ = file.file().tree_sitter(&snapshot.db);
                 Ok(LspResponse::Hover(None))
             },
             |response| response,
