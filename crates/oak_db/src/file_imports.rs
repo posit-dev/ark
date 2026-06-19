@@ -69,8 +69,14 @@ impl File {
             Some(package) if is_testthat_file(self, db) => {
                 testthat_imports(self, db, package, None)
             },
-            Some(package) => package_imports(self, db, package),
-            None => script_imports(self, db),
+            Some(package) if is_package_source(self, db, package) => {
+                package_imports(self, db, package)
+            },
+            // A file with a package back-pointer that isn't a loadable `R/`
+            // file (`data-raw/`, `inst/`, a non-collated `R/` file) lives in
+            // the package but isn't loaded with it. Resolve it as a standalone
+            // script, same as a file with no package at all.
+            _ => script_imports(self, db),
         }
     }
 
@@ -113,10 +119,23 @@ impl File {
             Some(package) if is_testthat_file(self, db) => {
                 testthat_imports(self, db, package, Some(offset))
             },
-            Some(package) => narrow_package_top_level(self, db, package),
-            None => narrow_script_top_level(self, db, offset),
+            Some(package) if is_package_source(self, db, package) => {
+                narrow_package_top_level(self, db, package)
+            },
+            // A packaged file that isn't a loadable `R/` file narrows like a
+            // standalone script.
+            _ => narrow_script_top_level(self, db, offset),
         }
     }
+}
+
+/// Whether `file` is one of its package's loadable `R/` files, the ones in
+/// `package.files()`. A file can carry a package back-pointer without being
+/// loadable: `data-raw/`, `inst/`, and `R/` files left out of a `Collate:`
+/// directive all land in `package.scripts()` instead and resolve as
+/// standalone scripts.
+fn is_package_source(file: File, db: &dyn Db, package: Package) -> bool {
+    package.files(db).contains(&file)
 }
 
 fn narrow_script_top_level(file: File, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {

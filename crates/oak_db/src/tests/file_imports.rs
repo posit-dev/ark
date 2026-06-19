@@ -204,6 +204,56 @@ fn test_package_file_emits_namespace_and_collation_layers() {
 }
 
 #[test]
+fn test_package_script_resolves_as_standalone_script() {
+    // A `data-raw/` file carries a package back-pointer but lives in
+    // `scripts`, not `files`. It isn't loaded with the package, so its
+    // imports must be the standalone-script view, never the package view
+    // (no `R/` `File` layers, no namespace layers). See #1270.
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["dplyr", "base"]);
+    let dplyr = installed[0];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("internal <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let data_raw = File::new(
+        &db,
+        file_path("w/pkg/data-raw/prep.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![data_raw]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = dplyr;
+    // Only its own `library(dplyr)` and `base` from the default search path
+    // (the only other registered package). `R/a.R` and the namespace are
+    // absent because the script isn't part of the package's namespace.
+    assert_eq!(shape(&db, data_raw.imports(&db)), vec![
+        "Package(dplyr)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
 fn test_testthat_file_sees_helpers_package_and_testthat() {
     let mut db = TestDb::new();
     let installed = install_packages(&mut db, &["testthat", "base"]);
