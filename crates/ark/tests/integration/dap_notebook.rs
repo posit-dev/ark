@@ -853,9 +853,9 @@ fn test_notebook_debug_info_reports_breakpoints() {
 }
 
 /// `debugInfo` must hand back the exact `source.path` the frontend sent, not
-/// the normalized `UrlId` we key breakpoints on. Here the path carries a `..`
-/// segment that `UrlId` collapses, so a normalized echo would differ from what
-/// the editor sent and could open a second editor pane on the same file.
+/// the normalized `FilePath` we key breakpoints on. Here the path carries a `..`
+/// segment that `FilePath` collapses, so a normalized echo would differ from
+/// what the editor sent and could open a second editor pane on the same file.
 #[test]
 #[cfg(not(windows))]
 fn test_notebook_debug_info_echoes_verbatim_breakpoint_path() {
@@ -874,7 +874,7 @@ fn test_notebook_debug_info_echoes_verbatim_breakpoint_path() {
     let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
 
     // Build a `..`-variant of that path. It resolves to the same file (the
-    // intermediate dir exists), but `UrlId` collapses the `..`, so the
+    // intermediate dir exists), but `FilePath` collapses the `..`, so the
     // normalized key no longer matches these bytes.
     let path = std::path::Path::new(source_path);
     let dir = path.parent().unwrap();

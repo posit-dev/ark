@@ -1,7 +1,7 @@
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::Db;
@@ -15,7 +15,7 @@ fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("workspace/{name}/DESCRIPTION")),
+        file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
         Namespace::default(),
@@ -31,7 +31,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("libs/{name}/DESCRIPTION")),
+        file_path(&format!("libs/{name}/DESCRIPTION")),
         name.to_string(),
         Some("1.0.0".to_string()),
         Namespace::default(),
@@ -44,7 +44,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
 }
 
 fn make_script(db: &mut OakDatabase, name: &str) -> File {
-    File::new(db, file_url(name), String::new(), None)
+    File::new(db, file_path(name), String::new(), None)
 }
 
 #[test]

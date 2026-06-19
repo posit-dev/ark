@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -455,10 +455,10 @@ impl GlobalState {
                 // time: a buffer may have opened or closed since the scan
                 // kicked off. The buffer-drain inside `apply_scan_completed` uses
                 // this set as its watcher-event `skip` argument.
-                let editor_owned: HashSet<UrlId> = self.world
+                let editor_owned: HashSet<FilePath> = self.world
                     .documents
                     .keys()
-                    .map(|url| UrlId::from_url(url.clone()))
+                    .map(FilePath::from_url)
                     .collect();
 
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(

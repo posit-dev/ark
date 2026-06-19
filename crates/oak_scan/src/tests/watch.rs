@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -30,7 +30,7 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
 
 /// Sync helper: set workspace paths and drive the scheduler to
 /// quiescence on the current thread.
-fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<UrlId>) {
+fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<FilePath>) {
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.set_workspace_paths(db, paths, editor_owned);
     drain_scheduler(db, &mut scheduler, reqs, editor_owned);
@@ -38,7 +38,7 @@ fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &H
 
 /// Sync helper: dispatch watcher events through the scheduler and
 /// drive it to quiescence.
-fn apply_watcher_events(db: &mut OakDatabase, events: Vec<FileEvent>, skip: &HashSet<UrlId>) {
+fn apply_watcher_events(db: &mut OakDatabase, events: Vec<FileEvent>, skip: &HashSet<FilePath>) {
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.apply_watcher_events(db, events, skip);
     drain_scheduler(db, &mut scheduler, reqs, skip);
@@ -47,23 +47,23 @@ fn apply_watcher_events(db: &mut OakDatabase, events: Vec<FileEvent>, skip: &Has
 /// Sync helper: synthesize a single Changed watcher event. The
 /// scheduler reads contents from disk, so callers must write the
 /// expected content to disk before calling.
-fn add_watched_file(db: &mut OakDatabase, url: UrlId) {
+fn add_watched_file(db: &mut OakDatabase, path: FilePath) {
     apply_watcher_events(
         db,
         vec![FileEvent {
             kind: FileEventKind::Changed,
-            url,
+            path,
         }],
         &HashSet::new(),
     );
 }
 
-fn remove_watched_file(db: &mut OakDatabase, url: UrlId) {
+fn remove_watched_file(db: &mut OakDatabase, path: FilePath) {
     apply_watcher_events(
         db,
         vec![FileEvent {
             kind: FileEventKind::Deleted,
-            url,
+            path,
         }],
         &HashSet::new(),
     );
@@ -72,7 +72,7 @@ fn remove_watched_file(db: &mut OakDatabase, url: UrlId) {
 /// Sync helper: force a fresh full rescan of `root`. Equivalent to the
 /// production trigger of a DESCRIPTION watcher event hitting the root.
 fn rescan_workspace_root(db: &mut OakDatabase, root: Root) {
-    let path = root.path(db).to_file_path().unwrap();
+    let path = root.path(db).as_path().unwrap().to_path_buf();
     let result = ScanRequest { root, path }.run();
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.apply_scan_completed(db, result, &HashSet::new());
@@ -87,12 +87,12 @@ fn test_add_watched_file_new_top_level_script() {
 
     let path = tmp.path().join("new.R");
     fs::write(&path, "x <- 1\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
-    add_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    add_watched_file(&mut db, path.clone());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     assert_eq!(scripts.len(), 1);
-    assert!(scripts[0].url(&db).as_url().path().ends_with("new.R"));
+    assert!(scripts[0].path(&db).to_url().path().ends_with("new.R"));
 }
 
 #[test]
@@ -104,14 +104,14 @@ fn test_add_watched_file_into_existing_package() {
 
     let path = tmp.path().join("pkg/R/b.R");
     fs::write(&path, "y <- 2\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
-    add_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    add_watched_file(&mut db, path.clone());
 
     let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].files(&db).len(), 2);
 
-    let file = db.file_by_url(&url).expect("findable");
+    let file = db.file_by_path(&path).expect("findable");
     assert_eq!(file.package(&db), Some(packages[0]));
 }
 
@@ -128,15 +128,15 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
     fs::write(&path, "test code\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
-    add_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    add_watched_file(&mut db, path.clone());
 
     let root = db.workspace_roots().roots(&db)[0];
     let pkg = root.packages(&db)[0];
     assert!(root.scripts(&db).is_empty());
     assert_eq!(pkg.files(&db).len(), 1);
     assert_eq!(pkg.scripts(&db).len(), 1);
-    let file = db.file_by_url(&url).expect("findable via pkg.scripts");
+    let file = db.file_by_path(&path).expect("findable via pkg.scripts");
     assert_eq!(file.package(&db), Some(pkg));
     assert_eq!(file.contents(&db), "test code\n");
 }
@@ -154,14 +154,14 @@ fn test_add_watched_file_skips_nested_r_subdir() {
 
     let path = tmp.path().join("pkg/R/nested/deep.R");
     fs::write(&path, "z <- 3\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
-    add_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    add_watched_file(&mut db, path.clone());
 
     let root = db.workspace_roots().roots(&db)[0];
     let pkg = root.packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 1);
     assert!(pkg.scripts(&db).is_empty());
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
 }
 
 #[test]
@@ -175,15 +175,15 @@ fn test_add_watched_file_updates_pkg_scripts_content_preserves_placement() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let path = tmp.path().join("pkg/tests/test-foo.R");
-    let url = UrlId::from_file_path(&path).unwrap();
+    let fs_path = tmp.path().join("pkg/tests/test-foo.R");
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let file_before = pkg.scripts(&db)[0];
 
-    fs::write(&path, "v2\n").unwrap();
-    add_watched_file(&mut db, url.clone());
+    fs::write(&fs_path, "v2\n").unwrap();
+    add_watched_file(&mut db, path.clone());
 
-    let file_after = db.file_by_url(&url).unwrap();
+    let file_after = db.file_by_path(&path).unwrap();
     assert_eq!(file_before, file_after);
     assert_eq!(file_after.contents(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
@@ -201,13 +201,13 @@ fn test_remove_watched_file_from_pkg_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
-    let url = UrlId::from_file_path(&path).unwrap();
-    remove_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    remove_watched_file(&mut db, path.clone());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert!(pkg.scripts(&db).is_empty());
     assert_eq!(pkg.files(&db).len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
 }
 
 #[test]
@@ -223,10 +223,10 @@ fn test_add_watched_file_outside_workspace_is_skipped() {
 
     let path = outside.path().join("stray.R");
     fs::write(&path, "z <- 3\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
-    add_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    add_watched_file(&mut db, path.clone());
 
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
 }
@@ -238,15 +238,15 @@ fn test_add_watched_file_updates_existing_content_preserves_placement() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let path = tmp.path().join("pkg/R/a.R");
-    let url = UrlId::from_file_path(&path).unwrap();
+    let fs_path = tmp.path().join("pkg/R/a.R");
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let file_before = pkg.files(&db)[0];
 
-    fs::write(&path, "v2\n").unwrap();
-    add_watched_file(&mut db, url.clone());
+    fs::write(&fs_path, "v2\n").unwrap();
+    add_watched_file(&mut db, path.clone());
 
-    let file_after = db.file_by_url(&url).unwrap();
+    let file_after = db.file_by_path(&path).unwrap();
     assert_eq!(file_before, file_after);
     assert_eq!(file_after.contents(&db), "v2\n");
     assert_eq!(file_after.package(&db), Some(pkg));
@@ -264,12 +264,12 @@ fn test_remove_watched_file_from_package() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/R/a.R");
-    let url = UrlId::from_file_path(&path).unwrap();
-    remove_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    remove_watched_file(&mut db, path.clone());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
 }
 
 #[test]
@@ -281,12 +281,12 @@ fn test_remove_watched_file_from_workspace_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("a.R");
-    let url = UrlId::from_file_path(&path).unwrap();
-    remove_watched_file(&mut db, url.clone());
+    let path = FilePath::from_path_buf(path.clone()).unwrap();
+    remove_watched_file(&mut db, path.clone());
 
     let scripts = db.workspace_roots().roots(&db)[0].scripts(&db).clone();
     assert_eq!(scripts.len(), 1);
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
 }
 
 #[test]
@@ -295,8 +295,8 @@ fn test_remove_watched_file_unknown_url_is_noop() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let url = UrlId::from_file_path(tmp.path().join("ghost.R")).unwrap();
-    remove_watched_file(&mut db, url);
+    let path = FilePath::from_path_buf(tmp.path().join("ghost.R")).unwrap();
+    remove_watched_file(&mut db, path);
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn test_rescan_workspace_root_demotes_removed_description() {
 
 fn file_event(path: &Path, kind: FileEventKind) -> FileEvent {
     FileEvent {
-        url: UrlId::from_file_path(path).unwrap(),
+        path: FilePath::from_path_buf(path.to_path_buf()).unwrap(),
         kind,
     }
 }
@@ -471,42 +471,42 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let path = tmp.path().join("a.R");
-    let url = UrlId::from_file_path(&path).unwrap();
+    let fs_path = tmp.path().join("a.R");
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     apply_watcher_events(
         &mut db,
-        vec![file_event(&path, FileEventKind::Deleted)],
+        vec![file_event(&fs_path, FileEventKind::Deleted)],
         &HashSet::new(),
     );
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
 }
 
 #[test]
 fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("a.R");
-    fs::write(&path, "disk_v1\n").unwrap();
+    let fs_path = tmp.path().join("a.R");
+    fs::write(&fs_path, "disk_v1\n").unwrap();
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     // Driver "owns" this URL (the editor has it open).
-    let url = UrlId::from_file_path(&path).unwrap();
-    db.upsert_editor(url.clone(), "editor_v2\n".to_string());
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
+    db.upsert_editor(path.clone(), "editor_v2\n".to_string());
 
     let mut skip = HashSet::new();
-    skip.insert(url.clone());
+    skip.insert(path.clone());
 
-    fs::write(&path, "disk_v3\n").unwrap();
+    fs::write(&fs_path, "disk_v3\n").unwrap();
     apply_watcher_events(
         &mut db,
-        vec![file_event(&path, FileEventKind::Changed)],
+        vec![file_event(&fs_path, FileEventKind::Changed)],
         &skip,
     );
 
-    let file = db.file_by_url(&url).unwrap();
+    let file = db.file_by_path(&path).unwrap();
     assert_eq!(file.contents(&db), "editor_v2\n");
 }
 
@@ -526,14 +526,14 @@ fn test_apply_watcher_events_skip_set_does_not_block_description() {
     )
     .unwrap();
 
-    let desc_path = tmp.path().join("pkg/DESCRIPTION");
-    let desc_url = UrlId::from_file_path(&desc_path).unwrap();
+    let desc_fs_path = tmp.path().join("pkg/DESCRIPTION");
+    let desc_path = FilePath::from_path_buf(desc_fs_path.clone()).unwrap();
     let mut skip = HashSet::new();
-    skip.insert(desc_url);
+    skip.insert(desc_path);
 
     apply_watcher_events(
         &mut db,
-        vec![file_event(&desc_path, FileEventKind::Created)],
+        vec![file_event(&desc_fs_path, FileEventKind::Created)],
         &skip,
     );
 
@@ -583,16 +583,16 @@ fn test_apply_watcher_events_ignores_non_r_files() {
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
-    let path = tmp.path().join("notes.txt");
-    fs::write(&path, "not R\n").unwrap();
-    let url = UrlId::from_file_path(&path).unwrap();
+    let fs_path = tmp.path().join("notes.txt");
+    fs::write(&fs_path, "not R\n").unwrap();
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     apply_watcher_events(
         &mut db,
-        vec![file_event(&path, FileEventKind::Created)],
+        vec![file_event(&fs_path, FileEventKind::Created)],
         &HashSet::new(),
     );
 
-    assert!(db.file_by_url(&url).is_none());
+    assert!(db.file_by_path(&path).is_none());
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
     assert!(db.orphan_root().files(&db).is_empty());

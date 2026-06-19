@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
-use stdext::result::ResultExt;
 
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -20,8 +19,8 @@ use crate::Root;
 /// This matches rust-analyzer's push model and avoids tying parsing to
 /// disk/network I/O inside a Salsa query.
 ///
-/// The `url` field is a [`UrlId`], so the type system enforces "everything
-/// inside Salsa is a canonical URL".
+/// The `path` field is a [`FilePath`], so the type system enforces "everything
+/// inside Salsa is a canonical path".
 ///
 /// `package` is a back-pointer to the [`Package`] this file belongs to, or
 /// `None` for standalone scripts. Inverse of `Package.files`, so queries
@@ -34,7 +33,7 @@ use crate::Root;
 /// `File.package` and the file's physical location in a `Vec<File>` are
 /// expected to agree. A file with `package == Some(pkg)` should live in
 /// `pkg.files`. A file with `package == None` should live in either some
-/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_url`,
+/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_path`,
 /// `set_contents`, `set_package`) are `pub` because field visibility couples to
 /// setter visibility in salsa but calling `set_package` directly leaves the
 /// file in its old bucket and silently breaks this invariant.
@@ -47,7 +46,7 @@ use crate::Root;
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
-    pub url: UrlId,
+    pub path: FilePath,
     #[returns(ref)]
     pub contents: String,
     /// **Placement invariant.** Call this setter only through
@@ -163,29 +162,25 @@ impl File {
         if let Some(pkg) = self.package(db) {
             return db.root_by_package(pkg);
         }
-        root_by_url(db, self.url(db))
+        root_by_path(db, self.path(db))
     }
 }
 
 /// Find the workspace `Root` whose path is the longest-prefix ancestor
-/// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
+/// of `path`. Returns `None` for virtual documents and for paths outside
 /// every workspace folder. Private helper: the only caller is
 /// [`File::root`] (for files without a registered package).
-fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
-    if !url.is_file() {
-        return None;
-    }
-
-    let path = url.to_file_path().log_err()?;
+    let path = path.as_path()?;
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).to_file_path().log_err()?;
-            path.starts_with(&root_path).then_some((root_path, *root))
+            let root_path = root.path(db).as_path()?;
+            path.starts_with(root_path).then_some((root_path, *root))
         })
-        .max_by_key(|(p, _)| p.components().count())
+        .max_by_key(|(root_path, _)| root_path.components().count())
         .map(|(_, r)| r)
 }
 
@@ -198,7 +193,7 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
     log::warn!(
         "Cyclic `source()` Detected at {}. Rebuilding without cross-file resolution.",
-        file.url(db),
+        file.path(db),
     );
     let parsed = file.parse(db);
     oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)

@@ -29,7 +29,7 @@ aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_fa
 aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
-aether_url = { path = "crates/aether_url" }
+aether_path = { path = "crates/aether_path" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
@@ -43,6 +43,7 @@ biome_rowan = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8
 biome_text_size = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
 blake3 = "1.8.5"
 bus = "2.4.1"
+camino = "1.1"
 cc = "1.2.61"
 cfg-if = "1.0.4"
 chrono = "0.4.44"

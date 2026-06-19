@@ -14,7 +14,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-aether_url.workspace = true
+aether_path.workspace = true
 amalthea.workspace = true
 anyhow.workspace = true
 ark.workspace = true

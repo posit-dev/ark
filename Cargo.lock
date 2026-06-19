@@ -216,10 +216,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether_url"
+name = "aether_path"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "camino",
  "log",
  "stdext",
  "tempfile",
@@ -394,7 +395,7 @@ version = "0.1.251"
 dependencies = [
  "actix-web",
  "aether_lsp_utils",
- "aether_url",
+ "aether_path",
  "air_r_factory",
  "air_r_parser",
  "air_r_syntax",
@@ -410,6 +411,7 @@ dependencies = [
  "biome_rowan",
  "blake3",
  "bus",
+ "camino",
  "cc",
  "cfg-if",
  "chrono",
@@ -481,7 +483,7 @@ dependencies = [
 name = "ark_test"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "amalthea",
  "anyhow",
  "ark",
@@ -814,6 +816,12 @@ checksum = "86566c496f2f47d9b8147a4c8b02ffdb69c919fe0c2b2e7195d22cbba0e635c9"
 dependencies = [
  "bytes",
 ]
+
+[[package]]
+name = "camino"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 
 [[package]]
 name = "castaway"
@@ -2583,10 +2591,11 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
+ "camino",
  "compact_str",
  "log",
  "oak_package_metadata",
@@ -2656,7 +2665,8 @@ dependencies = [
 name = "oak_scan"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
+ "camino",
  "ignore",
  "log",
  "oak_core",

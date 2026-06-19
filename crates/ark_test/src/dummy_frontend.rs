@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
@@ -1436,7 +1436,9 @@ impl DummyArkFrontend {
         // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
         // in tests, we also canonicalize here.
         let canonical = file.path().canonicalize().unwrap();
-        let uri_id = UrlId::from_file_path(&canonical).unwrap().to_string();
+        let uri_id = FilePath::from_path_buf(canonical.clone())
+            .unwrap()
+            .to_string();
         let filename = file
             .path()
             .file_name()
@@ -1832,8 +1834,8 @@ impl SourceFile {
         // symlinks (e.g. macOS `/var/...` -> `/private/var/...`). To match that
         // in tests, we also canonicalize here.
         let canonical = file.path().canonicalize().unwrap();
-        let url = UrlId::from_file_path(&canonical).unwrap();
-        let uri_id = url.to_string();
+        let file_path = FilePath::from_path_buf(canonical.clone()).unwrap();
+        let uri_id = file_path.to_string();
 
         // Extract file name
         let filename = file

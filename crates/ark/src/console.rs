@@ -116,7 +116,7 @@ mod console_graphics;
 mod console_integration;
 mod console_repl;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use console_annotate::annotate_input;
 pub(crate) use console_debug::DebugCallText;
 pub(crate) use console_debug::DebugStoppedReason;

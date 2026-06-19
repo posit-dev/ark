@@ -11,10 +11,11 @@ use std::io::BufWriter;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -241,18 +242,15 @@ impl DapHandler {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match UrlId::from_file_path(path) {
-            Ok(uri) => uri,
-            Err(err) => {
-                log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
-                return Ok(DapHandlerOutput {
-                    body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                        breakpoints: vec![],
-                    }),
-                    dap_events: vec![],
-                    console_events: vec![],
-                });
-            },
+        let Some(uri) = FilePath::from_path_buf(PathBuf::from(path)) else {
+            log::warn!("Can't set breakpoints for non-file path: '{path}'");
+            return Ok(DapHandlerOutput {
+                body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints: vec![],
+                }),
+                dap_events: vec![],
+                console_events: vec![],
+            });
         };
 
         // Read document content to compute hash. We currently assume UTF-8 even

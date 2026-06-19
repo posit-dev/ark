@@ -1,6 +1,6 @@
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -9,13 +9,13 @@ use crate::Name;
 
 /// Build a workspace root at `w` populated with the given files.
 /// Returns the file handles in the same order. Registers the root with
-/// `WorkspaceRoots` so `file_by_url` can find the files for cross-file
+/// `WorkspaceRoots` so `file_by_path` can find the files for cross-file
 /// resolution.
 fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(db, "w");
     let files: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| File::new(db, file_url(name), contents.to_string(), None))
+        .map(|(name, contents)| File::new(db, file_path(name), contents.to_string(), None))
         .collect();
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -220,7 +220,7 @@ fn test_name_range_returns_none_for_import_kind() {
             .expect("file must contain a call");
         let kind = DefinitionKind::Import {
             call: AstPtr::new(&call),
-            file: file.url(db).as_url().clone(),
+            file: file.path(db).to_url(),
             name: name.text(db).to_string(),
         };
         Definition::new(db, file, ScopeId::from(0), name, kind)
@@ -281,7 +281,7 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
     let workspace = workspace_root(&db, "w/pkg");
     let pkg = crate::Package::new(
         &db,
-        file_url("/w/pkg/DESCRIPTION"),
+        file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         oak_package_metadata::namespace::Namespace::default(),
@@ -292,13 +292,13 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
 
     let a = File::new(
         &db,
-        file_url("/w/pkg/R/a.R"),
+        file_path("/w/pkg/R/a.R"),
         "x <- 1\n".to_string(),
         Some(pkg),
     );
     let b = File::new(
         &db,
-        file_url("/w/pkg/R/b.R"),
+        file_path("/w/pkg/R/b.R"),
         "y <- 2\n".to_string(),
         Some(pkg),
     );
@@ -321,7 +321,7 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
     let workspace = workspace_root(&db, "w/pkg");
     let pkg = crate::Package::new(
         &db,
-        file_url("/w/pkg/DESCRIPTION"),
+        file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         oak_package_metadata::namespace::Namespace::default(),
@@ -332,13 +332,13 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
 
     let a = File::new(
         &db,
-        file_url("/w/pkg/R/a.R"),
+        file_path("/w/pkg/R/a.R"),
         "shared <- 1\n".to_string(),
         Some(pkg),
     );
     let b = File::new(
         &db,
-        file_url("/w/pkg/R/b.R"),
+        file_path("/w/pkg/R/b.R"),
         "use_shared <- function() shared\n".to_string(),
         Some(pkg),
     );

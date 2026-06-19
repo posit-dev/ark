@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -266,17 +266,17 @@ fn test_set_library_paths_stale_no_duplicates_across_cycles() {
 // resolution logic that PR 12's workspace scanner -- which walks any depth
 // and is the realistic trigger -- depends on.
 
-fn file_url(s: &str) -> UrlId {
-    UrlId::from_url(Url::parse(&format!("file://{s}")).unwrap())
+fn file_path(s: &str) -> FilePath {
+    FilePath::from_url(&Url::parse(&format!("file://{s}")).unwrap())
 }
 
 fn empty_library_root(db: &OakDatabase, path: &str) -> Root {
-    Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
+    Root::new(db, file_path(path), RootKind::Library, vec![], vec![])
 }
 
 /// Stash `pkg` in `root.packages` and register `root` on
 /// `library_roots`, mirroring what the library scanner does after
-/// `set_package` returns. Without this step `package_by_url` can't see
+/// `set_package` returns. Without this step `package_by_path` can't see
 /// the package on subsequent `set_package` calls.
 fn register_package(db: &mut OakDatabase, root: Root, pkg: Package) {
     root.set_packages(db).to(vec![pkg]);
@@ -292,11 +292,11 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
     let mut db = OakDatabase::new();
     let short = empty_library_root(&db, "/lib");
     let long = empty_library_root(&db, "/lib/sub");
-    let desc_url = file_url("/lib/sub/DESCRIPTION");
+    let desc_path = file_path("/lib/sub/DESCRIPTION");
 
     let p1 = short.set_package(
         &mut db,
-        desc_url.clone(),
+        desc_path.clone(),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -309,7 +309,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
 
     let p2 = long.set_package(
         &mut db,
-        desc_url,
+        desc_path,
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -329,11 +329,11 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
     let mut db = OakDatabase::new();
     let short = empty_library_root(&db, "/lib");
     let long = empty_library_root(&db, "/lib/sub");
-    let desc_url = file_url("/lib/sub/DESCRIPTION");
+    let desc_path = file_path("/lib/sub/DESCRIPTION");
 
     let p1 = long.set_package(
         &mut db,
-        desc_url.clone(),
+        desc_path.clone(),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -346,7 +346,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
 
     let p2 = short.set_package(
         &mut db,
-        desc_url,
+        desc_path,
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -375,8 +375,8 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     let mut db = OakDatabase::new();
 
     // Editor opens the file before any scan -> orphan.
-    let r_url = file_url("/lib/pkg/R/a.R");
-    let file = File::new(&db, r_url.clone(), "editor content".to_string(), None);
+    let r_path = file_path("/lib/pkg/R/a.R");
+    let file = File::new(&db, r_path.clone(), "editor content".to_string(), None);
     db.orphan_root()
         .set_files(&mut db)
         .to(HashSet::from([file]));
@@ -386,12 +386,12 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     let lib = empty_library_root(&db, "/lib");
     let pkg = lib.set_package(
         &mut db,
-        file_url("/lib/pkg/DESCRIPTION"),
+        file_path("/lib/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
         Namespace::default(),
         vec![FileEntry {
-            url: r_url.clone(),
+            path: r_path.clone(),
             contents: "disk content".to_string(),
         }],
         Vec::new(),
@@ -419,11 +419,11 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
     let old = empty_library_root(&db, "/lib");
     let new = empty_library_root(&db, "/lib");
     assert_ne!(old, new);
-    let desc_url = file_url("/lib/pkg/DESCRIPTION");
+    let desc_path = file_path("/lib/pkg/DESCRIPTION");
 
     let p1 = old.set_package(
         &mut db,
-        desc_url.clone(),
+        desc_path.clone(),
         "pkg".to_string(),
         None,
         Namespace::default(),
@@ -442,7 +442,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
 
     let p2 = new.set_package(
         &mut db,
-        desc_url,
+        desc_path,
         "pkg".to_string(),
         None,
         Namespace::default(),

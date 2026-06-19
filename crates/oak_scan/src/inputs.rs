@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::path::PathBuf;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -29,10 +29,10 @@ use oak_db::Root;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::lookup::package_by_url;
+use crate::lookup::package_by_path;
 use crate::stale::remove_from_stale_files;
 use crate::stale::remove_from_stale_packages;
-use crate::stale::stale_file_by_url;
+use crate::stale::stale_file_by_path;
 
 /// Description of one R file the scanner wants to register.
 ///
@@ -47,7 +47,7 @@ use crate::stale::stale_file_by_url;
 /// VFS) is the authoritative way to update content.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
-    pub url: UrlId,
+    pub path: FilePath,
     pub contents: String,
 }
 
@@ -100,7 +100,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If no `File` exists at all, one is created in `orphan_root().files`.
     /// It stays there until another handler reclassifies it.
-    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File;
+    fn upsert_editor(&mut self, path: FilePath, contents: String) -> File;
 
     /// Mark the editor as no longer holding a buffer for this URL.
     ///
@@ -113,7 +113,7 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// If the file is in a live workspace / library container, the call is a
     /// no-op.
-    fn close_editor(&mut self, url: &UrlId);
+    fn close_editor(&mut self, path: &FilePath);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -121,15 +121,15 @@ impl<DB: Db + DbInputs> DbScan for DB {
         crate::library::set_library_paths(self, paths);
     }
 
-    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File {
-        if let Some(existing) = self.file_by_url(&url) {
+    fn upsert_editor(&mut self, path: FilePath, contents: String) -> File {
+        if let Some(existing) = self.file_by_path(&path) {
             existing.set_contents(self).to(contents);
             return existing;
         }
 
         // Resurrect a previously-closed buffer from stale. The didOpen
         // content overwrites whatever the stale entity carried.
-        if let Some(stale) = stale_file_by_url(self, &url) {
+        if let Some(stale) = stale_file_by_path(self, &path) {
             stale.set_contents(self).to(contents);
             stale.set_package(self).to(None);
             remove_from_stale_files(self, stale);
@@ -137,13 +137,13 @@ impl<DB: Db + DbInputs> DbScan for DB {
             return stale;
         }
 
-        let file = File::new(self, url, contents, None);
+        let file = File::new(self, path, contents, None);
         add_to_orphan_files(self, file);
         file
     }
 
-    fn close_editor(&mut self, url: &UrlId) {
-        let Some(file) = self.file_by_url(url) else {
+    fn close_editor(&mut self, path: &FilePath) {
+        let Some(file) = self.file_by_path(path) else {
             return;
         };
 
@@ -174,20 +174,20 @@ pub trait RootExt {
     /// Create or update a package under this root. Atomic
     /// full-replacement of the package's file set.
     ///
-    /// Identity is keyed on `description_url`: if `self.packages`
+    /// Identity is keyed on `description_path`: if `self.packages`
     /// already contains a `Package` with this URL, that entity is
     /// reused and its `name` / `version` / `namespace` / `collation`
     /// fields are updated in place. Salsa backdates each setter call
     /// when the value doesn't actually change.
     ///
-    /// Files are reused by URL via [`Db::file_by_url`]; see
+    /// Files are reused by URL via [`Db::file_by_path`]; see
     /// [`FileEntry`] for the content-preservation semantics. Wiring
     /// the returned `Package` into `self.packages` is the caller's
     /// job.
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
-        description_url: UrlId,
+        description_path: FilePath,
         name: String,
         version: Option<String>,
         namespace: Namespace,
@@ -208,7 +208,7 @@ pub trait RootExt {
     ///
     /// Doesn't touch `LibraryRoots` / `WorkspaceRoots`. The caller is
     /// responsible for rebuilding those Vec inputs with `self` excluded.
-    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>);
+    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>);
 
     /// Replace `self.scripts` with `File` entities for `files`. Same identity
     /// rules as [`set_package`](Self::set_package): existing `File` entities at
@@ -220,7 +220,7 @@ impl RootExt for Root {
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
-        description_url: UrlId,
+        description_path: FilePath,
         name: String,
         version: Option<String>,
         namespace: Namespace,
@@ -228,11 +228,11 @@ impl RootExt for Root {
         scripts: Vec<FileEntry>,
         collation: Option<Vec<String>>,
     ) -> Package {
-        // `package_by_url()` finds the existing entity whether it's already
+        // `package_by_path()` finds the existing entity whether it's already
         // in `self.packages` (rescan, common path) or in
         // `stale_root.packages` (resurrection after a previous eviction).
         // Either way we reuse the entity and refresh its metadata fields.
-        let pkg = match package_by_url(db, &description_url) {
+        let pkg = match package_by_path(db, &description_path) {
             Some(p) => {
                 p.set_name(db).to(name);
                 p.set_version(db).to(version);
@@ -243,7 +243,7 @@ impl RootExt for Root {
             },
             None => Package::new(
                 db,
-                description_url,
+                description_path,
                 name,
                 version,
                 namespace,
@@ -267,7 +267,7 @@ impl RootExt for Root {
         pkg
     }
 
-    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>) {
+    fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>) {
         crate::stale::set_root_stale(db, self, editor_owned);
     }
 
@@ -293,13 +293,13 @@ impl RootExt for Root {
 ///
 /// The orphan cleanup below relies on this contract. A future caller that
 /// invoked `upsert_root_file()` without then placing the file would leave it
-/// with no container, and `file_by_url()` would return `None`.
+/// with no container, and `file_by_path()` would return `None`.
 pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     db: &mut DB,
     package: Option<Package>,
     entry: FileEntry,
 ) -> File {
-    if let Some(existing) = db.file_by_url(&entry.url) {
+    if let Some(existing) = db.file_by_path(&entry.path) {
         // The new container is owned by the caller. What needs active cleanup
         // is the OLD container:
         //
@@ -323,7 +323,7 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
         return existing;
     }
 
-    if let Some(stale) = stale_file_by_url(db, &entry.url) {
+    if let Some(stale) = stale_file_by_path(db, &entry.path) {
         // Resurrecting an evicted File. Restore disk contents (the editor-owned
         // variant lives in `orphan_root` instead; this branch only sees
         // scanner-discovered files).
@@ -333,7 +333,7 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
         return stale;
     }
 
-    File::new(db, entry.url, entry.contents, package)
+    File::new(db, entry.path, entry.contents, package)
 }
 
 /// Remove `file` from whichever of `pkg.files` / `pkg.scripts` holds it.

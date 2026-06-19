@@ -2,7 +2,7 @@ use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
@@ -12,11 +12,11 @@ use crate::ImportLayer;
 use crate::Package;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_url(path), contents.to_string(), None)
+    File::new(db, file_path(path), contents.to_string(), None)
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_url(path), contents.to_string(), Some(package))
+    File::new(db, file_path(path), contents.to_string(), Some(package))
 }
 
 /// Register a set of installed packages on `LibraryRoots`, one library
@@ -28,7 +28,7 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
         let root = library_root(db, &format!("libs/{name}"));
         let pkg = Package::new(
             db,
-            file_url(&format!("libs/{name}/DESCRIPTION")),
+            file_path(&format!("libs/{name}/DESCRIPTION")),
             name.to_string(),
             Some("1.0.0".to_string()),
             Namespace::default(),
@@ -50,7 +50,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
     let root = workspace_root(db, &format!("workspace/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("workspace/{name}/DESCRIPTION")),
+        file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
         Namespace::default(),

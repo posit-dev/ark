@@ -1,6 +1,6 @@
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::TestDb;
 use crate::File;
 
@@ -9,7 +9,7 @@ use crate::File;
 /// touching the orphan/workspace bucketing logic that's exercised in
 /// `oak_storage/tests/`.
 fn new_file(db: &mut TestDb, name: &str, contents: &str) -> File {
-    File::new(db, file_url(name), contents.to_string(), None)
+    File::new(db, file_path(name), contents.to_string(), None)
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn test_changing_contents_reparses() {
 fn test_semantic_index_matches_oak_semantic() {
     let db = TestDb::new();
     let source = "x <- 1\nx\n";
-    let url = file_url("a.R");
+    let url = file_path("a.R");
     let file = File::new(&db, url.clone(), source.to_string(), None);
 
     let via_salsa = file.semantic_index(&db);
