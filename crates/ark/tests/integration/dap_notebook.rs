@@ -851,3 +851,198 @@ fn test_notebook_debug_info_reports_breakpoints() {
     frontend.recv_debug_reply();
     frontend.recv_iopub_idle();
 }
+
+#[test]
+fn test_notebook_top_level_breakpoint_stops_execution() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // A cell with only top-level statements (no enclosing function). Setting a
+    // breakpoint on a top-level line must stop execution there.
+    let code = "x <- 1\nx <- 2\nx <- 3\nx";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Breakpoint on line 2 (`x <- 2`), a top-level line
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 2 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Attach so breakpoints fire
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    let event = frontend.recv_iopub_debug_event();
+    assert_eq!(event["event"], "thread");
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Execute the cell — the top-level breakpoint should fire mid-cell.
+    frontend.send_execute_request_with_metadata(
+        code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-top-level" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // The breakpoint verifies when reached, then we stop at it.
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    assert_eq!(bp_event["body"]["breakpoint"]["verified"], true);
+
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // Shell reply hasn't arrived — kernel is paused at the breakpoint
+    assert!(!frontend.shell_socket.poll_incoming(200).unwrap());
+
+    // Continue — cell runs to completion and returns the final value
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+
+    frontend.recv_shell_execute_reply();
+
+    let msgs = frontend.recv_iopub_interleaved(&[
+        // Control thread: continue debug_request busy/idle
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        // R thread: continued event, execute result (`[1] 3`), execution idle
+        &[
+            IopubExpectation::DebugEvent,
+            IopubExpectation::ExecuteResult,
+            IopubExpectation::IdleShell,
+        ],
+    ]);
+    find_debug_event(&msgs, "continued");
+
+    // Disconnect to reset state for other tests
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+}
+
+#[test]
+fn test_notebook_top_level_breakpoint_preserves_invisible_result() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // A cell whose last top-level statement is an invisible assignment. After
+    // continuing through a breakpoint, the cell must NOT emit a spurious
+    // `execute_result` — the bare brace block preserves the final statement's
+    // (invisible) visibility.
+    let code = "x <- 1\nx <- 2";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Breakpoint on line 1 (`x <- 1`)
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 1 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    let event = frontend.recv_iopub_debug_event();
+    assert_eq!(event["event"], "thread");
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_execute_request_with_metadata(
+        code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-invisible" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+
+    frontend.recv_shell_execute_reply();
+
+    // No `ExecuteResult` here: the final statement `x <- 2` is invisible.
+    frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[IopubExpectation::DebugEvent, IopubExpectation::IdleShell],
+    ]);
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+}
