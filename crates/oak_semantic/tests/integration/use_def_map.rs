@@ -656,6 +656,23 @@ f <- function() { x <<- 1 }  # file: def 0 (x <<- in parent), def 1 (f)
 }
 
 #[test]
+fn test_super_assignment_at_file_scope_reaches_later_use() {
+    // A top-level `<<-` collapses to a single file-scope binding (no enclosing
+    // frame to target). A later use of the name resolves to that one definition.
+    let index = index(
+        "\
+x <<- 1                      # file: def 0 (x, the sole binding)
+x                            # file: use 0 -> {def 0}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+}
+
+#[test]
 fn test_super_assignment_merges_with_if() {
     let index = index(
         "\

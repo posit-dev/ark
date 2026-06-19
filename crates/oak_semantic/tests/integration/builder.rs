@@ -562,8 +562,9 @@ fn test_repeat_loop() {
 
 #[test]
 fn test_super_assignment_at_file_scope() {
-    // At file scope, `<<-` targets the file scope itself (no parent to
-    // walk to), so the symbol gets both IS_SUPER_BOUND and IS_BOUND.
+    // At file scope, `<<-` targets the file scope itself (no parent to walk
+    // to), so the marker scope and the binding scope coincide. The symbol gets
+    // both IS_SUPER_BOUND and IS_BOUND from a single recording.
     let index = index("x <<- 1");
     let file = ScopeId::from(0);
 
@@ -573,15 +574,10 @@ fn test_super_assignment_at_file_scope() {
         SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
     );
 
-    // Two definitions: one from the current-scope recording, one from the
-    // target-scope recording (same scope in this case).
-    assert_eq!(index.definitions(file).len(), 2);
+    // One definition, not a self-duplicate.
+    assert_eq!(index.definitions(file).len(), 1);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::SuperAssignment(_)
-    ));
-    assert!(matches!(
-        index.definitions(file)[DefinitionId::from(1)].kind(),
         DefinitionKind::SuperAssignment(_)
     ));
     assert_eq!(index.uses(file).len(), 0);
@@ -598,7 +594,7 @@ fn test_super_assignment_right_at_file_scope() {
         SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
     );
 
-    assert_eq!(index.definitions(file).len(), 2);
+    assert_eq!(index.definitions(file).len(), 1);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
         DefinitionKind::SuperAssignment(_)
@@ -1296,12 +1292,16 @@ fn test_file_exports_empty() {
 }
 
 #[test]
-fn test_file_exports_multiple_defs_same_symbol() {
+fn test_file_exports_sequential_redef_keeps_last() {
     let index = index("x <- 1\nx <- 2");
     let exports = index.exports();
-    // Deduplicates: last definition wins
+    // The second assignment overwrites the first, so only the last def is in
+    // effect at end of file.
     assert_eq!(exports.len(), 1);
-    assert!(exports.contains_key("x"));
+    let x = exports.get("x").unwrap();
+    assert_eq!(x.len(), 1);
+    // The surviving def is the second `x` (offset 7), not the first (offset 0).
+    assert_eq!(x[0].1.range().start(), biome_rowan::TextSize::from(7));
 }
 
 // --- File directives ---
@@ -1505,15 +1505,23 @@ fn test_source_call_emitted_without_resolver() {
 }
 
 #[test]
-fn test_file_exports_last_def_wins() {
-    // When the same name is defined multiple times at file scope,
-    // file_exports() returns only the last definition.
-    let index = index("foo <- 1\nfoo <- 2\nbar <- 3\n");
+fn test_file_exports_if_else_keeps_both_branches() {
+    // Both arms of a top-level `if`/`else` could run, so both bindings are in
+    // effect at end of file. exports() keeps both, in definition order.
+    let index = index("if (cond) foo <- 1 else foo <- 2\nbar <- 3\n");
     let exports = index.exports();
     assert_eq!(exports.len(), 2);
-    // The range should be the second `foo` (offset 9..12)
-    let (_def_id, def) = exports.get("foo").unwrap();
-    assert_eq!(def.range().start(), biome_rowan::TextSize::from(9));
+
+    let foo = exports.get("foo").unwrap();
+    let starts: Vec<biome_rowan::TextSize> = foo
+        .iter()
+        .map(|(_def_id, def)| def.range().start())
+        .collect();
+    // `foo <- 1` at offset 10, `foo <- 2` at offset 24.
+    assert_eq!(starts, vec![
+        biome_rowan::TextSize::from(10),
+        biome_rowan::TextSize::from(24),
+    ]);
 }
 
 // --- source() semantic calls: bail paths ---

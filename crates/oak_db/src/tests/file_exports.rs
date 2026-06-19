@@ -23,10 +23,10 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     files
 }
 
-fn entries(db: &TestDb, file: File) -> HashMap<String, ExportEntry> {
+fn entries(db: &TestDb, file: File) -> HashMap<String, Vec<ExportEntry>> {
     file.exports(db)
         .iter()
-        .map(|(k, v)| (k.to_string(), v.clone()))
+        .map(|(k, v)| (k.to_string(), v.to_vec()))
         .collect()
 }
 
@@ -37,8 +37,8 @@ fn test_local_top_level_definitions_become_local_entries() {
 
     let map = entries(&db, files[0]);
     assert_eq!(map.len(), 2);
-    assert_eq!(map.get("x"), Some(&ExportEntry::Local));
-    assert_eq!(map.get("f"), Some(&ExportEntry::Local));
+    assert_eq!(map.get("x"), Some(&vec![ExportEntry::Local]));
+    assert_eq!(map.get("f"), Some(&vec![ExportEntry::Local]));
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn test_source_call_to_unresolved_path_drops_forwarding() {
 
     let map = entries(&db, files[0]);
     assert_eq!(map.len(), 1);
-    assert_eq!(map.get("x"), Some(&ExportEntry::Local));
+    assert_eq!(map.get("x"), Some(&vec![ExportEntry::Local]));
 }
 
 #[test]
@@ -76,18 +76,18 @@ fn test_source_call_to_resolved_file_produces_import_entries() {
 
     let map = entries(&db, analysis);
     assert_eq!(map.len(), 2);
-    assert_eq!(map.get("x"), Some(&ExportEntry::Local));
+    assert_eq!(map.get("x"), Some(&vec![ExportEntry::Local]));
     assert_eq!(
         map.get("helper"),
-        Some(&ExportEntry::Import {
+        Some(&vec![ExportEntry::Import {
             file: helpers,
             name: "helper".to_string(),
-        })
+        }])
     );
 }
 
 #[test]
-fn test_local_definition_shadows_sourced_name() {
+fn test_sourced_then_local_resolves_to_local() {
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[
         ("w/helpers.R", "shared <- 1\n"),
@@ -95,16 +95,19 @@ fn test_local_definition_shadows_sourced_name() {
     ]);
     let analysis = files[1];
 
+    // The local `shared <- 2` runs after the `source()`, overwriting the
+    // sourced binding. Only the local is in effect at end of file.
     let map = entries(&db, analysis);
-    assert_eq!(map.get("shared"), Some(&ExportEntry::Local));
+    assert_eq!(map.get("shared"), Some(&vec![ExportEntry::Local]));
 }
 
 #[test]
-fn test_later_source_overrides_earlier_when_both_export_the_same_name() {
+fn test_two_sources_of_same_name_keeps_last_forward() {
     let mut db = TestDb::new();
 
-    // Both `b` and `c` define `dup`. R evaluates each `source()` in
-    // sequence and the later one's assignment wins.
+    // Both `b` and `c` define `dup`. R evaluates each `source()` in sequence,
+    // so `c`'s assignment overwrites `b`'s. Only the `c` forward is in effect
+    // at end of file.
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
@@ -116,19 +119,20 @@ fn test_later_source_overrides_earlier_when_both_export_the_same_name() {
     let map = entries(&db, a);
     assert_eq!(
         map.get("dup"),
-        Some(&ExportEntry::Import {
+        Some(&vec![ExportEntry::Import {
             file: c,
             name: "dup".to_string(),
-        })
+        }])
     );
 }
 
 #[test]
-fn test_local_after_sources_wins() {
+fn test_sources_then_local_resolves_to_local() {
     let mut db = TestDb::new();
 
-    // sources first, then local. Local is the last assignment so it
-    // ends up bound at end-of-file.
+    // sources first, then local. The local is the last assignment, so it
+    // overwrites both sourced forwards and is the only binding in effect at
+    // end of file.
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
@@ -137,16 +141,16 @@ fn test_local_after_sources_wins() {
     let a = files[2];
 
     let map = entries(&db, a);
-    assert_eq!(map.get("dup"), Some(&ExportEntry::Local));
+    assert_eq!(map.get("dup"), Some(&vec![ExportEntry::Local]));
 }
 
 #[test]
-fn test_later_source_after_local_overrides_it() {
+fn test_source_local_source_resolves_to_last_source() {
     let mut db = TestDb::new();
 
-    // Local in the middle is shadowed by the *later* source. Matches
-    // R's runtime: each statement assigns in order; the last write
-    // wins.
+    // Local in the middle, sources either side. Each statement assigns in
+    // order; the last write (the `c` source) overwrites the rest, so only the
+    // `c` forward is in effect at end of file.
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
@@ -158,18 +162,20 @@ fn test_later_source_after_local_overrides_it() {
     let map = entries(&db, a);
     assert_eq!(
         map.get("dup"),
-        Some(&ExportEntry::Import {
+        Some(&vec![ExportEntry::Import {
             file: c,
             name: "dup".to_string(),
-        })
+        }])
     );
 }
 
 #[test]
-fn test_local_before_sources_is_overridden() {
+fn test_local_then_sources_resolves_to_last_source() {
     let mut db = TestDb::new();
 
-    // Local first, sources later. Sources reassign, last source wins.
+    // Local first, sources later. The sources reassign in order, so the last
+    // source (`c`) overwrites the rest and is the only binding in effect at
+    // end of file.
     let files = setup_workspace(&mut db, &[
         ("w/b.R", "dup <- 1\n"),
         ("w/c.R", "dup <- 2\n"),
@@ -181,10 +187,57 @@ fn test_local_before_sources_is_overridden() {
     let map = entries(&db, a);
     assert_eq!(
         map.get("dup"),
-        Some(&ExportEntry::Import {
+        Some(&vec![ExportEntry::Import {
             file: c,
             name: "dup".to_string(),
-        })
+        }])
+    );
+}
+
+#[test]
+fn test_repeated_local_with_source_resolves_to_last_local() {
+    let mut db = TestDb::new();
+
+    // Local, then a sourced forward of the same name, then a later local. The
+    // last statement (`dup <- 3`) overwrites the rest, so only the local is in
+    // effect at end of file.
+    let files = setup_workspace(&mut db, &[
+        ("w/b.R", "dup <- 1\n"),
+        ("w/a.R", "dup <- 2\nsource(\"b.R\")\ndup <- 3\n"),
+    ]);
+    let a = files[1];
+
+    let map = entries(&db, a);
+    assert_eq!(map.get("dup"), Some(&vec![ExportEntry::Local]));
+}
+
+#[test]
+fn test_if_else_source_and_local_keeps_both_entries() {
+    let mut db = TestDb::new();
+
+    // `source()` on one `if` arm, a local rebind on the other. Either arm could
+    // run, so both the sourced forward and the local are in effect at end of
+    // file. The firewall keeps both entries, in definition order.
+    let files = setup_workspace(&mut db, &[
+        ("w/helpers.R", "shared <- 1\n"),
+        (
+            "w/analysis.R",
+            "if (cond) source(\"helpers.R\") else shared <- 2\n",
+        ),
+    ]);
+    let helpers = files[0];
+    let analysis = files[1];
+
+    let map = entries(&db, analysis);
+    assert_eq!(
+        map.get("shared"),
+        Some(&vec![
+            ExportEntry::Import {
+                file: helpers,
+                name: "shared".to_string(),
+            },
+            ExportEntry::Local,
+        ])
     );
 }
 
@@ -224,10 +277,10 @@ fn test_source_chain_forwards_through_two_files() {
     let map = entries(&db, top);
     assert_eq!(
         map.get("deep"),
-        Some(&ExportEntry::Import {
+        Some(&vec![ExportEntry::Import {
             file: mid,
             name: "deep".to_string(),
-        })
+        }])
     );
 }
 

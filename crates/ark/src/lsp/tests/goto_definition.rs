@@ -146,10 +146,36 @@ fn test_local_def_shadows_sourced() {
 }
 
 #[test]
-fn test_last_def_in_sourced_file_wins() {
-    // When the sourced file binds the same name twice, the use navigates to
-    // the last definition. The link range must point at that second def, in
-    // the target file's coordinates.
+fn test_sourced_file_with_repeated_def_offers_both() {
+    // When the sourced file binds the same name on both arms of a top-level
+    // `if`/`else`, either arm could run, so goto-def offers both candidate
+    // definitions, in definition order. Ranges are in the target file's
+    // coordinates.
+    let script_uri = test_path("script.R");
+    let helpers_uri = test_path("helpers.R");
+    let state = make_state_with(&[
+        (&script_uri, "source(\"helpers.R\")\nfn\n"),
+        (&helpers_uri, "if (cond) fn <- 1 else fn <- 2\n"),
+    ]);
+
+    let params = make_params(script_uri, 1, 0);
+    assert_matches!(
+        goto_definition(params, &state).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 2);
+            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_range, range((0, 10), (0, 12)));
+            assert_eq!(links[1].target_uri, helpers_uri);
+            assert_eq!(links[1].target_range, range((0, 23), (0, 25)));
+        }
+    );
+}
+
+#[test]
+fn test_sourced_file_with_sequential_redef_offers_runtime_winner() {
+    // When the sourced file binds the same name twice in sequence, the second
+    // overwrites the first, so only the last binding is in effect when
+    // `source()` finishes. goto-def offers just that one.
     let script_uri = test_path("script.R");
     let helpers_uri = test_path("helpers.R");
     let state = make_state_with(&[
@@ -164,6 +190,7 @@ fn test_last_def_in_sourced_file_wins() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
             assert_eq!(links[0].target_uri, helpers_uri);
             assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
         }

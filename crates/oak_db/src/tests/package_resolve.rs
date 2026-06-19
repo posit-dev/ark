@@ -144,12 +144,10 @@ fn test_resolves_binding_in_correct_file_for_multi_file_package() {
 }
 
 #[test]
-fn test_conditional_binding_single_under_last_wins_exports() {
-    // Top-level `if (cond) foo <- 1 else foo <- 2` in principle produces two
-    // candidate Definitions for `foo`. Full fan-out requires multi-target
-    // exports (PR 3, deferred). Under the current single-target model,
-    // `file_exports` keeps the last-wins definition, so `Package::resolve`
-    // returns exactly one. The stub+onload case across two files still works.
+fn test_conditional_binding_fans_out() {
+    // Top-level `if (cond) foo <- 1 else foo <- 2` produces two candidate
+    // Definitions for `foo`, one per branch. Multi-target exports surface both,
+    // so `Package::resolve` returns both candidates from the single file.
     let mut db = TestDb::new();
     let (pkg, _files) = setup_package(&mut db, "pkg", &["foo"], &[(
         "workspace/pkg/R/a.R",
@@ -157,7 +155,7 @@ fn test_conditional_binding_single_under_last_wins_exports() {
     )]);
 
     let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
-    assert_eq!(defs.len(), 1);
+    assert_eq!(defs.len(), 2);
 }
 
 #[test]

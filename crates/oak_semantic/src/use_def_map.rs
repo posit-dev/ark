@@ -479,6 +479,12 @@ impl UseDefMapBuilder {
         }
     }
 
+    /// The scope's exit flow state: for each symbol, the definitions still in
+    /// effect once the last statement has run
+    pub(crate) fn final_bindings(&self) -> &IndexVec<SymbolId, Bindings> {
+        &self.symbol_states
+    }
+
     /// Finalize into an immutable [`UseDefMap`].
     pub(crate) fn finish(mut self, uses: &IndexVec<UseId, Use>) -> UseDefMap {
         self.finish_deferred_defs(uses);

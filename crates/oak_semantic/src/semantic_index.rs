@@ -80,6 +80,12 @@ pub struct SemanticIndex {
     // Cross-file call sites recorded during indexing, such as `library()`
     // attachments or `source()` injections.
     semantic_calls: Vec<SemanticCall>,
+
+    // The file scope's exit flow state: for each top-level symbol, the
+    // definitions still in effect once the file has run top to bottom. This is
+    // the file's exports (see `exports()`). Only the file scope's exit state is
+    // ever needed, so we keep this one copy rather than per-scope state.
+    final_bindings: IndexVec<SymbolId, Bindings>,
 }
 
 impl SemanticIndex {
@@ -91,6 +97,7 @@ impl SemanticIndex {
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         semantic_calls: Vec<SemanticCall>,
+        final_bindings: IndexVec<SymbolId, Bindings>,
     ) -> Self {
         Self {
             scopes,
@@ -100,6 +107,7 @@ impl SemanticIndex {
             use_def_maps,
             enclosing_snapshots,
             semantic_calls,
+            final_bindings,
         }
     }
 
@@ -125,15 +133,29 @@ impl SemanticIndex {
 
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
-    /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn exports(&self) -> FxHashMap<&str, (DefinitionId, &Definition)> {
+    ///
+    /// For each name, the definitions still in effect once the file has run top
+    /// to bottom, which is what another file sees after `source()`-ing this one.
+    /// A name rebound in sequence keeps only the last def (the earlier one was
+    /// overwritten), so `x <- 1; x <- 2` exports just the second. A name bound
+    /// on both arms of an `if`/`else` (`if (cond) x <- 1 else x <- 2`) keeps
+    /// both, since either could be the one that ran. Definitions come back in
+    /// definition order.
+    pub fn exports(&self) -> FxHashMap<&str, Vec<(DefinitionId, &Definition)>> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
+        let defs = &self.definitions[file_scope];
 
-        let mut exports = FxHashMap::default();
-        for (id, def) in self.definitions[file_scope].iter() {
-            let name = symbols.symbol(def.symbol()).name();
-            exports.insert(name, (id, def));
+        let mut exports: FxHashMap<&str, Vec<(DefinitionId, &Definition)>> = FxHashMap::default();
+        for (symbol_id, bindings) in self.final_bindings.iter() {
+            if bindings.definitions().is_empty() {
+                continue;
+            }
+            let name = symbols.symbol(symbol_id).name();
+            let list = exports.entry(name).or_default();
+            for &def_id in bindings.definitions() {
+                list.push((def_id, &defs[def_id]));
+            }
         }
 
         exports

@@ -272,6 +272,27 @@ fn test_cross_file_via_source() {
 }
 
 #[test]
+fn test_cross_file_ambiguous_binding_includes_both_defs() {
+    // helpers.R binds `foo` on both arms of a top-level `if`/`else`, so the
+    // name has two candidate definitions. script.R sources it and uses `foo`.
+    // The use resolves to both candidates through the multi-target export
+    // forward, so find-references reports both defs alongside the use.
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "if (cond) foo <- 1 else foo <- 2\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nfoo\n");
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let refs = find_references(&db, script, offset(use_start), true);
+
+    // script.R (primary) first with its use, then helpers.R with both defs.
+    assert_eq!(pairs(&refs), vec![
+        (script, range(use_start, use_start + 3)),
+        (helpers, range(10, 13)),
+        (helpers, range(24, 27)),
+    ]);
+}
+
+#[test]
 fn test_different_binding_not_included() {
     // file2 has its own `foo` binding. Cursor on file1's `foo` must not
     // include file2's `foo` (confirmed distinct by resolve_at).
