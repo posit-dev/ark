@@ -25,7 +25,7 @@ use salsa::Setter;
 use walkdir::WalkDir;
 
 use crate::inputs::RootExt;
-use crate::packages::read_package_metadata;
+use crate::packages::file_revision;
 
 /// Reconcile `LibraryRoots` to exactly `paths`. Called through
 /// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
@@ -82,21 +82,48 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
         if !entry.file_type().is_dir() {
             continue;
         }
-        let Some(pkg) = read_package_metadata(entry.path()) else {
+        let Some(pkg) = register_installed_package(db, root, entry.path()) else {
             continue;
         };
-        packages.push(root.set_package(
-            db,
-            pkg.description_path,
-            pkg.name,
-            pkg.version,
-            pkg.namespace,
-            pkg.files,
-            pkg.scripts,
-            pkg.collation,
-        ));
+        packages.push(pkg);
     }
 
     root.set_packages(db).to(packages);
     root
+}
+
+/// Register one installed package under `root` without reading any of its
+/// files.
+///
+/// R installs packages at `<libpath>/<PkgName>/`, so the directory basename
+/// is the package name. That lets us skip reading `DESCRIPTION` here: we only
+/// confirm it exists (that's what marks the directory as a package) and stat
+/// `DESCRIPTION` / `NAMESPACE` for the revisions that drive the lazy metadata
+/// queries. Version, collation, and namespace are parsed on demand, only if
+/// the package is ever imported. Returns `None` for a directory with no
+/// `DESCRIPTION` or a non-UTF8 name.
+fn register_installed_package<DB: Db + DbInputs>(
+    db: &mut DB,
+    root: Root,
+    package_dir: &Path,
+) -> Option<Package> {
+    let description_file = package_dir.join("DESCRIPTION");
+    if !description_file.is_file() {
+        return None;
+    }
+
+    let name = package_dir.file_name()?.to_str()?.to_string();
+    let description_revision = file_revision(&description_file);
+    let namespace_revision = file_revision(&package_dir.join("NAMESPACE"));
+    let description_path = FilePath::from_path_buf(description_file)?;
+
+    Some(root.set_package(
+        db,
+        description_path,
+        name,
+        description_revision,
+        namespace_revision,
+        Vec::new(),
+        Vec::new(),
+    ))
 }

@@ -89,18 +89,16 @@ fn install_pkg(
     file_name: &str,
     contents: &str,
 ) -> File {
-    let (pkg_url, file_url, root_url, version) = match kind {
+    let (pkg_url, file_url, root_url) = match kind {
         RootKind::Library => (
             lib_url(&format!("{name}/DESCRIPTION")),
             lib_url(&format!("{name}/R/{file_name}")),
             lib_url(name),
-            Some("1.0.0".to_string()),
         ),
         RootKind::Workspace => (
             workspace_url(&format!("{name}/DESCRIPTION")),
             workspace_url(&format!("{name}/R/{file_name}")),
             workspace_url(name),
-            None,
         ),
     };
     let namespace = Namespace {
@@ -111,11 +109,11 @@ fn install_pkg(
         db,
         FilePath::from_url(&pkg_url),
         name.to_string(),
-        version,
-        namespace,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(namespace),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let file = File::new(
         db,

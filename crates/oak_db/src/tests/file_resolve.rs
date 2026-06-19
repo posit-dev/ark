@@ -547,11 +547,11 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
         &db,
         file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        oak_package_metadata::namespace::Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let a = File::new(
@@ -589,11 +589,11 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
         &db,
         file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        oak_package_metadata::namespace::Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let a = File::new(
@@ -633,11 +633,11 @@ fn test_resolve_if_else_in_collated_file_offers_both() {
         &db,
         file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
-        None,
-        oak_package_metadata::namespace::Namespace::default(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(oak_package_metadata::namespace::Namespace::default()),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let a = File::new(
@@ -685,11 +685,11 @@ fn test_resolve_collated_sequential_redef_resolves_to_last() {
         &db,
         file_path("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
-        None,
-        oak_package_metadata::namespace::Namespace::default(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(oak_package_metadata::namespace::Namespace::default()),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let a = File::new(

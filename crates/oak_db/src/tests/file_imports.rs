@@ -22,11 +22,11 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
         db,
         file_path(&format!("libs/{name}/DESCRIPTION")),
         name.to_string(),
-        Some("1.0.0".to_string()),
-        Namespace::default(),
-        Vec::new(),
-        Vec::new(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
+        Vec::new(),
+        Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
     (root, pkg)
@@ -142,11 +142,11 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         &db,
         file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
-        None,
-        namespace,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(namespace),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let first = File::new(
         &db,
@@ -215,11 +215,11 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
         &db,
         file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
 
     let r_file = File::new(
@@ -292,11 +292,11 @@ fn test_package_r_file_does_not_take_testthat_path() {
         &db,
         file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let r_file = File::new(
         &db,
@@ -338,11 +338,11 @@ fn test_testthat_file_includes_top_level_library_calls() {
         &db,
         file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let r_file = File::new(
         &db,

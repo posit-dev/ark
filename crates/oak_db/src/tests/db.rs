@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::tests::test_db::file_path;
@@ -36,11 +35,11 @@ fn test_file_by_path_finds_workspace_package_file() {
         &db,
         file_path("proj/DESCRIPTION"),
         "mypkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         vec![],
         Vec::new(),
-        None,
     );
     let file = File::new(
         &db,
@@ -64,11 +63,11 @@ fn test_file_by_path_finds_library_package_file() {
         &db,
         file_path("libs/foo/DESCRIPTION"),
         "foo".to_string(),
-        Some("1.0.0".to_string()),
-        Namespace::default(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
         vec![],
         Vec::new(),
-        None,
     );
     let file = File::new(
         &db,

@@ -33,6 +33,26 @@ impl From<u128> for FileRevision {
     }
 }
 
+/// Report an untracked read when `revision` is the zero sentinel.
+///
+/// A query that reads a revision input already records the normal salsa
+/// dependency, so a real mtime bump re-runs it. Zero is different: it means we
+/// never got a trustworthy mtime, e.g. a transient stat failure on a network
+/// drive. Nothing guarantees the revision will ever move off zero, because a
+/// file that recovers without changing produces no watcher event. Reporting an
+/// untracked read makes salsa re-run the calling query on the next revision, so
+/// it retries the disk read instead of pinning its first cached result forever.
+///
+/// The retry only persists while the file stays both reachable and at zero. A
+/// successful read that returns the same bytes backdates, so nothing downstream
+/// re-runs, and a deleted or evicted file leaves the live graph and stops being
+/// queried at all.
+pub(crate) fn report_untracked_if_zero(db: &dyn crate::Db, revision: FileRevision) {
+    if revision == FileRevision::zero() {
+        db.report_untracked_read();
+    }
+}
+
 impl From<filetime::FileTime> for FileRevision {
     fn from(value: filetime::FileTime) -> Self {
         // `seconds()` is i64, `nanoseconds()` is u32.

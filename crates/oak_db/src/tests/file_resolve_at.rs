@@ -66,11 +66,11 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
         db,
         file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     root.set_packages(db).to(vec![pkg]);
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -363,9 +363,9 @@ fn install_package(
     exports: &[&str],
     files: &[(&str, &str)],
 ) -> (Root, Package) {
-    let (prefix, version) = match kind {
-        RootKind::Library => ("library", Some("1.0.0".to_string())),
-        RootKind::Workspace => ("workspace", None),
+    let prefix = match kind {
+        RootKind::Library => "library",
+        RootKind::Workspace => "workspace",
     };
     let root = Root::new(
         db,
@@ -382,11 +382,11 @@ fn install_package(
         db,
         file_path(&format!("{prefix}/{name}/DESCRIPTION")),
         name.to_string(),
-        version,
-        namespace,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(namespace),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let pkg_files: Vec<File> = files
         .iter()
@@ -484,11 +484,11 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
         &db,
         file_path("workspace/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
-        None,
-        ns,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(ns),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let source = "bar\n";
     let ws_file = File::new(
@@ -536,11 +536,11 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
         &db,
         file_path("workspace/mypkg/DESCRIPTION"),
         "mypkg".to_string(),
-        None,
-        ns,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(ns),
         Vec::new(),
         Vec::new(),
-        None,
     );
     let ws_file = File::new(
         &db,

@@ -8,6 +8,7 @@ use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
 
 use crate::db::root_by_file;
+use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
@@ -80,9 +81,8 @@ impl File {
             return text.clone();
         }
 
-        // Reading `revision` makes this memo depend on it even though the value
-        // isn't otherwise used here: bumping the revision is what forces a re-read.
-        let _ = self.revision(db);
+        // Depend on `revision()` so a bump forces a re-read
+        report_untracked_if_zero(db, self.revision(db));
 
         let FilePath::File(path) = self.path(db) else {
             // Our virtual documents (e.g. untitled://) are push-based, the

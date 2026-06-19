@@ -10,7 +10,7 @@ use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
-use oak_package_metadata::namespace::Namespace;
+use oak_package_metadata::namespace::Import;
 use oak_scan::DbScan;
 use oak_scan::RootExt;
 use salsa::Setter;
@@ -61,6 +61,95 @@ fn test_scan_library_discovers_package() {
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name(&db), "dplyr");
     assert_eq!(packages[0].version(&db), &Some("1.0.0".to_string()),);
+}
+
+#[test]
+fn test_package_namespace_reads_from_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("dplyr");
+    write_package(&pkg_dir, "dplyr", &[]);
+    // The scanner only stats `NAMESPACE`; the lazy `Package::namespace` query
+    // is the first thing to actually read and parse it.
+    fs::write(
+        pkg_dir.join("NAMESPACE"),
+        "export(mutate)\nexport(select)\nimportFrom(rlang, sym)\n",
+    )
+    .unwrap();
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    let namespace = pkg.namespace(&db);
+    assert_eq!(namespace.exports.to_vec(), vec!["mutate", "select"]);
+    assert_eq!(namespace.imports, vec![Import {
+        name: "sym".to_string(),
+        package: "rlang".to_string(),
+    }]);
+}
+
+#[test]
+fn test_package_namespace_empty_when_file_absent() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("dplyr"), "dplyr", &[]);
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    let namespace = pkg.namespace(&db);
+    assert!(namespace.exports.is_empty());
+    assert!(namespace.imports.is_empty());
+}
+
+#[test]
+fn test_package_namespace_rereads_when_revision_bumps() {
+    // `Package::namespace` memoizes the parsed `NAMESPACE`. A later disk edit
+    // is invisible until something tells salsa the memo is stale, and the only
+    // such signal is the `namespace_revision` read inside `namespace()`. So
+    // this test rewrites the file, bumps the revision, and checks the second
+    // read reflects the edit. Drop that revision read and the assertion below
+    // would see the stale `mutate` export.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("dplyr");
+    write_package(&pkg_dir, "dplyr", &[]);
+    fs::write(pkg_dir.join("NAMESPACE"), "export(mutate)\n").unwrap();
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(pkg.namespace(&db).exports.to_vec(), vec!["mutate"]);
+
+    fs::write(pkg_dir.join("NAMESPACE"), "export(select)\n").unwrap();
+    pkg.set_namespace_revision(&mut db)
+        .to(oak_db::FileRevision::from(1u128));
+    assert_eq!(pkg.namespace(&db).exports.to_vec(), vec!["select"]);
+}
+
+#[test]
+fn test_package_version_rereads_when_revision_bumps() {
+    // Guards the `description_revision` read inside `Package::description`,
+    // which `version()` reads through. Same shape as the `NAMESPACE` test:
+    // drop the revision read and the second assertion sees the stale `1.0.0`.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("dplyr");
+    write_package(&pkg_dir, "dplyr", &[]);
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(pkg.version(&db), &Some("1.0.0".to_string()));
+
+    fs::write(
+        pkg_dir.join("DESCRIPTION"),
+        "Package: dplyr\nVersion: 2.0.0\n",
+    )
+    .unwrap();
+    pkg.set_description_revision(&mut db)
+        .to(oak_db::FileRevision::from(1u128));
+    assert_eq!(pkg.version(&db), &Some("2.0.0".to_string()));
 }
 
 #[test]
@@ -204,7 +293,7 @@ fn test_set_library_paths_re_add_preserves_package_identity() {
     use salsa::plumbing::AsId;
 
     let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "dplyr", &[("a.R", "x <- 1\n")]);
+    write_package(&tmp.path().join("dplyr"), "dplyr", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
 
     db.set_library_paths(&[tmp.path().to_path_buf()]);
@@ -298,11 +387,10 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         &mut db,
         desc_path.clone(),
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, short, p1);
     assert_eq!(db.root_by_package(p1), Some(short));
@@ -311,11 +399,10 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         &mut db,
         desc_path,
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, long, p2);
     // Same entity; now in both roots' `packages`. `root_by_package` prefers
@@ -335,11 +422,10 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         &mut db,
         desc_path.clone(),
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, long, p1);
     assert_eq!(db.root_by_package(p1), Some(long));
@@ -348,11 +434,10 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         &mut db,
         desc_path,
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, short, p2);
     // Same entity; now in both roots' `packages`. `root_by_package` keeps the
@@ -383,22 +468,20 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
         &mut db,
         desc_path.clone(),
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         files.clone(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, short, p1);
     let p2 = long.set_package(
         &mut db,
         desc_path,
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         files,
         Vec::new(),
-        None,
     );
     register_package(&mut db, long, p2);
     assert_eq!(p1, p2);
@@ -441,14 +524,13 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
         &mut db,
         file_path("/lib/pkg/DESCRIPTION"),
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         vec![FileEntry {
             path: r_path.clone(),
             revision: oak_db::FileRevision::zero(),
         }],
         Vec::new(),
-        None,
     );
 
     // Same `File` entity, editor content preserved, package backpointer set.
@@ -478,11 +560,10 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         &mut db,
         desc_path.clone(),
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, old, p1);
     assert_eq!(db.root_by_package(p1), Some(old));
@@ -497,11 +578,10 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         &mut db,
         desc_path,
         "pkg".to_string(),
-        None,
-        Namespace::default(),
+        oak_db::FileRevision::zero(),
+        oak_db::FileRevision::zero(),
         Vec::new(),
         Vec::new(),
-        None,
     );
     register_package(&mut db, new, p2);
     assert_eq!(p1, p2);

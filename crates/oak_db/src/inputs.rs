@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use aether_path::FilePath;
-use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;
 use crate::File;
+use crate::Package;
 
 /// Salsa-tracked root directory.
 ///
@@ -178,68 +178,4 @@ impl StaleRoot {
     pub fn empty(db: &dyn Db) -> Self {
         Self::new(db, HashSet::new(), vec![])
     }
-}
-
-#[salsa::input(debug)]
-pub struct Package {
-    /// URL of the package's `DESCRIPTION` file. Stable identity across
-    /// rescans and workspace / library churn: scanners look up an
-    /// existing `Package` by this URL before creating a new one. Two
-    /// packages with the same `Package:` name can coexist on disk and the
-    /// URL distinguishes them.
-    ///
-    /// The package's owning [`Root`] is not stored as a field. It is
-    /// derived from live-graph containment via [`Db::root_by_package`]: a
-    /// package belongs to whichever `Root.packages` currently holds it.
-    /// Workspace-vs-library is then `root.kind(db)`.
-    #[returns(ref)]
-    pub description_path: FilePath,
-    // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
-    // method so `db.package_by_name()` and other lookups key on the
-    // interned id rather than the string. Can't store `Name<'db>` on
-    // `Package` directly because salsa inputs are lifetime-free.
-    #[returns(ref)]
-    pub name: String,
-    /// Installed-package version (from `DESCRIPTION`). `None` for
-    /// workspace packages.
-    #[returns(ref)]
-    pub version: Option<String>,
-    #[returns(ref)]
-    pub namespace: Namespace,
-    /// R source files belonging to this package (the `R/*.R` files), in
-    /// R's load order. When DESCRIPTION's `Collate:` directive is
-    /// present, this is exactly the files it lists, in that order;
-    /// files in `R/` not listed are excluded (matching R's loader,
-    /// Writing R Extensions §1.1.1). When `Collate:` is absent, files
-    /// are in case-insensitive alphabetical order. TODO(diagnostics):
-    /// Lint files missing from collation.
-    ///
-    /// Per-package granularity: adding or removing a file in one
-    /// package doesn't invalidate tracked queries reading another
-    /// package's files.
-    ///
-    /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`, and a file with
-    /// `package == Some(self)` must live here or in [`Self::scripts`].
-    /// Call this setter only through `oak_scan`'s helpers, which keep
-    /// the back-pointer and the container in sync.
-    #[returns(ref)]
-    pub files: Vec<File>,
-    /// Other R files inside the package directory that aren't part of the
-    /// loadable namespace: `tests/`, `inst/`, `data-raw/`, etc. These get LSP
-    /// analysis (parse, semantic index) but aren't loaded with the package, so
-    /// name resolution treats them as standalone scripts that just happen to
-    /// live next to the package's code.
-    ///
-    /// **Placement invariant.** Same as [`Self::files`]: backpointer
-    /// stays `Some(self)`, file lives in one of the two containers.
-    #[returns(ref)]
-    pub scripts: Vec<File>,
-    /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
-    /// present. `None` when the field is absent (R defaults to
-    /// alphabetical load order). Changes only when `DESCRIPTION`
-    /// itself changes, so this anchor is independent of `files` (which
-    /// bumps when R/ files are added or removed).
-    #[returns(ref)]
-    pub collation: Option<Vec<String>>,
 }
