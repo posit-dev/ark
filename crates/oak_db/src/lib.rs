@@ -13,6 +13,7 @@ mod package;
 mod package_resolve;
 mod parse;
 mod storage;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -41,3 +42,4 @@ pub use name::Name;
 pub use package::Package;
 pub use package_resolve::PackageVisibility;
 pub use storage::OakDatabase;
+pub use workspace::workspace_dependencies;
