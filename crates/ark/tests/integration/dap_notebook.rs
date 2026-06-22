@@ -21,6 +21,43 @@ fn find_debug_event<'a>(msgs: &'a [Message], event: &str) -> &'a serde_json::Val
         .unwrap_or_else(|| panic!("No DebugEvent with event={event:?} found"))
 }
 
+/// Send an `evaluate` `debug_request` and return the reply.
+///
+/// `evaluate` runs through `try_idle_task()`, which waits for the R thread to
+/// park in its read-console `Select`. Once R is at a prompt a single attempt
+/// lands. The only time it reports "R is busy" here is cold start, before R has
+/// reached its first prompt, so we re-send until it's ready. The kernel-side
+/// wait paces each attempt, so no sleep is needed. The control thread brackets
+/// each attempt with busy/idle on IOPub, and the R-thread evaluation emits
+/// nothing there (printed output is captured), so each is the same busy/reply/
+/// idle as any other control-only request.
+fn notebook_evaluate(
+    frontend: &DummyArkFrontendNotebook,
+    seq: i64,
+    expression: &str,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        frontend.send_debug_request(serde_json::json!({
+            "type": "request",
+            "seq": seq,
+            "command": "evaluate",
+            "arguments": { "expression": expression }
+        }));
+        frontend.recv_iopub_busy();
+        let reply = frontend.recv_debug_reply();
+        frontend.recv_iopub_idle();
+
+        let busy = reply["success"] == false && reply["message"] == "R is busy";
+        if !busy {
+            return reply;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("`evaluate` kept returning \"R is busy\"; R never reached a prompt");
+        }
+    }
+}
+
 #[test]
 fn test_notebook_debug_info() {
     let frontend = DummyArkFrontendNotebook::lock();
@@ -912,4 +949,73 @@ fn test_notebook_debug_info_echoes_verbatim_breakpoint_path() {
         .find(|group| group["source"].as_str() == Some(sent_path.as_str()))
         .expect("debugInfo did not echo the verbatim breakpoint path");
     assert_eq!(group["breakpoints"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_notebook_evaluate() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let reply = notebook_evaluate(&frontend, 1, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["command"], "evaluate");
+    assert_eq!(reply["body"]["result"], "2");
+}
+
+#[test]
+fn test_notebook_evaluate_print() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // The `/print ` prefix evaluates and returns the captured print output.
+    let reply = notebook_evaluate(&frontend, 1, "/print 1:3");
+    assert_eq!(reply["success"], true);
+    let result = reply["body"]["result"].as_str().unwrap();
+    assert!(result.contains("[1] 1 2 3"), "got: {result}");
+}
+
+#[test]
+fn test_notebook_evaluate_error() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // An R error during evaluation comes back as a failed reply, not a crash.
+    let reply = notebook_evaluate(&frontend, 1, "stop('boom')");
+    assert_eq!(reply["success"], false);
+    let message = reply["message"].as_str().unwrap();
+    assert!(message.contains("boom"), "got: {message}");
+
+    // The kernel is still responsive afterwards.
+    let reply = notebook_evaluate(&frontend, 2, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+}
+
+/// A print method that raises an R error longjumps out of `Rf_PrintValue`. The
+/// evaluation must surface that as an error and leave both the try-idle
+/// handshake and the `Dap` state intact, so a follow-up evaluate still succeeds.
+/// The console (TCP) path is checked in
+/// `test_dap_evaluate_erroring_print_does_not_deadlock`.
+#[test]
+fn test_notebook_evaluate_erroring_print_does_not_deadlock() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Define an S3 object whose print method errors.
+    frontend.send_execute_request(
+        "print.boom <- function(x, ...) stop('kaboom'); obj <- structure(1, class = 'boom')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Printing `obj` dispatches `print.boom`, which longjumps out of R.
+    let reply = notebook_evaluate(&frontend, 1, "/print obj");
+    assert_eq!(reply["success"], false);
+    let message = reply["message"].as_str().unwrap();
+    assert!(message.contains("kaboom"), "got: {message}");
+
+    // A follow-up evaluate still succeeds: the handshake completed and the `Dap`
+    // state is left usable.
+    let reply = notebook_evaluate(&frontend, 2, "40 + 2");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "42");
 }

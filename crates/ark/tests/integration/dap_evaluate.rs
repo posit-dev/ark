@@ -390,6 +390,44 @@ outer()
     dap.recv_continued();
 }
 
+/// A print method that raises an R error longjumps out of `Rf_PrintValue`. The
+/// evaluation must surface that as an error and leave the `Dap` state usable, so
+/// a follow-up evaluate still succeeds. Console and notebook share
+/// `DapHandler::evaluate`; this checks the console (TCP) path, the notebook path
+/// is checked in `test_notebook_evaluate_erroring_print_does_not_deadlock`.
+#[test]
+fn test_dap_evaluate_erroring_print_does_not_deadlock() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Define an S3 object whose print method errors.
+    frontend.send_execute_request(
+        "print.boom <- function(x, ...) stop('kaboom'); obj <- structure(1, class = 'boom')",
+        Default::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.debug_send_browser();
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+
+    // Printing `obj` dispatches `print.boom`, which longjumps out of R.
+    let err = dap.evaluate_error("/print obj", Some(frame_id));
+    assert!(err.contains("kaboom"), "got: {err}");
+
+    // A follow-up evaluate still succeeds: the `Dap` state is left usable.
+    let result = dap.evaluate("1 + 1", Some(frame_id));
+    assert_eq!(result, "2");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
 #[test]
 fn test_dap_evaluate_unknown_frame_id() {
     let frontend = DummyArkFrontend::lock();

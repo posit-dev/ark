@@ -15,6 +15,7 @@ use std::time::Duration;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendTimeoutError;
 use crossbeam::channel::Sender;
 use harp::exec::r_sandbox;
 #[cfg(debug_assertions)]
@@ -103,12 +104,21 @@ pub(crate) fn take_receivers() -> (
     )
 }
 
+/// An idle R is not parked in its event loop continuously. It wakes every 50ms
+/// for the polled-events tick (see `console_repl.rs`), runs the events, then
+/// re-enters the `Select`. It also has a short gap right after an execution
+/// while it sends the idle status and rebuilds the `Select`. We wait longer
+/// than one tick to give a chance to ReadConsole to pick up the TryIdle task.
+const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
+
 /// Attempt to run `f` on the R thread if it is currently idle at a prompt.
 ///
 /// Returns `None` if R was busy. Otherwise returns `Some` with the outcome:
-/// `Ok` if `f` ran cleanly, `Err` if it raised an R error. The bounded(0)
-/// channel guarantees atomicity: `try_send` succeeds only when the event
-/// loop's `Select` is parked waiting.
+/// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
+///
+/// On the bounded(0) channel, `send_timeout` only hands off the task when the
+/// event loop's `Select` is parked receiving, so the task runs iff R is idle.
+/// Waiting up to `TRY_IDLE_TIMEOUT`.
 pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
 where
     F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
@@ -131,9 +141,16 @@ where
         }),
     };
 
-    // Try sending the task to the Console idle event loop. This only succeeds
-    // if the event loop is listening.
-    TRY_IDLE.tx.try_send(task).ok()?;
+    // Hand the task to the Console idle event loop. This only succeeds if the
+    // event loop parks in its `Select` within the timeout.
+    match TRY_IDLE.tx.send_timeout(task, TRY_IDLE_TIMEOUT) {
+        Ok(()) => {},
+        Err(SendTimeoutError::Timeout(_)) => return None,
+        Err(SendTimeoutError::Disconnected(_)) => {
+            log::error!("`try_idle_task`: `TRY_IDLE` is disconnected");
+            return None;
+        },
+    }
 
     done_rx.recv().log_err()?;
     let out = result.lock().unwrap().take();
