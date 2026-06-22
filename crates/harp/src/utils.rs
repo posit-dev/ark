@@ -702,10 +702,8 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     res.unwrap();
 }
 
-pub fn r_print(x: impl Into<SEXP>) {
-    unsafe {
-        Rf_PrintValue(x.into());
-    }
+pub fn r_print(x: &RObject) -> harp::Result<()> {
+    harp::try_catch(|| unsafe { Rf_PrintValue(x.sexp) })
 }
 
 pub fn r_printf(x: &str) {

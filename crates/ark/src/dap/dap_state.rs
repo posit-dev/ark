@@ -884,11 +884,11 @@ impl Dap {
 
     /// Evaluate `expression` in `env` and build a DAP variable from the result.
     ///
-    /// Takes a bare `env` SEXP rather than `&Dap` so an off-thread caller (e.g.
-    /// the DAP server) can resolve the frame environment under the `Dap` lock
-    /// and then release it before calling here. The lock must not be held
-    /// across this call since `evaluate()` might longjump over the mutex
-    /// guard..
+    /// Takes a bare `env` SEXP rather than `&Dap` so the caller can resolve the
+    /// frame environment under the `Dap` lock and release it before calling
+    /// here. The lock must not be held across this call: evaluating user code
+    /// can re-enter the debugger (a breakpoint or `browser()` fires), which
+    /// locks the same `Dap` again and would deadlock.
     pub(crate) fn evaluate(
         expression: &str,
         env: libr::SEXP,
@@ -897,7 +897,8 @@ impl Dap {
         match harp::parse_eval0(expression, harp::RObject::view(env)) {
             Ok(value) => {
                 if let Some(capture) = capture {
-                    harp::utils::r_print(value.sexp);
+                    harp::utils::r_print(&value)
+                        .map_err(|err| anyhow!(evaluate_error_message(err)))?;
                     Ok(RVariable {
                         name: String::new(),
                         value: capture.take().trim_end().to_string(),
