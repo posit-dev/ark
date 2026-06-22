@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
 
@@ -205,6 +206,47 @@ impl File {
             .into_iter()
             .map(|s| Name::new(db, s))
             .collect()
+    }
+
+    /// Package names from `::` / `:::` accesses in this file
+    ///
+    /// Packages are sorted by name and are unique. This maximizes the ability to
+    /// backdate after small file edits.
+    #[salsa::tracked(returns(ref))]
+    fn namespace_accessed_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        // Likely that there are many `::` accesses for the same package within a single
+        // file, so it's useful to build as a BTreeSet that automatically handles sorting
+        // and deduplicating for us, rather than building a long `Vec` of duplicated
+        // names.
+        let names: BTreeSet<&str> = self
+            .semantic_index(db)
+            .namespaced_accesses()
+            .iter()
+            .map(|access| access.package())
+            .collect();
+
+        names
+            .into_iter()
+            .map(|package| Name::new(db, package))
+            .collect()
+    }
+
+    /// All packages used in this file
+    ///
+    /// Sources:
+    /// - [Self::attached_packages()], i.e. `library()` or `require()`
+    /// - [Self::namespace_accessed_packages()], i.e. `::` or `:::`
+    ///
+    /// Packages are sorted by name and are unique. This maximizes the ability to
+    /// backdate after small file edits.
+    #[salsa::tracked(returns(ref))]
+    pub fn used_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        let mut names: Vec<Name<'_>> = Vec::new();
+        names.extend(self.attached_packages(db));
+        names.extend(self.namespace_accessed_packages(db));
+        names.sort_by_cached_key(|package| package.text(db));
+        names.dedup();
+        names
     }
 
     /// The root containing this file, if any.
