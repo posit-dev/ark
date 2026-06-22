@@ -115,6 +115,64 @@
     as.list(version)
 }
 
+# Return detail fields for a single installed package by name.
+#' @export
+.ps.rpc.pkg_detail <- function(name) {
+    installed <- rownames(utils::installed.packages())
+    if (!nzchar(name) || !(name %in% installed)) {
+        return(NULL)
+    }
+    fields <- c(
+        "Title", "Author", "Maintainer", "License",
+        "Depends", "Imports", "LinkingTo", "Repository", "Date/Publication"
+    )
+    d <- utils::packageDescription(name, fields = fields)
+
+    # Collapse DCF whitespace; return NULL for missing (NA) fields.
+    clean <- function(x) {
+        if (is.null(x) || is.na(x)) {
+            return(NULL)
+        }
+        trimws(gsub("\\s+", " ", x, perl = TRUE))
+    }
+
+    # Parse a comma-separated dependency field into bare package names
+    # (strip version constraints like "(>= 1.0)").
+    parse_deps <- function(x) {
+        if (is.null(x) || is.na(x)) {
+            return(character(0))
+        }
+        parts <- trimws(strsplit(x, ",")[[1]])
+        names <- trimws(sub("\\(.*\\)", "", parts))
+        names[nzchar(names)]
+    }
+
+    base_pkgs <- rownames(utils::installed.packages(priority = "base"))
+    deps <- unique(c(parse_deps(d$Depends), parse_deps(d$Imports), parse_deps(d$LinkingTo)))
+    deps <- setdiff(deps, c("R", base_pkgs))
+
+    out <- list(name = name, dependencyCount = length(deps))
+
+    # Prefer Maintainer for author display; fall back to Author.
+    author <- clean(d$Maintainer)
+    if (is.null(author)) {
+        author <- clean(d$Author)
+    }
+    title <- clean(d$Title)
+    license <- clean(d$License)
+    repo <- clean(d$Repository)
+    published <- clean(d[["Date/Publication"]])
+
+    if (!is.null(title)) out$title <- title
+    if (!is.null(author)) out$author <- author
+    if (!is.null(license)) out$license <- license
+    if (!is.null(repo)) out$sourceRepository <- repo
+    if (!is.null(published)) out$publishedDate <- published
+
+    out
+}
+
+
 # Return the list of outdated packages with their latest available versions.
 #
 # `utils::old.packages()` queries the user's configured repositories, so
