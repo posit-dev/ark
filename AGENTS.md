@@ -89,9 +89,9 @@ Prefer exact assertions over fuzzy ones, especially when ordering and completene
 
 ```rust
 // Prefer
-assert_eq!(names[0], "foo()")
+assert_eq!(names[0], "foo()");
 // Over
-assert!(names.contains(&"foo()"))
+assert!(names.contains(&"foo()"));
 ```
 
 ### Placing Integration Tests
