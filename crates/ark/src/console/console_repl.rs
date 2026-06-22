@@ -667,7 +667,7 @@ impl Console {
             comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm: DebugRefCell::new(None),
+            ui_comm_id: DebugRefCell::new(None),
             last_error: None,
             help_event_tx: None,
             help_port: None,
