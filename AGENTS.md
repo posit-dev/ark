@@ -69,7 +69,7 @@ just test -p ark
 
 ### Writing Tests
 
-Because we use `nextest` to run tests, each individual test runs in its own separate process. This means that tests cannot interact with each other, and cross-test hygeine is not a concern.
+Because we use `nextest` to run tests, each individual test runs in its own separate process. This means that tests cannot interact with each other, and cross-test hygiene is not a concern.
 
 Prefer simple assertion macros without custom error messages:
 
