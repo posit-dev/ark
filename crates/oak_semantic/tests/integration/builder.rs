@@ -4,6 +4,8 @@ use aether_syntax::RSyntaxKind;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
+use oak_semantic::semantic_index::NamespacedAccess;
+use oak_semantic::semantic_index::NamespacedAccessKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
@@ -523,12 +525,15 @@ fn test_at_extraction() {
 
 #[test]
 fn test_namespace_expression_no_uses() {
+    // Both sides of `::` are selectors, not variable references in the current
+    // scope, so neither the package nor the symbol becomes a use or a symbol.
     let index = index("dplyr::filter");
     let file = ScopeId::from(0);
 
     assert!(index.symbols(file).get("dplyr").is_none());
     assert!(index.symbols(file).get("filter").is_none());
     assert_eq!(index.symbols(file).len(), 0);
+    assert_eq!(index.uses(file).len(), 0);
 }
 
 #[test]
@@ -1502,6 +1507,70 @@ fn test_source_call_emitted_without_resolver() {
     let file_scope = ScopeId::from(0);
     assert_eq!(index.definitions(file_scope).iter().count(), 0);
     assert_eq!(index.semantic_calls().len(), 1);
+}
+
+fn export(package: &str, symbol: &str, offset: u32) -> NamespacedAccess {
+    NamespacedAccess::new(
+        package.into(),
+        symbol.into(),
+        NamespacedAccessKind::Export,
+        biome_rowan::TextSize::from(offset),
+    )
+}
+
+fn internal(package: &str, symbol: &str, offset: u32) -> NamespacedAccess {
+    NamespacedAccess::new(
+        package.into(),
+        symbol.into(),
+        NamespacedAccessKind::Internal,
+        biome_rowan::TextSize::from(offset),
+    )
+}
+
+#[test]
+fn test_namespaced_access_export() {
+    let index = index("dplyr::filter");
+    assert_eq!(index.namespaced_accesses(), [export("dplyr", "filter", 0)]);
+}
+
+#[test]
+fn test_namespaced_access_internal() {
+    let index = index("rlang:::abort");
+    assert_eq!(index.namespaced_accesses(), [internal("rlang", "abort", 0)]);
+}
+
+#[test]
+fn test_namespaced_access_backtick_quoted() {
+    let index = index("`my pkg`::`my fn`");
+    assert_eq!(index.namespaced_accesses(), [export("my pkg", "my fn", 0)]);
+}
+
+#[test]
+fn test_namespaced_access_string_selectors() {
+    let index = index("dplyr::\"filter\"");
+    assert_eq!(index.namespaced_accesses(), [export("dplyr", "filter", 0)]);
+}
+
+#[test]
+fn test_namespaced_accesses_in_order() {
+    let index = index("dplyr::filter\nrlang:::abort\ntidyr::pivot_longer");
+    assert_eq!(index.namespaced_accesses(), [
+        export("dplyr", "filter", 0),
+        internal("rlang", "abort", 14),
+        export("tidyr", "pivot_longer", 28),
+    ]);
+}
+
+#[test]
+fn test_namespaced_access_inside_call() {
+    let index = index("dplyr::filter(x, y > 1)");
+    assert_eq!(index.namespaced_accesses(), [export("dplyr", "filter", 0)]);
+}
+
+#[test]
+fn test_no_namespaced_accesses() {
+    let index = index("x <- 1\nf(y)");
+    assert_eq!(index.namespaced_accesses(), Vec::<NamespacedAccess>::new());
 }
 
 #[test]
