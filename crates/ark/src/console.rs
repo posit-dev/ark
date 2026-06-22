@@ -243,18 +243,19 @@ pub struct Console {
     try_idle_rx: Receiver<TryIdleTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Comm ID of the UI comm, if connected. The comm itself lives in `comms`
-    /// like any other.
+    /// Comm IDs of pinned comms, if connected.
     ui_comm_id: DebugRefCell<Option<String>>,
+    help_comm_id: DebugRefCell<Option<String>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
     last_error: Option<Exception>,
 
-    /// Channel to communicate with the Help thread
-    help_event_tx: Option<Sender<HelpEvent>>,
-    /// R help port
+    /// R help server port, used to recognize help URLs.
     help_port: Option<u16>,
+
+    /// Our help proxy server port, used to rewrite help URLs sent to the frontend.
+    help_proxy_port: Option<u16>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
