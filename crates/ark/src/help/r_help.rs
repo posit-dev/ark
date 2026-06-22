@@ -1,7 +1,7 @@
 //
 // r_help.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 //
 
@@ -11,77 +11,35 @@ use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::HelpFrontendEvent;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
-use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
-use log::info;
-use log::trace;
-use log::warn;
-use stdext::spawn;
 
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
 use crate::console;
 use crate::console::Console;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
+use crate::help_proxy;
 use crate::methods::ArkGenerics;
-use crate::r_task;
 
-/**
- * The R Help handler (together with the help proxy) provides the server side of
- * Positron's Help panel.
- */
-pub struct RHelp {
-    comm: CommSocket,
-    r_port: u16,
-    proxy_port: u16,
-    help_event_rx: Receiver<HelpEvent>,
-}
+pub const HELP_COMM_NAME: &str = "positron.help";
+
+/// The R Help handler (together with the help proxy) provides the server side
+/// of Positron's Help panel.
+#[derive(Debug)]
+pub struct RHelp;
 
 impl RHelp {
-    /**
-     * Start the help handler. Returns a channel for sending help events to
-     * the help thread.
-     *
-     * - `comm`: The socket for communicating with the frontend.
-     * - `r_port`: The R help server port.
-     * - `proxy_port`: Our proxy help server port.
-     */
-    pub fn start(
-        comm: CommSocket,
-        r_port: u16,
-        proxy_port: u16,
-    ) -> anyhow::Result<Sender<HelpEvent>> {
-        // Create the channel that will be used to send help events from other threads.
-        let (help_event_tx, help_event_rx) = crossbeam::channel::unbounded();
-
-        // Start the help thread and wait for requests from the frontend or events
-        // from another thread.
-        spawn!("ark-help", move || {
-            let help = Self {
-                comm,
-                r_port,
-                proxy_port,
-                help_event_rx,
-            };
-
-            help.execution_thread();
-        });
-
-        // Return the channel for sending help events to the help thread
-        Ok(help_event_tx)
-    }
-
-    /// Public associated function so that callers of `start()` can cheaply check if
-    /// a url is a help url without sending a message over the execution thread
-    /// (like in the case of `browseURL()`).
+    /// Public associated function so that callers can cheaply check if a url is
+    /// a help url without going through the handler (like in the case of
+    /// `browseURL()`).
     pub fn is_help_url(url: &str, port: u16) -> bool {
         let prefix = Self::help_url_prefix(port);
         url.starts_with(prefix.as_str())
@@ -91,80 +49,7 @@ impl RHelp {
         format!("http://127.0.0.1:{port}/")
     }
 
-    /**
-     * The main help execution thread; receives messages from the frontend and
-     * other threads and processes them.
-     */
-    fn execution_thread(&self) {
-        loop {
-            // Wait for either a message from the frontend or a help event
-            // from another thread.
-            select! {
-                // A message from the frontend; typically a request to show
-                // help for a specific topic.
-                recv(&self.comm.incoming_rx) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            if !self.handle_comm_message(msg) {
-                                info!("Help comm {} closing by request from frontend.", self.comm.comm_id);
-                                break;
-                            }
-                        },
-                        Err(err) => {
-                            // The connection with the frontend has been closed; let
-                            // the thread exit.
-                            warn!("Error receiving message from frontend: {:?}", err);
-                            break;
-                        },
-                    }
-                },
-
-                // A message from another thread, typically notifying us that a
-                // help URL is ready for viewing.
-                recv(&self.help_event_rx) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            if let Err(err) = self.handle_event(msg) {
-                                log::error!("Error handling Help event: {:?}", err);
-                            }
-                        },
-                        Err(err) => {
-                            // The connection with the frontend has been closed; let
-                            // the thread exit.
-                            log::error!("Error receiving internal Help message: {:?}", err);
-                            break;
-                        },
-                    }
-                },
-            }
-        }
-        trace!("Help comm {} closed.", self.comm.comm_id);
-    }
-
-    /**
-     * Handles a comm message from the frontend.
-     *
-     * Returns true if the thread should continue, false if it should exit.
-     */
-    fn handle_comm_message(&self, message: CommMsg) -> bool {
-        if let CommMsg::Close = message {
-            // The frontend has closed the connection; let the
-            // thread exit.
-            return false;
-        }
-
-        if self
-            .comm
-            .handle_request(message, |req| self.handle_rpc(req))
-        {
-            return true;
-        }
-
-        true
-    }
-
     fn handle_rpc(&self, message: HelpBackendRequest) -> anyhow::Result<HelpBackendReply> {
-        // Match on the type of data received.
         match message {
             HelpBackendRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
@@ -177,32 +62,45 @@ impl RHelp {
         }
     }
 
-    #[tracing::instrument(level = "trace", skip_all, fields(message = %message))]
-    fn handle_event(&self, message: HelpEvent) -> anyhow::Result<()> {
-        log::trace!("{message:#?}");
-        match message {
-            HelpEvent::ShowHelpUrl(params) => self.handle_show_help_url(params),
+    /// Translate a help event into a frontend `ShowHelp` message and send it on
+    /// the comm's outgoing channel.
+    pub fn handle_event(
+        event: HelpEvent,
+        ctx: &CommHandlerContext,
+        r_port: u16,
+        proxy_port: u16,
+    ) -> anyhow::Result<()> {
+        log::trace!("{event:#?}");
+        match event {
+            HelpEvent::ShowHelpUrl(params) => {
+                Self::handle_show_help_url(params, ctx, r_port, proxy_port)
+            },
         }
     }
 
     /// Shows a help URL by sending a message to the frontend. We expect that any URL
     /// coming through here has already been verified to look like a help URL with
     /// `is_help_url()`, so if we get an unexpected prefix, that's an error.
-    fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
+    fn handle_show_help_url(
+        params: ShowHelpUrlParams,
+        ctx: &CommHandlerContext,
+        r_port: u16,
+        proxy_port: u16,
+    ) -> anyhow::Result<()> {
         let url = params.url.clone();
 
         let url = match params.kind {
             ShowHelpUrlKind::HelpProxy => {
-                if !Self::is_help_url(url.as_str(), self.r_port) {
-                    let prefix = Self::help_url_prefix(self.r_port);
+                if !Self::is_help_url(url.as_str(), r_port) {
+                    let prefix = Self::help_url_prefix(r_port);
                     return Err(anyhow!(
                         "Help URL '{url}' doesn't have expected prefix '{prefix}'."
                     ));
                 }
 
                 // Re-direct the help event to our help proxy server.
-                let r_prefix = Self::help_url_prefix(self.r_port);
-                let proxy_prefix = Self::help_url_prefix(self.proxy_port);
+                let r_prefix = Self::help_url_prefix(r_port);
+                let proxy_prefix = Self::help_url_prefix(proxy_port);
 
                 url.replace(r_prefix.as_str(), proxy_prefix.as_str())
             },
@@ -223,10 +121,8 @@ impl RHelp {
             kind: ShowHelpKind::Url,
             focus: true,
         });
-        let json = serde_json::to_value(msg)?;
-        self.comm.outgoing_tx.send(CommMsg::Data(json))?;
+        ctx.send_event(&msg);
 
-        // The URL was sent to the frontend.
         Ok(())
     }
 
@@ -235,38 +131,37 @@ impl RHelp {
         let topic = HelpTopic::parse(topic);
 
         let found = match topic {
-            HelpTopic::Simple(symbol) => r_task(|| {
+            HelpTopic::Simple(symbol) => {
                 // Try evaluating the help handler first and then fall back to
                 // the default help topic display function.
-
-                if let Ok(Some(result)) = Self::r_custom_help_handler(symbol.clone()) {
+                if let Ok(Some(result)) = Self::custom_help_handler(symbol.clone()) {
                     return Ok(result);
                 }
 
                 RFunction::from(".ps.help.showHelpTopic")
                     .add(symbol)
                     .call()?
-                    .to::<bool>()
-            }),
-            HelpTopic::Expression(expression) => {
-                // For expressions, we have to use the help handler
-                // If that fails there's no fallback.
-                r_task(|| match Self::r_custom_help_handler(expression) {
-                    Ok(Some(result)) => Ok(result),
-                    // No method found
-                    Ok(None) => Ok(false),
-                    // Error during evaluation
-                    Err(err) => Err(harp::Error::Anyhow(err)),
-                })
+                    .to::<bool>()?
             },
-        }?;
+            HelpTopic::Expression(expression) => {
+                // For expressions, we have to use the help handler.
+                // If that fails there's no fallback.
+                match Self::custom_help_handler(expression) {
+                    Ok(Some(result)) => result,
+                    // No method found
+                    Ok(None) => false,
+                    // Error during evaluation
+                    Err(err) => return Err(err),
+                }
+            },
+        };
 
         Ok(found)
     }
 
-    // Must be called in a `r_task` context.
+    // Must be called on the R thread.
     // Tries calling a custom help handler defined as an ark method.
-    fn r_custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
+    fn custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
         let env = console::selected_env();
 
         let obj = match harp::parse_eval0(topic.as_str(), env.sexp) {
@@ -289,8 +184,8 @@ impl RHelp {
             let mut fun = RFunction::new_inlined(handler);
             match fun.call_in(env.sexp) {
                 Err(err) => {
-                    log::error!("Error calling help handler: {:?}", err);
-                    return Err(anyhow!("Error calling help handler: {:?}", err));
+                    log::error!("Error calling help handler: {err:?}");
+                    return Err(anyhow!("Error calling help handler: {err:?}"));
                 },
                 Ok(result) => {
                     return Ok(Some(result.try_into()?));
@@ -301,12 +196,45 @@ impl RHelp {
         Ok(None)
     }
 
-    pub fn r_start_or_reconnect_to_help_server() -> harp::Result<u16> {
+    pub fn start_or_reconnect_to_help_server() -> harp::Result<u16> {
         // Start the R help server.
         // If it is already started, it just returns the preexisting port number.
         RFunction::from(".ps.help.startOrReconnectToHelpServer")
             .call()
             .and_then(|x| x.try_into())
+    }
+}
+
+impl CommHandler for RHelp {
+    fn handle_open(&mut self, _ctx: &CommHandlerContext) {
+        // Start the R help server and proxy on the R thread, then record their
+        // ports on `Console` so help URLs can be recognized and rewritten. If
+        // either fails to start, we leave the ports unset and help stays inert.
+        let r_port = match Self::start_or_reconnect_to_help_server() {
+            Ok(port) => port,
+            Err(err) => {
+                log::error!("Could not start R help server: {err:?}");
+                return;
+            },
+        };
+        log::info!("R help server listening on port {r_port}");
+
+        let proxy_port = match help_proxy::start(r_port) {
+            Ok(port) => port,
+            Err(err) => {
+                log::error!("Could not start R help proxy server: {err:?}");
+                return;
+            },
+        };
+
+        Console::get_mut().set_help_ports(r_port, proxy_port);
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        let this = &*self;
+        handle_rpc_request(&ctx.outgoing_tx, HELP_COMM_NAME, msg, |req| {
+            this.handle_rpc(req)
+        });
     }
 }
 

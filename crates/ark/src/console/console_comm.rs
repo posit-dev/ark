@@ -20,6 +20,7 @@ use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
+use crate::help::r_help::HELP_COMM_NAME;
 use crate::ui::UI_COMM_NAME;
 
 // All methods take `&self`.
@@ -120,6 +121,11 @@ impl Console {
             *self.ui_comm_id.borrow_mut() = Some(comm_id.clone());
         }
 
+        if comm_name == HELP_COMM_NAME {
+            self.close_help_comm();
+            *self.help_comm_id.borrow_mut() = Some(comm_id.clone());
+        }
+
         self.comms.borrow_mut().insert(
             comm_id,
             Rc::new(ConsoleComm {
@@ -148,12 +154,14 @@ impl Console {
     }
 
     pub(super) fn lookup_ui_comm(&self) -> Option<Rc<ConsoleComm>> {
-        let comm_id = self.ui_comm_id.borrow();
-        let comm_id = comm_id.as_deref()?;
-        self.lookup_comm(comm_id)
+        self.lookup_comm(self.ui_comm_id.borrow().as_deref()?)
     }
 
-    /// Remove a comm from the map, keeping the UI index in sync.
+    pub(super) fn lookup_help_comm(&self) -> Option<Rc<ConsoleComm>> {
+        self.lookup_comm(self.help_comm_id.borrow().as_deref()?)
+    }
+
+    /// Remove a comm from the map, keeping the UI and help indices in sync.
     fn remove_comm(&self, comm_id: &str) -> Option<Rc<ConsoleComm>> {
         let comm = self.comms.borrow_mut().remove(comm_id)?;
 
@@ -161,22 +169,33 @@ impl Console {
         if ui_comm_id.as_deref() == Some(comm_id) {
             *ui_comm_id = None;
         }
+        let mut help_comm_id = self.help_comm_id.borrow_mut();
+        if help_comm_id.as_deref() == Some(comm_id) {
+            *help_comm_id = None;
+        }
 
         Some(comm)
     }
 
-    /// Close and drop the currently registered UI comm, if any.
-    fn close_ui_comm(&self) {
-        let Some(old) = self
-            .ui_comm_id
+    /// Close and drop the singleton comm currently registered in `index`, if
+    /// any. `role` only labels the log message.
+    fn close_comm(&self, index: &DebugRefCell<Option<String>>, role: &str) {
+        let Some(old) = index
             .borrow_mut()
             .take()
             .and_then(|old_id| self.comms.borrow_mut().remove(&old_id))
         else {
             return;
         };
-        log::info!("Replacing an existing UI comm.");
+        log::info!("Replacing an existing {role} comm.");
         old.handler.borrow_mut().handle_close(&old.ctx);
+    }
+
+    fn close_ui_comm(&self) {
+        self.close_comm(&self.ui_comm_id, "UI");
+    }
+    fn close_help_comm(&self) {
+        self.close_comm(&self.help_comm_id, "help");
     }
 
     fn drain_closed(&self) {

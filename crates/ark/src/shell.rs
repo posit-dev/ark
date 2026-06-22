@@ -40,15 +40,13 @@ use harp::object::RObject;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
-use stdext::unwrap;
 
 use crate::ark_comm::ArkComm;
-use crate::console::Console;
 use crate::console::KernelInfo;
 use crate::console::SessionMode;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
-use crate::help_proxy;
+use crate::help::r_help::HELP_COMM_NAME;
 use crate::plots::graphics_device::PLOT_COMM_NAME;
 use crate::r_task;
 use crate::request::KernelRequest;
@@ -251,7 +249,7 @@ impl ShellHandler for Shell {
         match target {
             Comm::Variables => Ok((handle_comm_open_variables(comm)?, None)),
             Comm::Ui => handle_comm_open_ui(comm, self.kernel_request_tx.clone(), data),
-            Comm::Help => Ok((handle_comm_open_help(comm)?, None)),
+            Comm::Help => handle_comm_open_help(comm, self.kernel_request_tx.clone()),
             Comm::Other(target_name) if target_name == "ark" => {
                 Ok((ArkComm::handle_comm_open(comm)?, None))
             },
@@ -267,7 +265,7 @@ impl ShellHandler for Shell {
         originator: Originator,
     ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | HELP_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -286,7 +284,7 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | HELP_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
@@ -343,31 +341,23 @@ fn handle_comm_open_ui(
     Ok((true, Some(done_rx)))
 }
 
-fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
-    r_task(|| {
-        // Ensure the R help server is started, and get its port
-        let r_port = unwrap!(RHelp::r_start_or_reconnect_to_help_server(), Err(err) => {
-            log::error!("Could not start R help server: {err:?}");
-            return Ok(false);
-        });
-        log::info!("R help server listening on port {r_port}");
+fn handle_comm_open_help(
+    comm: CommSocket,
+    kernel_request_tx: Sender<KernelRequest>,
+) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
+    // Register the handler on the R thread, like the UI comm. `RHelp::handle_open`
+    // starts the R help server and proxy and records their ports on `Console`, all
+    // on the R thread. The RPC handler itself is stateless.
+    let (done_tx, done_rx) = bounded(0);
+    kernel_request_tx
+        .send(KernelRequest::CommOpen {
+            comm_id: comm.comm_id.clone(),
+            comm_name: comm.comm_name.clone(),
+            outgoing_tx: comm.outgoing_tx.clone(),
+            handler: Box::new(RHelp),
+            done_tx,
+        })
+        .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
 
-        // Ensure our proxy help server is started, and get its port
-        let proxy_port = unwrap!(help_proxy::start(r_port), Err(err) => {
-            log::error!("Could not start R help proxy server: {err:?}");
-            return Ok(false);
-        });
-
-        // Start the R Help handler that routes help requests
-        let help_event_tx = unwrap!(RHelp::start(comm, r_port, proxy_port), Err(err) => {
-            log::error!("Could not start R Help handler: {err:?}");
-            return Ok(false);
-        });
-
-        // Send the help event channel to the main R thread so it can
-        // emit help events, to be delivered over the help comm.
-        Console::get_mut().set_help_fields(help_event_tx, r_port);
-
-        Ok(true)
-    })
+    Ok((true, Some(done_rx)))
 }
