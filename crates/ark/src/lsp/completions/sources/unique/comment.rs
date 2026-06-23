@@ -22,6 +22,8 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
+#[cfg(test)]
+use crate::lsp::document_context::TestDocument;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
@@ -51,7 +53,7 @@ fn completions_from_comment(
 
     let pattern = Regex::new(r"^.*\s")?;
 
-    let contents = node.node_as_str(&context.document.contents)?;
+    let contents = node.node_as_str(context.contents)?;
     let token = pattern.replace(contents, "");
 
     let mut completions: Vec<CompletionItem> = vec![];
@@ -142,21 +144,20 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| {
         // If not in a comment, return `None`
         let point = Point { row: 0, column: 1 };
-        let document = Document::new("mean()", None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new("mean()");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap();
         assert!(completions.is_none());
 
         // If in a comment, return empty vector
         let point = Point { row: 0, column: 1 };
-        let document = Document::new("# mean", None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new("# mean");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap().unwrap();
         assert!(completions.is_empty());
     });
@@ -167,7 +168,6 @@ fn test_roxygen_comment() {
     use libr::LOGICAL_ELT;
     use tree_sitter::Point;
 
-    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| unsafe {
@@ -183,8 +183,8 @@ fn test_roxygen_comment() {
         }
 
         let point = Point { row: 0, column: 4 };
-        let document = Document::new("#' @", None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new("#' @");
+        let context = doc.context(point);
         let completions = completions_from_comment(&context).unwrap().unwrap();
 
         // Make sure we find it

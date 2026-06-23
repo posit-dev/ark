@@ -1,12 +1,23 @@
+use aether_path::FilePath;
+use oak_scan::DbScan;
 use tower_lsp::lsp_types;
 
-use crate::lsp::document::Document;
 use crate::lsp::state::WorldState;
 
-pub(super) fn make_state(uri: &lsp_types::Url, doc: &Document) -> WorldState {
+pub(super) fn make_state(uri: &lsp_types::Url, contents: &str) -> WorldState {
     let mut state = WorldState::default();
-    state.documents.insert(uri.clone(), doc.clone());
+    insert_file(&mut state, uri, contents);
     state
+}
+
+/// Insert an editor buffer, the same as `did_open` performs, so handlers
+/// reading either `state.documents` or `state.db` (via `file_by_path`) see a
+/// consistent file.
+pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, contents: &str) {
+    let file = state
+        .db
+        .upsert_editor(FilePath::from_url(uri), contents.to_string());
+    state.insert_open_file(uri.clone(), file, None);
 }
 
 pub(super) fn range(start: (u32, u32), end: (u32, u32)) -> lsp_types::Range {

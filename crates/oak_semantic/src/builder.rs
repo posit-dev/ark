@@ -175,6 +175,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // the first scope where the symbol is already bound. If no binding is
     // found, it assigns in the global (file) scope.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
+        let Some(parent) = self.scopes[self.current_scope].parent else {
+            // A top-level `<<-` has no enclosing frame to walk to, so it binds
+            // in the file scope it already sits in. The marker scope and the
+            // binding scope coincide, so record one definition carrying both
+            // flags rather than pushing two coinciding entries.
+            let symbol_id = self.symbol_tables[self.current_scope].intern(
+                name,
+                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
+            );
+            let def_id = self.definitions[self.current_scope].push(Definition {
+                symbol: symbol_id,
+                kind,
+                range,
+            });
+            self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+            self.use_def_maps[self.current_scope].record_deferred_definition(symbol_id, def_id);
+            return;
+        };
+
+        let target_scope = self.resolve_super_target(name, parent);
+
         let symbol_id =
             self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
         self.definitions[self.current_scope].push(Definition {
@@ -182,8 +203,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: kind.clone(),
             range,
         });
-
-        let target_scope = self.resolve_super_target(name);
 
         let target_symbol = self.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
         let target_def_id = self.definitions[target_scope].push(Definition {
@@ -195,15 +214,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);
     }
 
-    // Walk up from the parent scope looking for a scope where `name` already
-    // has `IS_BOUND`. Returns that scope, or the file scope if no binding is
-    // found (mirroring R's assignment to the global environment).
-    fn resolve_super_target(&self, name: &str) -> ScopeId {
-        let file_scope = ScopeId::from(0);
-        let Some(mut scope) = self.scopes[self.current_scope].parent else {
-            return file_scope;
-        };
-
+    // Walk up from `start` to the first scope where `name` already has
+    // `IS_BOUND`. Returns that scope, or the file scope if no binding is found
+    // (mirroring R's assignment to the global environment). Reaching the file
+    // scope unbound ends the walk there, so its `parent` of `None` is the
+    // natural terminator.
+    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
+        let mut scope = start;
         loop {
             if let Some(id) = self.symbol_tables[scope].id(name) {
                 if self.symbol_tables[scope]
@@ -215,7 +232,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
             }
             let Some(parent) = self.scopes[scope].parent else {
-                return file_scope;
+                return scope;
             };
             scope = parent;
         }
@@ -857,6 +874,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .into_iter()
             .map(|b| Arc::new(b.build()))
             .collect();
+
+        // The file scope's exit flow state is the file's exports. Capture it
+        // before the builders are consumed below.
+        let file_final_bindings = self.use_def_maps[ScopeId::from(0)].final_bindings().clone();
+
         let use_def_maps: IndexVec<ScopeId, _> = self
             .use_def_maps
             .into_iter()
@@ -872,6 +894,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.enclosing_snapshots,
             self.semantic_calls,
+            file_final_bindings,
         )
     }
 }

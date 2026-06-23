@@ -1,225 +1,306 @@
-use aether_parser::parse;
-use aether_parser::RParserOptions;
-use aether_syntax::RSyntaxNode;
-use biome_rowan::TextRange;
-use biome_rowan::TextSize;
+//! Rename at the ide layer.
+
+use aether_path::FilePath;
+use oak_db::DbInputs;
+use oak_db::File;
+use oak_db::FileRevision;
+use oak_db::OakDatabase;
+use oak_db::Package;
+use oak_db::Root;
+use oak_db::RootKind;
 use oak_ide::prepare_rename;
 use oak_ide::rename;
-use oak_ide::FilePosition;
-use oak_semantic::build_index;
-use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::NoopImportsResolver;
+use salsa::Setter;
 use url::Url;
 
-fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
-    let parsed = parse(source, RParserOptions::default());
-    let root = parsed.syntax();
-    let index = build_index(&parsed.tree(), NoopImportsResolver);
-    (root, index)
-}
-
-fn text_range(start: u32, end: u32) -> TextRange {
-    TextRange::new(TextSize::from(start), TextSize::from(end))
-}
-
-fn file_url(name: &str) -> Url {
-    Url::parse(&format!("file:///project/R/{name}")).unwrap()
-}
-
-fn pos(file: &Url, n: u32) -> FilePosition {
-    FilePosition {
-        file: file.clone(),
-        offset: TextSize::from(n),
-    }
-}
-
-fn edited_ranges(targets: oak_ide::RenameTargets) -> Vec<TextRange> {
-    targets.ranges.into_iter().map(|r| r.range).collect()
-}
+use crate::support::install_library_package;
+use crate::support::install_workspace_package;
+use crate::support::offset;
+use crate::support::pairs;
+use crate::support::range;
+use crate::support::ranges;
+use crate::support::upsert;
 
 // --- prepare_rename ---
 
 #[test]
 fn test_prepare_rename_on_def() {
-    let source = "foo <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
 
-    // Cursor on the def `foo` at offset 0
-    let result = prepare_rename(&idx, &root, &pos(&file, 0)).unwrap();
-    assert_eq!(result, (text_range(0, 3), "foo".to_string()));
+    let result = prepare_rename(&db, file, offset(0)).unwrap().unwrap();
+    assert_eq!(result, (range(0, 3), "foo".to_string()));
 }
 
 #[test]
 fn test_prepare_rename_on_use() {
-    let source = "foo <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo\n");
 
-    // Cursor on the use at offset 9
-    let result = prepare_rename(&idx, &root, &pos(&file, 9)).unwrap();
-    assert_eq!(result, (text_range(9, 12), "foo".to_string()));
+    let result = prepare_rename(&db, file, offset(9)).unwrap().unwrap();
+    assert_eq!(result, (range(9, 12), "foo".to_string()));
 }
 
 #[test]
 fn test_prepare_rename_namespace_access_returns_none() {
-    let source = "dplyr::mutate\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
-    assert!(prepare_rename(&idx, &root, &pos(&file, 7)).is_none());
+    assert!(prepare_rename(&db, file, offset(7)).unwrap().is_none());
 }
 
 #[test]
 fn test_prepare_rename_non_identifier_returns_none() {
-    let source = "x <- 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "x <- 1\n");
 
-    // Cursor on `<-` operator
-    assert!(prepare_rename(&idx, &root, &pos(&file, 3)).is_none());
+    assert!(prepare_rename(&db, file, offset(3)).unwrap().is_none());
+}
+
+#[test]
+fn test_prepare_rename_library_package_symbol_errors() {
+    let mut db = OakDatabase::new();
+    let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
+
+    let err = prepare_rename(&db, lib_file, offset(0)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
 }
 
 // --- rename: basic ---
 
 #[test]
 fn test_rename_def_and_use() {
-    let source = "foo <- 1\nfoo + foo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "foo <- 1\nfoo + foo\n");
 
-    let targets = rename(&idx, &root, &pos(&file, 0), "bar").unwrap();
-    assert_eq!(targets.new_text, "bar");
-    assert_eq!(edited_ranges(targets), vec![
-        text_range(0, 3),
-        text_range(9, 12),
-        text_range(15, 18),
+    let targets = rename(&db, file, offset(0)).unwrap();
+    assert_eq!(ranges(&targets), vec![
+        range(0, 3),
+        range(9, 12),
+        range(15, 18)
     ]);
 }
 
 #[test]
 fn test_rename_excludes_shadowed_outer() {
-    // Inner `x` is a different binding from outer `x`. Renaming inner
-    // should not touch outer.
     let source = "x <- 1\nf <- function() {\n  x <- 2\n  x\n}\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
 
     let inner_def = source.find("x <- 2").unwrap() as u32;
-    let targets = rename(&idx, &root, &pos(&file, inner_def), "y").unwrap();
-    assert_eq!(edited_ranges(targets), vec![
-        text_range(inner_def, inner_def + 1),
-        text_range(
-            source.rfind('x').unwrap() as u32,
-            source.rfind('x').unwrap() as u32 + 1
-        ),
+    let inner_use = source.rfind('x').unwrap() as u32;
+    let targets = rename(&db, file, offset(inner_def)).unwrap();
+    assert_eq!(ranges(&targets), vec![
+        range(inner_def, inner_def + 1),
+        range(inner_use, inner_use + 1),
     ]);
 }
 
 // --- rename: validation ---
 
 #[test]
-fn test_rename_empty_name_errors() {
-    let source = "foo <- 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-
-    let err = rename(&idx, &root, &pos(&file, 0), "").unwrap_err();
-    assert!(err.to_string().contains("empty"));
-}
-
-#[test]
-fn test_rename_reserved_word_errors() {
-    let source = "foo <- 1\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-
-    for word in ["if", "for", "function", "TRUE", "NULL", "NA"] {
-        let err = rename(&idx, &root, &pos(&file, 0), word).unwrap_err();
-        assert!(
-            err.to_string().contains("reserved"),
-            "expected {word} to be rejected"
-        );
-    }
-}
-
-#[test]
 fn test_rename_non_renamable_errors() {
-    // Cursor on `mutate` in `dplyr::mutate` (NamespaceAccess: not a
-    // renamable identifier). TODO: if package is in the workspace we
-    // should allow renaming.
-    let source = "dplyr::mutate\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
-    let err = rename(&idx, &root, &pos(&file, 7), "x").unwrap_err();
-    assert!(err.to_string().contains("renamable identifier"));
+    let err = rename(&db, file, offset(7)).unwrap_err();
+    assert!(err.to_string().contains("Can't rename identifier"));
 }
 
 #[test]
 fn test_rename_unbound_use_errors() {
-    // Free variable: classifies as a Use but has no local binding, so
-    // rename refuses rather than producing a partial edit.
-    let source = "foo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+    // Free variable with no binding anywhere in the db.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "foo\n");
 
-    let err = rename(&idx, &root, &pos(&file, 0), "bar").unwrap_err();
-    assert!(err.to_string().contains("no local binding"));
-}
-
-// --- rename: backtick canonicalization ---
-
-#[test]
-fn test_rename_to_name_with_space_gets_backticked() {
-    let source = "foo <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-
-    let targets = rename(&idx, &root, &pos(&file, 0), "foo bar").unwrap();
-    assert_eq!(targets.new_text, "`foo bar`");
-}
-
-#[test]
-fn test_rename_to_name_with_starting_digit_gets_backticked() {
-    let source = "foo <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-
-    let targets = rename(&idx, &root, &pos(&file, 0), "1foo").unwrap();
-    assert_eq!(targets.new_text, "`1foo`");
-}
-
-#[test]
-fn test_rename_to_name_with_backtick_errors() {
-    let source = "foo <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
-
-    let err = rename(&idx, &root, &pos(&file, 0), "foo`bar").unwrap_err();
-    assert!(err.to_string().contains("backtick"));
+    let err = rename(&db, file, offset(0)).unwrap_err();
+    assert!(err.to_string().contains("no binding"));
 }
 
 // --- rename: string definitions ---
 
 #[test]
-fn test_rename_string_def_normalizes_to_identifier_form() {
-    // `"foo" <- 1` defines `foo` using R's rarely-seen string-literal
-    // assignment form. The semantic index records the def's range as
-    // covering the whole `"foo"` token (5 chars), so rename emits an
-    // edit that replaces `"foo"` with the new name in bare identifier
-    // form. The user's quoting style is intentionally not preserved:
-    // `bar <- 1` is valid R, more idiomatic than `"bar" <- 1`, and
-    // preserving it would require per-site `new_text` plus escaping
-    // rules for new names that contain quotes or backslashes.
-    let source = "\"foo\" <- 1\nfoo\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
+fn test_rename_string_def_spans_quoted_range() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "\"foo\" <- 1\nfoo\n");
 
-    let targets = rename(&idx, &root, &pos(&file, 11), "bar").unwrap();
-    assert_eq!(targets.new_text, "bar");
-    assert_eq!(edited_ranges(targets), vec![
-        text_range(0, 5),   // covers `"foo"` (replaced as a whole)
-        text_range(11, 14), // covers `foo` (the use site)
+    let targets = rename(&db, file, offset(11)).unwrap();
+    assert_eq!(ranges(&targets), vec![range(0, 5), range(11, 14)]);
+}
+
+// --- rename: cross-file workspace scripts ---
+
+#[test]
+fn test_rename_cross_file_workspace_scripts() {
+    // Two top-level scripts in a workspace root, linked by `source()`. The
+    // candidate scan finds both and the edit spans both files.
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "helper <- function() 1\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nhelper\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, script]);
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let targets = rename(&db, script, offset(use_start)).unwrap();
+    // script.R (cursor's file) first, then helpers.R.
+    assert_eq!(pairs(&targets), vec![
+        (script, range(use_start, use_start + 6)),
+        (helpers, range(0, 6)),
     ]);
+}
+
+// --- rename: cross-file workspace package ---
+
+#[test]
+fn test_rename_cross_file_workspace_package() {
+    // `shared` is defined in a.R and used by a function body in b.R, a sibling
+    // file in the same workspace package. Package collation makes b.R's use
+    // resolve to a.R's def, so the rename spans both package files.
+    let mut db = OakDatabase::new();
+    let files = build_workspace_package(&mut db, &[
+        ("a.R", "shared <- 1\n"),
+        ("b.R", "use_shared <- function() shared\n"),
+    ]);
+    let (a, b) = (files[0], files[1]);
+
+    // Cursor on the def `shared` in a.R at offset 0.
+    let targets = rename(&db, a, offset(0)).unwrap();
+    let use_start = "use_shared <- function() ".len() as u32;
+    assert_eq!(pairs(&targets), vec![
+        (a, range(0, 6)),
+        (b, range(use_start, use_start + 6)),
+    ]);
+}
+
+// --- rename: installed packages ---
+
+#[test]
+fn test_rename_refuses_library_package_symbol() {
+    // Symbol defined in an installed-package file. Even with the file open and
+    // its sources available, editing it wouldn't change what's installed, so
+    // rename refuses.
+    let mut db = OakDatabase::new();
+    let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
+
+    // Cursor on the def `foo` at offset 0.
+    let err = rename(&db, lib_file, offset(0)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
+}
+
+#[test]
+fn test_rename_refuses_package_export_used_via_library() {
+    // `library(mypkg)` then a use of its exported `foo`. The use now resolves
+    // through the package layer to the installed-package binding, so rename
+    // refuses with the installed-package guard. Before package-layer resolution
+    // this use was unbound and errored with "no binding" instead.
+    let mut db = OakDatabase::new();
+    let _pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    let use_start = "library(mypkg)\n".len() as u32;
+    let err = rename(&db, script, offset(use_start)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is defined in an installed package."
+    );
+}
+
+#[test]
+fn test_rename_succeeds_for_workspace_package_export_via_library() {
+    // `library(mypkg)` where `mypkg` is a *workspace* package. Unlike an
+    // installed package, workspace files are editable, so rename must succeed
+    // and rewrite both the script use and the definition in the package file.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_workspace_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
+
+    let use_start = "library(mypkg)\n".len() as u32;
+    let result = rename(&db, script, offset(use_start)).unwrap();
+    assert_eq!(pairs(&result), vec![
+        (script, range(use_start, use_start + 3)),
+        (pkg_file, range(0, 3)),
+    ]);
+}
+
+// --- helpers for root / package wiring ---
+
+fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
+    // Root path must be an ancestor of the files' URLs (see `file_url`), as a
+    // real scan guarantees: `File::root` resolves an unpackaged file to the
+    // root whose scan reached it, and `source()` anchoring reads that root's
+    // path.
+    let raw = if cfg!(windows) {
+        "file:///C:/project/R/"
+    } else {
+        "file:///project/R/"
+    };
+    let url = FilePath::from_url(&Url::parse(raw).unwrap());
+    let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+}
+
+/// Build a workspace package holding `files` (name, contents), each with the
+/// package back-pointer set, and register it under a workspace root. Returns
+/// the created `File`s in order.
+fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<File> {
+    let pkg = empty_package(db, "file:///project/pkg/DESCRIPTION");
+    let created: Vec<File> = files
+        .iter()
+        .map(|(name, contents)| {
+            let url =
+                FilePath::from_url(&Url::parse(&format!("file:///project/pkg/R/{name}")).unwrap());
+            File::new(
+                db,
+                url,
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
+        .collect();
+    pkg.set_files(db).to(created.clone());
+
+    let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
+    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    created
+}
+
+/// Build a single installed-package file under a library root.
+fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
+    let pkg = empty_package(db, "file:///lib/pkg/DESCRIPTION");
+    let url = FilePath::from_url(&Url::parse("file:///lib/pkg/R/foo.R").unwrap());
+    let file = File::new(
+        db,
+        url,
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(db).to(vec![file]);
+
+    let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());
+    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg]);
+    db.library_roots().set_roots(db).to(vec![root]);
+    file
+}
+
+fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
+    Package::new(
+        db,
+        FilePath::from_url(&Url::parse(description_url).unwrap()),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        vec![],
+        vec![],
+    )
 }

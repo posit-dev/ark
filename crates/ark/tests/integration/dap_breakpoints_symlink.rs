@@ -107,9 +107,9 @@ fn real_location(file: &SymlinkedFile) -> JupyterPositronLocation {
 /// Test that breakpoints activate on execute requests when the frontend
 /// sends a URI through a symlink that differs from the canonical path.
 ///
-/// DAP's `SetBreakpoints` canonicalizes paths via `UrlId::from_file_path`.
+/// DAP's `SetBreakpoints` canonicalizes paths via `FilePath::from_path_buf`.
 /// The execute request's URI comes from the frontend as a raw string.
-/// `UrlId` must resolve both to the same canonical key.
+/// `FilePath` must resolve both to the same canonical key.
 ///
 /// This test creates an explicit symlink to avoid relying on OS-specific
 /// symlinks (e.g. macOS `/var` -> `/private/var`).
@@ -136,7 +136,7 @@ foo()
     let bp_id = breakpoints[0].id;
 
     // Send execute request with the symlinked URI (as Positron would).
-    // `UrlId::from_code_location` must resolve this to the same canonical
+    // `FilePath::from_code_location` must resolve this to the same canonical
     // key that `set_breakpoints` used.
     frontend.send_execute_request(&file.code(), ExecuteRequestOptions {
         positron: Some(ExecuteRequestPositron {
@@ -349,7 +349,7 @@ greet()
 /// Test that `source()` works through macOS's `/var` symlink.
 ///
 /// R's `normalizePath()` resolves symlinks on its own, so this path
-/// should work independently of `UrlId` canonicalization. This test
+/// should work independently of `FilePath` canonicalization. This test
 /// guards against regressions.
 #[test]
 #[cfg(target_os = "macos")]

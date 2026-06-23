@@ -1,79 +1,73 @@
-use aether_syntax::RSyntaxNode;
 use anyhow::anyhow;
 use biome_rowan::TextRange;
-use oak_core::identifier::to_identifier_text;
-use oak_semantic::semantic_index::SemanticIndex;
+use biome_rowan::TextSize;
+use oak_db::Db;
+use oak_db::Definition;
+use oak_db::File;
+use oak_db::Name;
+use oak_db::RootKind;
 
 use crate::find_references;
-use crate::FilePosition;
 use crate::FileRange;
-use crate::Identifier;
 
-/// All edits needed to rename the symbol at the cursor. Each range gets
-/// replaced by `new_text`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenameTargets {
-    pub ranges: Vec<FileRange>,
-    /// The canonical syntactic form of the new name (backtick-wrapped if
-    /// needed). Same for every range in `ranges`.
-    pub new_text: String,
-}
-
-/// Identify the renamable identifier at `position`, returning its range
-/// and current (unquoted) name. Returns `None` when the cursor is on a
-/// non-identifier, a `pkg::sym` namespace access, or a `$`/`@` member
-/// name (TODO(places)).
+/// Identify the renamable identifier at `offset`, returning its range and
+/// current (unquoted) name.
 ///
-/// Equivalent to LSP `textDocument/prepareRename`. Clients use the range
-/// to highlight the editable region and the name as the placeholder.
+/// Returns `Ok(None)` when the cursor isn't on something we can rename (a
+/// non-identifier, a `pkg::sym` namespace access, or a `$`/`@` member name),
+/// so the client simply offers no rename. Returns `Err` when the cursor is on
+/// a renamable identifier that we still refuse, today only a symbol defined in
+/// an installed package, so the client can surface why at prepare time.
 pub fn prepare_rename(
-    index: &SemanticIndex,
-    root: &RSyntaxNode,
-    position: &FilePosition,
-) -> Option<(TextRange, String)> {
-    let ident = Identifier::classify(index, root, position.offset)?;
-    match ident {
-        Identifier::Definition { def, name, .. } => Some((def.range(), name.to_string())),
-        Identifier::Use { use_site, name, .. } => Some((use_site.range(), name.to_string())),
-        Identifier::NamespaceAccess { .. } => None,
-    }
+    db: &dyn Db,
+    file: File,
+    offset: TextSize,
+) -> anyhow::Result<Option<(TextRange, String)>> {
+    Ok(renamable_at(db, file, offset)?.map(|(range, name)| (range, name.text(db).to_string())))
 }
 
-/// Compute all rename edits within the file.
+/// Find every site to rename for the symbol at `offset`. The caller turns
+/// these ranges into edits.
 ///
-/// Returns `Err` when:
-/// - `new_name` is empty, is an R reserved word, or contains a literal
-///   backtick (which can't appear in a backtick-quoted identifier).
-/// - The cursor isn't on a renamable identifier (no `prepare_rename`
-///   target).
-/// - Nothing in the file binds to the cursor's symbol (free variable
-///   from outside the file). Rename would only edit local sites without
-///   touching the external definition, so we refuse rather than produce
-///   a partial result.
-///
-/// TODO(places): renaming a `$`/`@` member name returns `Err` because
-/// the semantic index doesn't track member names.
-///
-/// TODO(salsa): cross-file renames are out of scope until cross-file
-/// resolution lands. For now this is intra-file only.
-pub fn rename(
-    index: &SemanticIndex,
-    root: &RSyntaxNode,
-    position: &FilePosition,
-    new_name: &str,
-) -> anyhow::Result<RenameTargets> {
-    let new_text = to_identifier_text(new_name)?;
+/// Returns `Err` when the cursor isn't on a renamable identifier or it
+/// resolves to an installed package (both via `renamable_at`), or when nothing
+/// in the database binds the cursor's symbol. In that last case a rename would
+/// produce no edits, so we refuse rather than silently succeed.
+pub fn rename(db: &dyn Db, file: File, offset: TextSize) -> anyhow::Result<Vec<FileRange>> {
+    let Some(_) = renamable_at(db, file, offset)? else {
+        return Err(anyhow!("Can't rename identifier at cursor."));
+    };
 
-    if prepare_rename(index, root, position).is_none() {
-        return Err(anyhow!("No renamable identifier at cursor"));
-    }
-
-    let ranges = find_references(index, root, position, true).ranges;
+    let ranges = find_references(db, file, offset, true);
     if ranges.is_empty() {
         return Err(anyhow!(
-            "Cannot rename: symbol has no local binding in this file"
+            "Can't rename: symbol has no binding in the workspace."
         ));
     }
 
-    Ok(RenameTargets { ranges, new_text })
+    Ok(ranges)
+}
+
+fn renamable_at<'db>(
+    db: &'db dyn Db,
+    file: File,
+    offset: TextSize,
+) -> anyhow::Result<Option<(TextRange, Name<'db>)>> {
+    let Some((name, range, defs)) = file.resolve_variable_at(db, offset) else {
+        return Ok(None);
+    };
+
+    if defs.iter().any(|&def| is_library_def(db, def)) {
+        return Err(anyhow!(
+            "Can't rename: symbol is defined in an installed package."
+        ));
+    }
+
+    Ok(Some((range, name)))
+}
+
+fn is_library_def(db: &dyn Db, def: Definition) -> bool {
+    def.file(db)
+        .root(db)
+        .is_some_and(|root| root.kind(db) == RootKind::Library)
 }

@@ -1,3 +1,5 @@
+use aether_lsp_utils::proto::PositionEncoding;
+use biome_line_index::WideEncoding;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -81,11 +83,27 @@ pub static DOCUMENT_SETTINGS: &[Setting<DocumentConfig>] = &[
 ];
 
 /// Configuration of the LSP
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
     pub(crate) symbols: SymbolsConfig,
     pub(crate) workspace_symbols: WorkspaceSymbolsConfig,
+
+    /// Session-wide position encoding for offset <-> LSP-position conversion.
+    /// One value for the whole session, not per document. Hard-coded to UTF-16,
+    /// the encoding we advertise at `initialize`.
+    pub(crate) position_encoding: PositionEncoding,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self {
+            diagnostics: DiagnosticsConfig::default(),
+            symbols: SymbolsConfig::default(),
+            workspace_symbols: WorkspaceSymbolsConfig::default(),
+            position_encoding: PositionEncoding::Wide(WideEncoding::Utf16),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

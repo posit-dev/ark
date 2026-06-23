@@ -20,16 +20,31 @@ pub struct OakDatabase {
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
     stale_root: Arc<OnceLock<StaleRoot>>,
+    // Clone counter that represents how many background readers have cloned the database
+    holds: Arc<()>,
 }
 
 impl OakDatabase {
     pub fn new() -> Self {
         Self::default()
     }
+
+    // Number of live clones of this db (always >= 1, the caller itself). A
+    // write through `&mut db` parks until this reaches 1, so a value > 1 here
+    // means a write right now would block on that many outstanding handles.
+    pub fn outstanding_holds(&self) -> usize {
+        Arc::strong_count(&self.holds)
+    }
 }
 
 #[salsa::db]
 impl salsa::Database for OakDatabase {}
+
+impl std::fmt::Debug for OakDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OakDatabase").finish_non_exhaustive()
+    }
+}
 
 #[salsa::db]
 impl DbInputs for OakDatabase {
@@ -54,8 +69,8 @@ impl DbInputs for OakDatabase {
 
 #[salsa::db]
 impl Db for OakDatabase {
-    fn file_by_url(&self, url: &aether_url::UrlId) -> Option<crate::File> {
-        crate::db::file_by_url_query(self, url)
+    fn file_by_path(&self, path: &aether_path::FilePath) -> Option<crate::File> {
+        crate::db::file_by_path_query(self, path)
     }
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {

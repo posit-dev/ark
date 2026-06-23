@@ -4,7 +4,7 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
@@ -324,7 +324,7 @@ impl Console {
             return;
         }
 
-        let Some(uri) = UrlId::parse(&filename).warn_on_err() else {
+        let Some(uri) = FilePath::parse(&filename).warn_on_err() else {
             return;
         };
 
@@ -546,7 +546,7 @@ pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
     let env = RObject::new(env);
 
     let uri: String = RObject::view(uri).try_into()?;
-    let uri = UrlId::parse(&uri)?;
+    let uri = FilePath::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
     let id: i64 = id.parse()?;
@@ -648,7 +648,7 @@ pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
 }
 
 /// Emit a fenced breakpoint block to stderr.
-fn emit_breakpoint_block(uri: &UrlId, line: u32, content: &str) {
+fn emit_breakpoint_block(uri: &FilePath, line: u32, content: &str) {
     let Some(text) = format_breakpoint_block(uri, line, content) else {
         return;
     };
@@ -662,7 +662,7 @@ fn emit_breakpoint_block(uri: &UrlId, line: u32, content: &str) {
         .unwrap();
 }
 
-fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<String> {
+fn format_breakpoint_block(uri: &FilePath, line: u32, content: &str) -> Option<String> {
     if content.trim().is_empty() {
         return None;
     }
@@ -696,9 +696,9 @@ fn eval_log_message(template: &str, env: RObject) -> String {
 }
 
 /// Format a clickable `filename#line` label for breakpoint output.
-fn breakpoint_label(uri: &UrlId, line: u32) -> String {
-    let filename = uri
-        .as_url()
+fn breakpoint_label(uri: &FilePath, line: u32) -> String {
+    let url = uri.to_url();
+    let filename = url
         .path_segments()
         .and_then(|mut s| s.next_back())
         .unwrap_or("unknown");
@@ -743,7 +743,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
     let uri: String = RObject::view(uri).try_into()?;
     let id: String = RObject::view(id).try_into()?;
 
-    let Some(uri) = UrlId::parse(&uri).log_err() else {
+    let Some(uri) = FilePath::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -773,7 +773,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     let start_line: i32 = RObject::view(start_line).try_into()?;
     let end_line: i32 = RObject::view(end_line).try_into()?;
 
-    let Some(uri) = UrlId::parse(&uri).log_err() else {
+    let Some(uri) = FilePath::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -851,8 +851,8 @@ mod tests {
         frames.iter().map(|f| f.frame_name.as_str()).collect()
     }
 
-    fn test_uri(path: &str) -> UrlId {
-        UrlId::from_url(Url::parse(&format!("file:///project/{path}")).unwrap())
+    fn test_uri(path: &str) -> FilePath {
+        FilePath::from_url(&Url::parse(&format!("file:///project/{path}")).unwrap())
     }
 
     #[test]

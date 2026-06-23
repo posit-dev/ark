@@ -16,10 +16,14 @@ workspace = true
 [dependencies]
 aether_parser.workspace = true
 aether_syntax.workspace = true
-aether_url.workspace = true
+aether_path.workspace = true
+biome_line_index.workspace = true
 biome_rowan.workspace = true
+camino.workspace = true
 compact_str.workspace = true
+filetime.workspace = true
 log.workspace = true
+oak_core.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
 rustc-hash.workspace = true
@@ -30,3 +34,4 @@ url.workspace = true
 
 [dev-dependencies]
 oak_semantic = { workspace = true, features = ["salsa", "testing"] }
+tempfile.workspace = true

@@ -1,27 +1,33 @@
+use std::fs;
 use std::sync::Arc;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
-use stdext::result::ResultExt;
 
+use crate::db::root_by_file;
+use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
+use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::Root;
 
 /// A source file tracked by Salsa.
 ///
-/// Content is pushed into Salsa by the LSP layer, the database never does I/O.
-/// This matches rust-analyzer's push model and avoids tying parsing to
-/// disk/network I/O inside a Salsa query.
+/// The file's content is not stored directly. Instead, `source_text()` is a
+/// lazy tracked query that returns either the editor's in-memory buffer
+/// (`source_text_override`) or reads the file from disk. The `revision` input
+/// drives cache invalidation for the disk-read path: bumping it forces
+/// `source_text()` to re-read the file without storing the bytes as a salsa
+/// input.
 ///
-/// The `url` field is a [`UrlId`], so the type system enforces "everything
-/// inside Salsa is a canonical URL".
+/// The `path` field is a [`FilePath`], so the type system enforces "everything
+/// inside Salsa is a canonical path".
 ///
 /// `package` is a back-pointer to the [`Package`] this file belongs to, or
 /// `None` for standalone scripts. Inverse of `Package.files`, so queries
@@ -34,10 +40,11 @@ use crate::Root;
 /// `File.package` and the file's physical location in a `Vec<File>` are
 /// expected to agree. A file with `package == Some(pkg)` should live in
 /// `pkg.files`. A file with `package == None` should live in either some
-/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_url`,
-/// `set_contents`, `set_package`) are `pub` because field visibility couples to
-/// setter visibility in salsa but calling `set_package` directly leaves the
-/// file in its old bucket and silently breaks this invariant.
+/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_path`,
+/// `set_revision`, `set_source_text_override`, `set_package`) are `pub` because
+/// field visibility couples to setter visibility in salsa but calling
+/// `set_package` directly leaves the file in its old bucket and silently breaks
+/// this invariant.
 ///
 /// The scanner crate (`oak_scan`) wraps these setters in helpers that
 /// maintain placement (move the file between `pkg.files`,
@@ -47,9 +54,10 @@ use crate::Root;
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
-    pub url: UrlId,
+    pub path: FilePath,
+    pub revision: FileRevision,
     #[returns(ref)]
-    pub contents: String,
+    pub source_text_override: Option<String>,
     /// **Placement invariant.** Call this setter only through
     /// `oak_scan`'s helpers; see the type-level doc above.
     pub package: Option<Package>,
@@ -57,6 +65,48 @@ pub struct File {
 
 #[salsa::tracked]
 impl File {
+    /// The file's source text. Returns the editor's in-memory buffer if one is
+    /// set (`source_text_override`), otherwise reads from disk.
+    ///
+    /// Tracked and LRU-bounded so the string isn't pinned forever the way an
+    /// input field would be. The body reads `revision` and
+    /// `source_text_override` through `db`, so salsa invalidates this memo when
+    /// the watcher bumps the revision or the editor sets/clears the override,
+    /// and a re-read picks up the new bytes.
+    ///
+    /// A virtual path or an unreadable file yields empty text (matches ty).
+    #[salsa::tracked(returns(ref), lru = 128)]
+    pub fn source_text(self, db: &dyn Db) -> String {
+        if let Some(text) = self.source_text_override(db) {
+            return text.clone();
+        }
+
+        // Depend on `revision()` so a bump forces a re-read
+        report_untracked_if_zero(db, self.revision(db));
+
+        let FilePath::File(path) = self.path(db) else {
+            // Our virtual documents (e.g. untitled://) are push-based, the
+            // editor writes them to the source override field via
+            // `upsert_editor`. If we ever do lazy virtual documents, that is
+            // where we'd hook them up. Until then it would be unexpected to
+            // reach here.
+            log::warn!("Can't read virtual document `{}`", self.path(db));
+            return String::new();
+        };
+
+        match fs::read_to_string(path.as_path().as_std_path()) {
+            Ok(text) => text,
+            Err(err) => {
+                // A file we were asked to analyze but can't read (permissions,
+                // transient I/O) becomes empty source. Log so the failure isn't
+                // wholly silent, otherwise downstream diagnostics and symbols
+                // would just come back empty with no explanation.
+                log::error!("Failed to read `{path}`: {err:?}");
+                String::new()
+            },
+        }
+    }
+
     /// Parse this file's contents into an R syntax tree.
     ///
     /// Crate-internal: kept `pub(crate)` so downstream crates can't take a
@@ -71,9 +121,22 @@ impl File {
     #[salsa::tracked(returns(ref), lru = 128)]
     pub(crate) fn parse(self, db: &dyn Db) -> OakParse {
         OakParse::new(aether_parser::parse(
-            self.contents(db),
+            self.source_text(db).as_str(),
             aether_parser::RParserOptions::default(),
         ))
+    }
+
+    /// Line index for this file, mapping byte offsets to `(line, column)`.
+    ///
+    /// Computed straight from `source_text()`, so it doesn't depend on a syntax
+    /// tree. The LSP needs it for every offset <-> position translation. No
+    /// `lru`: it's small and almost every request needs it, so it stays
+    /// resident for the file's lifetime. Follows ty and rust-analyzer, which
+    /// both compute the line index as a query off the source text rather than
+    /// storing it on the file input.
+    #[salsa::tracked(returns(ref))]
+    pub fn line_index(self, db: &dyn Db) -> biome_line_index::LineIndex {
+        biome_line_index::LineIndex::new(self.source_text(db).as_str())
     }
 
     /// Build this file's `SemanticIndex` from the parse tree.
@@ -146,11 +209,16 @@ impl File {
 
     /// The root containing this file, if any.
     ///
-    /// If the file has a registered [`Package`], asks the db which live
-    /// root holds it via [`Db::root_by_package`]. Otherwise falls back to a
-    /// URL-prefix lookup against [`WorkspaceRoots`] (orphan files live
-    /// under a workspace root or nowhere). Library files normally have
-    /// a package; the `root_by_package` branch covers them too.
+    /// Packaged files ask the db which live root holds the package via
+    /// [`Db::root_by_package`]. That branch covers library files too, which
+    /// normally have a package. It also keeps the common case cheap: it
+    /// depends on each root's package list, not its full file set.
+    ///
+    /// Unpackaged files go through `root_by_file()`, the deepest root whose
+    /// scan actually reached the file. If no scan reached it (an editor
+    /// buffer opened before any scan, so it sits in orphan), we fall back
+    /// to a URL-prefix lookup so the file still resolves to the workspace
+    /// folder it lives under.
     ///
     /// Returns `None` if the file's package was evicted to
     /// [`StaleRoot`] (no live root contains it), or if the file is in
@@ -163,29 +231,26 @@ impl File {
         if let Some(pkg) = self.package(db) {
             return db.root_by_package(pkg);
         }
-        root_by_url(db, self.url(db))
+        root_by_file(db, self).or_else(|| root_by_path(db, self.path(db)))
     }
 }
 
 /// Find the workspace `Root` whose path is the longest-prefix ancestor
-/// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
+/// of `path`. Returns `None` for virtual documents and for paths outside
 /// every workspace folder. Private helper: the only caller is
-/// [`File::root`] (for files without a registered package).
-fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+/// [`File::root`], as the fallback for an orphan file no scan has reached
+/// yet (path prefix is all we have until a scan lands).
+fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
-    if !url.is_file() {
-        return None;
-    }
-
-    let path = url.to_file_path().log_err()?;
+    let path = path.as_path()?;
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).to_file_path().log_err()?;
-            path.starts_with(&root_path).then_some((root_path, *root))
+            let root_path = root.path(db).as_path()?;
+            path.starts_with(root_path).then_some((root_path, *root))
         })
-        .max_by_key(|(p, _)| p.components().count())
+        .max_by_key(|(root_path, _)| root_path.components().count())
         .map(|(_, r)| r)
 }
 
@@ -198,7 +263,7 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
     log::warn!(
         "Cyclic `source()` Detected at {}. Rebuilding without cross-file resolution.",
-        file.url(db),
+        file.path(db),
     );
     let parsed = file.parse(db);
     oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)

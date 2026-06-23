@@ -1,7 +1,7 @@
 use crate::dcf::Dcf;
 
 /// Parsed DESCRIPTION file
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Description {
     pub name: String,
     pub version: String,
@@ -17,12 +17,12 @@ pub struct Description {
     pub fields: Dcf,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Repository {
     CRAN,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Priority {
     Base,
     Recommended,
@@ -84,10 +84,16 @@ impl Description {
     }
 
     /// Parse the `Collate` field, if present, returning the whitespace-separated
-    /// file names in the order specified.
+    /// file names in the order specified. R's DCF format quotes each filename
+    /// (`Collate: 'foo.R' 'bar.R'`) so surrounding quotes are stripped.
     pub fn collate(&self) -> Option<Vec<String>> {
         let collate = self.fields.get("Collate")?;
-        Some(collate.split_whitespace().map(|s| s.to_string()).collect())
+        Some(
+            collate
+                .split_whitespace()
+                .map(|s| s.trim_matches(['\'', '"']).to_string())
+                .collect(),
+        )
     }
 }
 
@@ -176,6 +182,34 @@ Priority: recommended"#;
 Version: 1.0.0"#;
         let parsed = Description::parse(desc).unwrap();
         assert!(parsed.priority.is_none());
+    }
+
+    #[test]
+    fn parses_collate_strips_surrounding_quotes() {
+        // Real R DESCRIPTION files quote each filename in the `Collate` field.
+        let desc = r#"Package: mypackage
+Version: 1.0.0
+Collate:
+    'utils.R'
+    'core.R'
+    'zzz.R'"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(
+            parsed.collate(),
+            Some(vec![
+                "utils.R".to_string(),
+                "core.R".to_string(),
+                "zzz.R".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_collate_returns_none_when_field_absent() {
+        let desc = r#"Package: mypackage
+Version: 1.0.0"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.collate(), None);
     }
 
     #[test]

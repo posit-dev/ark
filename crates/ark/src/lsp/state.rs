@@ -1,21 +1,28 @@
 use std::collections::HashMap;
-use std::path::Path;
 
+use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::File;
+use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
-use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::open_file::OpenFile;
 
 #[derive(Clone, Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
 /// code. This is a pure value. There is no interior mutability in this data
 /// structure. It can be cloned and safely sent to other threads.
 pub(crate) struct WorldState {
-    /// Watched documents
-    pub(crate) documents: HashMap<Url, Document>,
+    /// Salsa input tree for Oak queries.
+    pub(crate) db: OakDatabase,
+
+    /// Watched documents, keyed on the normalised [`FilePath`] form.
+    /// The verbatim editor URL is preserved on each [`OpenFile::wire_url`]
+    /// for wire output.
+    pub(crate) open_files: HashMap<FilePath, OpenFile>,
 
     /// Watched folders
     pub(crate) workspace: Workspace,
@@ -66,64 +73,77 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(library: Library) -> Self {
+    pub(crate) fn new(db: OakDatabase, library: Library) -> Self {
         Self {
+            db,
             library,
             ..Default::default()
         }
     }
 
-    pub(crate) fn get_document(&self, uri: &Url) -> anyhow::Result<&Document> {
-        if let Some(doc) = self.documents.get(uri) {
-            Ok(doc)
+    pub(crate) fn open_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut OpenFile> {
+        let key = FilePath::from_url(uri);
+        if let Some(open_file) = self.open_files.get_mut(&key) {
+            Ok(open_file)
         } else {
             Err(anyhow!("Can't find document for URI {uri}"))
         }
     }
 
-    pub(crate) fn get_document_mut(&mut self, uri: &Url) -> anyhow::Result<&mut Document> {
-        if let Some(doc) = self.documents.get_mut(uri) {
-            Ok(doc)
-        } else {
-            Err(anyhow!("Can't find document for URI {uri}"))
+    /// Snapshot for the diagnostics worker, which runs off the main loop and
+    /// queries oak.
+    pub(crate) fn diagnostics_snapshot(&self) -> WorldState {
+        WorldState {
+            db: self.db.clone(),
+            console_scopes: self.console_scopes.clone(),
+            installed_packages: self.installed_packages.clone(),
+            root: self.root.clone(),
+            library: self.library.clone(),
+            config: self.config.clone(),
+            open_files: HashMap::new(),
+            virtual_documents: HashMap::new(),
+            workspace: Workspace::default(),
         }
+    }
+
+    /// The stored [`OpenFile`] for a request.
+    pub(crate) fn open_file(&self, uri: &Url) -> anyhow::Result<&OpenFile> {
+        let key = FilePath::from_url(uri);
+        let Some(open_file) = self.open_files.get(&key) else {
+            return Err(anyhow!("Can't find document for URI {uri}"));
+        };
+        Ok(open_file)
+    }
+
+    /// URL to put on the wire for `file`. Open buffers keep the editor's
+    /// verbatim URL so the frontend sees the URI it sent us. Files that were
+    /// never opened in the editor (disk-scanned files, resolution targets) have
+    /// no verbatim URL, so synthesise one from the normalised path.
+    pub(crate) fn wire_url(&self, file: File) -> Url {
+        let path = file.path(&self.db);
+        self.open_files
+            .get(path)
+            .map(|open_file| open_file.wire_url().clone())
+            .unwrap_or_else(|| path.to_url())
+    }
+
+    /// Register an editor buffer in `open_files`, keying on the normalised
+    /// [`FilePath`] and stashing the verbatim editor URL on [`OpenFile::wire_url`] for
+    /// wire output.
+    ///
+    /// The caller is in charge of pushing the contents into `oak` via
+    /// `upsert_editor()` and handing us the resulting [`File`].
+    pub(crate) fn insert_open_file(&mut self, url: Url, file: File, version: Option<i32>) {
+        let key = FilePath::from_url(&url);
+        let open_file = OpenFile::new(file, version, url);
+        self.open_files.insert(key, open_file);
     }
 }
 
-pub(crate) fn with_document<T, F>(
-    path: &Path,
-    state: &WorldState,
-    mut callback: F,
-) -> anyhow::Result<T>
-where
-    F: FnMut(&Document) -> anyhow::Result<T>,
-{
-    let mut fallback = || {
-        let contents = std::fs::read_to_string(path)?;
-        let document = Document::new(contents.as_str(), None);
-        callback(&document)
-    };
-
-    // If we have a cached copy of the document (because we're monitoring it)
-    // then use that; otherwise, try to read the document from the provided
-    // path and use that instead.
-    let Ok(uri) = Url::from_file_path(path) else {
-        log::info!(
-            "couldn't construct uri from {}; reading from disk instead",
-            path.display()
-        );
-        return fallback();
-    };
-
-    let Ok(document) = state.get_document(&uri) else {
-        log::info!("no document for uri {uri}; reading from disk instead");
-        return fallback();
-    };
-
-    callback(document)
-}
-
-pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
-    let uris: Vec<Url> = state.documents.iter().map(|elt| elt.0.clone()).collect();
-    uris
+pub(crate) fn open_file_wire_urls(state: &WorldState) -> Vec<Url> {
+    state
+        .open_files
+        .values()
+        .map(|doc| doc.wire_url().clone())
+        .collect()
 }

@@ -186,12 +186,13 @@ impl DapJupyterHandler {
         let breakpoints: Vec<serde_json::Value> = state
             .breakpoints
             .iter()
-            .map(|(uri, (_, bps))| {
-                let source = uri
-                    .as_url()
-                    .to_file_path()
-                    .map_or_else(|_| uri.to_string(), |p| p.to_string_lossy().into_owned());
-                let source_breakpoints: Vec<serde_json::Value> = bps
+            .map(|(_, entry)| {
+                // Echo the verbatim path the frontend sent rather than the
+                // normalized key, so it sees back its own bytes (e.g. its
+                // Windows drive-letter casing).
+                let source = entry.verbatim_path.clone();
+                let source_breakpoints: Vec<serde_json::Value> = entry
+                    .breakpoints
                     .iter()
                     .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
                     .map(|bp| {

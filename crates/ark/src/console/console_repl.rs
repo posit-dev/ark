@@ -68,7 +68,7 @@ pub enum SessionMode {
 #[derive(Debug)]
 pub(crate) enum ConsoleNotification {
     /// Notification that a document has changed, requiring breakpoint invalidation.
-    DidChangeDocument(UrlId),
+    DidChangeDocument(FilePath),
 }
 
 /// Stack of pending inputs
@@ -1541,28 +1541,28 @@ impl Console {
                 // Keep the DAP lock while we are updating breakpoints
                 let mut dap_guard = self.debug_dap.lock().unwrap();
 
-                let uri_id = loc.as_ref().map(crate::url::url_id_from_code_location);
+                let path = loc.as_ref().map(crate::url::file_path_from_code_location);
 
                 // For notebook cells (`cellId` present in metadata), synthesize
                 // a `CodeLocation` pointing to the temp file that `dumpCell`
                 // wrote. This gives `annotate_input()` the file URI it needs
                 // for the `#line` directive and breakpoint injection.
-                let (uri_id, loc) = if cell_id.is_some() {
+                let (path, loc) = if cell_id.is_some() {
                     match dap_notebook::notebook_code_location(&code) {
                         Some(notebook_loc) => {
-                            let id = UrlId::from_url(notebook_loc.uri.clone());
+                            let id = FilePath::from_url(&notebook_loc.uri);
                             (Some(id), Some(notebook_loc))
                         },
-                        None => (uri_id, loc),
+                        None => (path, loc),
                     }
                 } else {
-                    (uri_id, loc)
+                    (path, loc)
                 };
 
-                let breakpoints = uri_id
+                let breakpoints = path
                     .as_ref()
-                    .and_then(|uri_id| dap_guard.breakpoints.get_mut(uri_id))
-                    .map(|(_, v)| v.as_mut_slice());
+                    .and_then(|path| dap_guard.breakpoints.get_mut(path))
+                    .map(|entry| entry.breakpoints.as_mut_slice());
 
                 let parse_result =
                     PendingInputs::read(&code, loc, breakpoints, cell_id.is_some());
@@ -1583,9 +1583,9 @@ impl Console {
 
                 // Notify frontend about any breakpoints marked invalid during annotation.
                 // Remove disabled breakpoints.
-                if let Some(uri_id) = &uri_id {
-                    dap_guard.notify_invalid_breakpoints(uri_id);
-                    dap_guard.remove_disabled_breakpoints(uri_id);
+                if let Some(path) = &path {
+                    dap_guard.notify_invalid_breakpoints(path);
+                    dap_guard.remove_disabled_breakpoints(path);
                 }
 
                 drop(dap_guard);

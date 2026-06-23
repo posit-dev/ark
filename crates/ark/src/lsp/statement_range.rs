@@ -5,8 +5,10 @@
 //
 //
 
+use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
+use oak_db::File;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
@@ -19,7 +21,10 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::backend::LspResult;
-use crate::lsp::document::Document;
+use crate::lsp::db::parse_tree_sitter;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -97,13 +102,26 @@ struct ArkStatementRangeSyntaxRejection {
 impl ArkStatementRangeResponse {
     // Sole conversion method between `ArkStatementRangeResponse` and `StatementRangeResponse`,
     // which handles all Tree-sitter to LSP conversion at the method boundary
-    fn into_lsp_response(self, document: &Document) -> anyhow::Result<StatementRangeResponse> {
+    fn into_lsp_response(
+        self,
+        db: &dyn ArkDb,
+        file: File,
+        encoding: PositionEncoding,
+    ) -> anyhow::Result<StatementRangeResponse> {
         match self {
             ArkStatementRangeResponse::Success(response) => {
                 // Tree-sitter `Point`s to LSP `Position`s
-                let start =
-                    document.lsp_position_from_tree_sitter_point(response.range.start_point)?;
-                let end = document.lsp_position_from_tree_sitter_point(response.range.end_point)?;
+                let line_index = file.line_index(db);
+                let start = lsp_position_from_tree_sitter_point(
+                    response.range.start_point,
+                    line_index,
+                    encoding,
+                )?;
+                let end = lsp_position_from_tree_sitter_point(
+                    response.range.end_point,
+                    line_index,
+                    encoding,
+                )?;
                 let range = lsp_types::Range { start, end };
                 Ok(StatementRangeResponse::Success(StatementRangeSuccess {
                     range,
@@ -130,22 +148,24 @@ impl ArkStatementRangeResponse {
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
 pub(crate) fn statement_range(
-    document: &Document,
+    db: &dyn ArkDb,
+    file: File,
     point: Point,
+    encoding: PositionEncoding,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let root = document.ast.root_node();
-    let contents = &document.contents;
+    let root = file.tree_sitter(db).root_node();
+    let contents = file.source_text(db).as_str();
 
     // Initial check to see if we are in a roxygen2 comment, in which case we parse a
     // subdocument containing the `@examples` or `@examplesIf` section and locate a
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some(response) = find_roxygen_statement_range(&root, contents, point)? {
-        return Ok(Some(response.into_lsp_response(document)?));
+        return Ok(Some(response.into_lsp_response(db, file, encoding)?));
     }
 
     if let Some(response) = find_statement_range(&root, point.row)? {
-        return Ok(Some(response.into_lsp_response(document)?));
+        return Ok(Some(response.into_lsp_response(db, file, encoding)?));
     }
 
     Ok(None)
@@ -341,9 +361,11 @@ fn find_roxygen_examples_range(
         .collect();
     let subcontents = subcontents.join("\n");
 
-    // Parse the subdocument
-    let subdocument = Document::new(&subcontents, None);
-    let subdocument_root = subdocument.ast.root_node();
+    // Parse the subdocument directly. The `@examples` subdocument is a
+    // re-indented slice of the buffer, not an editor file with its own
+    // `oak_db::File`.
+    let subdocument_tree = parse_tree_sitter(&subcontents);
+    let subdocument_root = subdocument_tree.root_node();
 
     // Adjust original document row to point to the subdocument row so we know where to
     // start our search from within the subdocument
@@ -360,7 +382,7 @@ fn find_roxygen_examples_range(
         ArkStatementRangeResponse::Success(subdocument_statement_range) => {
             adjust_roxygen_examples_success(
                 subdocument_statement_range,
-                &subdocument,
+                &subcontents,
                 root,
                 row_adjustment,
             )
@@ -375,16 +397,14 @@ fn find_roxygen_examples_range(
 
 fn adjust_roxygen_examples_success(
     subdocument_statement_range: ArkStatementRangeSuccess,
-    subdocument: &Document,
+    subcontents: &str,
     root: &Node,
     row_adjustment: usize,
 ) -> Option<ArkStatementRangeSuccess> {
     let subdocument_range = subdocument_statement_range.range;
 
     // Slice out code to execute from the subdocument
-    let slice = subdocument
-        .contents
-        .get(subdocument_range.start_byte..subdocument_range.end_byte)?;
+    let slice = subcontents.get(subdocument_range.start_byte..subdocument_range.end_byte)?;
     let subdocument_code = slice.to_string();
 
     // Map the `subdocument_range` that covers the executable code back to a `range`
@@ -829,9 +849,9 @@ mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
+    use super::parse_tree_sitter;
     use crate::fixtures::point_and_offset_from_cursor;
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
     use crate::lsp::statement_range::ArkStatementRangeRejection;
@@ -2087,9 +2107,9 @@ fn <- function() {
 #' 1 + 1
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2107,9 +2127,9 @@ fn <- function() {
 #' 1 + 1
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2127,9 +2147,9 @@ fn <- function() {
 #' 1 + 1
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2148,9 +2168,9 @@ fn <- function() {
 #' 2 + 2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2168,9 +2188,9 @@ fn <- function() {
 #'^
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2188,9 +2208,9 @@ fn <- function() {
 #' ^@returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2214,9 +2234,9 @@ fn <- function() {
 #' 2 + 2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2257,9 +2277,9 @@ fn <- function() {
 #' 2 + 2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2299,9 +2319,9 @@ fn <- function() {
 NULL
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2340,9 +2360,9 @@ x %>%
 #' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2362,9 +2382,9 @@ x %>%
 #'2 + ^2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2384,9 +2404,9 @@ x %>%
 #' ^@returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2406,9 +2426,9 @@ x %>%
 ###' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2429,9 +2449,9 @@ x %>%
 ###' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2452,9 +2472,9 @@ x %>%
 ###' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2474,9 +2494,9 @@ x %>%
 2 + 2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2501,9 +2521,9 @@ x %>%
 #' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2532,9 +2552,9 @@ x %>%
 #' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let rejection = find_roxygen_statement_range_rejection(&root, contents, point);
         assert_matches::assert_matches!(
             rejection,
@@ -2552,9 +2572,9 @@ x %>%
 #' @returns
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let rejection = find_roxygen_statement_range_rejection(&root, contents, point);
         assert_matches::assert_matches!(
             rejection,
@@ -2577,9 +2597,9 @@ x %>%
 2 + 2
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         assert!(find_roxygen_statement_range(&root, contents, point)
             .unwrap()
             .is_none());
@@ -2595,9 +2615,9 @@ x %>%
 NULL
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
@@ -2617,9 +2637,9 @@ NULL
 NULL
 ";
         let (text, point) = statement_range_point_from_cursor(text);
-        let document = Document::new(&text, None);
-        let root = document.ast.root_node();
-        let contents = &document.contents;
+        let tree = parse_tree_sitter(&text);
+        let root = tree.root_node();
+        let contents = text.as_str();
         let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),

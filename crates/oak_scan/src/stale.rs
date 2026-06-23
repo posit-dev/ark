@@ -12,7 +12,7 @@
 //!   `OrphanRoot` has no `packages` field, so an evicted package file
 //!   loses its package association: `file.package` clears to `None` and
 //!   analysis treats it as a standalone script for as long as the
-//!   workspace is removed. If the workspace comes back, `upsert_file`
+//!   workspace is removed. If the workspace comes back, `upsert_root_file`
 //!   finds the same `File` via `OrphanRoot` and re-promotes it into
 //!   `pkg.files`, restoring the package context.
 //!
@@ -26,7 +26,7 @@
 
 use std::collections::HashSet;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
@@ -34,6 +34,9 @@ use oak_db::Package;
 use oak_db::Root;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
+
+use crate::inputs::with_cow_filter;
+use crate::inputs::with_cow_remove;
 
 /// Drop `root` from its live container, rehoming files and packages to
 /// `OrphanRoot` / `StaleRoot` as described in the module doc.
@@ -49,13 +52,14 @@ use salsa::Setter;
 pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     db: &mut DB,
     root: Root,
-    editor_owned: Option<&HashSet<UrlId>>,
+    editor_owned: Option<&HashSet<FilePath>>,
 ) {
     let packages: Vec<Package> = root.packages(db).clone();
 
     let mut all_files: Vec<File> = root.scripts(db).to_vec();
     for &pkg in &packages {
         all_files.extend(pkg.files(db).iter().copied());
+        all_files.extend(pkg.scripts(db).iter().copied());
     }
 
     // Clear `file.package` first: by the time these files land in their new
@@ -69,29 +73,21 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     let (to_orphan, to_stale): (Vec<File>, Vec<File>) = match editor_owned {
         Some(owned) => all_files
             .into_iter()
-            .partition(|f| owned.contains(f.url(db))),
+            .partition(|f| owned.contains(f.path(db))),
         None => (Vec::new(), all_files),
     };
 
     if !to_orphan.is_empty() {
         let orphan = db.orphan_root();
         let mut files = orphan.files(db).clone();
-        for file in to_orphan {
-            if !files.contains(&file) {
-                files.push(file);
-            }
-        }
+        files.extend(to_orphan);
         orphan.set_files(db).to(files);
     }
 
     let stale = db.stale_root();
     if !to_stale.is_empty() {
         let mut files = stale.files(db).clone();
-        for file in to_stale {
-            if !files.contains(&file) {
-                files.push(file);
-            }
-        }
+        files.extend(to_stale);
         stale.set_files(db).to(files);
     }
 
@@ -105,65 +101,60 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         stale.set_packages(db).to(stale_packages);
     }
 
-    // Clear the dropped root's containers and each package's files vec.
-    // The packages themselves now live in `stale_root.packages`; keeping
+    // Clear the dropped root's containers and each package's files / scripts
+    // vec. The packages themselves now live in `stale_root.packages`. Keeping
     // their `files` populated would leave stale references that
-    // `package_by_url` can resurrect with inconsistent contents.
+    // `package_by_path` can resurrect with inconsistent contents.
     root.set_scripts(db).to(Vec::new());
     for &pkg in &packages {
         pkg.set_files(db).to(Vec::new());
+        pkg.set_scripts(db).to(Vec::new());
     }
     root.set_packages(db).to(Vec::new());
 }
 
 pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let stale = db.stale_root();
-    if !stale.files(db).contains(&file) {
-        return;
+    if let Some(files) = with_cow_remove(stale.files(db), file) {
+        stale.set_files(db).to(files);
     }
-    let mut files = stale.files(db).clone();
-    files.retain(|f| *f != file);
-    stale.set_files(db).to(files);
 }
 
 pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Package) {
     let stale = db.stale_root();
-    if !stale.packages(db).contains(&pkg) {
-        return;
+    if let Some(packages) = with_cow_filter(stale.packages(db), pkg) {
+        stale.set_packages(db).to(packages);
     }
-    let mut packages = stale.packages(db).clone();
-    packages.retain(|p| *p != pkg);
-    stale.set_packages(db).to(packages);
 }
 
 /// Look up a stale `File` by URL. The scanner's upsert helpers call this to
-/// fall back to the eviction bucket after `oak_db::Db::file_by_url` misses,
+/// fall back to the eviction bucket after `oak_db::Db::file_by_path` misses,
 /// reusing the evicted entity instead of minting a new one.
-pub(crate) fn stale_file_by_url(db: &dyn Db, url: &UrlId) -> Option<File> {
-    stale_url_index(db).get(url).copied()
+pub(crate) fn stale_file_by_path(db: &dyn Db, path: &FilePath) -> Option<File> {
+    stale_path_index(db).get(path).copied()
 }
 
 /// Stale file URL -> File index. Reads only `stale_root().files`. Analysis is
-/// stale-blind by design (`oak_db::Db::file_by_url` never consults this), so
-/// the scanner is the only reader, via [`stale_file_by_url`] when re-adding a
+/// stale-blind by design (`oak_db::Db::file_by_path` never consults this), so
+/// the scanner is the only reader, via [`stale_file_by_path`] when re-adding a
 /// path.
 #[salsa::tracked(returns(ref))]
-fn stale_url_index(db: &dyn Db) -> FxHashMap<UrlId, File> {
+fn stale_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in db.stale_root().files(db) {
-        map.insert(file.url(db).clone(), file);
+        map.insert(file.path(db).clone(), file);
     }
     map
 }
 
 /// Stale DESCRIPTION URL -> Package index. The eviction-bucket counterpart to
-/// the live per-root `root_package_url_index`; consulted by `package_by_url`
+/// the live per-root `root_package_path_index`; consulted by `package_by_path`
 /// as its stale fallback.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn stale_package_url_index(db: &dyn Db) -> FxHashMap<UrlId, Package> {
+pub(crate) fn stale_package_path_index(db: &dyn Db) -> FxHashMap<FilePath, Package> {
     let mut map = FxHashMap::default();
     for &pkg in db.stale_root().packages(db) {
-        map.insert(pkg.description_url(db).clone(), pkg);
+        map.insert(pkg.description_path(db).clone(), pkg);
     }
     map
 }

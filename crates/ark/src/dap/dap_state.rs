@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -18,6 +18,7 @@ use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_event::DebugEvent;
 use anyhow::anyhow;
+use camino::Utf8PathBuf;
 use crossbeam::channel::Sender;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
@@ -220,6 +221,105 @@ impl DapBackendEvent {
     }
 }
 
+/// One file's breakpoints in a [`BreakpointMap`], plus the bookkeeping we need
+/// to talk back to the frontend about them.
+#[derive(Debug, Clone)]
+pub struct BreakpointEntry {
+    /// The verbatim `source.path` string the frontend sent in `setBreakpoints`.
+    /// The editor treats a URI as a file's identity, so handing back a
+    /// normalized form risks getting the frontend confused.
+    ///
+    /// In practice only `debugInfo` reads this. Verbatim paths rarely matter
+    /// for the DAP. Breakpoint responses and events identify breakpoints by
+    /// `id`, not by path, and a stack frame's `source.path` comes from the R
+    /// srcref. `debugInfo` is the one spot that echoes a path keyed on this
+    /// entry, so it returns `verbatim_path` instead of the normalized key.
+    pub verbatim_path: String,
+    /// Hash of the document when the breakpoints were set. A mismatch on
+    /// reconnect means the file changed and the breakpoints are stale.
+    pub hash: blake3::Hash,
+    pub breakpoints: Vec<Breakpoint>,
+}
+
+/// Breakpoint storage keyed on the lexically normalized `FilePath` the frontend
+/// sent in `setBreakpoints`. A secondary index maps `fs::canonicalize`d paths
+/// back to the primary key, bridging R-runtime srcref URIs (which go through
+/// `normalizePath()` and so arrive symlink-resolved) against the editor's
+/// pre-resolution form.
+///
+/// `fs::canonicalize` runs at insert time and at lookup-fallback time only.
+/// Lookups try the primary first (cheap, no fs touch), then canonicalise the
+/// incoming URI and consult the secondary.
+#[derive(Debug, Default)]
+pub struct BreakpointMap {
+    /// Primary index, keyed on the normalized path the frontend gave us.
+    by_path: HashMap<FilePath, BreakpointEntry>,
+    /// `fs::canonicalize`d path -> primary key. Populated at insert
+    /// only when the URL is a `file:` and `canonicalize` succeeds (i.e.
+    /// the file exists, which it does at `setBreakpoints` time).
+    by_canonical: HashMap<Utf8PathBuf, FilePath>,
+}
+
+impl BreakpointMap {
+    pub fn insert(&mut self, path: FilePath, entry: BreakpointEntry) {
+        if let Some(canonical) = canonical_path(&path) {
+            self.by_canonical.insert(canonical, path.clone());
+        }
+        self.by_path.insert(path, entry);
+    }
+
+    pub fn remove(&mut self, path: &FilePath) -> Option<BreakpointEntry> {
+        let primary = self.resolve_primary(path)?.clone();
+        self.by_canonical.retain(|_, p| p != &primary);
+        self.by_path.remove(&primary)
+    }
+
+    pub fn get(&self, path: &FilePath) -> Option<&BreakpointEntry> {
+        let primary = self.resolve_primary(path)?;
+        self.by_path.get(primary)
+    }
+
+    pub fn get_mut(&mut self, path: &FilePath) -> Option<&mut BreakpointEntry> {
+        // Cloning because the mut accessors can't hold a `&self.by_canonical`
+        // borrow across `&mut self.by_path`.
+        let primary = self.resolve_primary(path)?.clone();
+        self.by_path.get_mut(&primary)
+    }
+
+    pub fn contains_key(&self, path: &FilePath) -> bool {
+        self.resolve_primary(path).is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&FilePath, &BreakpointEntry)> {
+        self.by_path.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&FilePath, &mut BreakpointEntry)> {
+        self.by_path.iter_mut()
+    }
+
+    /// Resolve to the primary key. Tries bare `path` first. On miss,
+    /// canonicalises `path` and consults the secondary index. The
+    /// secondary catches cases like an R srcref `/private/tmp/foo.R`
+    /// (resolved by `normalizePath()`) looking up an editor URI
+    /// `/tmp/foo.R` (not resolved).
+    fn resolve_primary<'a>(&'a self, path: &'a FilePath) -> Option<&'a FilePath> {
+        if self.by_path.contains_key(path) {
+            return Some(path);
+        }
+        let canonical = canonical_path(path)?;
+        self.by_canonical.get(&canonical)
+    }
+}
+
+/// `fs::canonicalize` of the path component of a `file:` URL, if any.
+/// Returns `None` for non-`file:` URLs (`ark://`, `untitled:`, ...), when
+/// the file isn't on disk, and (rare) when the canonical path isn't UTF-8.
+fn canonical_path(path: &FilePath) -> Option<Utf8PathBuf> {
+    let canonical = std::fs::canonicalize(path.as_path()?).ok()?;
+    Utf8PathBuf::from_path_buf(canonical).ok()
+}
+
 pub struct Dap {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
@@ -241,8 +341,8 @@ pub struct Dap {
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
-    /// Known breakpoints keyed by canonical URI, with document hash
-    pub breakpoints: HashMap<UrlId, (blake3::Hash, Vec<Breakpoint>)>,
+    /// Known breakpoints, with document hash.
+    pub breakpoints: BreakpointMap,
 
     /// Filters for enabled condition breakpoints
     pub exception_breakpoint_filters: Vec<String>,
@@ -306,7 +406,7 @@ impl Dap {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
@@ -606,10 +706,11 @@ impl Dap {
     /// Loops over all breakpoints for the URI and verifies any unverified
     /// breakpoints that fall within the range [start_line, end_line).
     /// Sends a `BreakpointVerified` event for each newly verified breakpoint.
-    pub fn verify_breakpoints(&mut self, uri: &UrlId, start_line: u32, end_line: u32) {
-        let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
+    pub fn verify_breakpoints(&mut self, uri: &FilePath, start_line: u32, end_line: u32) {
+        let Some(entry) = self.breakpoints.get_mut(uri) else {
             return;
         };
+        let bp_list = &mut entry.breakpoints;
 
         // Collect events first: `bp_list` borrows from `self.breakpoints`,
         // which prevents calling `&mut self` methods like `send_backend_event()`.
@@ -651,12 +752,16 @@ impl Dap {
     ///
     /// Finds the breakpoint with the given ID for the URI and marks it as verified
     /// if it was previously unverified. Sends a `BreakpointVerified` event.
-    pub fn verify_breakpoint(&mut self, uri: &UrlId, id: &str) {
+    pub fn verify_breakpoint(&mut self, uri: &FilePath, id: &str) {
         let event = {
-            let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
+            let Some(entry) = self.breakpoints.get_mut(uri) else {
                 return;
             };
-            let Some(bp) = bp_list.iter_mut().find(|bp| bp.id.to_string() == id) else {
+            let Some(bp) = entry
+                .breakpoints
+                .iter_mut()
+                .find(|bp| bp.id.to_string() == id)
+            else {
                 return;
             };
 
@@ -679,12 +784,13 @@ impl Dap {
 
     /// Called when a document changes. Removes all breakpoints for the URI
     /// and sends unverified events for each one.
-    pub fn did_change_document(&mut self, uri: &UrlId) {
+    pub fn did_change_document(&mut self, uri: &FilePath) {
         log::trace!("DAP: did_change_document for {uri}");
 
-        let Some((_, breakpoints)) = self.breakpoints.remove(uri) else {
+        let Some(entry) = self.breakpoints.remove(uri) else {
             return;
         };
+        let breakpoints = entry.breakpoints;
 
         log::trace!("DAP: Removing {} breakpoints for {uri}", breakpoints.len());
 
@@ -700,12 +806,12 @@ impl Dap {
 
     /// Notify the frontend about breakpoints that were marked invalid during annotation.
     /// Sends a `BreakpointState` event with verified=false and a message for each.
-    pub fn notify_invalid_breakpoints(&mut self, uri: &UrlId) {
+    pub fn notify_invalid_breakpoints(&mut self, uri: &FilePath) {
         let events: Vec<_> = self
             .breakpoints
             .get(uri)
             .into_iter()
-            .flat_map(|(_, breakpoints)| breakpoints)
+            .flat_map(|entry| &entry.breakpoints)
             .filter_map(|bp| {
                 let BreakpointState::Invalid(reason) = &bp.state else {
                     return None;
@@ -725,22 +831,24 @@ impl Dap {
     }
 
     /// Remove disabled breakpoints for a given URI.
-    pub fn remove_disabled_breakpoints(&mut self, uri: &UrlId) {
-        let Some((_, bps)) = self.breakpoints.get_mut(uri) else {
+    pub fn remove_disabled_breakpoints(&mut self, uri: &FilePath) {
+        let Some(entry) = self.breakpoints.get_mut(uri) else {
             return;
         };
-        bps.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
+        entry
+            .breakpoints
+            .retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
-    pub(crate) fn is_breakpoint_enabled(&self, uri: &UrlId, id: i64) -> bool {
-        let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
+    pub(crate) fn is_breakpoint_enabled(&self, uri: &FilePath, id: i64) -> bool {
+        let Some(entry) = self.breakpoints.get(uri) else {
             return false;
         };
 
         // Unverified breakpoints are enabled. This happens when we hit a
         // breakpoint in an expression that hasn't been evaluated yet (or hasn't
         // finished).
-        breakpoints.iter().any(|bp| {
+        entry.breakpoints.iter().any(|bp| {
             bp.id == id &&
                 matches!(
                     bp.state,
@@ -772,28 +880,28 @@ impl Dap {
         Ok(obj.get().sexp)
     }
 
-    pub(crate) fn get_breakpoint(&self, uri: &UrlId, id: i64) -> Option<&Breakpoint> {
-        let (_, breakpoints) = self.breakpoints.get(uri)?;
-        breakpoints.iter().find(|bp| bp.id == id)
+    pub(crate) fn get_breakpoint(&self, uri: &FilePath, id: i64) -> Option<&Breakpoint> {
+        let entry = self.breakpoints.get(uri)?;
+        entry.breakpoints.iter().find(|bp| bp.id == id)
     }
 
     /// Reset per-execution breakpoint state (hit counts).
     /// Called when `ReadConsole` returns to a top-level (non-browser) prompt,
     /// meaning the execution that may have hit breakpoints is complete.
     pub(crate) fn reset(&mut self) {
-        for (_, (_, breakpoints)) in self.breakpoints.iter_mut() {
-            for bp in breakpoints.iter_mut() {
+        for (_, entry) in self.breakpoints.iter_mut() {
+            for bp in entry.breakpoints.iter_mut() {
                 bp.hit_count = 0;
             }
         }
     }
 
     /// Increment the hit count for a breakpoint and return the new count.
-    pub(crate) fn increment_hit_count(&mut self, uri: &UrlId, id: i64) -> u64 {
-        let Some((_, breakpoints)) = self.breakpoints.get_mut(uri) else {
+    pub(crate) fn increment_hit_count(&mut self, uri: &FilePath, id: i64) -> u64 {
+        let Some(entry) = self.breakpoints.get_mut(uri) else {
             return 0;
         };
-        let Some(bp) = breakpoints.iter_mut().find(|bp| bp.id == id) else {
+        let Some(bp) = entry.breakpoints.iter_mut().find(|bp| bp.id == id) else {
             return 0;
         };
         bp.hit_count += 1;
@@ -847,13 +955,15 @@ impl ServerHandler for Dap {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crossbeam::channel::unbounded;
     use url::Url;
 
     use super::*;
 
-    fn url_id(s: &str) -> UrlId {
-        UrlId::from_url(Url::parse(s).unwrap())
+    fn file_path(s: &str) -> FilePath {
+        FilePath::from_url(&Url::parse(s).unwrap())
     }
 
     fn create_test_dap() -> (Dap, crossbeam::channel::Receiver<DapBackendEvent>) {
@@ -864,7 +974,7 @@ mod tests {
             is_connected: true,
             backend_events_tx: Some(backend_events_tx),
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
@@ -887,16 +997,17 @@ mod tests {
     fn test_did_change_document_removes_breakpoints() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
         let hash = blake3::hash(b"test content");
 
-        dap.breakpoints.insert(
-            uri.clone(),
-            (hash, vec![
+        dap.breakpoints.insert(uri.clone(), BreakpointEntry {
+            verbatim_path: String::from("/test.R"),
+            hash,
+            breakpoints: vec![
                 Breakpoint::new(1, 10, BreakpointState::Verified),
                 Breakpoint::new(2, 20, BreakpointState::Verified),
-            ]),
-        );
+            ],
+        });
 
         dap.did_change_document(&uri);
 
@@ -923,7 +1034,7 @@ mod tests {
     fn test_did_change_document_no_breakpoints_is_noop() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
 
         dap.did_change_document(&uri);
 
@@ -934,27 +1045,21 @@ mod tests {
     fn test_did_change_document_only_affects_target_uri() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri1 = url_id("file:///test1.R");
-        let uri2 = url_id("file:///test2.R");
+        let uri1 = file_path("file:///test1.R");
+        let uri2 = file_path("file:///test2.R");
         let hash1 = blake3::hash(b"content 1");
         let hash2 = blake3::hash(b"content 2");
 
-        dap.breakpoints.insert(
-            uri1.clone(),
-            (hash1, vec![Breakpoint::new(
-                1,
-                10,
-                BreakpointState::Verified,
-            )]),
-        );
-        dap.breakpoints.insert(
-            uri2.clone(),
-            (hash2, vec![Breakpoint::new(
-                2,
-                20,
-                BreakpointState::Verified,
-            )]),
-        );
+        dap.breakpoints.insert(uri1.clone(), BreakpointEntry {
+            verbatim_path: String::from("/test1.R"),
+            hash: hash1,
+            breakpoints: vec![Breakpoint::new(1, 10, BreakpointState::Verified)],
+        });
+        dap.breakpoints.insert(uri2.clone(), BreakpointEntry {
+            verbatim_path: String::from("/test2.R"),
+            hash: hash2,
+            breakpoints: vec![Breakpoint::new(2, 20, BreakpointState::Verified)],
+        });
 
         dap.did_change_document(&uri1);
 
@@ -978,7 +1083,7 @@ mod tests {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-            breakpoints: HashMap::new(),
+            breakpoints: BreakpointMap::default(),
             exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
@@ -994,22 +1099,65 @@ mod tests {
             shared_self: None,
         };
 
-        let uri = url_id("file:///test.R");
+        let uri = file_path("file:///test.R");
         let hash = blake3::hash(b"test content");
 
-        dap.breakpoints.insert(
-            uri.clone(),
-            (hash, vec![Breakpoint::new(
-                1,
-                10,
-                BreakpointState::Verified,
-            )]),
-        );
+        dap.breakpoints.insert(uri.clone(), BreakpointEntry {
+            verbatim_path: String::from("/test.R"),
+            hash,
+            breakpoints: vec![Breakpoint::new(1, 10, BreakpointState::Verified)],
+        });
 
         // Should not panic even without `backend_events_tx`
         dap.did_change_document(&uri);
 
         // Breakpoints should still be removed
         assert!(!dap.breakpoints.contains_key(&uri));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_breakpoint_map_keeps_verbatim_source_path() {
+        // The `source.path` the frontend sends can normalize to a different
+        // `FilePath` (here the `..` segment is collapsed). `debugInfo` echoes
+        // `verbatim_path`, so we store the original bytes rather than rebuild
+        // them from the normalized key.
+        let mut map = BreakpointMap::default();
+        let sent = "/home/user/../user/test.R";
+        let path = FilePath::from_path_buf(PathBuf::from(sent)).unwrap();
+
+        map.insert(path.clone(), BreakpointEntry {
+            verbatim_path: String::from(sent),
+            hash: blake3::hash(b""),
+            breakpoints: vec![],
+        });
+
+        assert_eq!(map.get(&path).unwrap().verbatim_path, sent);
+
+        // Rebuilding the path from the key would hand the frontend different
+        // bytes, since the key dropped the `..`.
+        assert_ne!(path.as_path().unwrap().as_str(), sent);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_breakpoint_map_keeps_verbatim_source_path() {
+        // Positron often sends a lowercase Windows drive letter. The `FilePath`
+        // key uppercases it, so we echo the original `verbatim_path` back via
+        // `debugInfo` rather than the normalized key.
+        let mut map = BreakpointMap::default();
+        let sent = "c:\\Users\\test\\file.R";
+        let path = FilePath::from_path_buf(PathBuf::from(sent)).unwrap();
+
+        map.insert(path.clone(), BreakpointEntry {
+            verbatim_path: String::from(sent),
+            hash: blake3::hash(b""),
+            breakpoints: vec![],
+        });
+
+        assert_eq!(map.get(&path).unwrap().verbatim_path, sent);
+
+        // The key uppercased the drive letter.
+        assert!(path.to_url().as_str().contains("/C:/"));
     }
 }

@@ -1045,3 +1045,65 @@ fn test_notebook_top_level_breakpoint_preserves_invisible_result() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_idle();
 }
+
+/// `debugInfo` must hand back the exact `source.path` the frontend sent, not
+/// the normalized `FilePath` we key breakpoints on. Here the path carries a `..`
+/// segment that `FilePath` collapses, so a normalized echo would differ from
+/// what the editor sent and could open a second editor pane on the same file.
+#[test]
+#[cfg(not(windows))]
+fn test_notebook_debug_info_echoes_verbatim_breakpoint_path() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Dump a cell to get a real file on disk that `setBreakpoints` can read.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": "x <- 1\ny <- 2" }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
+
+    // Build a `..`-variant of that path. It resolves to the same file (the
+    // intermediate dir exists), but `FilePath` collapses the `..`, so the
+    // normalized key no longer matches these bytes.
+    let path = std::path::Path::new(source_path);
+    let dir = path.parent().unwrap();
+    let dir_base = dir.file_name().unwrap().to_string_lossy();
+    let file_name = path.file_name().unwrap().to_string_lossy();
+    let sent_path = format!("{}/../{dir_base}/{file_name}", dir.to_string_lossy());
+    assert_ne!(sent_path, source_path);
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": sent_path },
+            "breakpoints": [{ "line": 1 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "debugInfo",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let info_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    let bp_groups = info_reply["body"]["breakpoints"].as_array().unwrap();
+    let group = bp_groups
+        .iter()
+        .find(|group| group["source"].as_str() == Some(sent_path.as_str()))
+        .expect("debugInfo did not echo the verbatim breakpoint path");
+    assert_eq!(group["breakpoints"].as_array().unwrap().len(), 1);
+}

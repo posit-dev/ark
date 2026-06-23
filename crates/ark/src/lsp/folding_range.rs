@@ -8,18 +8,21 @@
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
+use oak_db::File;
 use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp;
-use crate::lsp::document::Document;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
+use crate::lsp::open_file::get_line;
 
-pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
+pub(crate) fn folding_range(db: &dyn ArkDb, file: File) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
 
-    let ast = &document.ast;
+    let ast = file.tree_sitter(db);
     if ast.root_node().has_error() {
         tracing::error!("Folding range service: Parse error");
         return Err(anyhow::anyhow!("Parse error"));
@@ -28,10 +31,11 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     // Traverse the AST
     let mut cursor = ast.root_node().walk();
     parse_ts_node(
+        db,
+        file,
         &mut cursor,
         0,
         &mut folding_ranges,
-        document,
         &mut vec![Vec::new()],
         &mut None,
         &mut None,
@@ -41,10 +45,11 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
 }
 
 fn parse_ts_node(
+    db: &dyn ArkDb,
+    file: File,
     cursor: &mut tree_sitter::TreeCursor,
     _depth: usize,
     folding_ranges: &mut Vec<FoldingRange>,
-    document: &Document,
     comment_stack: &mut Vec<Vec<(usize, usize)>>,
     region_marker: &mut Option<usize>,
     cell_marker: &mut Option<usize>,
@@ -70,18 +75,22 @@ fn parse_ts_node(
                 start.column + 1, // Start after the opening delimiter
                 end.row,
                 end.column - 1,
-                count_leading_whitespaces(document, end.row),
+                count_leading_whitespaces(db, file, end.row),
             );
             folding_ranges.push(folding_range);
         },
         "comment" => {
             // Only process standalone comment
-            if count_leading_whitespaces(document, start.row) != start.column {
+            if count_leading_whitespaces(db, file, start.row) != start.column {
                 return;
             }
 
             // Nested comment section handling
-            if let Some(comment_line) = document.get_line(start.row) {
+            if let Some(comment_line) = get_line(
+                file.source_text(db).as_str(),
+                file.line_index(db),
+                start.row,
+            ) {
                 if let Err(err) =
                     nested_processor(comment_stack, folding_ranges, start.row, comment_line)
                 {
@@ -104,10 +113,11 @@ fn parse_ts_node(
         // recursive loop
         loop {
             parse_ts_node(
+                db,
+                file,
                 cursor,
                 _depth + 1,
                 folding_ranges,
-                document,
                 &mut child_comment_stack,
                 &mut child_region_marker,
                 &mut child_cell_marker,
@@ -168,8 +178,8 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     }
 }
 
-fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
-    let Some(line) = document.get_line(line_num) else {
+fn count_leading_whitespaces(db: &dyn ArkDb, file: File, line_num: usize) -> usize {
+    let Some(line) = get_line(file.source_text(db).as_str(), file.line_index(db), line_num) else {
         return 0;
     };
 
@@ -361,12 +371,10 @@ fn end_node_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::document::Document;
 
     fn test_folding_range(code: &str) -> Vec<FoldingRange> {
-        let doc = Document::new(code, None);
-        // Sort ranges for more consistent testing
-        sorted_ranges(folding_range(&doc).unwrap())
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
+        sorted_ranges(folding_range(&db, file.file()).unwrap())
     }
 
     fn sorted_ranges(mut ranges: Vec<FoldingRange>) -> Vec<FoldingRange> {
@@ -703,21 +711,18 @@ function(a, b, c) {
     // Test for unterminated structures
     #[test]
     fn test_folding_unterminated() {
-        // Add try_unwrap to handle the expected error from the parser
-        let doc = Document::new(
-            "
+        let code = "
 # #region without end
 
 # %% cell without another cell
 
 function() {
   # Unclosed function
-",
-            None,
-        );
+";
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
 
         // Handle the expected parse error
-        match folding_range(&doc) {
+        match folding_range(&db, file.file()) {
             Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
             Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
         }
@@ -726,18 +731,16 @@ function() {
     // Test for whitespace counting
     #[test]
     fn test_count_leading_whitespaces() {
-        let doc = Document::new(
-            "no spaces
+        let code = "no spaces
   two spaces
     four spaces
-\ttab char",
-            None,
-        );
+\ttab char";
+        let (db, file) = crate::lsp::open_file::test_open_file(code);
 
-        assert_eq!(count_leading_whitespaces(&doc, 0), 0);
-        assert_eq!(count_leading_whitespaces(&doc, 1), 2);
-        assert_eq!(count_leading_whitespaces(&doc, 2), 4);
-        assert_eq!(count_leading_whitespaces(&doc, 3), 1); // Tab counts as 1 char
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 0), 0);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 1), 2);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 2), 4);
+        assert_eq!(count_leading_whitespaces(&db, file.file(), 3), 1); // Tab counts as 1 char
     }
 
     #[test]

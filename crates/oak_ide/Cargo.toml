@@ -18,9 +18,15 @@ aether_syntax.workspace = true
 anyhow.workspace = true
 biome_rowan.workspace = true
 oak_core.workspace = true
+oak_db.workspace = true
 oak_semantic.workspace = true
 url.workspace = true
 
 [dev-dependencies]
 aether_parser.workspace = true
+aether_path.workspace = true
+oak_package_metadata.workspace = true
+oak_scan.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
+salsa.workspace = true
+stdext.workspace = true
