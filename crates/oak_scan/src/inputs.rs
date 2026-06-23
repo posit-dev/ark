@@ -18,6 +18,7 @@
 
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
@@ -30,6 +31,7 @@ use oak_db::Root;
 use salsa::Setter;
 
 use crate::lookup::package_by_path;
+use crate::packages::read_package_sources;
 use crate::stale::remove_from_stale_files;
 use crate::stale::remove_from_stale_packages;
 use crate::stale::stale_file_by_path;
@@ -113,6 +115,14 @@ pub trait DbScan: Db + DbInputs {
     /// If the file is in a live workspace / library container, the call is a
     /// no-op.
     fn close_editor(&mut self, path: &FilePath);
+
+    /// Set `package`'s `files` / `scripts` to the `.R` files found directly
+    /// under `directory`, respecting the package's `Collate` rules.
+    ///
+    /// Used to ingest sources produced by an external tool into an already-registered
+    /// library `Package` whose `files` start empty (the scanner registers installed
+    /// packages without sources).
+    fn set_package_sources(&mut self, package: Package, directory: &Path);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -164,6 +174,23 @@ impl<DB: Db + DbInputs> DbScan for DB {
         if let Some(stale_files) = with_cow_insert(stale.files(self), file) {
             stale.set_files(self).to(stale_files);
         }
+    }
+
+    fn set_package_sources(&mut self, package: Package, directory: &Path) {
+        let (files, scripts) = read_package_sources(directory, package.collation(self).as_deref());
+
+        let files: Vec<File> = files
+            .into_iter()
+            .map(|entry| upsert_root_file(self, Some(package), entry))
+            .collect();
+
+        let scripts: Vec<File> = scripts
+            .into_iter()
+            .map(|entry| upsert_root_file(self, Some(package), entry))
+            .collect();
+
+        package.set_files(self).to(files);
+        package.set_scripts(self).to(scripts);
     }
 }
 

@@ -210,6 +210,46 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
     Some(package)
 }
 
+/// Walk `directory`, collecting `.R` files
+///
+/// `.R` files are split into either `files` or `scripts` based on `collation`,
+/// matching [read_workspace_package()].
+///
+/// The `directory` is not walked recursively. We expect that this is a flat directory of
+/// `.R` files.
+pub(crate) fn read_package_sources(
+    directory: &Path,
+    collation: Option<&[String]>,
+) -> (Vec<FileEntry>, Vec<FileEntry>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        log::warn!("Cannot read sources directory: {}", directory.display());
+        return (Vec::new(), Vec::new());
+    };
+
+    let mut files: Vec<(PathBuf, FileEntry)> = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !is_r_file(&path) {
+            continue;
+        }
+        let Some(file_path) = FilePath::from_path_buf(path.clone()) else {
+            log::warn!("Skipping R file, can't build a URL: {}", path.display());
+            continue;
+        };
+        let revision = file_revision(&path);
+        files.push((path, FileEntry {
+            path: file_path,
+            revision,
+        }));
+    }
+
+    match collation {
+        Some(order) => order_by_collation(files, order),
+        None => order_alphabetically(files),
+    }
+}
+
 /// Split the package's `R/*.R` files into `(loadable, leftover)` using the
 /// `Collate:` directive: `loadable` is the listed files in that order, and
 /// `leftover` is the R/ files not listed. Logs mismatches in either direction:
