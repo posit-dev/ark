@@ -123,8 +123,15 @@
         return(NULL)
     }
     fields <- c(
-        "Title", "Author", "Maintainer", "License",
-        "Depends", "Imports", "LinkingTo", "Repository", "Date/Publication"
+        "Title",
+        "Author",
+        "Maintainer",
+        "License",
+        "Depends",
+        "Imports",
+        "LinkingTo",
+        "Repository",
+        "Date/Publication"
     )
     d <- utils::packageDescription(name, fields = fields)
 
@@ -148,7 +155,11 @@
     }
 
     base_pkgs <- rownames(utils::installed.packages(priority = "base"))
-    deps <- unique(c(parse_deps(d$Depends), parse_deps(d$Imports), parse_deps(d$LinkingTo)))
+    deps <- unique(c(
+        parse_deps(d$Depends),
+        parse_deps(d$Imports),
+        parse_deps(d$LinkingTo)
+    ))
     deps <- setdiff(deps, c("R", base_pkgs))
 
     out <- list(name = name, dependencyCount = length(deps))
@@ -163,11 +174,21 @@
     repo <- clean(d$Repository)
     published <- clean(d[["Date/Publication"]])
 
-    if (!is.null(title)) out$title <- title
-    if (!is.null(author)) out$author <- author
-    if (!is.null(license)) out$license <- license
-    if (!is.null(repo)) out$sourceRepository <- repo
-    if (!is.null(published)) out$publishedDate <- published
+    if (!is.null(title)) {
+        out$title <- title
+    }
+    if (!is.null(author)) {
+        out$author <- author
+    }
+    if (!is.null(license)) {
+        out$license <- license
+    }
+    if (!is.null(repo)) {
+        out$sourceRepository <- repo
+    }
+    if (!is.null(published)) {
+        out$publishedDate <- published
+    }
 
     out
 }
