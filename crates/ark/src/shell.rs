@@ -347,14 +347,15 @@ fn handle_comm_open_help(
 ) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
     // Register the handler on the R thread, like the UI comm. `RHelp::handle_open`
     // starts the R help server and proxy and records their ports on `Console`, all
-    // on the R thread. The RPC handler itself is stateless.
+    // on the R thread. The handler holds the proxy's drop guard, so the proxy is
+    // torn down when the comm is removed.
     let (done_tx, done_rx) = bounded(0);
     kernel_request_tx
         .send(KernelRequest::CommOpen {
             comm_id: comm.comm_id.clone(),
             comm_name: comm.comm_name.clone(),
             outgoing_tx: comm.outgoing_tx.clone(),
-            handler: Box::new(RHelp),
+            handler: Box::new(RHelp::default()),
             done_tx,
         })
         .map_err(|err| amalthea::Error::SendError(err.to_string()))?;

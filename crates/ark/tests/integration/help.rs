@@ -6,6 +6,8 @@
 //
 
 use core::panic;
+use std::net::TcpStream;
+use std::time::Duration;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
@@ -68,7 +70,7 @@ impl TestRHelp {
             let (comm_event_tx, _) = bounded::<CommEvent>(10);
             let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
-            let mut handler = RHelp;
+            let mut handler = RHelp::default();
             handler.handle_msg(msg, &ctx);
         });
 
@@ -198,4 +200,89 @@ fn test_help_show_help_event() {
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+/// Reopening the help comm (as happens on a frontend reload) must not leak the
+/// previous proxy server.
+///
+/// The proxy's lifetime is tied to the help comm via a drop guard held in
+/// `RHelp`. When the frontend opens a second `positron.help` comm, the kernel
+/// replaces the handler, the old `RHelp` drops, and its proxy stops. We observe
+/// this directly. Each proxy binds its own localhost port, so we connect to the
+/// old port and check it stops accepting connections. Before this was wired up,
+/// the old proxy stayed bound forever.
+#[test]
+fn test_help_proxy_torn_down_on_reopen() {
+    let frontend = DummyArkFrontend::lock();
+
+    let comm_id_1 = open_help_comm(&frontend);
+    let port_1 = show_help_and_get_proxy_port(&frontend, &comm_id_1);
+    assert!(proxy_is_listening(port_1));
+
+    // Reopen the help comm, which replaces the handler and drops the old one.
+    let comm_id_2 = open_help_comm(&frontend);
+    let port_2 = show_help_and_get_proxy_port(&frontend, &comm_id_2);
+
+    // The new proxy binds before the old `RHelp` is dropped, so the OS hands out
+    // a different port and we can tell the two apart.
+    assert_ne!(port_1, port_2);
+    assert!(proxy_is_listening(port_2));
+
+    // Teardown is asynchronous (a task inside the proxy's runtime calls
+    // `stop()`), so poll until the old port refuses connections.
+    wait_until_proxy_stops(port_1);
+}
+
+fn open_help_comm(frontend: &DummyArkFrontend) -> String {
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    frontend.send_shell(CommOpen {
+        comm_id: comm_id.clone(),
+        target_name: String::from("positron.help"),
+        data: serde_json::json!({}),
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    comm_id
+}
+
+/// Request a help topic and return the proxy port from the `show_help` URL.
+fn show_help_and_get_proxy_port(frontend: &DummyArkFrontend, comm_id: &str) -> u16 {
+    frontend.send_execute_request("?plot", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let msg = frontend.recv_iopub_comm_msg();
+    assert_eq!(msg.comm_id, comm_id);
+    assert_eq!(
+        msg.data.get("method").and_then(|v| v.as_str()),
+        Some("show_help")
+    );
+    let content = msg.data["params"]["content"].as_str().unwrap();
+    let port = proxy_port_from_url(content);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    port
+}
+
+/// Pull the port out of a proxy URL like `http://127.0.0.1:<port>/...`.
+fn proxy_port_from_url(url: &str) -> u16 {
+    let after_host = url.strip_prefix("http://127.0.0.1:").unwrap();
+    let end = after_host.find('/').unwrap();
+    after_host[..end].parse().unwrap()
+}
+
+fn proxy_is_listening(port: u16) -> bool {
+    TcpStream::connect(("127.0.0.1", port)).is_ok()
+}
+
+fn wait_until_proxy_stops(port: u16) {
+    for _ in 0..100 {
+        if !proxy_is_listening(port) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("Proxy on port {port} is still accepting connections after teardown");
 }
