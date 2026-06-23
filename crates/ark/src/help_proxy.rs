@@ -71,7 +71,9 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
         };
 
         // Send back the finalized port address
-        port_tx.send(address.port())?;
+        let port = address.port();
+        log::info!("Help proxy server listening on port {port}");
+        port_tx.send(port)?;
 
         // Create a single-threaded Tokio runtime to spare stack memory. The
         // help proxy server does not need to be high performance.

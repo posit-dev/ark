@@ -350,6 +350,7 @@ fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
             log::error!("Could not start R help server: {err:?}");
             return Ok(false);
         });
+        log::info!("R help server listening on port {r_port}");
 
         // Ensure our proxy help server is started, and get its port
         let proxy_port = unwrap!(help_proxy::start(r_port), Err(err) => {
