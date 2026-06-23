@@ -33,8 +33,11 @@ pub const HELP_COMM_NAME: &str = "positron.help";
 
 /// The R Help handler (together with the help proxy) provides the server side
 /// of Positron's Help panel.
-#[derive(Debug)]
-pub struct RHelp;
+#[derive(Debug, Default)]
+pub struct RHelp {
+    /// Drop guard to stop the help proxy server on teardown.
+    proxy: Option<help_proxy::ProxyHandle>,
+}
 
 impl RHelp {
     /// Public associated function so that callers can cheaply check if a url is
@@ -219,14 +222,15 @@ impl CommHandler for RHelp {
         };
         log::info!("R help server listening on port {r_port}");
 
-        let proxy_port = match help_proxy::start(r_port) {
-            Ok(port) => port,
+        let (proxy_port, proxy) = match help_proxy::start(r_port) {
+            Ok(proxy) => proxy,
             Err(err) => {
                 log::error!("Could not start R help proxy server: {err:?}");
                 return;
             },
         };
 
+        self.proxy = Some(proxy);
         Console::get_mut().set_help_ports(r_port, proxy_port);
     }
 
