@@ -1,8 +1,62 @@
+use std::path::Path;
+
 use aether_path::FilePath;
 use oak_scan::DbScan;
 use tower_lsp::lsp_types;
+use tower_lsp::Client;
+use tower_lsp::LanguageServer;
+use tower_lsp::LspService;
 
 use crate::lsp::state::WorldState;
+
+/// Get a real `Client` without a live connection. `LspService::new` hands a
+/// `Client` to its init closure; we capture it and drop the service. The
+/// client's sends go nowhere, which is fine since the event paths under test
+/// never use it.
+pub(super) fn test_client() -> Client {
+    struct Dummy;
+
+    #[tower_lsp::async_trait]
+    impl LanguageServer for Dummy {
+        async fn initialize(
+            &self,
+            _: lsp_types::InitializeParams,
+        ) -> tower_lsp::jsonrpc::Result<lsp_types::InitializeResult> {
+            Ok(lsp_types::InitializeResult::default())
+        }
+        async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
+            Ok(())
+        }
+    }
+
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = std::sync::Arc::clone(&captured);
+    let (_service, _socket) = LspService::new(move |client| {
+        *sink.lock().unwrap() = Some(client);
+        Dummy
+    });
+
+    // Bind first so the `MutexGuard` temporary drops at the `;`, not at the
+    // end of the block.
+    let client = captured.lock().unwrap().take();
+    client.unwrap()
+}
+
+pub(super) fn write_description(dir: &Path, name: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("DESCRIPTION"),
+        format!("Package: {name}\nVersion: 0.0.0\n"),
+    )
+    .unwrap();
+}
+
+pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
+    std::fs::create_dir_all(dir).unwrap();
+    for (basename, contents) in files {
+        std::fs::write(dir.join(basename), contents).unwrap();
+    }
+}
 
 pub(super) fn make_state(uri: &lsp_types::Url, contents: &str) -> WorldState {
     let mut state = WorldState::default();

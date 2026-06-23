@@ -32,6 +32,7 @@ pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
 pub(crate) mod open_file;
+pub mod sources;
 
 pub mod find_references;
 pub mod rename;

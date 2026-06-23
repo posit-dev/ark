@@ -7,67 +7,25 @@
 //! own wiring: which arm calls which handler, and the apply-and-redispatch
 //! step. The scheduler's policy is unit tested without tokio in `oak_scan`.
 
-use std::path::Path;
-
 use oak_db::DbInputs;
+use oak_db::OakDatabase;
+use oak_semantic::library::Library;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
-use tower_lsp::lsp_types::InitializeParams;
-use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::WorkspaceFolder;
 use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
-use tower_lsp::Client;
-use tower_lsp::LanguageServer;
-use tower_lsp::LspService;
 use url::Url;
 
+use super::utils::test_client;
+use super::utils::write_description;
+use super::utils::write_sources;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
-
-/// Get a real `Client` without a live connection. `LspService::new` hands a
-/// `Client` to its init closure; we capture it and drop the service. The
-/// client's sends go nowhere, which is fine since the event paths under test
-/// never use it.
-fn test_client() -> Client {
-    struct Dummy;
-
-    #[tower_lsp::async_trait]
-    impl LanguageServer for Dummy {
-        async fn initialize(
-            &self,
-            _: InitializeParams,
-        ) -> tower_lsp::jsonrpc::Result<InitializeResult> {
-            Ok(InitializeResult::default())
-        }
-        async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
-            Ok(())
-        }
-    }
-
-    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let sink = std::sync::Arc::clone(&captured);
-    let (_service, _socket) = LspService::new(move |client| {
-        *sink.lock().unwrap() = Some(client);
-        Dummy
-    });
-
-    // Bind first so the `MutexGuard` temporary drops at the `;`, not at the
-    // end of the block.
-    let client = captured.lock().unwrap().take();
-    client.unwrap()
-}
-
-fn write_package(dir: &Path, name: &str, basename: &str, contents: &str) {
-    std::fs::create_dir_all(dir.join("R")).unwrap();
-    std::fs::write(
-        dir.join("DESCRIPTION"),
-        format!("Package: {name}\nVersion: 0.0.0\n"),
-    )
-    .unwrap();
-    std::fs::write(dir.join("R").join(basename), contents).unwrap();
-}
+use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::SourceManager;
+use crate::lsp::state::WorldState;
 
 /// Drive `didChangeWorkspaceFolders` through the real `handle_event`, including
 /// the real `OakScanCompleted` arm, to check that the main loop wires scan
@@ -75,10 +33,19 @@ fn write_package(dir: &Path, name: &str, basename: &str, contents: &str) {
 #[tokio::test]
 async fn test_workspace_folder_scan_drives_through_main_loop() {
     let _aux = init_aux_for_test();
-    let mut state = GlobalState::new_test(test_client());
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(OakDatabase::new(), Library::new(vec![])),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceManager::new(None),
+        ),
+    );
 
     let tmp = tempfile::tempdir().unwrap();
-    write_package(&tmp.path().join("pkg"), "pkg", "a.R", "x <- 1\n");
+    let pkg = tmp.path().join("pkg");
+    write_description(&pkg, "pkg");
+    write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
 
     let params = DidChangeWorkspaceFoldersParams {
         event: WorkspaceFoldersChangeEvent {
