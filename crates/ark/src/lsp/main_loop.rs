@@ -53,6 +53,8 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::open_file::OpenFile;
+use crate::lsp::sources::SourceCompleted;
+use crate::lsp::sources::SourceManager;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -98,6 +100,7 @@ pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
+    SourceCompleted(SourceCompleted),
 }
 
 #[derive(Debug)]
@@ -189,6 +192,24 @@ pub(crate) struct LspState {
     /// main-loop handlers. Must be out of [`WorldState`] because the scheduler
     /// is not clonable.
     pub(crate) oak_scheduler: ScanScheduler,
+
+    /// Manager of [crate::lsp::sources::SourceRequest]s. Dispatches and source
+    /// consumption all happen from the main loop.
+    pub(crate) source_manager: SourceManager,
+}
+
+impl LspState {
+    pub(crate) fn new(
+        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
+        source_manager: SourceManager,
+    ) -> Self {
+        Self {
+            capabilities: Capabilities::default(),
+            console_notification_tx,
+            oak_scheduler: ScanScheduler::new(),
+            source_manager,
+        }
+    }
 }
 
 /// State for the auxiliary loop
@@ -246,28 +267,19 @@ impl GlobalState {
 
         Self::from_parts(
             client,
-            console_notification_tx,
             WorldState::new(db, library),
+            LspState::new(console_notification_tx, SourceManager::new(None)),
         )
     }
 
-    /// Assemble the state around an already-built `WorldState`. Splitting this
-    /// out from [`GlobalState::new`] lets tests construct a state without the
-    /// R `.libPaths()` lookup that `new` does.
-    fn from_parts(
-        client: Client,
-        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-        world: WorldState,
-    ) -> Self {
+    /// Assemble the state around an already-built [`WorldState`] and
+    /// [`LspState`]. Splitting this out from [`GlobalState::new`] lets tests
+    /// construct a state without the R `.libPaths()` lookup that `new` does, and
+    /// with a db / provider configured up front.
+    pub(crate) fn from_parts(client: Client, world: WorldState, lsp_state: LspState) -> Self {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
-
-        let lsp_state = LspState {
-            capabilities: Capabilities::default(),
-            console_notification_tx,
-            oak_scheduler: ScanScheduler::new(),
-        };
 
         Self {
             world,
@@ -544,6 +556,12 @@ impl GlobalState {
                     warm_workspace_index(self.world.db.clone());
                 }
             },
+
+            Event::SourceCompleted(SourceCompleted { package, response }) => {
+                if let Some(directory) = self.lsp_state.source_manager.finish(package, response) {
+                    self.world.db.set_package_sources(package, &directory);
+                }
+            },
         }
         lsp::log_info!("Finished handling event in {}ms", loop_tick.elapsed().as_millis());
 
@@ -555,6 +573,9 @@ impl GlobalState {
         if salsa::plumbing::current_revision(&self.world.db) != old_revision {
             lsp::log_info!("World state revision advanced");
             diagnostics_refresh_all(&self.world);
+            self.lsp_state
+                .source_manager
+                .dispatch(&self.world.db, &self.events_tx);
         }
 
         Ok(())
@@ -587,21 +608,15 @@ impl GlobalState {
 /// real `handle_event()` and the private channels rather than a reconstruction.
 #[cfg(test)]
 impl GlobalState {
-    /// Build a state with an empty db and no R library paths. Takes a `client`
-    /// because the struct holds one, but the event paths exercised in tests
-    /// never touch it.
-    pub(crate) fn new_test(client: Client) -> Self {
-        let (console_notification_tx, _) = tokio_unbounded_channel::<ConsoleNotification>();
-        let world = WorldState::new(OakDatabase::new(), Library::new(vec![]));
-        Self::from_parts(client, console_notification_tx, world)
-    }
-
-    /// Run `event` through the real `handle_event`, then pump the scan
-    /// completions it spawns until the scheduler goes idle. This is what
-    /// `main_loop()` does, minus the surrounding `loop`.
+    /// Run `event` through the real `handle_event`, then pump any pending
+    /// events until we reach quiescence. This includes:
+    /// - Pending oak scans
+    /// - Pending source requests
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
         self.handle_event(event).await.unwrap();
-        while self.lsp_state.oak_scheduler.has_pending_scans() {
+        while self.lsp_state.oak_scheduler.has_pending_scans() ||
+            self.lsp_state.source_manager.has_pending()
+        {
             let event = self.next_event().await;
             self.handle_event(event).await.unwrap();
         }
