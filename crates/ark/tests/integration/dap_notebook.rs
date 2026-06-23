@@ -944,7 +944,6 @@ fn test_notebook_top_level_breakpoint_stops_execution() {
     ]);
     find_debug_event(&msgs, "continued");
 
-    // Disconnect to reset state for other tests
     frontend.send_debug_request(serde_json::json!({
         "type": "request",
         "seq": 5,

@@ -93,9 +93,32 @@ impl PendingInputs {
         code: &str,
         location: Option<CodeLocation>,
         breakpoints: Option<&mut [Breakpoint]>,
+        notebook_cell: bool,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let input = if let Some(location) = location {
-            match annotate_input(code, location, breakpoints) {
+            // Annotate the code with breakpoint calls and `#line` directives. A
+            // notebook cell with breakpoints needs special treatment: it is
+            // evaluated as top-level input, where R can't stop at top-level
+            // breakpoints (it only steps statement-by-statement within a single
+            // braced evaluation). So we brace-wrap and instrument the whole cell
+            // as one `{ ... }` block, which lets top-level breakpoints fire. This
+            // mirrors how `source()` enables top-level breakpoints. Cells without
+            // breakpoints fall through to the usual top-level input annotation.
+            let annotated = match breakpoints {
+                Some(breakpoints) if notebook_cell && !breakpoints.is_empty() => {
+                    annotate_notebook(code, &location.uri, breakpoints).or_else(|err| {
+                        // Fall back to plain annotation so the user still gets the
+                        // normal R error for their code.
+                        log::warn!(
+                            "Notebook cell annotation failed, falling back to plain parse: {err:?}"
+                        );
+                        annotate_input(code, location, None)
+                    })
+                },
+                breakpoints => annotate_input(code, location, breakpoints),
+            };
+
+            match annotated {
                 Ok(annotated_code) => {
                     log::trace!("Annotated code: \n```\n{annotated_code}\n```");
                     harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(
@@ -113,17 +136,6 @@ impl PendingInputs {
             harp::ParseInput::Text(code)
         };
 
-        Self::from_parse_input(input)
-    }
-
-    /// Parse already-annotated code (e.g. an instrumented notebook cell) into
-    /// pending expressions. The code is parsed with a virtual source file so
-    /// that the `#line` directives it contains map srcrefs back to the original
-    /// document.
-    fn read_annotated(annotated_code: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
-        log::trace!("Annotated code: \n```\n{annotated_code}\n```");
-        let srcfile = SrcFile::new_virtual_empty_filename(annotated_code.into());
-        let input = harp::ParseInput::SrcFile(&srcfile);
         Self::from_parse_input(input)
     }
 
@@ -1552,28 +1564,8 @@ impl Console {
                     .and_then(|uri_id| dap_guard.breakpoints.get_mut(uri_id))
                     .map(|(_, v)| v.as_mut_slice());
 
-                // Notebook cells are evaluated as top-level input, where R can't
-                // stop at top-level breakpoints (it only steps statement-by-statement
-                // within a single braced evaluation). When such a cell has
-                // breakpoints, brace-wrap and instrument it so the whole cell
-                // evaluates as one `{ ... }` block and top-level breakpoints fire.
-                // This mirrors how `source()` enables top-level breakpoints.
-                let parse_result = match (cell_id.is_some(), loc, breakpoints) {
-                    (true, Some(loc), Some(breakpoints)) if !breakpoints.is_empty() => {
-                        match annotate_notebook(&code, &loc.uri, breakpoints) {
-                            Ok(annotated) => PendingInputs::read_annotated(&annotated),
-                            Err(err) => {
-                                // Fall back to plain parsing so the user still
-                                // gets the normal R error for their code.
-                                log::warn!(
-                                    "Notebook cell annotation failed, falling back to plain parse: {err:?}"
-                                );
-                                PendingInputs::read(&code, Some(loc), None)
-                            },
-                        }
-                    },
-                    (_, loc, breakpoints) => PendingInputs::read(&code, loc, breakpoints),
-                };
+                let parse_result =
+                    PendingInputs::read(&code, loc, breakpoints, cell_id.is_some());
 
                 match parse_result {
                     Ok(ParseResult::Success(inputs)) => {

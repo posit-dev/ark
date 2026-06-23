@@ -256,7 +256,7 @@ fn annotate_source_impl(
     breakpoints: &mut [Breakpoint],
     with_visible: bool,
 ) -> anyhow::Result<String> {
-    let block = instrument_braced_block(code, uri, breakpoints)?;
+    let block = annotate_braced_block(code, uri, breakpoints)?;
 
     // Add a trailing verify call to handle any injected breakpoint in trailing
     // position. Normally we'd inject a verify call as well as a line directive
@@ -301,7 +301,9 @@ fn annotate_source_impl(
 ///   so a cell ending in an invisible assignment (`x <- 1`) does not print.
 ///   The `list(...)[[1]]` wrapper used by `source()` always forces the result
 ///   visible, which is wrong for notebook output semantics.
-/// - It keeps the debugger call stack clean (no wrapper frame).
+/// - It keeps the debugger call stack clean: unlike the `withVisible()` wrapper
+///   that `source()` uses to capture visibility, the bare block adds no extra
+///   frame.
 ///
 /// Trade-off: there is no outer trailing verify call, so a breakpoint inside a
 /// dead branch of the cell's *last* top-level statement is verified lazily when
@@ -312,7 +314,7 @@ pub(super) fn annotate_notebook(
     uri: &Url,
     breakpoints: &mut [Breakpoint],
 ) -> anyhow::Result<String> {
-    instrument_braced_block(code, uri, breakpoints)
+    annotate_braced_block(code, uri, breakpoints)
 }
 
 /// Wrap `code` in `{}` and instrument the braced block: inject breakpoint calls,
@@ -322,7 +324,7 @@ pub(super) fn annotate_notebook(
 /// Shared by [`annotate_source`] (which adds an outer `base::list(..., verify)[[1]]`
 /// wrapper to verify trailing breakpoints) and [`annotate_notebook`] (which uses
 /// the bare block to preserve the final expression's visibility).
-fn instrument_braced_block(
+fn annotate_braced_block(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],
@@ -337,7 +339,7 @@ fn instrument_braced_block(
     let parse = aether_parser::parse(&wrapped, Default::default());
     if let Some(err) = parse.error() {
         // Shouldn't happen since we're only operating on code that was parsed by R
-        return Err(anyhow!("Parse error in `instrument_braced_block()`: {err}"));
+        return Err(anyhow!("Parse error in `annotate_braced_block()`: {err}"));
     }
 
     let root = parse.tree();
