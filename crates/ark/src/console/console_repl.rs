@@ -93,9 +93,32 @@ impl PendingInputs {
         code: &str,
         location: Option<CodeLocation>,
         breakpoints: Option<&mut [Breakpoint]>,
+        notebook_cell: bool,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let input = if let Some(location) = location {
-            match annotate_input(code, location, breakpoints) {
+            // Annotate the code with breakpoint calls and `#line` directives. A
+            // notebook cell with breakpoints needs special treatment: it is
+            // evaluated as top-level input, where R can't stop at top-level
+            // breakpoints (it only steps statement-by-statement within a single
+            // braced evaluation). So we brace-wrap and instrument the whole cell
+            // as one `{ ... }` block, which lets top-level breakpoints fire. This
+            // mirrors how `source()` enables top-level breakpoints. Cells without
+            // breakpoints fall through to the usual top-level input annotation.
+            let annotated = match breakpoints {
+                Some(breakpoints) if notebook_cell && !breakpoints.is_empty() => {
+                    annotate_notebook(code, &location.uri, breakpoints).or_else(|err| {
+                        // Fall back to plain annotation so the user still gets the
+                        // normal R error for their code.
+                        log::warn!(
+                            "Notebook cell annotation failed, falling back to plain parse: {err:?}"
+                        );
+                        annotate_input(code, location, None)
+                    })
+                },
+                breakpoints => annotate_input(code, location, breakpoints),
+            };
+
+            match annotated {
                 Ok(annotated_code) => {
                     log::trace!("Annotated code: \n```\n{annotated_code}\n```");
                     harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(
@@ -113,6 +136,11 @@ impl PendingInputs {
             harp::ParseInput::Text(code)
         };
 
+        Self::from_parse_input(input)
+    }
+
+    /// Parse a prepared [`harp::ParseInput`] into pending expressions.
+    fn from_parse_input(input: harp::ParseInput) -> anyhow::Result<ParseResult<PendingInputs>> {
         let status = match harp::parse_status(&input) {
             Err(err) => {
                 // Failed to even attempt to parse the input, something is seriously wrong
@@ -1536,7 +1564,9 @@ impl Console {
                     .and_then(|path| dap_guard.breakpoints.get_mut(path))
                     .map(|entry| entry.breakpoints.as_mut_slice());
 
-                match PendingInputs::read(&code, loc, breakpoints) {
+                let parse_result = PendingInputs::read(&code, loc, breakpoints, cell_id.is_some());
+
+                match parse_result {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },

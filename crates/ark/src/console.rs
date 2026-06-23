@@ -118,6 +118,7 @@ mod console_repl;
 
 use aether_path::FilePath;
 use console_annotate::annotate_input;
+use console_annotate::annotate_notebook;
 pub(crate) use console_debug::DebugCallText;
 pub(crate) use console_debug::DebugStoppedReason;
 pub(crate) use console_debug::FrameInfo;
