@@ -59,7 +59,7 @@ fn workspace_dependencies_names(db: &TestDb) -> Vec<String> {
 }
 
 #[test]
-fn test_collects_library_and_namespaced_accesses() {
+fn test_collects_library_and_namespace_accesses() {
     let mut db = TestDb::new();
     register_library(&mut db, &["foo", "bar", "unused"]);
     workspace_with_script(&mut db, "library(foo)\nbar::thing()\n");
@@ -70,7 +70,7 @@ fn test_collects_library_and_namespaced_accesses() {
 }
 
 #[test]
-fn test_collects_internal_namespaced_access() {
+fn test_collects_internal_namespace_access() {
     let mut db = TestDb::new();
     register_library(&mut db, &["rlang"]);
     workspace_with_script(&mut db, "rlang:::abort()\n");

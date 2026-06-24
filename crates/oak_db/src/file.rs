@@ -220,7 +220,7 @@ impl File {
         // names.
         let names: BTreeSet<&str> = self
             .semantic_index(db)
-            .namespaced_accesses()
+            .namespace_accesses()
             .iter()
             .map(|access| access.package())
             .collect();
