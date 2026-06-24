@@ -718,14 +718,14 @@ impl SemanticCall {
 /// `package:::symbol`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceAccess {
-    package: String,
-    symbol: String,
-    kind: NamespaceAccessKind,
-    offset: TextSize,
+    pub(crate) package: String,
+    pub(crate) symbol: String,
+    pub(crate) kind: NamespaceAccessKind,
+    pub(crate) offset: TextSize,
 }
 
 impl NamespaceAccess {
-    pub fn new(
+    pub(crate) fn new(
         package: String,
         symbol: String,
         kind: NamespaceAccessKind,
