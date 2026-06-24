@@ -245,7 +245,7 @@ fn order_by_collation(
     // it into the namespace, so it can't go in `files`; keep it as a standalone
     // script instead of dropping it. Sorted for a deterministic order.
     let mut leftover: Vec<(PathBuf, FileEntry)> = by_name.into_values().collect();
-    leftover.sort_by_key(|(path, _)| basename_key(path));
+    leftover.sort_by_cached_key(|(path, _)| basename_key(path));
     for (path, _) in &leftover {
         log::warn!(
             "R file `{}` is not listed in `Collate:`; treating it as a standalone \
@@ -263,7 +263,7 @@ fn order_by_collation(
 /// All files are loadable, in case-insensitive alphabetical order by basename.
 /// No leftover: without `Collate:`, R loads every R/ file.
 fn order_alphabetically(mut files: Vec<(PathBuf, FileEntry)>) -> (Vec<FileEntry>, Vec<FileEntry>) {
-    files.sort_by_key(|(path, _)| basename_key(path));
+    files.sort_by_cached_key(|(path, _)| basename_key(path));
     (
         files.into_iter().map(|(_, file)| file).collect(),
         Vec::new(),
