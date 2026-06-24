@@ -67,6 +67,17 @@ just test <test_name>
 just test -p ark
 ```
 
+### Writing Tests
+
+- Do not worry about cross-test hygiene. We use `nextest` to run tests, so each individual test runs in its own separate process and cannot affect other tests.
+
+- Prefer simple assertion macros without custom error messages:
+    - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
+    - Use `assert!(condition);` instead of `assert!(condition, "custom message");`
+
+- Prefer exact assertions over fuzzy ones, especially when ordering and completeness matter:
+    - Use `assert_eq!(names[0], "foo()");` rather than `assert!(names.contains(&"foo()"));`
+
 ### Placing Integration Tests
 
 Put integration tests under `crates/<crate>/tests/integration/`, with a `main.rs` that declares each test file as a module (`mod library;`). Don't add loose `*.rs` files directly under `tests/`. Each top-level file there compiles as its own test binary, so consolidating them into one `integration` binary keeps build and link times down and saves on disk space.
@@ -191,12 +202,6 @@ If changes are needed in these files, that must happen in the separate Positron 
 - Keep `Cargo.toml` dependencies in alphabetical order.
 
 - All dependencies must be declared in the workspace root's `Cargo.toml`. Individual crates reference them with `dep.workspace = true`.
-
-- When writing tests, prefer simple assertion macros without custom error messages:
-    - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
-    - Use `assert!(condition);` instead of `assert!(condition, "custom message");`
-
-- In tests, prefer exact assertions over fuzzy ones. Use `assert_eq!(stack[0].name, "foo()")` rather than `assert!(names.contains(&"foo()"))` when ordering and completeness matter.
 
 - When you extract code in a function (or move things around) that function goes _below_ the calling function. A general goal is to be able to read linearly from top to bottom with the relevant context and main logic first. The code should be organised like a call stack. Of course that's not always possible, use best judgement to produce the clearest code organization.
 
