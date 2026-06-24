@@ -69,30 +69,14 @@ just test -p ark
 
 ### Writing Tests
 
-Because we use `nextest` to run tests, each individual test runs in its own separate process. This means that tests cannot interact with each other, and cross-test hygiene is not a concern.
+- Do not worry about cross-test hygiene. We use `nextest` to run tests, so each individual test runs in its own separate process and cannot affect other tests.
 
-Prefer simple assertion macros without custom error messages:
+- Prefer simple assertion macros without custom error messages:
+    - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
+    - Use `assert!(condition);` instead of `assert!(condition, "custom message");`
 
-```rust
-// Prefer
-assert_eq!(actual, expected);
-// Over
-assert_eq!(actual, expected, "custom message");
-
-// Prefer
-assert!(condition);
-// Over
-assert!(condition, "custom message");
-```
-
-Prefer exact assertions over fuzzy ones, especially when ordering and completeness matter:
-
-```rust
-// Prefer
-assert_eq!(names[0], "foo()");
-// Over
-assert!(names.contains(&"foo()"));
-```
+- Prefer exact assertions over fuzzy ones, especially when ordering and completeness matter:
+    - Use `assert_eq!(names[0], "foo()");` rather than `assert!(names.contains(&"foo()"));`
 
 ### Placing Integration Tests
 
