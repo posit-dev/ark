@@ -81,9 +81,9 @@ pub struct SemanticIndex {
     // attachments or `source()` injections.
     semantic_calls: Vec<SemanticCall>,
 
-    // Namespaced accesses recorded during indexing, i.e. `package::symbol` or
+    // Namespace accesses recorded during indexing, i.e. `package::symbol` or
     // `package:::symbol`
-    namespaced_accesses: Vec<NamespacedAccess>,
+    namespace_accesses: Vec<NamespaceAccess>,
 
     // The file scope's exit flow state: for each top-level symbol, the
     // definitions still in effect once the file has run top to bottom. This is
@@ -101,7 +101,7 @@ impl SemanticIndex {
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         semantic_calls: Vec<SemanticCall>,
-        namespaced_accesses: Vec<NamespacedAccess>,
+        namespace_accesses: Vec<NamespaceAccess>,
         final_bindings: IndexVec<SymbolId, Bindings>,
     ) -> Self {
         Self {
@@ -112,7 +112,7 @@ impl SemanticIndex {
             use_def_maps,
             enclosing_snapshots,
             semantic_calls,
-            namespaced_accesses,
+            namespace_accesses,
             final_bindings,
         }
     }
@@ -184,10 +184,10 @@ impl SemanticIndex {
         &self.semantic_calls
     }
 
-    /// Namespaced accesses recorded during indexing, i.e. `package::symbol` or
+    /// Namespace accesses recorded during indexing, i.e. `package::symbol` or
     /// `package:::symbol`
-    pub fn namespaced_accesses(&self) -> &[NamespacedAccess] {
-        &self.namespaced_accesses
+    pub fn namespace_accesses(&self) -> &[NamespaceAccess] {
+        &self.namespace_accesses
     }
 
     /// Find the innermost scope containing `offset`.
@@ -714,21 +714,21 @@ impl SemanticCall {
     }
 }
 
-/// Namespaced access recorded during indexing, i.e. `package::symbol` or
+/// Namespace access recorded during indexing, i.e. `package::symbol` or
 /// `package:::symbol`
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NamespacedAccess {
+pub struct NamespaceAccess {
     package: String,
     symbol: String,
-    kind: NamespacedAccessKind,
+    kind: NamespaceAccessKind,
     offset: TextSize,
 }
 
-impl NamespacedAccess {
+impl NamespaceAccess {
     pub fn new(
         package: String,
         symbol: String,
-        kind: NamespacedAccessKind,
+        kind: NamespaceAccessKind,
         offset: TextSize,
     ) -> Self {
         Self {
@@ -747,7 +747,7 @@ impl NamespacedAccess {
         &self.symbol
     }
 
-    pub fn kind(&self) -> NamespacedAccessKind {
+    pub fn kind(&self) -> NamespaceAccessKind {
         self.kind
     }
 
@@ -757,7 +757,7 @@ impl NamespacedAccess {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NamespacedAccessKind {
+pub enum NamespaceAccessKind {
     /// `::`
     Export,
     /// `:::`

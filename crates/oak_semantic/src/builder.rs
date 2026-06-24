@@ -35,8 +35,8 @@ use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
-use crate::semantic_index::NamespacedAccess;
-use crate::semantic_index::NamespacedAccessKind;
+use crate::semantic_index::NamespaceAccess;
+use crate::semantic_index::NamespaceAccessKind;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
@@ -73,7 +73,7 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
-    namespaced_accesses: Vec<NamespacedAccess>,
+    namespace_accesses: Vec<NamespaceAccess>,
     resolver: R,
 }
 
@@ -115,7 +115,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
-            namespaced_accesses: Vec::new(),
+            namespace_accesses: Vec::new(),
             resolver,
         }
     }
@@ -403,7 +403,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             },
 
             AnyRExpression::RNamespaceExpression(expr) => {
-                self.collect_namespaced_access(expr);
+                self.collect_namespace_access(expr);
             },
 
             AnyRExpression::RForStatement(stmt) => {
@@ -698,13 +698,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    fn collect_namespaced_access(&mut self, expr: &RNamespaceExpression) {
+    fn collect_namespace_access(&mut self, expr: &RNamespaceExpression) {
         let Ok(operator) = expr.operator() else {
             return;
         };
         let kind = match operator.kind() {
-            RSyntaxKind::COLON2 => NamespacedAccessKind::Export,
-            RSyntaxKind::COLON3 => NamespacedAccessKind::Internal,
+            RSyntaxKind::COLON2 => NamespaceAccessKind::Export,
+            RSyntaxKind::COLON3 => NamespaceAccessKind::Internal,
             _ => return,
         };
         let Some(package) = expr
@@ -722,8 +722,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
         let offset = expr.syntax().text_trimmed_range().start();
-        self.namespaced_accesses
-            .push(NamespacedAccess::new(package, symbol, kind, offset));
+        self.namespace_accesses
+            .push(NamespaceAccess::new(package, symbol, kind, offset));
     }
 
     fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
@@ -927,7 +927,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.enclosing_snapshots,
             self.semantic_calls,
-            self.namespaced_accesses,
+            self.namespace_accesses,
             file_final_bindings,
         )
     }
