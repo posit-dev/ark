@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
 
@@ -214,21 +213,17 @@ impl File {
     /// backdate after small file edits.
     #[salsa::tracked(returns(ref))]
     fn namespace_accessed_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
-        // Likely that there are many `::` accesses for the same package within a single
-        // file, so it's useful to build as a BTreeSet that automatically handles sorting
-        // and deduplicating for us, rather than building a long `Vec` of duplicated
-        // names.
-        let names: BTreeSet<&str> = self
+        // Sort and dedup on `&str` before converting to `Name`, avoids unnecessary
+        // database accesses
+        let mut names: Vec<&str> = self
             .semantic_index(db)
             .namespace_accesses()
             .iter()
             .map(|access| access.package())
             .collect();
-
-        names
-            .into_iter()
-            .map(|package| Name::new(db, package))
-            .collect()
+        names.sort();
+        names.dedup();
+        names.into_iter().map(|name| Name::new(db, name)).collect()
     }
 
     /// All packages used in this file
