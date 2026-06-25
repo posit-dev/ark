@@ -26,13 +26,13 @@ use tower_lsp::lsp_types::WorkspaceFolder;
 use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
-use crate::lsp::capabilities::Capabilities;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
@@ -125,11 +125,10 @@ where
 }
 
 fn test_lsp_state() -> LspState {
-    LspState {
-        capabilities: Capabilities::default(),
-        console_notification_tx: tokio::sync::mpsc::unbounded_channel().0,
-        oak_scheduler: ScanScheduler::new(),
-    }
+    LspState::new(
+        tokio::sync::mpsc::unbounded_channel().0,
+        SourceScheduler::new(None),
+    )
 }
 
 /// Inline drain loop: oak_scan keeps its equivalent crate-private so
