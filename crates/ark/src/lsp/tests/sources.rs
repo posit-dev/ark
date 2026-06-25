@@ -41,7 +41,7 @@ struct TestSourceHandler {
     sources: tempfile::TempDir,
     /// Per-package canned behavior.
     behavior: HashMap<String, TestBehavior>,
-    /// Each request passed to `provide`, in call order.
+    /// Each request passed to `handle`, in call order.
     calls: Mutex<Vec<SourceRequest>>,
 }
 
@@ -62,7 +62,7 @@ impl TestSourceHandler {
         }
     }
 
-    /// The requests passed to `provide`, in call order, for the test to assert on.
+    /// The requests passed to `handle`, in call order, for the test to assert on.
     fn calls(&self) -> &Mutex<Vec<SourceRequest>> {
         &self.calls
     }
