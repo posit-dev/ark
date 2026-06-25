@@ -11,12 +11,12 @@ use stdext::result::ResultExt;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
 
-/// Provide R source files for an installed package
+/// Handle source requests to provide R source files for an installed package
 ///
 /// Implementations live outside of oak, oak is only in charge of ingesting the
 /// returned directory.
-pub(crate) trait SourceProvider: Send + Sync {
-    fn provide(&self, request: &SourceRequest) -> SourceResponse;
+pub(crate) trait SourceHandler: Send + Sync {
+    fn handle(&self, request: &SourceRequest) -> SourceResponse;
 }
 
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub(crate) struct SourceRequest {
     library_path: PathBuf,
 }
 
-// TODO!: Remove when we have a production `SourceProvider`
+// TODO!: Remove when we have a production `SourceHandler`
 #[cfg_attr(not(test), expect(dead_code))]
 #[derive(Debug)]
 pub(crate) enum SourceResponse {
@@ -49,21 +49,21 @@ enum SourceState {
 }
 
 pub(crate) struct SourceManager {
-    // TODO!: Remove the `Option<>` when we implement a production `SourceProvider`
-    provider: Option<Arc<dyn SourceProvider>>,
+    // TODO!: Remove the `Option<>` when we implement a production `SourceHandler`
+    handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
 }
 
 impl SourceManager {
-    pub(crate) fn new(provider: Option<Arc<dyn SourceProvider>>) -> Self {
+    pub(crate) fn new(handler: Option<Arc<dyn SourceHandler>>) -> Self {
         Self {
-            provider,
+            handler,
             state: HashMap::new(),
         }
     }
 
     pub(crate) fn dispatch(&mut self, db: &dyn Db, events_tx: &TokioUnboundedSender<Event>) {
-        let Some(provider) = &self.provider else {
+        let Some(handler) = &self.handler else {
             return;
         };
 
@@ -82,14 +82,14 @@ impl SourceManager {
                 continue;
             };
 
-            let provider = Arc::clone(provider);
+            let handler = Arc::clone(handler);
             let tx = events_tx.clone();
 
             // Set to `Pending` after all possible early exits
             self.state.insert(package, SourceState::Pending);
 
             crate::lsp::spawn_blocking(move || {
-                let response = provider.provide(&request);
+                let response = handler.handle(&request);
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
                     package,
@@ -170,19 +170,19 @@ impl SourceRequest {
         })
     }
 
-    // TODO!: Remove when we have a production `SourceProvider`
+    // TODO!: Remove when we have a production `SourceHandler`
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
-    // TODO!: Remove when we have a production `SourceProvider`
+    // TODO!: Remove when we have a production `SourceHandler`
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn version(&self) -> &str {
         &self.version
     }
 
-    // TODO!: Remove when we have a production `SourceProvider`
+    // TODO!: Remove when we have a production `SourceHandler`
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn library_path(&self) -> &Path {
         &self.library_path

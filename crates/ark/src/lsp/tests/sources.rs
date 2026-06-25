@@ -26,17 +26,17 @@ use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceManager;
-use crate::lsp::sources::SourceProvider;
 use crate::lsp::sources::SourceRequest;
 use crate::lsp::sources::SourceResponse;
 use crate::lsp::state::WorldState;
 
-/// A test [`SourceProvider`] that serves canned behavior per package name and
+/// A test [`SourceHandler`] that serves canned behavior per package name and
 /// records every call, so tests can assert dispatch, dedup, and retry policy.
-/// The provider is shared (as the `Arc<dyn SourceProvider>` the `SourceManager`
+/// The handler is shared (as the `Arc<dyn SourceHandler>` the `SourceManager`
 /// holds and the clone the test keeps), so `calls` is a plain `Mutex`.
-struct TestProvider {
+struct TestSourceHandler {
     /// Owns the cache directory that `Success` writes per-package sources into.
     sources: tempfile::TempDir,
     /// Per-package canned behavior.
@@ -54,7 +54,7 @@ enum TestBehavior {
     Retry,
 }
 
-impl TestProvider {
+impl TestSourceHandler {
     fn new(behavior: HashMap<String, TestBehavior>) -> Self {
         Self {
             sources: tempfile::tempdir().unwrap(),
@@ -69,8 +69,8 @@ impl TestProvider {
     }
 }
 
-impl SourceProvider for TestProvider {
-    fn provide(&self, request: &SourceRequest) -> SourceResponse {
+impl SourceHandler for TestSourceHandler {
+    fn handle(&self, request: &SourceRequest) -> SourceResponse {
         self.calls.lock().unwrap().push(request.clone());
 
         match self.behavior.get(request.name()) {
@@ -112,7 +112,7 @@ fn did_open(path: &Path, contents: &str) -> Event {
     ))
 }
 
-/// The package names passed to the provider, in call order.
+/// The package names passed to the handler, in call order.
 fn dispatched_names(calls: &Mutex<Vec<SourceRequest>>) -> Vec<String> {
     calls
         .lock()
@@ -123,13 +123,13 @@ fn dispatched_names(calls: &Mutex<Vec<SourceRequest>>) -> Vec<String> {
 }
 
 /// The happy path end to end: a workspace uses an installed library package via
-/// `::`, so the revision-advance check dispatches a source request, the provider
+/// `::`, so the revision-advance check dispatches a source request, the handler
 /// returns a directory, and the main loop ingests it into the library package.
 #[tokio::test]
 async fn test_source_pipeline_ingests_package_sources() {
     let _aux = init_aux_for_test();
 
-    let provider = Arc::new(TestProvider::new(HashMap::from([(
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
         String::from("donor"),
         TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
     )])));
@@ -145,7 +145,7 @@ async fn test_source_pipeline_ingests_package_sources() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(provider.clone())),
+            SourceManager::new(Some(handler.clone())),
         ),
     );
 
@@ -159,10 +159,10 @@ async fn test_source_pipeline_ingests_package_sources() {
         .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
         .await;
 
-    // The provider was asked exactly once, with the package's name, version, and
+    // The handler was asked exactly once, with the package's name, version, and
     // library path extracted from the db on the main loop.
     {
-        let recorded = provider.calls().lock().unwrap();
+        let recorded = handler.calls().lock().unwrap();
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].name(), "donor");
         assert_eq!(recorded[0].version(), "0.0.0");
@@ -183,7 +183,7 @@ async fn test_source_pipeline_ingests_package_sources() {
 async fn test_failed_source_is_not_retried() {
     let _aux = init_aux_for_test();
 
-    let provider = Arc::new(TestProvider::new(HashMap::from([(
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
         String::from("donor"),
         TestBehavior::Failed,
     )])));
@@ -198,7 +198,7 @@ async fn test_failed_source_is_not_retried() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(provider.clone())),
+            SourceManager::new(Some(handler.clone())),
         ),
     );
 
@@ -212,7 +212,7 @@ async fn test_failed_source_is_not_retried() {
         .await;
 
     // Ensure that we got the request once
-    assert_eq!(dispatched_names(provider.calls()), vec![String::from(
+    assert_eq!(dispatched_names(handler.calls()), vec![String::from(
         "donor"
     )]);
 
@@ -222,7 +222,7 @@ async fn test_failed_source_is_not_retried() {
         .await;
 
     // Ensure that we haven't gotten a second request
-    assert_eq!(dispatched_names(provider.calls()), vec![String::from(
+    assert_eq!(dispatched_names(handler.calls()), vec![String::from(
         "donor"
     )]);
 }
@@ -233,7 +233,7 @@ async fn test_failed_source_is_not_retried() {
 async fn test_retry_source_redispatches_on_next_edit() {
     let _aux = init_aux_for_test();
 
-    let provider = Arc::new(TestProvider::new(HashMap::from([(
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
         String::from("donor"),
         TestBehavior::Retry,
     )])));
@@ -248,7 +248,7 @@ async fn test_retry_source_redispatches_on_next_edit() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(provider.clone())),
+            SourceManager::new(Some(handler.clone())),
         ),
     );
 
@@ -262,7 +262,7 @@ async fn test_retry_source_redispatches_on_next_edit() {
         .await;
 
     // Got the first one
-    assert_eq!(dispatched_names(provider.calls()), vec![String::from(
+    assert_eq!(dispatched_names(handler.calls()), vec![String::from(
         "donor"
     )]);
 
@@ -272,7 +272,7 @@ async fn test_retry_source_redispatches_on_next_edit() {
         .await;
 
     // Now we have two due to the retry
-    assert_eq!(dispatched_names(provider.calls()), vec![
+    assert_eq!(dispatched_names(handler.calls()), vec![
         String::from("donor"),
         String::from("donor")
     ]);
