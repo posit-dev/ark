@@ -37,6 +37,7 @@ use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
 use crate::r_task;
+use crate::r_task::TryIdleOutcome;
 use crate::request::RRequest;
 
 pub struct DapJupyterHandler {
@@ -138,24 +139,32 @@ impl DapJupyterHandler {
         let expression = args.expression;
         let frame_id = args.frame_id;
 
-        // This only returns `Some()` if R is idle. Even though we stopped at
-        // some point, causing the Evaluate request, R could be busy evaluating
-        // the next expression already.
+        // This runs only if R is idle. Even though we stopped at some point,
+        // causing the Evaluate request, R could be busy evaluating the next
+        // expression already. A runaway expression is interrupted after a
+        // timeout and reported as `TimedOut`.
         let result = r_task::try_idle_task(move |capture| {
             DapHandler::evaluate(&state, &expression, frame_id, capture)
         });
 
         match result {
-            None => Ok(self.error_response(seq, "evaluate", "R is busy")),
+            TryIdleOutcome::Busy => Ok(self.error_response(seq, "evaluate", "R is busy")),
+            TryIdleOutcome::TimedOut => {
+                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
+            },
             // The task raised an R error, caught by the sandbox on the R thread.
-            Some(Err(err)) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
-            Some(Ok(Ok(body))) => {
+            TryIdleOutcome::Ran(Err(err)) => {
+                Ok(self.error_response(seq, "evaluate", &format!("{err}")))
+            },
+            TryIdleOutcome::Ran(Ok(Ok(body))) => {
                 let ResponseBody::Evaluate(eval) = body else {
                     return Err(anyhow::anyhow!("Unexpected response body from evaluate"));
                 };
                 Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
             },
-            Some(Ok(Err(err))) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
+            TryIdleOutcome::Ran(Ok(Err(err))) => {
+                Ok(self.error_response(seq, "evaluate", &format!("{err}")))
+            },
         }
     }
 
