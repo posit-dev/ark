@@ -1,3 +1,4 @@
+use aether_syntax::AnyRSelector;
 use aether_syntax::RIdentifier;
 use aether_syntax::RStringValue;
 use biome_rowan::AstNode;
@@ -37,6 +38,26 @@ impl RStringValueExt for RStringValue {
         let token = self.value_token().ok()?;
         let text = token.text_trimmed();
         Some(text[1..text.len() - 1].to_string())
+    }
+}
+
+pub trait AnyRSelectorExt {
+    /// Uses [RIdentifierExt::name_text()] and [RStringValueExt::string_text()] to report
+    /// the name without backticks or quotes
+    ///
+    /// Returns [None] for [aether_syntax::AnyRSelector::RDotDotI] and
+    /// [aether_syntax::AnyRSelector::RDots], which we don't consider standard
+    /// identifiers.
+    fn identifier_text(&self) -> Option<String>;
+}
+
+impl AnyRSelectorExt for AnyRSelector {
+    fn identifier_text(&self) -> Option<String> {
+        match self {
+            AnyRSelector::RIdentifier(node) => Some(node.name_text()),
+            AnyRSelector::RStringValue(node) => node.string_text(),
+            AnyRSelector::RDots(_) | AnyRSelector::RDotDotI(_) => None,
+        }
     }
 }
 

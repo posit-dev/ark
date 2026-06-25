@@ -8,6 +8,7 @@ use aether_syntax::RArgumentList;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RExpressionList;
 use aether_syntax::RFunctionDefinition;
+use aether_syntax::RNamespaceExpression;
 use aether_syntax::RParameter;
 use aether_syntax::RParameters;
 use aether_syntax::RRoot;
@@ -20,6 +21,7 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
+use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
@@ -33,6 +35,8 @@ use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
+use crate::semantic_index::NamespaceAccess;
+use crate::semantic_index::NamespaceAccessKind;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
@@ -69,6 +73,7 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
+    namespace_accesses: Vec<NamespaceAccess>,
     resolver: R,
 }
 
@@ -110,6 +115,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
+            namespace_accesses: Vec::new(),
             resolver,
         }
     }
@@ -396,9 +402,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
             },
 
-            AnyRExpression::RNamespaceExpression(_) => {
-                // In `pkg::fn` or `pkg:::fn`, both sides are selectors, not
-                // variable references in the current scope
+            AnyRExpression::RNamespaceExpression(expr) => {
+                self.collect_namespace_access(expr);
             },
 
             AnyRExpression::RForStatement(stmt) => {
@@ -693,6 +698,34 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
+    fn collect_namespace_access(&mut self, expr: &RNamespaceExpression) {
+        let Ok(operator) = expr.operator() else {
+            return;
+        };
+        let kind = match operator.kind() {
+            RSyntaxKind::COLON2 => NamespaceAccessKind::Export,
+            RSyntaxKind::COLON3 => NamespaceAccessKind::Internal,
+            _ => return,
+        };
+        let Some(package) = expr
+            .left()
+            .ok()
+            .and_then(|selector| selector.identifier_text())
+        else {
+            return;
+        };
+        let Some(symbol) = expr
+            .right()
+            .ok()
+            .and_then(|selector| selector.identifier_text())
+        else {
+            return;
+        };
+        let offset = expr.syntax().text_trimmed_range().start();
+        self.namespace_accesses
+            .push(NamespaceAccess::new(package, symbol, kind, offset));
+    }
+
     fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
@@ -894,6 +927,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.enclosing_snapshots,
             self.semantic_calls,
+            self.namespace_accesses,
             file_final_bindings,
         )
     }

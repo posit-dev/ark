@@ -1,4 +1,3 @@
-use aether_syntax::AnyRSelector;
 use aether_syntax::RExtractExpression;
 use aether_syntax::RNamespaceExpression;
 use aether_syntax::RSyntaxKind;
@@ -8,8 +7,7 @@ use biome_rowan::AstNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use biome_rowan::TokenAtOffset;
-use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
+use oak_core::syntax_ext::AnyRSelectorExt;
 
 use crate::Db;
 use crate::Definition;
@@ -158,12 +156,12 @@ impl<'db> File {
                 if op_kind != kind {
                     return None;
                 }
-                let rhs = extract.right().ok()?;
-                let (member_name, range) = selector_name_and_range(&rhs)?;
-                if member_name != name {
+                let right = extract.right().ok()?;
+                let right_name = right.identifier_text()?;
+                if right_name != name {
                     return None;
                 }
-                Some(range)
+                Some(right.syntax().text_trimmed_range())
             })
             .collect()
     }
@@ -177,16 +175,16 @@ impl<'db> File {
             .filter_map(RNamespaceExpression::cast)
             .filter_map(|namespace_expr| {
                 let left = namespace_expr.left().ok()?;
-                let (lhs_name, _) = selector_name_and_range(&left)?;
-                if lhs_name != namespace {
+                let left_name = left.identifier_text()?;
+                if left_name != namespace {
                     return None;
                 }
-                let rhs = namespace_expr.right().ok()?;
-                let (member_name, range) = selector_name_and_range(&rhs)?;
-                if member_name != name {
+                let right = namespace_expr.right().ok()?;
+                let right_name = right.identifier_text()?;
+                if right_name != name {
                     return None;
                 }
-                Some(range)
+                Some(right.syntax().text_trimmed_range())
             })
             .collect()
     }
@@ -211,9 +209,11 @@ fn classify_member(token: &RSyntaxToken) -> Option<(String, MemberKind, TextRang
         _ => return None,
     };
 
-    let rhs = extract.right().ok()?;
-    let (name, name_range) = selector_name_and_range(&rhs)?;
-    Some((name, kind, op.text_trimmed_range(), name_range))
+    let right = extract.right().ok()?;
+    let name = right.identifier_text()?;
+    let range = right.syntax().text_trimmed_range();
+
+    Some((name, kind, op.text_trimmed_range(), range))
 }
 
 /// Check whether `token` is part of a `pkg::sym` / `pkg:::sym` namespace
@@ -238,22 +238,13 @@ fn classify_namespace(
     };
 
     let left = namespace_expr.left().ok()?;
-    let (namespace, _) = selector_name_and_range(&left)?;
+    let namespace = left.identifier_text()?;
 
-    let rhs = namespace_expr.right().ok()?;
-    let (name, name_range) = selector_name_and_range(&rhs)?;
-    Some((namespace, name, part, op.text_trimmed_range(), name_range))
-}
+    let right = namespace_expr.right().ok()?;
+    let name = right.identifier_text()?;
+    let range = right.syntax().text_trimmed_range();
 
-fn selector_name_and_range(selector: &AnyRSelector) -> Option<(String, TextRange)> {
-    match selector {
-        AnyRSelector::RIdentifier(ident) => {
-            Some((ident.name_text(), ident.syntax().text_trimmed_range()))
-        },
-        AnyRSelector::RStringValue(s) => Some((s.string_text()?, s.syntax().text_trimmed_range())),
-        // Dots are not regular identifiers so we intentionally exclude them here
-        AnyRSelector::RDotDotI(_) | AnyRSelector::RDots(_) => None,
-    }
+    Some((namespace, name, part, op.text_trimmed_range(), range))
 }
 
 /// The name token the cursor is on, after snapping to the nearest name-token

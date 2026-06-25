@@ -81,6 +81,10 @@ pub struct SemanticIndex {
     // attachments or `source()` injections.
     semantic_calls: Vec<SemanticCall>,
 
+    // Namespace accesses recorded during indexing, i.e. `package::symbol` or
+    // `package:::symbol`
+    namespace_accesses: Vec<NamespaceAccess>,
+
     // The file scope's exit flow state: for each top-level symbol, the
     // definitions still in effect once the file has run top to bottom. This is
     // the file's exports (see `exports()`). Only the file scope's exit state is
@@ -97,6 +101,7 @@ impl SemanticIndex {
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         semantic_calls: Vec<SemanticCall>,
+        namespace_accesses: Vec<NamespaceAccess>,
         final_bindings: IndexVec<SymbolId, Bindings>,
     ) -> Self {
         Self {
@@ -107,6 +112,7 @@ impl SemanticIndex {
             use_def_maps,
             enclosing_snapshots,
             semantic_calls,
+            namespace_accesses,
             final_bindings,
         }
     }
@@ -176,6 +182,12 @@ impl SemanticIndex {
     /// during indexing.
     pub fn semantic_calls(&self) -> &[SemanticCall] {
         &self.semantic_calls
+    }
+
+    /// Namespace accesses recorded during indexing, i.e. `package::symbol` or
+    /// `package:::symbol`
+    pub fn namespace_accesses(&self) -> &[NamespaceAccess] {
+        &self.namespace_accesses
     }
 
     /// Find the innermost scope containing `offset`.
@@ -700,6 +712,56 @@ impl SemanticCall {
     pub fn scope(&self) -> ScopeId {
         self.scope
     }
+}
+
+/// Namespace access recorded during indexing, i.e. `package::symbol` or
+/// `package:::symbol`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceAccess {
+    pub(crate) package: String,
+    pub(crate) symbol: String,
+    pub(crate) kind: NamespaceAccessKind,
+    pub(crate) offset: TextSize,
+}
+
+impl NamespaceAccess {
+    pub(crate) fn new(
+        package: String,
+        symbol: String,
+        kind: NamespaceAccessKind,
+        offset: TextSize,
+    ) -> Self {
+        Self {
+            package,
+            symbol,
+            kind,
+            offset,
+        }
+    }
+
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    pub fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    pub fn kind(&self) -> NamespaceAccessKind {
+        self.kind
+    }
+
+    pub fn offset(&self) -> TextSize {
+        self.offset
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NamespaceAccessKind {
+    /// `::`
+    Export,
+    /// `:::`
+    Internal,
 }
 
 // --- Iterators ---
