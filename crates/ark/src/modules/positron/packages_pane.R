@@ -154,6 +154,20 @@
         names[nzchar(names)]
     }
 
+    # Reduce an R License field to its primary license: the first alternative
+    # (before "|"), without the "+ file LICENSE" clause.
+    primary_license <- function(x) {
+        if (is.null(x)) {
+            return(NULL)
+        }
+        first <- trimws(strsplit(x, "\\|")[[1]][1])
+        first <- trimws(sub("\\s*\\+\\s*file\\s+.*$", "", first, ignore.case = TRUE))
+        if (!nzchar(first)) {
+            return(NULL)
+        }
+        first
+    }
+
     base_pkgs <- rownames(utils::installed.packages(priority = "base"))
     deps <- unique(c(
         parse_deps(d$Depends),
@@ -170,7 +184,7 @@
         author <- clean(d$Author)
     }
     title <- clean(d$Title)
-    license <- clean(d$License)
+    license <- primary_license(clean(d$License))
     repo <- clean(d$Repository)
     published <- clean(d[["Date/Publication"]])
 
