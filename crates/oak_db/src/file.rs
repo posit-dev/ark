@@ -207,6 +207,43 @@ impl File {
             .collect()
     }
 
+    /// Package names from `::` / `:::` accesses in this file
+    ///
+    /// Packages are sorted by name and are unique. This maximizes the ability to
+    /// backdate after small file edits.
+    #[salsa::tracked(returns(ref))]
+    fn namespace_accessed_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        // Sort and dedup on `&str` before converting to `Name`, avoids unnecessary
+        // database accesses
+        let mut names: Vec<&str> = self
+            .semantic_index(db)
+            .namespace_accesses()
+            .iter()
+            .map(|access| access.package())
+            .collect();
+        names.sort();
+        names.dedup();
+        names.into_iter().map(|name| Name::new(db, name)).collect()
+    }
+
+    /// All packages used in this file
+    ///
+    /// Sources:
+    /// - [Self::attached_packages()], i.e. `library()` or `require()`
+    /// - [Self::namespace_accessed_packages()], i.e. `::` or `:::`
+    ///
+    /// Packages are sorted by name and are unique. This maximizes the ability to
+    /// backdate after small file edits.
+    #[salsa::tracked(returns(ref))]
+    pub fn used_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        let mut names: Vec<Name<'_>> = Vec::new();
+        names.extend(self.attached_packages(db));
+        names.extend(self.namespace_accessed_packages(db));
+        names.sort_by_cached_key(|package| package.text(db));
+        names.dedup();
+        names
+    }
+
     /// The root containing this file, if any.
     ///
     /// Packaged files ask the db which live root holds the package via

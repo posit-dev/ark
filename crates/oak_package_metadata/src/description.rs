@@ -9,6 +9,9 @@ pub struct Description {
     /// `Depends` field. Currently doesn't contain versions.
     pub depends: Vec<String>,
 
+    /// `Imports` field. Currently doesn't contain versions.
+    pub imports: Vec<String>,
+
     pub repository: Option<Repository>,
 
     pub priority: Option<Priority>,
@@ -56,6 +59,11 @@ impl Description {
             })
             .unwrap_or_default();
 
+        let imports = fields
+            .get("Imports")
+            .map(parse_comma_separated)
+            .unwrap_or_default();
+
         let repository = fields.get("Repository").and_then(|repository| {
             if repository == "CRAN" {
                 return Some(Repository::CRAN);
@@ -77,6 +85,7 @@ impl Description {
             name,
             version,
             depends,
+            imports,
             repository,
             priority,
             fields,
@@ -140,6 +149,17 @@ Title: My Package"#;
         assert_eq!(parsed.name, "mypackage");
         assert_eq!(parsed.version, "1.0.0");
         assert_eq!(parsed.depends, vec!["utils", "stats"]);
+    }
+
+    #[test]
+    fn parses_description_with_imports() {
+        let desc = r#"Package: mypackage
+Version: 1.0.0
+Imports: rlang (>= 1.0.0), dplyr, tidyr
+Title: My Package"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.imports, vec!["rlang", "dplyr", "tidyr"]);
+        assert!(parsed.depends.is_empty());
     }
 
     #[test]
