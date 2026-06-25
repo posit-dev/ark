@@ -54,7 +54,7 @@ use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::sources::SourceCompleted;
-use crate::lsp::sources::SourceManager;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -193,21 +193,21 @@ pub(crate) struct LspState {
     /// is not clonable.
     pub(crate) oak_scheduler: ScanScheduler,
 
-    /// Manager of [crate::lsp::sources::SourceRequest]s. Dispatches and source
+    /// Scheduler of [crate::lsp::sources::SourceRequest]s. Scheduling and source
     /// consumption all happen from the main loop.
-    pub(crate) source_manager: SourceManager,
+    pub(crate) source_scheduler: SourceScheduler,
 }
 
 impl LspState {
     pub(crate) fn new(
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-        source_manager: SourceManager,
+        source_scheduler: SourceScheduler,
     ) -> Self {
         Self {
             capabilities: Capabilities::default(),
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
-            source_manager,
+            source_scheduler,
         }
     }
 }
@@ -268,7 +268,7 @@ impl GlobalState {
         Self::from_parts(
             client,
             WorldState::new(db, library),
-            LspState::new(console_notification_tx, SourceManager::new(None)),
+            LspState::new(console_notification_tx, SourceScheduler::new(None)),
         )
     }
 
@@ -558,7 +558,7 @@ impl GlobalState {
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
-                if let Some(directory) = self.lsp_state.source_manager.finish(package, response) {
+                if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
                     self.world.db.set_package_sources(package, &directory);
                 }
             },
@@ -574,8 +574,8 @@ impl GlobalState {
             lsp::log_info!("World state revision advanced");
             diagnostics_refresh_all(&self.world);
             self.lsp_state
-                .source_manager
-                .dispatch(&self.world.db, &self.events_tx);
+                .source_scheduler
+                .schedule(&self.world.db, &self.events_tx);
         }
 
         Ok(())
@@ -615,7 +615,7 @@ impl GlobalState {
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
         self.handle_event(event).await.unwrap();
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
-            self.lsp_state.source_manager.has_pending()
+            self.lsp_state.source_scheduler.has_pending()
         {
             let event = self.next_event().await;
             self.handle_event(event).await.unwrap();

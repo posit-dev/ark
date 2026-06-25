@@ -27,14 +27,14 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sources::SourceHandler;
-use crate::lsp::sources::SourceManager;
 use crate::lsp::sources::SourceRequest;
 use crate::lsp::sources::SourceResponse;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 
 /// A test [`SourceHandler`] that serves canned behavior per package name and
 /// records every call, so tests can assert dispatch, dedup, and retry policy.
-/// The handler is shared (as the `Arc<dyn SourceHandler>` the `SourceManager`
+/// The handler is shared (as the `Arc<dyn SourceHandler>` the `SourceScheduler`
 /// holds and the clone the test keeps), so `calls` is a plain `Mutex`.
 struct TestSourceHandler {
     /// Owns the cache directory that `Success` writes per-package sources into.
@@ -145,7 +145,7 @@ async fn test_source_pipeline_ingests_package_sources() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(handler.clone())),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -198,7 +198,7 @@ async fn test_failed_source_is_not_retried() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(handler.clone())),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -248,7 +248,7 @@ async fn test_retry_source_redispatches_on_next_edit() {
         WorldState::new(db, Library::new(vec![])),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceManager::new(Some(handler.clone())),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 

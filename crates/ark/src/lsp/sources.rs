@@ -48,13 +48,13 @@ enum SourceState {
     Retry,
 }
 
-pub(crate) struct SourceManager {
+pub(crate) struct SourceScheduler {
     // TODO!: Remove the `Option<>` when we implement a production `SourceHandler`
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
 }
 
-impl SourceManager {
+impl SourceScheduler {
     pub(crate) fn new(handler: Option<Arc<dyn SourceHandler>>) -> Self {
         Self {
             handler,
@@ -62,7 +62,7 @@ impl SourceManager {
         }
     }
 
-    pub(crate) fn dispatch(&mut self, db: &dyn Db, events_tx: &TokioUnboundedSender<Event>) {
+    pub(crate) fn schedule(&mut self, db: &dyn Db, events_tx: &TokioUnboundedSender<Event>) {
         let Some(handler) = &self.handler else {
             return;
         };
@@ -70,7 +70,7 @@ impl SourceManager {
         // For each package used by the workspace, request its sources if we have never
         // seen it before (or if it needs a retry)
         for package in oak_db::workspace_dependencies(db) {
-            if !self.should_dispatch(package) {
+            if !self.should_schedule(package) {
                 continue;
             }
 
@@ -102,7 +102,7 @@ impl SourceManager {
         }
     }
 
-    fn should_dispatch(&self, package: &Package) -> bool {
+    fn should_schedule(&self, package: &Package) -> bool {
         match self.state.get(package) {
             Some(state) => match state {
                 SourceState::Pending => false,

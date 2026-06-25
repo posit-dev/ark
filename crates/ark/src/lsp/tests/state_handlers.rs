@@ -32,7 +32,7 @@ use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::sources::SourceManager;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
@@ -127,7 +127,7 @@ where
 fn test_lsp_state() -> LspState {
     LspState::new(
         tokio::sync::mpsc::unbounded_channel().0,
-        SourceManager::new(None),
+        SourceScheduler::new(None),
     )
 }
 
