@@ -17,15 +17,15 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::SendTimeoutError;
 use crossbeam::channel::Sender;
-use harp::exec::r_sandbox;
 #[cfg(debug_assertions)]
 use libr::SEXP;
-use stdext::result::ResultExt;
 use uuid::Uuid;
 
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
+use crate::timeout::InterruptOutcome;
+use crate::timeout::InterruptTimeout;
 
 /// Task channels for interrupt-time tasks
 static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
@@ -111,50 +111,59 @@ pub(crate) fn take_receivers() -> (
 /// than one tick to give a chance to ReadConsole to pick up the TryIdle task.
 const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
 
+/// How long a `try_idle_task` may run before we interrupt it. Without this a
+/// runaway expression (e.g. `repeat {}` typed in the debugger's watch pane)
+/// would freeze the kernel, since it runs on the R main thread. Watch and hover
+/// evaluations are meant to be cheap, so we keep this short.
+const TRY_IDLE_EXEC_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Outcome of `try_idle_task`.
+pub(crate) enum TryIdleOutcome<T> {
+    /// R was busy and never parked to pick up the task.
+    Busy,
+    /// The task ran but exceeded `TRY_IDLE_EXEC_TIMEOUT` and was interrupted.
+    TimedOut,
+    /// The task ran to completion. `Ok` if `f` returned, `Err` if it raised an
+    /// R error.
+    Ran(harp::Result<T>),
+}
+
 /// Attempt to run `f` on the R thread if it is currently idle at a prompt.
-///
-/// Returns `None` if R was busy. Otherwise returns `Some` with the outcome:
-/// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
 ///
 /// On the bounded(0) channel, `send_timeout` only hands off the task when the
 /// event loop's `Select` is parked receiving, so the task runs iff R is idle.
-/// Waiting up to `TRY_IDLE_TIMEOUT`.
-pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
+/// We wait up to `TRY_IDLE_TIMEOUT` for that handoff.
+///
+/// `f` runs interruptibly. If it outlasts `TRY_IDLE_EXEC_TIMEOUT` we interrupt
+/// it (it runs on the R main thread, so a runaway expression would otherwise
+/// freeze the kernel) and report `TimedOut`.
+pub(crate) fn try_idle_task<F, T>(f: F) -> TryIdleOutcome<T>
 where
     F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
     T: Send + 'static,
 {
-    let result: SharedOption<harp::Result<T>> = Arc::new(Mutex::new(None));
-    let (done_tx, done_rx) = bounded::<()>(1);
+    let (timeout, runner) = InterruptTimeout::new(TRY_IDLE_EXEC_TIMEOUT);
 
-    let result_clone = Arc::clone(&result);
     let task = TryIdleTask {
-        fun: Box::new(move |capture| {
-            // Run `f` inside `r_sandbox` so an R error longjumps back to here
-            // rather than unwinding past this frame. The `done` signal must
-            // stay outside the sandbox: a longjump skips everything between
-            // the error and the sandbox `setjmp`, so signalling inside would
-            // strand the caller forever in `recv()`.
-            let res = r_sandbox(|| f(capture));
-            *result_clone.lock().unwrap() = Some(res);
-            let _ = done_tx.send(());
-        }),
+        fun: Box::new(move |capture| runner.run(|| f(capture))),
     };
 
     // Hand the task to the Console idle event loop. This only succeeds if the
     // event loop parks in its `Select` within the timeout.
     match TRY_IDLE.tx.send_timeout(task, TRY_IDLE_TIMEOUT) {
         Ok(()) => {},
-        Err(SendTimeoutError::Timeout(_)) => return None,
+        Err(SendTimeoutError::Timeout(_)) => return TryIdleOutcome::Busy,
         Err(SendTimeoutError::Disconnected(_)) => {
             log::error!("`try_idle_task`: `TRY_IDLE` is disconnected");
-            return None;
+            return TryIdleOutcome::Busy;
         },
     }
 
-    done_rx.recv().log_err()?;
-    let out = result.lock().unwrap().take();
-    out
+    match timeout.wait() {
+        InterruptOutcome::Completed(res) => TryIdleOutcome::Ran(res),
+        InterruptOutcome::TimedOut => TryIdleOutcome::TimedOut,
+        InterruptOutcome::Disconnected => TryIdleOutcome::Busy,
+    }
 }
 
 pub enum QueuedRTask {
