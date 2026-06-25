@@ -32,10 +32,10 @@ use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 
-/// A test [`SourceHandler`] that serves canned behavior per package name and
-/// records every call, so tests can assert dispatch, dedup, and retry policy.
-/// The handler is shared (as the `Arc<dyn SourceHandler>` the `SourceScheduler`
-/// holds and the clone the test keeps), so `calls` is a plain `Mutex`.
+/// A test [`SourceHandler`] that serves canned behavior per package name and records
+/// every call, so tests can count the number of calls. The handler is shared (as the
+/// `Arc<dyn SourceHandler>` the `SourceScheduler` holds and the clone the test keeps), so
+/// `calls` is a plain `Mutex`.
 struct TestSourceHandler {
     /// Owns the cache directory that `Success` writes per-package sources into.
     sources: tempfile::TempDir,
@@ -50,8 +50,7 @@ enum TestBehavior {
     /// Write these `(basename, contents)` files into the package's source dir
     /// and return `Success(dir)`.
     Success(Vec<(&'static str, &'static str)>),
-    Failed,
-    Retry,
+    Failure,
 }
 
 impl TestSourceHandler {
@@ -79,8 +78,8 @@ impl SourceHandler for TestSourceHandler {
                 write_sources(&dir, files);
                 SourceResponse::Success(dir)
             },
-            Some(TestBehavior::Retry) => SourceResponse::Retry,
-            Some(TestBehavior::Failed) | None => SourceResponse::Failed,
+            Some(TestBehavior::Failure) => SourceResponse::Failure,
+            None => panic!("Unknown test package {}", request.name()),
         }
     }
 }
@@ -177,7 +176,7 @@ async fn test_source_pipeline_ingests_package_sources() {
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
 
-/// A `Failed` fetch is terminal! Here, a later edit advances the revision, but the
+/// A `Failure` fetch is terminal! Here, a later edit advances the revision, but the
 /// package is not dispatched again.
 #[tokio::test]
 async fn test_failed_source_is_not_retried() {
@@ -185,7 +184,7 @@ async fn test_failed_source_is_not_retried() {
 
     let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
         String::from("donor"),
-        TestBehavior::Failed,
+        TestBehavior::Failure,
     )])));
 
     let lib = tempfile::tempdir().unwrap();
@@ -225,60 +224,4 @@ async fn test_failed_source_is_not_retried() {
     assert_eq!(dispatched_names(handler.calls()), vec![String::from(
         "donor"
     )]);
-}
-
-/// A `Retry` fetch is transient. It writes nothing, and the package is
-/// re-dispatched on the next revision-advancing edit.
-#[tokio::test]
-async fn test_retry_source_redispatches_on_next_edit() {
-    let _aux = init_aux_for_test();
-
-    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
-        String::from("donor"),
-        TestBehavior::Retry,
-    )])));
-
-    let lib = tempfile::tempdir().unwrap();
-    write_description(&lib.path().join("donor"), "donor");
-    let mut db = OakDatabase::new();
-    db.set_library_paths(&[lib.path().to_path_buf()]);
-
-    let mut state = GlobalState::from_parts(
-        test_client(),
-        WorldState::new(db, Library::new(vec![])),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
-    );
-
-    let workspace = tempfile::tempdir().unwrap();
-    let myproj = workspace.path().join("myproj");
-    write_description(&myproj, "myproj");
-    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
-
-    state
-        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
-        .await;
-
-    // Got the first one
-    assert_eq!(dispatched_names(handler.calls()), vec![String::from(
-        "donor"
-    )]);
-
-    // The next edit re-dispatches the transient `Retry`.
-    state
-        .handle_event_to_quiescence(did_open(&workspace.path().join("other.R"), "1 + 1\n"))
-        .await;
-
-    // Now we have two due to the retry
-    assert_eq!(dispatched_names(handler.calls()), vec![
-        String::from("donor"),
-        String::from("donor")
-    ]);
-
-    // `Retry` never writes sources.
-    let db = &state.world().db;
-    let donor = db.package_by_name("donor").unwrap();
-    assert!(donor.files(db).is_empty());
 }

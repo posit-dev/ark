@@ -31,8 +31,7 @@ pub(crate) struct SourceRequest {
 #[derive(Debug)]
 pub(crate) enum SourceResponse {
     Success(PathBuf),
-    Failed,
-    Retry,
+    Failure,
 }
 
 #[derive(Debug)]
@@ -41,11 +40,18 @@ pub(crate) struct SourceCompleted {
     pub(crate) response: SourceResponse,
 }
 
+/// State of a particular [Package]'s [SourceRequest]
+///
+/// There is also a 3rd implied state of "we've never seen this package before" if it
+/// isn't in the `state` hash map.
 enum SourceState {
+    /// The [SourceRequest] is in flight
     Pending,
-    Success,
-    Failed,
-    Retry,
+
+    /// We have received a [SourceResponse]. Regardless of [SourceResponse::Success] or
+    /// [SourceResponse::Failure], we mark the package as `Finished` so we never request
+    /// it again.
+    Finished,
 }
 
 pub(crate) struct SourceScheduler {
@@ -68,24 +74,26 @@ impl SourceScheduler {
         };
 
         // For each package used by the workspace, request its sources if we have never
-        // seen it before (or if it needs a retry)
+        // seen it before
         for package in oak_db::workspace_dependencies(db) {
-            if !self.should_schedule(package) {
+            if self.state.contains_key(package) {
+                // If we've seen this package before, don't request sources again!
                 continue;
             }
 
             let package = *package;
 
             let Some(request) = SourceRequest::from_package(db, &package).log_err() else {
-                // Never retry this package if we couldn't convert it to a source request
-                self.state.insert(package, SourceState::Failed);
+                // Go straight to `Finished` if we can't generate the source request,
+                // something is structurally wrong
+                self.state.insert(package, SourceState::Finished);
                 continue;
             };
 
             let handler = Arc::clone(handler);
             let tx = events_tx.clone();
 
-            // Set to `Pending` after all possible early exits
+            // Mark as `Pending` just before launching the tokio task
             self.state.insert(package, SourceState::Pending);
 
             crate::lsp::spawn_blocking(move || {
@@ -102,27 +110,13 @@ impl SourceScheduler {
         }
     }
 
-    fn should_schedule(&self, package: &Package) -> bool {
-        match self.state.get(package) {
-            Some(state) => match state {
-                SourceState::Pending => false,
-                SourceState::Success => false,
-                SourceState::Failed => false,
-                SourceState::Retry => true,
-            },
-            None => true,
-        }
-    }
-
     #[must_use]
     pub(crate) fn finish(&mut self, package: Package, response: SourceResponse) -> Option<PathBuf> {
-        let (next, directory) = match response {
-            SourceResponse::Success(directory) => (SourceState::Success, Some(directory)),
-            SourceResponse::Failed => (SourceState::Failed, None),
-            SourceResponse::Retry => (SourceState::Retry, None),
-        };
-        self.state.insert(package, next);
-        directory
+        self.state.insert(package, SourceState::Finished);
+        match response {
+            SourceResponse::Success(directory) => Some(directory),
+            SourceResponse::Failure => None,
+        }
     }
 
     /// Whether any source request is in flight. Allows tests to deterministically "wait"
