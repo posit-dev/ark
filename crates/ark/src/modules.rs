@@ -282,7 +282,7 @@ mod debug {
         // https://github.com/posit-dev/positron/issues/11591#issuecomment-3816838107
         let mut entries: Vec<_> =
             std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.path());
+        entries.sort_by_cached_key(|entry| entry.path());
 
         for entry in entries {
             import_file(&entry.path(), src, env)?;
