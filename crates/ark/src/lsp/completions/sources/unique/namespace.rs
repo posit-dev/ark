@@ -76,7 +76,7 @@ fn completions_from_namespace(
         return Ok(Some(completions));
     };
 
-    let package = package.node_as_str(&context.document.contents)?;
+    let package = package.node_as_str(context.contents)?;
 
     // Get the package namespace
     let Ok(namespace) = RFunction::new("base", "getNamespace").add(package).call() else {
@@ -246,8 +246,7 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
-    use crate::lsp::document::Document;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -255,8 +254,8 @@ mod tests {
         cursor_text: &str,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         let (text, point) = point_from_cursor(cursor_text);
-        let document = Document::new(&text, None);
-        let document_context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let document_context = doc.context(point);
         let state = WorldState::default();
         let context = CompletionContext::new(&document_context, &state);
 

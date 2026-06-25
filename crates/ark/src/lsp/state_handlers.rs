@@ -5,25 +5,28 @@
 //
 //
 
-use aether_url::UrlId;
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_scan::DbScan;
+use oak_scan::FileEvent;
+use oak_scan::FileEventKind;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
-use tower_lsp::lsp_types::CreateFilesParams;
-use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
+use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
+use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
-use tower_lsp::lsp_types::FileOperationFilter;
-use tower_lsp::lsp_types::FileOperationPattern;
-use tower_lsp::lsp_types::FileOperationPatternKind;
-use tower_lsp::lsp_types::FileOperationRegistrationOptions;
+use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
@@ -31,7 +34,6 @@ use tower_lsp::lsp_types::ImplementationProviderCapability;
 use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::OneOf;
-use tower_lsp::lsp_types::RenameFilesParams;
 use tower_lsp::lsp_types::RenameOptions;
 use tower_lsp::lsp_types::SelectionRangeProviderCapability;
 use tower_lsp::lsp_types::ServerCapabilities;
@@ -43,7 +45,6 @@ use tower_lsp::lsp_types::WorkDoneProgressOptions;
 use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp::lsp_types::WorkspaceServerCapabilities;
 use tracing::Instrument;
-use tree_sitter::Parser;
 use url::Url;
 
 use crate::console::ConsoleNotification;
@@ -53,12 +54,15 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::document::Document;
+use crate::lsp::content_changes::apply_content_changes;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::state::workspace_uris;
+use crate::lsp::main_loop::TokioUnboundedSender;
+use crate::lsp::state::open_file_wire_urls;
 use crate::lsp::state::WorldState;
 
 // Handlers that mutate the world state
@@ -85,53 +89,57 @@ pub(crate) fn initialize(
     params: InitializeParams,
     lsp_state: &mut LspState,
     state: &mut WorldState,
+    events_tx: &TokioUnboundedSender<Event>,
 ) -> LspResult<InitializeResult> {
+    let workspace_uris = effective_workspace_uris(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
-    let mut folders: Vec<String> = Vec::new();
-    if let Some(workspace_folders) = params.workspace_folders {
-        for folder in workspace_folders.iter() {
-            state.workspace.folders.push(folder.uri.clone());
-            if let Ok(path) = folder.uri.to_file_path() {
-                // Try to load package from this workspace folder and set as
-                // root if found. This means we're dealing with a package
-                // source.
-                if state.root.is_none() {
-                    match Package::load_from_folder(&path) {
-                        Ok(Some(pkg)) => {
-                            log::info!(
-                                "Root: Loaded package `{pkg}` from {path} as project root",
-                                pkg = pkg.description().name,
-                                path = path.display()
-                            );
-                            state.root = Some(SourceRoot::Package(pkg));
-                        },
-                        Ok(None) => {
-                            log::info!(
-                                "Root: No package found at {path}, treating as folder of scripts",
-                                path = path.display()
-                            );
-                        },
-                        Err(err) => {
-                            log::warn!(
-                                "Root: Error loading package at {path}: {err}",
-                                path = path.display()
-                            );
-                        },
-                    }
-                }
-                if let Some(path_str) = path.to_str() {
-                    folders.push(path_str.to_string());
+    let mut workspace_paths: Vec<PathBuf> = Vec::new();
+
+    for uri in workspace_uris {
+        state.workspace.folders.push(uri.clone());
+        if let Ok(path) = uri.to_file_path() {
+            workspace_paths.push(path.clone());
+            // Try to load package from this workspace folder and set as
+            // root if found. This means we're dealing with a package
+            // source.
+            if state.root.is_none() {
+                match Package::load_from_folder(&path) {
+                    Ok(Some(pkg)) => {
+                        log::info!(
+                            "Root: Loaded package `{pkg}` from {path} as project root",
+                            pkg = pkg.description().name,
+                            path = path.display()
+                        );
+                        state.root = Some(SourceRoot::Package(pkg));
+                    },
+                    Ok(None) => {
+                        log::info!(
+                            "Root: No package found at {path}, treating as folder of scripts",
+                            path = path.display()
+                        );
+                    },
+                    Err(err) => {
+                        log::warn!(
+                            "Root: Error loading package at {path}: {err}",
+                            path = path.display()
+                        );
+                    },
                 }
             }
         }
     }
 
-    // Start first round of indexing
-    lsp::main_loop::index_start(folders, state.clone());
+    // Kick off the initial workspace scan
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
+    let requests =
+        lsp_state
+            .oak_scheduler
+            .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
+    dispatch_scan_requests(events_tx, requests);
 
-    Ok(InitializeResult {
+    let result = InitializeResult {
         server_info: Some(ServerInfo {
             name: "Ark R Kernel".to_string(),
             version: Some(crate::BUILD_VERSION.to_string()),
@@ -184,28 +192,11 @@ pub(crate) fn initialize(
                     supported: Some(true),
                     change_notifications: Some(OneOf::Left(true)),
                 }),
-                file_operations: {
-                    let r_file_filter = FileOperationFilter {
-                        scheme: Some(String::from("file")),
-                        pattern: FileOperationPattern {
-                            glob: String::from("**/*.{r,R}"),
-                            matches: Some(FileOperationPatternKind::File),
-                            options: None,
-                        },
-                    };
-                    Some(lsp_types::WorkspaceFileOperationsServerCapabilities {
-                        did_create: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_delete: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter.clone()],
-                        }),
-                        did_rename: Some(FileOperationRegistrationOptions {
-                            filters: vec![r_file_filter],
-                        }),
-                        ..Default::default()
-                    })
-                },
+                // We don't register `file_operations`. Disk changes reach us
+                // through `didChangeWatchedFiles` from every source (editor, git,
+                // terminal), so it's the single channel that keeps the index
+                // current. A rename arrives there as delete + create.
+                file_operations: None,
             }),
             document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                 first_trigger_character: String::from("\n"),
@@ -213,33 +204,38 @@ pub(crate) fn initialize(
             }),
             ..ServerCapabilities::default()
         },
-    })
+    };
+
+    Ok(result)
+}
+
+/// Resolve the effective workspace folders from `InitializeParams`.
+///
+/// We read only `workspaceFolders`, the modern field , without falling back to
+/// the deprecated `rootUri`. An empty or absent list means single-file mode.
+pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
+    params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .map(|folder| folder.uri.clone())
+        .collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let contents = params.text_document.text.as_str();
+    let contents = params.text_document.text;
     let uri = params.text_document.uri;
     let version = params.text_document.version;
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-
-    let document = Document::new_with_parser(contents, &mut parser, Some(version));
-
-    lsp_state.parsers.insert(uri.clone(), parser);
-    state.documents.insert(uri.clone(), document.clone());
+    let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
+    state.insert_open_file(uri.clone(), file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
-
-    lsp::main_loop::diagnostics_refresh_all(state.clone());
 
     Ok(())
 }
@@ -251,23 +247,39 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let document = state.get_document_mut(uri)?;
+    let key = FilePath::from_url(uri);
+    let new_version = params.text_document.version;
+    let encoding = state.config.position_encoding;
 
-    let parser = lsp_state
-        .parsers
-        .get_mut(uri)
-        .ok_or(anyhow!("No parser for {uri}"))?;
+    let file = state.open_file(uri)?;
 
-    document.on_did_change(parser, &params);
+    // Reject out-of-order change notifications. The spec allows version numbers
+    // to skip values but requires them to increase monotonically. A lower
+    // version means we've lost sync and can't keep our state consistent.
+    // Currently panicking, but in principle we should shut the LSP down in an
+    // orderly fashion.
+    if let Some(old_version) = file.version() {
+        if new_version < old_version {
+            panic!(
+                "out-of-sync change notification: currently at {old_version}, got {new_version}"
+            );
+        }
+    }
 
-    lsp::main_loop::index_update(vec![uri.clone()], state.clone());
+    // Fold the edits into the new buffer text and push it into `oak`
+    let new_contents = apply_content_changes(
+        file.source_text(&state.db).as_str(),
+        &params.content_changes,
+        encoding,
+    );
+    state.db.upsert_editor(key.clone(), new_contents);
+
+    state.open_file_mut(uri)?.set_version(Some(new_version));
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
         .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(UrlId::from_url(
-            uri.clone(),
-        )))
+        .send(ConsoleNotification::DidChangeDocument(key))
         .log_err();
 
     Ok(())
@@ -276,7 +288,6 @@ pub(crate) fn did_change(
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
-    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = params.text_document.uri;
@@ -285,14 +296,12 @@ pub(crate) fn did_close(
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
 
     state
-        .documents
-        .remove(&uri)
+        .open_files
+        .remove(&FilePath::from_url(&uri))
         .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
 
-    lsp_state
-        .parsers
-        .remove(&uri)
-        .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
+    let path = FilePath::from_url(&uri);
+    state.db.close_editor(&path);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
@@ -300,64 +309,79 @@ pub(crate) fn did_close(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_create_files(
-    params: CreateFilesParams,
-    state: &WorldState,
-) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_create(uris, state.clone());
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_delete_files(
-    params: DeleteFilesParams,
-    state: &WorldState,
-) -> anyhow::Result<()> {
-    let uris = params
-        .files
-        .iter()
-        .filter_map(|file| parse_uri_or_none(&file.uri))
-        .collect();
-
-    lsp::main_loop::index_delete(uris, state.clone());
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_rename_files(
-    params: RenameFilesParams,
+pub(crate) fn did_change_watched_files(
+    params: DidChangeWatchedFilesParams,
     state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    let uri_pairs = params
-        .files
+    // Editor owns the contents of files it has open: ignore disk-side events
+    // for those URLs. Their content comes from `did_open` / `did_change`.
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
+
+    let events: Vec<FileEvent> = params
+        .changes
         .iter()
-        .filter_map(|file| {
-            let old_url = parse_uri_or_none(&file.old_uri)?;
-            let new_url = parse_uri_or_none(&file.new_uri)?;
-            Some((old_url, new_url))
+        .filter_map(|change| {
+            Some(FileEvent {
+                path: FilePath::from_url(&change.uri),
+                kind: file_event_kind(change.typ)?,
+            })
         })
         .collect();
 
-    lsp::main_loop::index_rename(uri_pairs, state.clone());
+    let requests =
+        lsp_state
+            .oak_scheduler
+            .apply_watcher_events(&mut state.db, events, &editor_owned);
+    dispatch_scan_requests(events_tx, requests);
+
     Ok(())
 }
 
-fn parse_uri_or_none(uri: &str) -> Option<url::Url> {
-    match url::Url::parse(uri) {
-        Ok(url) => Some(url),
-        Err(err) => {
-            log::warn!("Failed to parse URI '{uri}': {err}");
-            None
-        },
+fn file_event_kind(kind: FileChangeType) -> Option<FileEventKind> {
+    match kind {
+        FileChangeType::CREATED => Some(FileEventKind::Created),
+        FileChangeType::CHANGED => Some(FileEventKind::Changed),
+        FileChangeType::DELETED => Some(FileEventKind::Deleted),
+        _ => None,
     }
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_workspace_folders(
+    params: DidChangeWorkspaceFoldersParams,
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event>,
+) -> anyhow::Result<()> {
+    let removed: HashSet<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+    state.workspace.folders.retain(|uri| !removed.contains(uri));
+
+    for folder in params.event.added {
+        if !state.workspace.folders.contains(&folder.uri) {
+            state.workspace.folders.push(folder.uri);
+        }
+    }
+
+    let workspace_paths: Vec<PathBuf> = state
+        .workspace
+        .folders
+        .iter()
+        .filter_map(|uri| uri.to_file_path().ok())
+        .collect();
+
+    // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
+    // open buffers keep getting analysed even when their workspace
+    // folder goes away.
+    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
+
+    let requests =
+        lsp_state
+            .oak_scheduler
+            .set_workspace_paths(&mut state.db, &workspace_paths, &editor_owned);
+    dispatch_scan_requests(events_tx, requests);
+    Ok(())
 }
 
 pub(crate) async fn did_change_configuration(
@@ -372,7 +396,7 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(workspace_uris(state), client, state)
+    update_config(open_file_wire_urls(state), client, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
 }
@@ -383,7 +407,7 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
-    let Ok(doc) = state.get_document_mut(uri) else {
+    let Ok(doc) = state.open_file_mut(uri) else {
         return;
     };
 
@@ -393,13 +417,14 @@ pub(crate) fn did_change_formatting_options(
     // than the latter: it does not allow the tab size to differ from the
     // indent size, as in the R core sources. So we just ignore the less
     // rich updates in this case.
-    if doc.config.indent.indent_size != doc.config.indent.tab_width {
+    if doc.config().indent.indent_size != doc.config().indent.tab_width {
         return;
     }
 
-    doc.config.indent.indent_size = opts.tab_size as usize;
-    doc.config.indent.tab_width = opts.tab_size as usize;
-    doc.config.indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
+    let indent = &mut doc.config_mut().indent;
+    indent.indent_size = opts.tab_size as usize;
+    indent.tab_width = opts.tab_size as usize;
+    indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
 
     // TODO:
     // `trim_trailing_whitespace`
@@ -475,8 +500,8 @@ async fn update_config(
         let head = std::mem::replace(&mut remaining, tail);
 
         for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
-            if let Ok(doc) = state.get_document_mut(&uri) {
-                (mapping.set)(&mut doc.config, value);
+            if let Ok(doc) = state.open_file_mut(&uri) {
+                (mapping.set)(doc.config_mut(), value);
             }
         }
     }
@@ -484,7 +509,7 @@ async fn update_config(
     // Refresh diagnostics if the configuration changed
     if state.config.diagnostics != diagnostics_config {
         tracing::info!("Refreshing diagnostics after configuration changed");
-        lsp::main_loop::diagnostics_refresh_all(state.clone());
+        lsp::main_loop::diagnostics_refresh_all(state);
     }
 
     Ok(())
@@ -502,7 +527,7 @@ pub(crate) fn did_change_console_inputs(
     // during package development in conjunction with `devtools::load_all()`.
     // Ideally diagnostics would not rely on these though, and we wouldn't need
     // to refresh from here.
-    lsp::diagnostics_refresh_all(state.clone());
+    lsp::diagnostics_refresh_all(state);
 
     Ok(())
 }

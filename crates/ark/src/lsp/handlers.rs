@@ -14,11 +14,14 @@ use tower_lsp::lsp_types::CodeActionResponse;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
 use tower_lsp::lsp_types::CompletionResponse;
+use tower_lsp::lsp_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingParams;
 use tower_lsp::lsp_types::DocumentSymbolParams;
 use tower_lsp::lsp_types::DocumentSymbolResponse;
+use tower_lsp::lsp_types::FileSystemWatcher;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeParams;
+use tower_lsp::lsp_types::GlobPattern;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::Hover;
@@ -49,6 +52,7 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
 use crate::lsp::folding_range::folding_range;
@@ -61,6 +65,9 @@ use crate::lsp::indent::indent_edit;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
+use crate::lsp::open_file::tree_sitter_point_from_lsp_position;
+use crate::lsp::open_file::tree_sitter_range_from_lsp_range;
 use crate::lsp::rename;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
@@ -93,6 +100,27 @@ pub(crate) async fn handle_initialized(
 
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
+
+    // Watch R files and DESCRIPTION. We get notified on any disk change;
+    // the handler skips editor-owned URLs since those are tracked via
+    // `textDocument/did*` instead.
+    let watchers = vec![
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+    ];
+    regs.push(Registration {
+        id: uuid::Uuid::new_v4().to_string(),
+        method: String::from("workspace/didChangeWatchedFiles"),
+        register_options: Some(
+            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
+        ),
+    });
 
     if lsp_state
         .capabilities
@@ -160,8 +188,9 @@ pub(crate) fn handle_folding_range(
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let uri = &params.text_document.uri;
-    let document = state.get_document(uri)?;
-    match folding_range(document) {
+    let file = state.open_file(uri)?.file();
+    let db = &state.db;
+    match folding_range(db, file) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
             lsp::log_error!("{err:?}");
@@ -184,20 +213,31 @@ pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
 ) -> LspResult<Option<CompletionResponse>> {
-    // Get reference to document.
     let uri = params.text_document_position.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let file = state.open_file(&uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
 
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
-    // Build the document context.
-    let context = DocumentContext::new(document, point, trigger);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        encoding,
+        point,
+        trigger,
+    );
     lsp::log_info!("Completion context: {:#?}", context);
 
-    let completions = r_task(|| provide_completions(&context, state))?;
+    // TODO(oak/completions): Clone so the closure captures by value. `r_task()`
+    // sends the closure across threads, and `&WorldState` isn't `Send` because
+    // `OakDatabase`'s salsa storage keeps thread-local query state.
+    let state = state.clone();
+    let completions = r_task(move || provide_completions(&context, &state))?;
 
     if !completions.is_empty() {
         Ok(Some(CompletionResponse::Array(completions)))
@@ -215,13 +255,21 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let file = state.open_file(&uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
 
-    // build document context
-    let context = DocumentContext::new(document, point, None);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        encoding,
+        point,
+        None,
+    );
 
     // request hover information
     let result = r_task(|| r_hover(&context));
@@ -250,12 +298,21 @@ pub(crate) fn handle_signature_help(
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let document = state.get_document(&uri)?;
+    let file = state.open_file(&uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position)?;
+    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
 
-    let context = DocumentContext::new(document, point, None);
+    let context = DocumentContext::new(
+        file.tree_sitter(db),
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        encoding,
+        point,
+        None,
+    );
 
     // request signature help
     let result = r_task(|| r_signature_help(&context));
@@ -279,10 +336,7 @@ pub(crate) fn handle_goto_definition(
     params: GotoDefinitionParams,
     state: &WorldState,
 ) -> LspResult<Option<GotoDefinitionResponse>> {
-    let uri = &params.text_document_position_params.text_document.uri;
-    let document = state.get_document(uri)?;
-
-    Ok(goto_definition(document, params).log_err().flatten())
+    Ok(goto_definition(params, state).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -290,23 +344,30 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let document = state.get_document(&params.text_document.uri)?;
+    let uri = &params.text_document.uri;
+    let file = state.open_file(uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
     // Get tree-sitter points to return selection ranges for
     let points = params
         .positions
         .into_iter()
-        .map(|position| document.tree_sitter_point_from_lsp_position(position))
+        .map(|position| {
+            tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let Some(selections) = selection_range(&document.ast, points) else {
+    let Some(selections) = selection_range(file.tree_sitter(db), points) else {
         return Ok(None);
     };
 
     // Convert tree-sitter points to LSP positions everywhere
     let selections = selections
         .into_iter()
-        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, document))
+        .map(|selection| {
+            convert_selection_range_from_tree_sitter_to_lsp(db, file, encoding, selection)
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(selections))
@@ -354,9 +415,13 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let document = state.get_document(&params.text_document.uri)?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    statement_range(document, point)
+    let uri = &params.text_document.uri;
+    let file = state.open_file(uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let point =
+        tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
+    statement_range(db, file, point, encoding)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -364,9 +429,13 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let document = state.get_document(&params.text_document.uri)?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    help_topic(point, document)
+    let uri = &params.text_document.uri;
+    let file = state.open_file(uri)?.file();
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let point =
+        tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
+    help_topic(db, file, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -375,10 +444,29 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let doc = state.get_document(&ctxt.text_document.uri)?;
-    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
+    let uri = &ctxt.text_document.uri;
+    let open_file = state.open_file(uri)?;
+    let encoding = state.config.position_encoding;
 
-    indent_edit(doc, point.row)
+    let db = &state.db;
+    let line_index = open_file.line_index(db);
+    let point = tree_sitter_point_from_lsp_position(ctxt.position, line_index, encoding)?;
+
+    let Some(edits) = indent_edit(db, open_file.file(), &open_file.config().indent, point.row)?
+    else {
+        return Ok(None);
+    };
+
+    let edits = edits
+        .into_iter()
+        .map(|edit| {
+            Ok(TextEdit {
+                range: lsp_range_from_tree_sitter_range(edit.range, line_index, encoding)?,
+                new_text: edit.new_text,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Some(edits))
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -388,15 +476,18 @@ pub(crate) fn handle_code_action(
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
-    let doc = state.get_document(&uri)?;
-    let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
+    let file = state.open_file(&uri)?;
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+    let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 
-    let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
+    let actions = code_actions(db, file.file(), range, &lsp_state.capabilities);
+    let response = actions.into_response(db, file, encoding, &lsp_state.capabilities);
 
-    if code_actions.is_empty() {
+    if response.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(code_actions))
+        Ok(Some(response))
     }
 }
 

@@ -10,6 +10,7 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::lsp::diagnostics::DiagnosticContext;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
@@ -339,7 +340,7 @@ fn diagnose_missing_binary_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(&context.doc.contents)?;
+    let text = operator.node_as_str(context.contents())?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
@@ -370,7 +371,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
 
     let range = operator.range();
 
-    let text = operator.node_as_str(&context.doc.contents)?;
+    let text = operator.node_as_str(context.contents())?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
@@ -421,25 +422,34 @@ fn new_syntax_diagnostic(
     range: Range,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Diagnostic> {
-    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    let range = lsp_range_from_tree_sitter_range(
+        range,
+        context.file.line_index(context.db),
+        context.encoding,
+    )?;
     Ok(Diagnostic::new_simple(range, message))
 }
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
     use oak_semantic::library::Library;
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-    use crate::lsp::document::Document;
+    use crate::lsp::open_file::test_open_file;
+
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let document = Document::new(text, None);
+        let (db, open_file) = test_open_file(text);
         let library = Library::default();
-        let context = DiagnosticContext::new(&document, &None, &library);
-        let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
+        let context = DiagnosticContext::new(&db, &None, &library, open_file.file(), ENCODING);
+        let diagnostics =
+            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

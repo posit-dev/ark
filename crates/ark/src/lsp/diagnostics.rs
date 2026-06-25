@@ -10,10 +10,12 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
+use oak_db::File;
 use oak_semantic::library::Library;
 use oak_semantic::package::Package;
 use stdext::*;
@@ -24,11 +26,13 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-use crate::lsp::document::Document;
 use crate::lsp::indexer;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -44,8 +48,9 @@ pub struct DiagnosticsConfig {
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
-    /// The document under analysis
-    pub doc: &'a Document,
+    pub(crate) db: &'a dyn ArkDb,
+    pub(crate) file: File,
+    pub(crate) encoding: PositionEncoding,
 
     /// The symbols currently defined and available in the session.
     pub session_symbols: HashSet<String>,
@@ -84,9 +89,21 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn new(doc: &'a Document, root: &'a Option<SourceRoot>, library: &'a Library) -> Self {
+    pub(crate) fn contents(&self) -> &'a str {
+        self.file.source_text(self.db).as_str()
+    }
+
+    pub(crate) fn new(
+        db: &'a dyn ArkDb,
+        root: &'a Option<SourceRoot>,
+        library: &'a Library,
+        file: File,
+        encoding: PositionEncoding,
+    ) -> Self {
         Self {
-            doc,
+            file,
+            encoding,
+            db,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
@@ -133,7 +150,7 @@ impl<'a> DiagnosticContext<'a> {
 }
 
 pub(crate) fn generate_diagnostics(
-    doc: Document,
+    file: File,
     state: WorldState,
     testthat: bool,
 ) -> Vec<Diagnostic> {
@@ -143,20 +160,25 @@ pub(crate) fn generate_diagnostics(
         return diagnostics;
     }
 
+    let db = &state.db;
+
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
-    let decls = top_level_declare(&doc.ast, &doc.contents);
+    let tree = file.tree_sitter(db);
+    let contents = file.source_text(db).as_str();
+    let decls = top_level_declare(tree, contents);
     if !decls.diagnostics {
         return diagnostics;
     }
 
-    let mut context = DiagnosticContext::new(&doc, &state.root, &state.library);
+    let encoding = state.config.position_encoding;
+    let mut context = DiagnosticContext::new(db, &state.root, &state.library, file, encoding);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
 
     // Add the current workspace symbols.
-    indexer::map(|_uri, _symbol, entry| match &entry.data {
+    indexer::map(db, |_file, _symbol, entry| match &entry.data {
         indexer::IndexEntryData::Function { name, arguments: _ } => {
             context.workspace_symbols.insert(name.to_string());
         },
@@ -220,7 +242,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     // Start iterating through the nodes.
-    let root = doc.ast.root_node();
+    let root = file.tree_sitter(db).root_node();
 
     // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
     match syntax_diagnostics(root, &context) {
@@ -366,7 +388,7 @@ fn recurse_for(
     });
 
     if variable.is_identifier() {
-        let name = variable.node_as_str(&context.doc.contents)?;
+        let name = variable.node_as_str(context.contents())?;
         let range = variable.range();
         context.add_defined_variable(name, range);
     }
@@ -553,7 +575,7 @@ fn handle_assignment_variable(
         return Ok(());
     }
 
-    let name = identifier.node_as_str(&context.doc.contents)?;
+    let name = identifier.node_as_str(context.contents())?;
     let range = identifier.range();
     context.add_defined_variable(name, range);
 
@@ -585,7 +607,7 @@ fn handle_assignment_dotty(
         return Ok(());
     };
 
-    let dot = dot.node_as_str(&context.doc.contents)?;
+    let dot = dot.node_as_str(context.contents())?;
     if dot != "." {
         return Ok(());
     };
@@ -609,7 +631,7 @@ fn handle_assignment_dotty(
         // so we don't want to define a variable for `x` there.
         if let Some(name) = child.child_by_field_name("name") {
             let range = name.range();
-            let name = name.node_as_str(&context.doc.contents)?;
+            let name = name.node_as_str(context.contents())?;
             context.add_defined_variable(name, range);
             continue;
         };
@@ -621,7 +643,7 @@ fn handle_assignment_dotty(
         // i.e. `.[x, y]` where `value` is just a name that dotty assigns to
         if value.is_identifier() {
             let range = value.range();
-            let name = value.node_as_str(&context.doc.contents)?;
+            let name = value.node_as_str(context.contents())?;
             context.add_defined_variable(name, range);
             continue;
         }
@@ -652,7 +674,7 @@ fn node_find_magrittr_pipe<'tree>(
     node: &Node<'tree>,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Option<Node<'tree>>> {
-    if node.is_magrittr_pipe_operator(&context.doc.contents)? {
+    if node.is_magrittr_pipe_operator(context.contents())? {
         // Found one!
         return Ok(Some(*node));
     }
@@ -689,10 +711,14 @@ fn recurse_namespace(
     });
 
     // Check for a valid package name.
-    let package = lhs.node_as_str(&context.doc.contents)?;
+    let package = lhs.node_as_str(context.contents())?;
     if !context.installed_packages.contains(package) {
         let range = lhs.range();
-        let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+        let range = lsp_range_from_tree_sitter_range(
+            range,
+            context.file.line_index(context.db),
+            context.encoding,
+        )?;
         let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
@@ -725,7 +751,7 @@ fn recurse_parameters(
             bail!("Missing a `name` field in a `parameter` node.");
         });
 
-        let symbol = name.node_as_str(&context.doc.contents)?;
+        let symbol = name.node_as_str(context.contents())?;
         let location = name.range();
 
         context.add_defined_variable(symbol, location);
@@ -840,7 +866,7 @@ fn recurse_call(
     //
     // TODO: Handle certain 'scope-generating' function calls, e.g.
     // things like 'local({ ... })'.
-    let fun = callee.node_as_str(&context.doc.contents)?;
+    let fun = callee.node_as_str(context.contents())?;
 
     match fun {
         "library" | "require" => {
@@ -869,14 +895,14 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     // We'll do better when we have a more capable argument inspection
     // infrastructure.
     if node
-        .arguments_names_as_string(&context.doc.contents)
+        .arguments_names_as_string(context.contents())
         .flatten()
         .any(|n| n == "character.only")
     {
         return Ok(());
     }
 
-    let package_name = package_node.get_identifier_or_string_text(&context.doc.contents)?;
+    let package_name = package_node.get_identifier_or_string_text(context.contents())?;
     let attach_pos = node.end_position();
 
     let package = insert_package_exports(package_name, attach_pos, context)?;
@@ -1025,7 +1051,7 @@ fn check_invalid_na_comparison(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        let contents = child.node_as_str(&context.doc.contents)?;
+        let contents = child.node_as_str(context.contents())?;
 
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
@@ -1035,7 +1061,11 @@ fn check_invalid_na_comparison(
                 _ => continue,
             };
             let range = child.range();
-            let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+            let range = lsp_range_from_tree_sitter_range(
+                range,
+                context.file.line_index(context.db),
+                context.encoding,
+            )?;
             let mut diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
             diagnostics.push(diagnostic);
@@ -1069,7 +1099,11 @@ fn check_unexpected_assignment_in_if_conditional(
     }
 
     let range = condition.range();
-    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    let range = lsp_range_from_tree_sitter_range(
+        range,
+        context.file.line_index(context.db),
+        context.encoding,
+    )?;
     let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
@@ -1110,15 +1144,19 @@ fn check_symbol_in_scope(
     }
 
     // Skip if a symbol with this name is in scope.
-    let name = node.node_as_str(&context.doc.contents)?;
+    let name = node.node_as_str(context.contents())?;
     if context.has_definition(name, node.start_position()) {
         return false.ok();
     }
 
     // No symbol in scope; provide a diagnostic.
     let range = node.range();
-    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
-    let identifier = node.node_as_str(&context.doc.contents)?;
+    let range = lsp_range_from_tree_sitter_range(
+        range,
+        context.file.line_index(context.db),
+        context.encoding,
+    )?;
+    let identifier = node.node_as_str(context.contents())?;
     let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
@@ -1131,27 +1169,31 @@ fn check_symbol_in_scope(
 mod tests {
     use std::path::PathBuf;
 
+    use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
     use oak_package_metadata::dcf::Dcf;
     use oak_package_metadata::description::Description;
     use oak_package_metadata::namespace::Namespace;
     use oak_semantic::library::Library;
     use oak_semantic::package::Package;
-    use once_cell::sync::Lazy;
     use stdext::SortedVec;
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
     use crate::console::console_inputs;
-    use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
-    // Default state that includes installed packages and default scopes.
-    static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(current_state);
-
-    fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<lsp_types::Diagnostic> {
-        super::generate_diagnostics(doc, state, false)
+    fn generate_diagnostics(code: &str, state: WorldState) -> Vec<lsp_types::Diagnostic> {
+        let url = url::Url::parse("file:///test.R").unwrap();
+        let file = oak_db::File::new(
+            &state.db,
+            FilePath::from_url(&url),
+            oak_db::FileRevision::zero(),
+            Some(code.to_string()),
+            None,
+        );
+        super::generate_diagnostics(file, state, false)
     }
 
     fn current_state() -> WorldState {
@@ -1173,8 +1215,7 @@ mod tests {
 foo
 
 1 }";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1197,8 +1238,7 @@ foo
                 1,
                 2 # hi there
             )";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1207,8 +1247,7 @@ foo
     fn test_missing_namespace_rhs() {
         r_task(|| {
             let text = "base::";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert_eq!(diagnostics.len(), 1);
             let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
@@ -1219,9 +1258,8 @@ foo
     fn test_no_diagnostic_for_dot_dot_i() {
         r_task(|| {
             let text = "..1 + ..2 + 3";
-            let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
 
             assert!(diagnostics.is_empty());
         })
@@ -1240,13 +1278,11 @@ foo
             let state = current_state();
 
             let text = "x$foo";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), state.clone());
+            let diagnostics = generate_diagnostics(text, state.clone());
             assert!(diagnostics.is_empty());
 
             let text = "x@foo";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), state.clone());
+            let diagnostics = generate_diagnostics(text, state.clone());
             assert!(diagnostics.is_empty());
 
             // Clean up
@@ -1263,8 +1299,7 @@ foo
                 z = 3
                 y + x + z
             ";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1277,8 +1312,7 @@ foo
                 2 ->> y
                 y + x
             ";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1291,9 +1325,8 @@ foo
                 x <- 1
                 x + 1
             ";
-            let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
@@ -1311,8 +1344,7 @@ foo
                 identity(foo ~ bar)
                 identity(~foo)
             ";
-            let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(text, current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1327,9 +1359,7 @@ foo
                 cherry
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1347,9 +1377,7 @@ foo
                 cherry
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1368,9 +1396,7 @@ foo
                 x
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1388,9 +1414,7 @@ foo
                 cherry
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1406,9 +1430,7 @@ foo
                 apple
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1421,9 +1443,7 @@ foo
                 apple
             ";
 
-            let document = Document::new(code, None);
-
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            let diagnostics = generate_diagnostics(code, current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1442,21 +1462,13 @@ foo
                 list(x <- 1)
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             let code = "
                 list({ x <- 1 })
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         });
 
         // Subset
@@ -1466,22 +1478,14 @@ foo
                 foo[x <- 1]
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             let code = "
                 foo <- list()
                 foo[{x <- 1}]
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         });
 
         // Subset2
@@ -1491,22 +1495,14 @@ foo
                 foo[[x <- 1]]
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             let code = "
                 foo <- list()
                 foo[[{x <- 1}]]
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         });
     }
 
@@ -1521,11 +1517,7 @@ foo
             let code = "
                 list(x)
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             // Important to test nested case. We have a dynamic stack of state
             // variable to keep track of whether we are in a call. The inner
@@ -1533,22 +1525,14 @@ foo
             let code = "
                 list(list(), x)
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             // `in_call_like_arguments` state variable is reset
             let code = "
                 list()
                 x
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                1
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 1);
         });
 
         // Subset
@@ -1561,11 +1545,7 @@ foo
                 data[x]
                 data[,x]
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             // Imagine this is `data.table()` (we don't necessarily have the package
             // installed in the test)
@@ -1574,11 +1554,7 @@ foo
                 data <- data.frame(x = 1)
                 data[, y := x + 1]
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         });
 
         // Subset2
@@ -1587,11 +1563,7 @@ foo
                 foo <- list()
                 foo[[x]]
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         });
     }
 
@@ -1603,11 +1575,7 @@ foo
                 x <- list(a = 1)
                 x |> _$a[1]
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             // Imagine this is a data.table
             // https://github.com/posit-dev/positron/issues/3749
@@ -1615,22 +1583,14 @@ foo
                 data <- data.frame(a = 1)
                 data |> _[1]
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
 
             // We technically disable diagnostics for this symbol everywhere, even outside
             // of pipe scope, which is probably fine
             let code = "
                 _
             ";
-            let document = Document::new(code, None);
-            assert_eq!(
-                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
-                0
-            );
+            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
         })
     }
 
@@ -1659,7 +1619,8 @@ foo
             // Simulate a search path with `library` in scope
             let console_scopes = vec![vec!["library".to_string()]];
 
-            // Whereas `DEFAULT_STATE` contains base package attached, this world state
+            // Whereas `current_state()` returns a state with the base package
+            // attached, this world state
             // only contains `mockpkg` as installed package and `library()` on
             // the search path.
             let state = WorldState {
@@ -1674,8 +1635,7 @@ foo
                 foo()
                 bar
             ";
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
 
             assert_eq!(diagnostics.len(), 0);
 
@@ -1685,9 +1645,8 @@ foo
                 undefined()
                 also_undefined
             ";
-            let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
             assert_eq!(diagnostics.len(), 2);
 
             assert!(diagnostics
@@ -1708,8 +1667,7 @@ foo
                 foo()
                 bar
             ";
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
             assert_eq!(diagnostics.len(), 0);
 
             // If the library call includes the `character.only` argument, we bail
@@ -1717,8 +1675,7 @@ foo
                 library(mockpkg, character.only = TRUE)
                 foo()
             "#;
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
             assert_eq!(diagnostics.len(), 1);
 
             // Same if passed `FALSE`, we're not trying to be smart (yet)
@@ -1726,8 +1683,7 @@ foo
                 library(mockpkg, character.only = FALSE)
                 foo()
             "#;
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state);
+            let diagnostics = generate_diagnostics(code, state);
             assert_eq!(diagnostics.len(), 1);
         });
     }
@@ -1796,8 +1752,7 @@ foo
                     bar           # in scope
                     baz           # in scope
                 ";
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
 
             let messages: Vec<_> = diagnostics.iter().map(|d| d.message.clone()).collect();
             assert!(messages.iter().any(|m| m.contains("No symbol named 'foo'")));
@@ -1842,8 +1797,7 @@ foo
                     bar
                     foo()
                 ";
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
             assert!(diagnostics
                 .iter()
                 .any(|d| d.message.contains("No symbol named 'foo'")));
@@ -1861,7 +1815,7 @@ foo
             let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
 
             // Simulate a world state with the penguins package installed and attached
-            let mut state = DEFAULT_STATE.clone();
+            let mut state = current_state();
             state.library = library;
             state.console_scopes = vec![vec!["library".to_string()]];
 
@@ -1871,8 +1825,7 @@ foo
                 path_to_file
                 penguins_raw
             "#;
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state.clone());
+            let diagnostics = generate_diagnostics(code, state.clone());
             assert!(diagnostics.is_empty());
 
             let code = r#"
@@ -1881,8 +1834,7 @@ foo
                 penguins_raw
                 library(penguins)
             "#;
-            let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state);
+            let diagnostics = generate_diagnostics(code, state);
             assert_eq!(diagnostics.len(), 3);
         })
     }

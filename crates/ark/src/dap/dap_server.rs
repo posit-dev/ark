@@ -11,10 +11,11 @@ use std::io::BufWriter;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use aether_url::UrlId;
+use aether_path::FilePath;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -36,6 +37,7 @@ use stdext::result::ResultExt;
 use stdext::spawn;
 
 use super::dap_state::Breakpoint;
+use super::dap_state::BreakpointEntry;
 use super::dap_state::BreakpointState;
 use super::dap_state::Dap;
 use super::dap_state::DapBackendEvent;
@@ -240,18 +242,15 @@ impl DapHandler {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match UrlId::from_file_path(path) {
-            Ok(uri) => uri,
-            Err(err) => {
-                log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
-                return Ok(DapHandlerOutput {
-                    body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                        breakpoints: vec![],
-                    }),
-                    dap_events: vec![],
-                    console_events: vec![],
-                });
-            },
+        let Some(uri) = FilePath::from_path_buf(PathBuf::from(path)) else {
+            log::warn!("Can't set breakpoints for non-file path: '{path}'");
+            return Ok(DapHandlerOutput {
+                body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints: vec![],
+                }),
+                dap_events: vec![],
+                console_events: vec![],
+            });
         };
 
         // Read document content to compute hash. We currently assume UTF-8 even
@@ -293,7 +292,7 @@ impl DapHandler {
         // changed after a reconnection, the breakpoints are no longer valid.
         let doc_hash = blake3::hash(doc_content.as_bytes());
         let doc_changed = match &old_breakpoints {
-            Some((existing_hash, _)) => existing_hash != &doc_hash,
+            Some(entry) => entry.hash != doc_hash,
             None => true,
         };
 
@@ -322,7 +321,7 @@ impl DapHandler {
             log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
 
             // Unwrap Safety: `doc_changed` is false, so `old_breakpoints` is Some
-            let (_, old_breakpoints) = old_breakpoints.unwrap();
+            let old_breakpoints = old_breakpoints.unwrap().breakpoints;
             // Use original_line for lookup since that's what the frontend sends back
             let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
                 .into_iter()
@@ -426,7 +425,11 @@ impl DapHandler {
             })
             .collect();
 
-        state.breakpoints.insert(uri, (doc_hash, new_breakpoints));
+        state.breakpoints.insert(uri, BreakpointEntry {
+            verbatim_path: path.clone(),
+            hash: doc_hash,
+            breakpoints: new_breakpoints,
+        });
 
         drop(state);
 
@@ -1009,6 +1012,14 @@ fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, String>)
     // Retrieve either `path` or `source_reference` depending on the `source` type.
     // In the `Text` case, a `source_reference` should always exist because we loaded
     // the map with all possible text values in `start_debug()`.
+    //
+    // We report R's view of the path (the srcref filename), not the verbatim
+    // path the frontend sent for a breakpoint. A breakpoint's `verbatim_path` can
+    // differ (e.g. a symlinked path that R resolved through `normalizePath()`),
+    // and we could match a frame back to it through `BreakpointMap`'s canonical
+    // index. But that would only reach files that happen to have a breakpoint,
+    // so a frame's path would flip form depending on whether a breakpoint is
+    // set. Using R's path keeps every frame consistent regardless.
     let path = match source {
         FrameSource::File(path) => Some(path),
         FrameSource::Text(source) => fallback_sources.get(&source).cloned().or_else(|| {

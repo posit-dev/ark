@@ -11,6 +11,8 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
+use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::BinaryOperatorType;
@@ -61,9 +63,11 @@ impl FunctionContext {
             // We shouldn't ever attempt to instantiate a FunctionContext or
             // function-flavored CompletionItem in this degenerate case, but we
             // return a dummy FunctionContext just to be safe.
-            let node_end = document_context
-                .document
-                .lsp_position_from_tree_sitter_point(completion_node.range().end_point)?;
+            let node_end = lsp_position_from_tree_sitter_point(
+                completion_node.range().end_point,
+                document_context.line_index,
+                document_context.encoding,
+            )?;
 
             return Ok(Self {
                 name: String::new(),
@@ -74,10 +78,7 @@ impl FunctionContext {
             });
         };
 
-        let usage = determine_function_usage(
-            &effective_function_node,
-            &document_context.document.contents,
-        );
+        let usage = determine_function_usage(&effective_function_node, document_context.contents);
 
         let function_name_node = if effective_function_node.is_namespace_operator() {
             // Note: this could be 'None', in the case of, e.g., `dplyr::@`
@@ -93,7 +94,7 @@ impl FunctionContext {
 
         let name = match function_name_node {
             Some(node) => node
-                .node_to_string(&document_context.document.contents)
+                .node_to_string(document_context.contents)
                 .unwrap_or_default(),
             None => String::new(),
         };
@@ -111,16 +112,18 @@ impl FunctionContext {
         Ok(Self {
             name,
             range: match function_name_node {
-                Some(node) => document_context
-                    .document
-                    .lsp_range_from_tree_sitter_range(node.range())?,
+                Some(node) => lsp_range_from_tree_sitter_range(
+                    node.range(),
+                    document_context.line_index,
+                    document_context.encoding,
+                )?,
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
-                    let node_end = document_context
-                        .document
-                        .lsp_position_from_tree_sitter_point(
-                            effective_function_node.range().end_point,
-                        )?;
+                    let node_end = lsp_position_from_tree_sitter_point(
+                        effective_function_node.range().end_point,
+                        document_context.line_index,
+                        document_context.encoding,
+                    )?;
                     lsp_types::Range::new(node_end, node_end)
                 },
             },

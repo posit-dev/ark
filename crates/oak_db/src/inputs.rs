@@ -1,8 +1,10 @@
-use aether_url::UrlId;
-use oak_package_metadata::namespace::Namespace;
+use std::collections::HashSet;
+
+use aether_path::FilePath;
 
 use crate::Db;
 use crate::File;
+use crate::Package;
 
 /// Salsa-tracked root directory.
 ///
@@ -20,7 +22,7 @@ use crate::File;
 #[salsa::input(debug)]
 pub struct Root {
     #[returns(ref)]
-    pub path: UrlId,
+    pub path: FilePath,
     pub kind: RootKind,
     /// Top-level R scripts directly under this root. Each entry is a
     /// `File` with `package(db) == None`. Always empty for `Library`
@@ -118,19 +120,22 @@ impl LibraryRoots {
 ///
 /// Singleton: there is one `OrphanRoot` per concrete database, lazily
 /// initialised by the implementation. The `files` field is what
-/// [`crate::Db::file_by_url`] consults to find unanchored files.
+/// [`crate::Db::file_by_path`] consults to find unanchored files.
 #[salsa::input(debug)]
 pub struct OrphanRoot {
     /// **Placement invariant.** Files here must have `package(db) ==
     /// None`. Call this setter only through `oak_scan`'s helpers,
     /// which keep the back-pointer and the container in sync.
+    ///
+    /// Unordered: these are unanchored files looked up by URL, with no
+    /// collation chain among them, so membership is all that matters.
     #[returns(ref)]
-    pub files: Vec<File>,
+    pub files: HashSet<File>,
 }
 
 impl OrphanRoot {
     pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, vec![])
+        Self::new(db, HashSet::new())
     }
 }
 
@@ -144,7 +149,7 @@ impl OrphanRoot {
 /// agent / multi-repo workflows where the same workspace folder gets
 /// added and removed repeatedly across a session.
 ///
-/// **Not consulted by analysis.** `Db::file_by_url` and
+/// **Not consulted by analysis.** `Db::file_by_path` and
 /// `Db::package_by_name` walk workspace / library roots and (for files)
 /// `OrphanRoot` only. Entities in `StaleRoot` are invisible to
 /// completions, goto-def, etc. — they correspond to folders the user
@@ -161,60 +166,16 @@ impl OrphanRoot {
 /// of them gets pulled back into a live container.
 #[salsa::input]
 pub struct StaleRoot {
+    /// Unordered: entity-reuse storage looked up by URL, no collation chain,
+    /// so membership is all that matters.
     #[returns(ref)]
-    pub files: Vec<File>,
+    pub files: HashSet<File>,
     #[returns(ref)]
     pub packages: Vec<Package>,
 }
 
 impl StaleRoot {
     pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, vec![], vec![])
+        Self::new(db, HashSet::new(), vec![])
     }
-}
-
-#[salsa::input(debug)]
-pub struct Package {
-    /// URL of the package's `DESCRIPTION` file. Stable identity across
-    /// rescans and workspace / library churn: scanners look up an
-    /// existing `Package` by this URL before creating a new one. Two
-    /// packages with the same `Package:` name can coexist on disk and the
-    /// URL distinguishes them.
-    ///
-    /// The package's owning [`Root`] is not stored as a field. It is
-    /// derived from live-graph containment via [`Db::root_by_package`]: a
-    /// package belongs to whichever `Root.packages` currently holds it.
-    /// Workspace-vs-library is then `root.kind(db)`.
-    #[returns(ref)]
-    pub description_url: UrlId,
-    // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
-    // method so `db.package_by_name()` and other lookups key on the
-    // interned id rather than the string. Can't store `Name<'db>` on
-    // `Package` directly because salsa inputs are lifetime-free.
-    #[returns(ref)]
-    pub name: String,
-    /// Installed-package version (from `DESCRIPTION`). `None` for
-    /// workspace packages.
-    #[returns(ref)]
-    pub version: Option<String>,
-    #[returns(ref)]
-    pub namespace: Namespace,
-    /// R source files belonging to this package (the `R/*.R` files).
-    /// Per-package granularity: adding or removing a file in one
-    /// package doesn't invalidate tracked queries reading another
-    /// package's files.
-    ///
-    /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`. Call this setter only through
-    /// `oak_scan`'s helpers, which keep the back-pointer and the
-    /// container in sync.
-    #[returns(ref)]
-    pub files: Vec<File>,
-    /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
-    /// present. `None` when the field is absent (R defaults to
-    /// alphabetical load order). Changes only when `DESCRIPTION`
-    /// itself changes, so this anchor is independent of `files` (which
-    /// bumps when R/ files are added or removed).
-    #[returns(ref)]
-    pub collation: Option<Vec<String>>,
 }

@@ -60,6 +60,7 @@ jobs:
             data.table
             dplyr
             haven
+            htmltools
             R6
             ragg
             readr

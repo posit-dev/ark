@@ -2,12 +2,13 @@ use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
 
@@ -19,12 +20,13 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("libs/{name}/DESCRIPTION")),
+        file_path(&format!("libs/{name}/DESCRIPTION")),
         name.to_string(),
-        Some("1.0.0".to_string()),
-        Namespace::default(),
-        Vec::new(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
+        Vec::new(),
+        Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
     (root, pkg)
@@ -51,7 +53,13 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
     let base = packages[0];
     let stats = packages[1];
 
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     let layers = file.imports(&db);
 
     // Only `stats` and `base` are registered in this test; the other
@@ -75,8 +83,9 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
 
     let file = File::new(
         &db,
-        file_url("a.R"),
-        "library(dplyr)\nlibrary(ggplot2)\n".to_string(),
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\nlibrary(ggplot2)\n".to_string()),
         None,
     );
     let layers = file.imports(&db);
@@ -98,7 +107,13 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
 fn test_script_attach_to_unregistered_package_drops_layer() {
     let db = TestDb::new();
     // No `dplyr` in any library root.
-    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
 
     let layers = file.imports(&db);
     assert!(layers.is_empty());
@@ -125,23 +140,26 @@ fn test_package_file_emits_namespace_and_collation_layers() {
     let workspace = workspace_root(&db, "w");
     let pkg = Package::new(
         &db,
-        file_url("w/pkg/DESCRIPTION"),
+        file_path("w/pkg/DESCRIPTION"),
         "pkg".to_string(),
-        None,
-        namespace,
+        FileRevision::zero(),
+        FileRevision::zero(),
+        Some(namespace),
         Vec::new(),
-        None,
+        Vec::new(),
     );
     let first = File::new(
         &db,
-        file_url("w/pkg/R/_a.R"),
-        "first <- 1\n".to_string(),
+        file_path("w/pkg/R/_a.R"),
+        FileRevision::zero(),
+        Some("first <- 1\n".to_string()),
         Some(pkg),
     );
     let second = File::new(
         &db,
-        file_url("w/pkg/R/b.R"),
-        "second <- 2\n".to_string(),
+        file_path("w/pkg/R/b.R"),
+        FileRevision::zero(),
+        Some("second <- 2\n".to_string()),
         Some(pkg),
     );
     pkg.set_files(&mut db).to(vec![first, second]);
@@ -163,9 +181,10 @@ fn test_package_file_emits_namespace_and_collation_layers() {
                 shape.push(format!("Package({})", p.name(&db)));
             },
             ImportLayer::File(f) => {
+                let url = f.path(&db).to_url();
                 shape.push(format!(
                     "File({})",
-                    f.url(&db).as_url().path().rsplit('/').next().unwrap_or("?")
+                    url.path().rsplit('/').next().unwrap_or("?")
                 ));
             },
         }
@@ -185,11 +204,261 @@ fn test_package_file_emits_namespace_and_collation_layers() {
 }
 
 #[test]
+fn test_package_script_resolves_as_standalone_script() {
+    // A `data-raw/` file carries a package back-pointer but lives in
+    // `scripts`, not `files`. It isn't loaded with the package, so its
+    // imports must be the standalone-script view, never the package view
+    // (no `R/` `File` layers, no namespace layers). See #1270.
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["dplyr", "base"]);
+    let dplyr = installed[0];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("internal <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let data_raw = File::new(
+        &db,
+        file_path("w/pkg/data-raw/prep.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![data_raw]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = dplyr;
+    // Only its own `library(dplyr)` and `base` from the default search path
+    // (the only other registered package). `R/a.R` and the namespace are
+    // absent because the script isn't part of the package's namespace.
+    assert_eq!(shape(&db, data_raw.imports(&db)), vec![
+        "Package(dplyr)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_testthat_file_sees_helpers_package_and_testthat() {
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["testthat", "base"]);
+    let testthat = installed[0];
+    let base = installed[1];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let helper = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/helper-b.R"),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let setup = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/setup-c.R"),
+        FileRevision::zero(),
+        Some("s <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let test_foo = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/test-foo.R"),
+        FileRevision::zero(),
+        Some("test_that('x', expect_true(TRUE))\n".to_string()),
+        Some(pkg),
+    );
+    // A sibling test file. Each test file runs in its own environment, so
+    // it must not appear in `test_foo`'s imports.
+    let test_bar = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/test-bar.R"),
+        FileRevision::zero(),
+        Some("test_that('y', expect_true(TRUE))\n".to_string()),
+        Some(pkg),
+    );
+
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db)
+        .to(vec![helper, setup, test_foo, test_bar]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = (testthat, base);
+    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
+        // helper/setup files come first (sourced into the test env). LIFO
+        // over byte-order basename sort, so `setup-c` (sourced last)
+        // outranks `helper-b`.
+        "File(setup-c.R)".to_string(),
+        "File(helper-b.R)".to_string(),
+        // Then the package's own R/ code.
+        "File(a.R)".to_string(),
+        // testthat is attached, base is always last.
+        "Package(testthat)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_package_r_file_does_not_take_testthat_path() {
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["testthat", "base"]);
+    let base = installed[1];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let helper = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/helper-b.R"),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![helper]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = base;
+    // An `R/` file is not a testthat file: no helper layer, no testthat
+    // layer, just base (no other R/ files, empty namespace).
+    assert_eq!(shape(&db, r_file.imports(&db)), vec![
+        "Package(base)".to_string()
+    ]);
+}
+
+#[test]
+fn test_testthat_file_includes_top_level_library_calls() {
+    let mut db = TestDb::new();
+    let installed = install_packages(&mut db, &["cli", "testthat", "base"]);
+    let cli = installed[0];
+    let testthat = installed[1];
+    let base = installed[2];
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let test_foo = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/test-foo.R"),
+        FileRevision::zero(),
+        Some("library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![test_foo]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    let _ = (cli, testthat, base);
+    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
+        // The package's own R/ code.
+        "File(a.R)".to_string(),
+        // The test file's own `library()` call sits below the package but
+        // above testthat (attached more recently than the runner attached
+        // testthat).
+        "Package(cli)".to_string(),
+        "Package(testthat)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+/// Render `ImportLayer`s to a stable, assertable shape. `File` layers
+/// collapse to their basename.
+fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
+    layers
+        .iter()
+        .map(|layer| match layer {
+            ImportLayer::From(map) => {
+                let mut entries: Vec<(String, String)> =
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                entries.sort();
+                format!("From({entries:?})")
+            },
+            ImportLayer::Package(p) => format!("Package({})", p.name(db)),
+            ImportLayer::File(f) => {
+                let url = f.path(db).to_url();
+                format!("File({})", url.path().rsplit('/').next().unwrap_or("?"))
+            },
+        })
+        .collect()
+}
+
+#[test]
 fn test_imports_is_cached_per_file() {
     let mut db = TestDb::new();
     let _ = install_packages(&mut db, &["dplyr"]);
 
-    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
+    let file = File::new(
+        &db,
+        file_path("a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
     let _ = file.imports(&db);
     let _ = file.imports(&db);
 

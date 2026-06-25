@@ -100,7 +100,7 @@ pub(super) fn filter_out_dot_prefixes(
     // Remove completions that start with `.` unless the user explicitly requested them
     let user_requested_dot = context
         .node
-        .node_as_str(&context.document.contents)
+        .node_as_str(context.contents)
         .map(|x| x.starts_with("."))
         .unwrap_or(false);
 
@@ -293,8 +293,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
-    use crate::lsp::document::Document;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
@@ -303,8 +302,8 @@ mod tests {
     fn test_call_node_position_type() {
         // Before `(`, but on it
         let (text, point) = point_from_cursor("fn @()");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from("("))
@@ -316,8 +315,8 @@ mod tests {
 
         // After `)`, but on it
         let (text, point) = point_from_cursor("fn()@");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from(")"))
@@ -329,8 +328,8 @@ mod tests {
 
         // After `(`, but on it
         let (text, point) = point_from_cursor("fn(@)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from("("))
@@ -342,8 +341,8 @@ mod tests {
 
         // After `x`
         let (text, point) = point_from_cursor("fn(x@)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
@@ -351,8 +350,8 @@ mod tests {
 
         // After `x`
         let (text, point) = point_from_cursor("fn(1, x@)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
@@ -360,8 +359,8 @@ mod tests {
 
         // Directly after `,`
         let (text, point) = point_from_cursor("fn(x,@ )");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(context.node.node_type(), NodeType::Comma);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -370,8 +369,8 @@ mod tests {
 
         // After `,`, but on `)`
         let (text, point) = point_from_cursor("fn(x, @)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from(")"))
@@ -383,8 +382,8 @@ mod tests {
 
         // After `=`
         let (text, point) = point_from_cursor("fn(x =@ )");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from("="))
@@ -396,8 +395,8 @@ mod tests {
 
         // In an expression
         let (text, point) = point_from_cursor("fn(1@ + 1)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -405,8 +404,8 @@ mod tests {
         );
 
         let (text, point) = point_from_cursor("fn(1 + 1@)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -416,8 +415,8 @@ mod tests {
         // Right before an expression
         // (special case where we still provide argument completions)
         let (text, point) = point_from_cursor("fn(1, @1 + 1)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -427,8 +426,8 @@ mod tests {
         // After an identifier, before the `)`, with whitespace between them,
         // but on the `)`
         let (text, point) = point_from_cursor("fn(x @)");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert_eq!(
             context.node.node_type(),
             NodeType::Anonymous(String::from(")"))
@@ -441,8 +440,8 @@ mod tests {
         // After an identifier, before the `)`, with whitespace between them,
         // but on the identifier
         let (text, point) = point_from_cursor("fn(x@ )");
-        let document = Document::new(text.as_str(), None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
         assert!(context.node.is_identifier());
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -451,8 +450,8 @@ mod tests {
 
         // After `(`, and on own line
         let (text, point) = point_from_cursor("fn(\n  @\n)");
-        let document = Document::new(&text, None);
-        let context = DocumentContext::new(&document, point, None);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
 
         assert_eq!(context.node.node_type(), NodeType::Arguments);
         assert_eq!(

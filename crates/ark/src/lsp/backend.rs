@@ -47,6 +47,7 @@ use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
+use crate::lsp::main_loop::LoopHandles;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
@@ -136,9 +137,6 @@ pub(crate) enum LspNotification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
-    DidCreateFiles(CreateFilesParams),
-    DidDeleteFiles(DeleteFilesParams),
-    DidRenameFiles(RenameFilesParams),
 }
 
 #[derive(Debug)]
@@ -235,9 +233,9 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
-    /// Handle to main loop. Drop it to cancel the loop, all associated tasks,
-    /// and drop all owned state.
-    _main_loop: tokio::task::JoinSet<()>,
+    /// Handle to the LSP loops. Drop it to shut the loops down and drop all
+    /// owned state.
+    _main_loop: LoopHandles,
 }
 
 impl Backend {
@@ -295,18 +293,6 @@ impl LanguageServer for Backend {
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         self.notify(LspNotification::DidChangeWatchedFiles(params));
-    }
-
-    async fn did_create_files(&self, params: CreateFilesParams) {
-        self.notify(LspNotification::DidCreateFiles(params));
-    }
-
-    async fn did_delete_files(&self, params: DeleteFilesParams) {
-        self.notify(LspNotification::DidDeleteFiles(params));
-    }
-
-    async fn did_rename_files(&self, params: RenameFilesParams) {
-        self.notify(LspNotification::DidRenameFiles(params));
     }
 
     async fn symbol(

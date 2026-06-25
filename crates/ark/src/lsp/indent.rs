@@ -1,14 +1,21 @@
 use anyhow::anyhow;
-use tower_lsp::lsp_types::TextEdit;
+use oak_db::File;
 
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
 use crate::lsp::config::IndentStyle;
 use crate::lsp::config::IndentationConfig;
-use crate::lsp::document::Document;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+/// An indentation correction in tree-sitter coordinates.
+pub(crate) struct IndentEdit {
+    pub(crate) range: tree_sitter::Range,
+    pub(crate) new_text: String,
+}
 
 /// Provide indentation corrections
 ///
@@ -21,10 +28,14 @@ use crate::treesitter::NodeTypeExt;
 ///
 /// Once we implement a full formatter, indentation will be provided for any
 /// constructs based on the formatter and will be fully consistent with it.
-pub(crate) fn indent_edit(doc: &Document, line: usize) -> LspResult<Option<Vec<TextEdit>>> {
-    let text = &doc.contents;
-    let ast = &doc.ast;
-    let config = &doc.config.indent;
+pub(crate) fn indent_edit(
+    db: &dyn ArkDb,
+    file: File,
+    config: &IndentationConfig,
+    line: usize,
+) -> LspResult<Option<Vec<IndentEdit>>> {
+    let text = file.source_text(db).as_str();
+    let ast = file.tree_sitter(db);
 
     let line_count = if text.is_empty() {
         1
@@ -175,10 +186,7 @@ pub(crate) fn indent_edit(doc: &Document, line: usize) -> LspResult<Option<Vec<T
         },
     };
 
-    let edit = TextEdit {
-        range: doc.lsp_range_from_tree_sitter_range(range)?,
-        new_text,
-    };
+    let edit = IndentEdit { range, new_text };
 
     let mut edits = vec![edit];
 
@@ -192,7 +200,7 @@ pub(crate) fn indent_edit(doc: &Document, line: usize) -> LspResult<Option<Vec<T
             let close_line = close.start_position().row;
 
             if close.node_type() == NodeType::Anonymous("}".into()) && close_line > line {
-                if let Some(ref mut close_edits) = indent_edit(doc, close_line)? {
+                if let Some(ref mut close_edits) = indent_edit(db, file, config, close_line)? {
                     edits.append(close_edits);
                 }
             }
@@ -265,24 +273,20 @@ pub fn find_enclosing_brace(node: tree_sitter::Node) -> Option<tree_sitter::Node
 #[cfg(test)]
 mod tests {
     use aether_lsp_utils::proto::from_proto;
+    use aether_lsp_utils::proto::PositionEncoding;
+    use biome_line_index::WideEncoding;
+    use oak_db::OakDatabase;
+    use salsa::Setter;
     use stdext::assert_match;
     use tower_lsp::lsp_types::TextEdit;
 
     use crate::lsp::config::IndentStyle;
     use crate::lsp::config::IndentationConfig;
-    use crate::lsp::document::Document;
     use crate::lsp::indent::indent_edit;
     use crate::lsp::indent::new_line_indent;
-
-    fn apply_text_edits(edits: Vec<TextEdit>, doc: &mut Document) {
-        from_proto::apply_text_edits(
-            &mut doc.contents,
-            edits,
-            &mut doc.line_index,
-            doc.position_encoding,
-        );
-        *doc = test_doc(&doc.contents);
-    }
+    use crate::lsp::indent::IndentEdit;
+    use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
+    use crate::lsp::open_file::OpenFile;
 
     // NOTE: If we keep adding tests we might want to switch to snapshot tests
 
@@ -292,19 +296,42 @@ mod tests {
         tab_width: 2,
     };
 
-    fn test_doc(text: &str) -> Document {
-        let mut doc = Document::new(text, None);
-        doc.config.indent = SPACE_CFG;
-        doc
+    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
+
+    fn apply_text_edits(
+        edits: Vec<IndentEdit>,
+        db: &mut OakDatabase,
+        file: &OpenFile,
+        encoding: PositionEncoding,
+    ) {
+        let line_index = file.line_index(&*db).clone();
+        let edits = edits
+            .into_iter()
+            .map(|edit| TextEdit {
+                range: lsp_range_from_tree_sitter_range(edit.range, &line_index, encoding).unwrap(),
+                new_text: edit.new_text,
+            })
+            .collect();
+
+        let mut contents = file.source_text(&*db).clone();
+        let mut line_index = line_index;
+        from_proto::apply_text_edits(&mut contents, edits, &mut line_index, encoding);
+        file.file().set_source_text_override(db).to(Some(contents));
     }
 
     #[test]
     fn test_line_indent_oob() {
-        let doc = test_doc("");
-        assert_match!(indent_edit(&doc, 1), Err(_));
+        let (db, file) = crate::lsp::open_file::test_open_file("");
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 1),
+            Err(_)
+        );
 
-        let doc = test_doc("\n");
-        assert_match!(indent_edit(&doc, 2), Err(_));
+        let (db, file) = crate::lsp::open_file::test_open_file("\n");
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 2),
+            Err(_)
+        );
     }
 
     #[test]
@@ -313,173 +340,229 @@ mod tests {
         // there is before the first newline
         // https://github.com/posit-dev/positron/issues/5258
         let text = String::from("  \nx");
-        let doc = test_doc(&text);
-        let edit = indent_edit(&doc, 1).unwrap();
+        let (db, file) = crate::lsp::open_file::test_open_file(&text);
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
         assert!(edit.is_none());
 
         let text = String::from("\r\nx");
-        let doc = test_doc(&text);
-        let edit = indent_edit(&doc, 1).unwrap();
+        let (db, file) = crate::lsp::open_file::test_open_file(&text);
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
         assert!(edit.is_none());
     }
 
     #[test]
     fn test_line_indent_chains() {
-        let mut doc = test_doc("foo +\n  bar +\n    baz + qux |>\nfoofy()");
+        let (mut db, file) =
+            crate::lsp::open_file::test_open_file("foo +\n  bar +\n    baz + qux |>\nfoofy()");
 
         // Indenting the first two lines doesn't change the text
-        assert_match!(indent_edit(&doc, 0), Ok(None));
-        assert_match!(indent_edit(&doc, 1), Ok(None));
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 0),
+            Ok(None)
+        );
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 1),
+            Ok(None)
+        );
 
-        let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "foo +\n  bar +\n  baz + qux |>\nfoofy()");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar +\n  baz + qux |>\nfoofy()"
+        );
 
-        let edit = indent_edit(&doc, 3).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "foo +\n  bar +\n  baz + qux |>\n  foofy()");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar +\n  baz + qux |>\n  foofy()"
+        );
     }
 
     #[test]
     fn test_line_indent_chains_trailing_space() {
-        let mut doc = test_doc("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
+        let (mut db, file) =
+            crate::lsp::open_file::test_open_file("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
 
-        let edit = indent_edit(&doc, 4).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "foo +\n  bar(\n    x\n  ) +\n  baz\n  ");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar(\n    x\n  ) +\n  baz\n  "
+        );
     }
 
     #[test]
     fn test_line_indent_chains_outdent() {
         let text = String::from("1 +\n  2\n");
-        let doc = test_doc(&text);
+        let (db, file) = crate::lsp::open_file::test_open_file(&text);
 
-        assert_match!(indent_edit(&doc, 2), Ok(None));
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 2),
+            Ok(None)
+        );
     }
 
     #[test]
     fn test_line_indent_chains_deep() {
-        let mut doc = test_doc("deep()()[] +\n    deep()()[]");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("deep()()[] +\n    deep()()[]");
 
-        let edit = indent_edit(&doc, 0).unwrap();
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "deep()()[] +\n  deep()()[]");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "deep()()[] +\n  deep()()[]");
     }
 
     #[test]
     fn test_line_indent_chains_deep_newlines() {
         // With newlines in the way
-        let mut doc = test_doc("deep(\n)()[] +\ndeep(\n)()[]");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("deep(\n)()[] +\ndeep(\n)()[]");
 
-        let edit = indent_edit(&doc, 0).unwrap();
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "deep(\n)()[] +\n  deep(\n)()[]");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "deep(\n)()[] +\n  deep(\n)()[]");
     }
 
     #[test]
     fn test_line_indent_chains_calls() {
-        let mut doc = test_doc("foo() +\n  bar() +\nbaz()");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("foo() +\n  bar() +\nbaz()");
 
-        let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "foo() +\n  bar() +\n  baz()");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo() +\n  bar() +\n  baz()");
 
         // Indenting the first two lines doesn't change the text
-        let edit = indent_edit(&doc, 0).unwrap();
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&doc, 1).unwrap();
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
         assert!(edit.is_none());
 
-        let doc = test_doc("foo(\n) +\n  bar");
-        let edit = indent_edit(&doc, 0).unwrap();
+        let (db, file) = crate::lsp::open_file::test_open_file("foo(\n) +\n  bar");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
         assert!(edit.is_none());
     }
 
     #[test]
     fn test_line_indent_braced_expression() {
-        let mut doc = test_doc("{\nbar\n}");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("{\nbar\n}");
 
-        let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "{\n  bar\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n  bar\n}");
 
-        let mut doc = test_doc("function() {\nbar\n}");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("function() {\nbar\n}");
 
-        let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "function() {\n  bar\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "function() {\n  bar\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing() {
-        let mut doc = test_doc("{\n  }");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("{\n  }");
 
-        let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "{\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing_multiline() {
         // https://github.com/posit-dev/positron/issues/3484
-        let mut doc = test_doc("{\n\n    }");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("{\n\n    }");
 
-        let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "{\n  \n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n  \n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline() {
-        let mut doc = test_doc("function(\n        ) {\nfoo\n}");
+        let (mut db, file) =
+            crate::lsp::open_file::test_open_file("function(\n        ) {\nfoo\n}");
 
-        let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "function(\n        ) {\n  foo\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  foo\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline_empty() {
-        let mut doc = test_doc("function(\n        ) {\n\n}");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("function(\n        ) {\n\n}");
 
-        let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "function(\n        ) {\n  \n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  \n}");
     }
 
     #[test]
     fn test_line_indent_minimum() {
         // https://github.com/posit-dev/positron/issues/1683
-        let mut doc = test_doc("function() {\n  ({\n  }\n)\n}");
+        let (mut db, file) = crate::lsp::open_file::test_open_file("function() {\n  ({\n  }\n)\n}");
 
-        let edit = indent_edit(&doc, 3).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "function() {\n  ({\n  }\n  )\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "function() {\n  ({\n  }\n  )\n}");
     }
 
     #[test]
     fn test_line_indent_minimum_nested() {
         // Nested R function test with multiple levels of nesting
-        let mut doc = test_doc("{\n  {\n    ({\n    }\n  )\n  }\n}");
+        let (mut db, file) =
+            crate::lsp::open_file::test_open_file("{\n  {\n    ({\n    }\n  )\n  }\n}");
 
-        let edit = indent_edit(&doc, 4).unwrap().unwrap();
-        apply_text_edits(edit, &mut doc);
-        assert_eq!(doc.contents, "{\n  {\n    ({\n    }\n    )\n  }\n}");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "{\n  {\n    ({\n    }\n    )\n  }\n}"
+        );
     }
 
     #[test]
     fn test_line_indent_function_opening_brace_own_line() {
         let text = String::from("object <- function()\n{\n  body\n}");
-        let doc = test_doc(&text);
+        let (db, file) = crate::lsp::open_file::test_open_file(&text);
 
-        assert_match!(indent_edit(&doc, 1).unwrap(), None);
+        assert_match!(
+            indent_edit(&db, file.file(), &file.config().indent, 1).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -529,20 +612,16 @@ mod tests {
     #[test]
     fn test_indent_snapshot() {
         let orig = read_text_asset("lsp/snapshots/indent.R");
-
-        let mut doc = test_doc(&orig);
-
-        let n_lines = doc.contents.matches('\n').count();
-
+        let (mut db, file) = crate::lsp::open_file::test_open_file(&orig);
+        let n_lines = file.source_text(&db).matches('\n').count();
         for i in 0..n_lines {
-            if let Some(edit) = indent_edit(&doc, i).unwrap() {
-                apply_text_edits(edit, &mut doc);
+            if let Some(edit) = indent_edit(&db, file.file(), &file.config().indent, i).unwrap() {
+                apply_text_edits(edit, &mut db, &file, ENCODING);
             }
         }
-
-        write_asset("lsp/snapshots/indent.R", &doc.contents);
-
-        if orig != doc.contents {
+        let result = file.source_text(&db).to_string();
+        write_asset("lsp/snapshots/indent.R", &result);
+        if orig != result {
             panic!("Indentation snapshots have changed.\nPlease see git diff.");
         }
     }

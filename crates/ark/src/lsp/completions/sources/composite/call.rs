@@ -21,6 +21,7 @@ use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::db::ArkDb;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
@@ -76,7 +77,7 @@ fn completions_from_call(
         return Ok(None);
     };
 
-    let callee = callee.node_as_str(&document_context.document.contents)?;
+    let callee = callee.node_as_str(document_context.contents)?;
 
     // - Prefer `root` as the first argument if it exists
     // - Then fall back to looking it up, if possible
@@ -93,7 +94,7 @@ fn completions_from_call(
         },
     };
 
-    completions_from_arguments(document_context, callee, object)
+    completions_from_arguments(&context.state.db, document_context, callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
@@ -122,7 +123,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
         return Ok(None);
     };
 
-    let text = value.node_as_str(&context.document.contents)?;
+    let text = value.node_as_str(context.contents)?;
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
@@ -156,6 +157,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
 }
 
 fn completions_from_arguments(
+    db: &dyn ArkDb,
     context: &DocumentContext,
     callable: &str,
     object: RObject,
@@ -168,7 +170,7 @@ fn completions_from_arguments(
         return Ok(Some(completions));
     }
 
-    if let Some(completions) = completions_from_workspace_arguments(context, callable)? {
+    if let Some(completions) = completions_from_workspace_arguments(db, callable, context)? {
         return Ok(Some(completions));
     }
 
@@ -234,14 +236,15 @@ fn completions_from_session_arguments(
 }
 
 fn completions_from_workspace_arguments(
-    context: &DocumentContext,
+    db: &dyn ArkDb,
     callable: &str,
+    context: &DocumentContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_workspace_arguments({callable:?})");
 
     // Try to find the `callable` in the workspace and use its arguments
     // if we can
-    let Some((_path, entry)) = indexer::find(callable) else {
+    let Some(entry) = indexer::find(db, callable) else {
         // Didn't find any workspace object with this name
         return Ok(None);
     };
@@ -280,8 +283,7 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::call::completions_from_call;
-    use crate::lsp::document::Document;
-    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -290,8 +292,8 @@ mod tests {
         r_task(|| {
             // Right after `tab`
             let (text, point) = point_from_cursor("match(tab@)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -303,8 +305,8 @@ mod tests {
 
             // Right after `tab`
             let (text, point) = point_from_cursor("match(1, tab@)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -323,8 +325,8 @@ mod tests {
         r_task(|| {
             // Place cursor between `()`
             let (text, point) = point_from_cursor("not_a_known_function(@)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -343,8 +345,8 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("my_fun(@)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -360,8 +362,8 @@ mod tests {
 
             // Place just before the `()`
             let (text, point) = point_from_cursor("my_fun@()");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -369,8 +371,8 @@ mod tests {
 
             // Place just after the `()`
             let (text, point) = point_from_cursor("my_fun()@");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
@@ -392,8 +394,8 @@ mod tests {
 
             // Place cursor between `()`
             let (text, point) = point_from_cursor("my_fun(@)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -409,8 +411,8 @@ mod tests {
         r_task(|| {
             // No arguments typed yet
             let (text, point) = point_from_cursor("match(\n  @\n)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -421,8 +423,8 @@ mod tests {
 
             // Partially typed argument
             let (text, point) = point_from_cursor("match(\n  tab@\n)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -433,8 +435,8 @@ mod tests {
 
             // Partially typed second argument
             let (text, point) = point_from_cursor("match(\n  1,\n  tab@\n)");
-            let document = Document::new(text.as_str(), None);
-            let document_context = DocumentContext::new(&document, point, None);
+            let doc = TestDocument::new(&text);
+            let document_context = doc.context(point);
             let state = WorldState::default();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
@@ -450,8 +452,8 @@ mod tests {
         r_task(|| {
             fn assert_no_call_completions(code_with_cursor: &str) {
                 let (text, point) = point_from_cursor(code_with_cursor);
-                let document = Document::new(text.as_str(), None);
-                let document_context = DocumentContext::new(&document, point, None);
+                let doc = TestDocument::new(&text);
+                let document_context = doc.context(point);
                 let state = WorldState::default();
                 let context = CompletionContext::new(&document_context, &state);
                 let completions = completions_from_call(&context).unwrap();

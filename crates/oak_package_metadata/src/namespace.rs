@@ -8,7 +8,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 use stdext::SortedVec;
 
 /// Parsed NAMESPACE file
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Namespace {
     /// Names of objects exported with `export()`
     pub exports: SortedVec<String>,

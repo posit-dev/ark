@@ -216,11 +216,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "aether_url"
+name = "aether_path"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "camino",
  "log",
+ "percent-encoding",
  "stdext",
  "tempfile",
  "url",
@@ -390,11 +392,11 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "ark"
-version = "0.1.251"
+version = "0.1.252"
 dependencies = [
  "actix-web",
  "aether_lsp_utils",
- "aether_url",
+ "aether_path",
  "air_r_factory",
  "air_r_parser",
  "air_r_syntax",
@@ -410,6 +412,7 @@ dependencies = [
  "biome_rowan",
  "blake3",
  "bus",
+ "camino",
  "cc",
  "cfg-if",
  "chrono",
@@ -434,6 +437,7 @@ dependencies = [
  "oak_db",
  "oak_ide",
  "oak_package_metadata",
+ "oak_scan",
  "oak_semantic",
  "oak_sources",
  "once_cell",
@@ -480,7 +484,7 @@ dependencies = [
 name = "ark_test"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "amalthea",
  "anyhow",
  "ark",
@@ -813,6 +817,12 @@ checksum = "86566c496f2f47d9b8147a4c8b02ffdb69c919fe0c2b2e7195d22cbba0e635c9"
 dependencies = [
  "bytes",
 ]
+
+[[package]]
+name = "camino"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 
 [[package]]
 name = "castaway"
@@ -1648,6 +1658,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "globset"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3"
+dependencies = [
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2049,6 +2072,22 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "ignore"
+version = "0.4.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3d782a365a015e0f5c04902246139249abf769125006fbe7649e2ee88169b4a"
+dependencies = [
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
 ]
 
 [[package]]
@@ -2553,18 +2592,23 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
  "air_r_parser",
  "air_r_syntax",
+ "biome_line_index",
  "biome_rowan",
+ "camino",
  "compact_str",
+ "filetime",
  "log",
+ "oak_core",
  "oak_package_metadata",
  "oak_semantic",
  "rustc-hash",
  "salsa",
  "salsa-macros",
  "stdext",
+ "tempfile",
  "url",
 ]
 
@@ -2582,12 +2626,18 @@ dependencies = [
 name = "oak_ide"
 version = "0.1.0"
 dependencies = [
+ "aether_path",
  "air_r_parser",
  "air_r_syntax",
  "anyhow",
  "biome_rowan",
  "oak_core",
+ "oak_db",
+ "oak_package_metadata",
+ "oak_scan",
  "oak_semantic",
+ "salsa",
+ "stdext",
  "url",
 ]
 
@@ -2626,7 +2676,10 @@ dependencies = [
 name = "oak_scan"
 version = "0.1.0"
 dependencies = [
- "aether_url",
+ "aether_path",
+ "camino",
+ "filetime",
+ "ignore",
  "log",
  "oak_core",
  "oak_db",

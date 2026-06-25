@@ -1,22 +1,34 @@
 use biome_rowan::TextSize;
-use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
-    File::new(db, file_url(path), contents.to_string(), None)
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Package) -> File {
-    File::new(db, file_url(path), contents.to_string(), Some(package))
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(package),
+    )
 }
 
 /// Register a set of installed packages on `LibraryRoots`, one library
@@ -28,12 +40,13 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
         let root = library_root(db, &format!("libs/{name}"));
         let pkg = Package::new(
             db,
-            file_url(&format!("libs/{name}/DESCRIPTION")),
+            file_path(&format!("libs/{name}/DESCRIPTION")),
             name.to_string(),
-            Some("1.0.0".to_string()),
-            Namespace::default(),
-            Vec::new(),
+            FileRevision::zero(),
+            FileRevision::zero(),
             None,
+            Vec::new(),
+            Vec::new(),
         );
         root.set_packages(db).to(vec![pkg]);
         roots.push(root);
@@ -49,12 +62,13 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
     let root = workspace_root(db, &format!("workspace/{name}"));
     let pkg = Package::new(
         db,
-        file_url(&format!("workspace/{name}/DESCRIPTION")),
+        file_path(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
         None,
-        Namespace::default(),
         Vec::new(),
-        None,
+        Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -214,4 +228,84 @@ fn test_package_namespace_and_base_layers_always_visible() {
 
     let layers = file.imports_at(&db, TextSize::from(0));
     assert!(attached_packages(&layers).contains(&base));
+}
+
+#[test]
+fn test_package_script_top_level_resolves_as_standalone_script() {
+    // A `data-raw/` file carries a package back-pointer but lives in
+    // `scripts`, not `files`. At top level it must narrow like a standalone
+    // script and never take the package path, which would log the spurious
+    // "back-pointer but not in its files" warning from #1270.
+    let mut db = TestDb::new();
+    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+    let pkg = install_workspace_package(&mut db, "pkg");
+
+    let r_file = make_package_file(&mut db, "/workspace/pkg/R/a.R", "internal <- 1\n", pkg);
+    let source = "library(dplyr)\nx <- 1\n";
+    let data_raw = make_package_file(&mut db, "/workspace/pkg/data-raw/prep.R", source, pkg);
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![data_raw]);
+
+    // Before the `library()` call: nothing attached, and no `R/` `File`
+    // layers (the script isn't part of the package's namespace).
+    let before = data_raw.imports_at(&db, TextSize::from(0));
+    assert_eq!(attached_packages(&before), Vec::<Package>::new());
+    assert_eq!(package_files(&before), Vec::<File>::new());
+
+    // After the call: dplyr attached, still no `R/` `File` layers.
+    let after = data_raw.imports_at(&db, TextSize::from(source.len() as u32));
+    assert_eq!(attached_packages(&after), vec![dplyr]);
+    assert_eq!(package_files(&after), Vec::<File>::new());
+}
+
+#[test]
+fn test_testthat_top_level_library_narrows_by_offset() {
+    // A test file's own top-level `library()` call narrows like a script's:
+    // invisible before the call, visible after. Helpers, the package, and
+    // testthat (omitted here) stay visible at any offset.
+    let mut db = TestDb::new();
+    let cli = install_packages(&mut db, &["cli", "testthat", "base"])[0];
+    let pkg = install_workspace_package(&mut db, "pkg");
+
+    let source = "library(cli)\ntest_that('x', expect_true(TRUE))\n";
+    let test_file = make_package_file(
+        &mut db,
+        "workspace/pkg/tests/testthat/test-x.R",
+        source,
+        pkg,
+    );
+    pkg.set_scripts(&mut db).to(vec![test_file]);
+
+    let before = test_file.imports_at(&db, TextSize::from(0));
+    assert!(!attached_packages(&before).contains(&cli));
+
+    let after = test_file.imports_at(&db, TextSize::from(source.len() as u32));
+    assert!(attached_packages(&after).contains(&cli));
+}
+
+#[test]
+fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
+    // A `library()` inside a file that's `source()`d from a function body is
+    // forwarded by the builder as an `Attach` scoped to that `source()` call,
+    // so its `Package` layer is visible inside the function (the lazy / EOF
+    // view) but not at file scope before or after it.
+    let mut db = TestDb::new();
+    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+
+    let helpers = make_file(&mut db, "w/helpers.R", "library(dplyr)\n");
+    let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n}\nafter\n";
+    let script = make_file(&mut db, "w/script.R", script_src);
+
+    let root = workspace_root(&db, "w");
+    root.set_scripts(&mut db).to(vec![helpers, script]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let at = |needle: &str| {
+        let offset = TextSize::from(script_src.find(needle).unwrap() as u32);
+        attached_packages(&script.imports_at(&db, offset))
+    };
+
+    assert!(!at("before").contains(&dplyr));
+    assert!(at("source").contains(&dplyr));
+    assert!(!at("after").contains(&dplyr));
 }

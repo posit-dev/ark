@@ -150,6 +150,7 @@ The following R packages are required for tests:
 - rstudioapi
 - tibble
 - haven
+- htmltools
 - R6
 - readr
 
@@ -210,3 +211,5 @@ If changes are needed in these files, that must happen in the separate Positron 
 - Don't let comments drift from the code. If behaviour changes, update nearby comments. If a file is renamed, update its header comment.
 
 - Use the new async closure syntax, e.g. `async move || { ... }` instead of `|| async move { ... }`.
+
+- Name closure and pattern bindings after what they hold, not by a single letter. Still use short names if possible, but disambiguate if needed. E.g. write `|root| root.path(db)` and `|(root_path, _)| path.starts_with(root_path)`, not `|r|` / `|(p, _)|`.

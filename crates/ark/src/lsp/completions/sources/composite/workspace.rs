@@ -62,20 +62,22 @@ fn completions_from_workspace(
     let mut completions = vec![];
 
     let token = if node.is_identifier() {
-        node.node_as_str(&context.document.contents)?.to_string()
+        node.node_as_str(context.contents)?.to_string()
     } else {
         "".to_string()
     };
     let token = token.as_str();
 
     // get entries from the index
-    indexer::map(|uri, symbol, entry| {
+    indexer::map(&state.db, |file, symbol, entry| {
         if !symbol.fuzzy_matches(token) {
             return;
         }
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
+                let uri = state.wire_url(file);
+
                 let fun_context = match completion_context.function_context() {
                     Ok(fun_context) => fun_context,
                     Err(err) => {
@@ -112,7 +114,7 @@ fn completions_from_workspace(
                 let value = format!(
                     "Defined in `{}` on line {}.",
                     path,
-                    entry.range.start.line + 1
+                    entry.range.start.row + 1
                 );
                 let markup = MarkupContent {
                     kind: MarkupKind::Markdown,

@@ -1,11 +1,15 @@
+use aether_path::FilePath;
 use assert_matches::assert_matches;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
+use url::Url;
 
-use crate::lsp::document::Document;
+use super::utils::insert_file;
+use super::utils::make_state;
+use super::utils::range;
 use crate::lsp::goto_definition::goto_definition;
-use crate::lsp::indexer;
+use crate::lsp::state::WorldState;
 use crate::lsp::util::test_path;
 
 fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
@@ -19,133 +23,194 @@ fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinition
     }
 }
 
+/// A state with several open files, each mirrored into `oak` like `did_open`
+/// does, so `source()` targets resolve through `file_by_path`.
+fn make_state_with(files: &[(&Url, &str)]) -> WorldState {
+    let mut state = WorldState::default();
+    for (uri, code) in files {
+        insert_file(&mut state, uri, code);
+    }
+    state
+}
+
 #[test]
 fn test_goto_definition() {
-    let code = "foo <- 42\nprint(foo)\n";
-    let doc = Document::new(code, None);
     let uri = test_path("test.R");
+    let state = make_state(&uri, "foo <- 42\nprint(foo)\n");
 
     let params = make_params(uri, 1, 6);
 
     assert_matches!(
-        goto_definition(&doc, params).unwrap(),
+        goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(
-                links[0].target_range,
-                lsp_types::Range {
-                    start: lsp_types::Position::new(0, 0),
-                    end: lsp_types::Position::new(0, 3),
-                }
-            );
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
 }
 
 #[test]
 fn test_goto_definition_prefers_local_symbol() {
-    let code = "foo <- 1\nfoo\n";
-    let doc = Document::new(code, None);
     let uri = test_path("file.R");
+    let state = make_state(&uri, "foo <- 1\nfoo\n");
 
     let params = make_params(uri.clone(), 1, 0);
 
     assert_matches!(
-        goto_definition(&doc, params).unwrap(),
+        goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links[0].target_uri, uri);
-            assert_eq!(
-                links[0].target_range,
-                lsp_types::Range {
-                    start: lsp_types::Position::new(0, 0),
-                    end: lsp_types::Position::new(0, 3),
-                }
-            );
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
+}
+
+#[test]
+fn test_target_uri_is_verbatim() {
+    // The doubled slash normalises away in `FilePath`, so the target URI is
+    // only correct if it comes from the buffer's verbatim URL.
+    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
+    let state = make_state(&uri, "foo <- 1\nfoo\n");
+
+    let params = make_params(uri.clone(), 1, 0);
+
+    assert_matches!(
+        goto_definition(params, &state).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links[0].target_uri, uri);
+        }
+    );
+    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
 }
 
 #[test]
 fn test_unbound_identifier_returns_none() {
-    // A free identifier with no local def and no indexer entry returns
-    // `None`, matching how rust-analyzer and ty handle the same case.
-    let _guard = indexer::ResetIndexerGuard;
-
-    let doc = Document::new("foo\n", None);
+    // A free identifier with no reachable binding returns `None`, matching how
+    // rust-analyzer and ty handle the same case.
     let uri = test_path("file.R");
+    let state = make_state(&uri, "foo\n");
 
     let params = make_params(uri, 0, 0);
-    assert_eq!(goto_definition(&doc, params).unwrap(), None);
+    assert_eq!(goto_definition(params, &state).unwrap(), None);
 }
 
 #[test]
 fn test_cursor_on_operator_returns_none() {
-    // Cursor on `<-` (a non-identifier token): even though the file has
-    // an identifier nearby, the operator itself doesn't resolve to
-    // anything, so the response is `None`.
-    let _guard = indexer::ResetIndexerGuard;
-
-    let other = Document::new("foo <- function() 'other'\n", None);
-    let other_uri = test_path("other.R");
-    indexer::update(&other, &other_uri).unwrap();
-
-    let doc = Document::new("foo <- 1\n", None);
+    // Cursor on `<-`, not on an identifier use: nothing to resolve.
     let uri = test_path("file.R");
+    let state = make_state(&uri, "foo <- 1\n");
 
     // Cursor on the `<` of `<-` at column 4.
     let params = make_params(uri, 0, 4);
-    assert_eq!(goto_definition(&doc, params).unwrap(), None);
+    assert_eq!(goto_definition(params, &state).unwrap(), None);
 }
 
 #[test]
-fn test_fallback_resolves_cross_file() {
-    // A free variable that the intra-file resolver can't bind falls back
-    // to the workspace indexer, which finds the definition in another
-    // indexed file.
-    let _guard = indexer::ResetIndexerGuard;
+fn test_unlinked_cross_file_returns_none() {
+    // `foo` is defined in another open file, but this file doesn't `source()`
+    // it, so R semantics can't reach it. goto-def is precise: it returns `None`
+    // rather than guessing by name across the workspace like the legacy ark handler.
+    let uses_uri = test_path("uses.R");
+    let defs_uri = test_path("defs.R");
+    let state = make_state_with(&[(&uses_uri, "foo\n"), (&defs_uri, "foo <- function() 1\n")]);
 
-    let doc1 = Document::new("foo <- function() 1\n", None);
-    let uri1 = test_path("defs.R");
-    indexer::update(&doc1, &uri1).unwrap();
+    let params = make_params(uses_uri, 0, 0);
+    assert_eq!(goto_definition(params, &state).unwrap(), None);
+}
 
-    let doc2 = Document::new("foo\n", None);
-    let uri2 = test_path("uses.R");
+#[test]
+fn test_resolves_across_source_directive() {
+    // `script.R` sources `helpers.R`; goto-def on the forwarded `helper` use
+    // lands in `helpers.R`. Exercises the cross-file branch of
+    // `definition_to_link` (the target file's own line index + URL). The
+    // resolution itself is covered exhaustively by `oak_db`'s `file_resolve_at`
+    // tests; this checks the goto-def wiring on top of it.
+    let script_uri = test_path("script.R");
+    let helpers_uri = test_path("helpers.R");
+    let state = make_state_with(&[
+        (&script_uri, "source(\"helpers.R\")\nhelper\n"),
+        (&helpers_uri, "helper <- function() 1\n"),
+    ]);
 
-    let params = make_params(uri2, 0, 0);
+    let params = make_params(script_uri, 1, 0);
     assert_matches!(
-        goto_definition(&doc2, params).unwrap(),
+        goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, uri1);
+            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_range, range((0, 0), (0, 6)));
         }
     );
 }
 
 #[test]
-fn test_fallback_skipped_when_local_def_wins() {
-    // When the symbol has a binding within the file, the within-file
-    // result is returned and the indexer fallback isn't consulted.
-    let _guard = indexer::ResetIndexerGuard;
+fn test_local_def_shadows_sourced() {
+    // A local `<-` after a `source()` shadows the sourced binding, so the use
+    // resolves to the local def (in this file), not the sourced one. The link
+    // range must point at the local def.
+    let script_uri = test_path("script.R");
+    let helpers_uri = test_path("helpers.R");
+    let state = make_state_with(&[
+        (&script_uri, "source(\"helpers.R\")\nfoo <- 1\nfoo\n"),
+        (&helpers_uri, "foo <- function() 2\n"),
+    ]);
 
-    let other = Document::new("foo <- function() 'other'\n", None);
-    let other_uri = test_path("other.R");
-    indexer::update(&other, &other_uri).unwrap();
-
-    let code = "foo <- 1\nfoo\n";
-    let doc = Document::new(code, None);
-    let uri = test_path("main.R");
-
-    let params = make_params(uri.clone(), 1, 0);
+    let params = make_params(script_uri.clone(), 2, 0);
     assert_matches!(
-        goto_definition(&doc, params).unwrap(),
+        goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, uri);
-            assert_eq!(
-                links[0].target_range,
-                lsp_types::Range {
-                    start: lsp_types::Position::new(0, 0),
-                    end: lsp_types::Position::new(0, 3),
-                }
-            );
+            assert_eq!(links[0].target_uri, script_uri);
+            assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
+        }
+    );
+}
+
+#[test]
+fn test_sourced_file_with_repeated_def_offers_both() {
+    // When the sourced file binds the same name on both arms of a top-level
+    // `if`/`else`, either arm could run, so goto-def offers both candidate
+    // definitions, in definition order. Ranges are in the target file's
+    // coordinates.
+    let script_uri = test_path("script.R");
+    let helpers_uri = test_path("helpers.R");
+    let state = make_state_with(&[
+        (&script_uri, "source(\"helpers.R\")\nfn\n"),
+        (&helpers_uri, "if (cond) fn <- 1 else fn <- 2\n"),
+    ]);
+
+    let params = make_params(script_uri, 1, 0);
+    assert_matches!(
+        goto_definition(params, &state).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 2);
+            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_range, range((0, 10), (0, 12)));
+            assert_eq!(links[1].target_uri, helpers_uri);
+            assert_eq!(links[1].target_range, range((0, 23), (0, 25)));
+        }
+    );
+}
+
+#[test]
+fn test_sourced_file_with_sequential_redef_offers_runtime_winner() {
+    // When the sourced file binds the same name twice in sequence, the second
+    // overwrites the first, so only the last binding is in effect when
+    // `source()` finishes. goto-def offers just that one.
+    let script_uri = test_path("script.R");
+    let helpers_uri = test_path("helpers.R");
+    let state = make_state_with(&[
+        (&script_uri, "source(\"helpers.R\")\nfn\n"),
+        (
+            &helpers_uri,
+            "fn <- function() 'first'\nfn <- function() 'second'\n",
+        ),
+    ]);
+
+    let params = make_params(script_uri, 1, 0);
+    assert_matches!(
+        goto_definition(params, &state).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
         }
     );
 }

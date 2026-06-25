@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.251"
+version = "0.1.252"
 description = """
 Ark, an R Kernel.
 """
@@ -23,7 +23,7 @@ ark_macros.workspace = true
 aether_lsp_utils.workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
-aether_url.workspace = true
+aether_path.workspace = true
 amalthea.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -32,6 +32,7 @@ biome_line_index.workspace = true
 biome_rowan.workspace = true
 blake3.workspace = true
 bus.workspace = true
+camino.workspace = true
 cfg-if.workspace = true
 crossbeam.workspace = true
 ctor.workspace = true
@@ -52,6 +53,7 @@ oak_core.workspace = true
 oak_db.workspace = true
 oak_ide.workspace = true
 oak_package_metadata.workspace = true
+oak_scan.workspace = true
 oak_semantic.workspace = true
 oak_sources.workspace = true
 once_cell.workspace = true

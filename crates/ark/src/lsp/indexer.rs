@@ -5,53 +5,30 @@
 //
 //
 
-use std::collections::HashMap;
 use std::result::Result::Ok;
-use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::Mutex;
 
+use aether_lsp_utils::proto::to_proto;
+use aether_lsp_utils::proto::PositionEncoding;
+use oak_db::File;
 use regex::Regex;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
-use url::Url;
-use walkdir::DirEntry;
-use walkdir::WalkDir;
 
 use crate::lsp;
-use crate::lsp::document::Document;
+use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
-use crate::url::ExtUrl;
 
-/// FileId represents a unique identifier for a file in the workspace index
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct FileId {
-    /// The URL representing the file
-    uri: Url,
-}
-
-impl FileId {
-    pub fn from_uri(uri: Url) -> Self {
-        Self { uri }
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.uri.as_str()
-    }
-
-    pub fn as_uri(&self) -> &Url {
-        &self.uri
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
 pub enum IndexEntryData {
     Variable {
         name: String,
@@ -70,112 +47,146 @@ pub enum IndexEntryData {
     },
 }
 
-#[derive(Clone, Debug)]
+/// A position in a file as a tree-sitter point: zero-based row, and column in
+/// bytes within that row. Encoding-free, so the per-file index stays a pure
+/// salsa query. Consumers that need an LSP position convert via the file's
+/// line index and the session encoding (see `index_range_to_lsp_range`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+pub struct IndexPoint {
+    pub row: u32,
+    pub column: u32,
+}
+
+impl From<tree_sitter::Point> for IndexPoint {
+    fn from(point: tree_sitter::Point) -> Self {
+        Self {
+            row: point.row as u32,
+            column: point.column as u32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+pub struct IndexRange {
+    pub start: IndexPoint,
+    pub end: IndexPoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
 pub struct IndexEntry {
     pub key: String,
-    pub range: Range,
+    pub range: IndexRange,
     pub data: IndexEntryData,
 }
 
-type DocumentSymbol = String;
-type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
-type WorkspaceIndex = Arc<Mutex<HashMap<FileId, DocumentSymbolIndex>>>;
+/// Convert an index entry's tree-sitter point range to an LSP range, resolving
+/// the file's line index from the db. Returns `None` if the points fall outside
+/// the line index, in which case the symbol is dropped from the results.
+pub(crate) fn index_range_to_lsp_range(
+    db: &dyn ArkDb,
+    file: File,
+    range: IndexRange,
+    encoding: PositionEncoding,
+) -> Option<Range> {
+    let line_index = file.line_index(db);
 
-static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(Default::default);
+    let to_position = |point: IndexPoint| {
+        to_proto::position_from_line_col(
+            biome_line_index::LineCol {
+                line: point.row,
+                col: point.column,
+            },
+            line_index,
+            encoding,
+        )
+        .log_err()
+    };
+
+    Some(Range::new(
+        to_position(range.start)?,
+        to_position(range.end)?,
+    ))
+}
+
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
-#[tracing::instrument(level = "info", skip_all)]
-pub fn start(folders: Vec<String>) {
-    let now = std::time::Instant::now();
-    lsp::log_info!("Initial indexing started");
-
-    for folder in folders {
-        let walker = WalkDir::new(folder);
-        for entry in walker.into_iter().filter_entry(filter_entry) {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let Ok(uri) = Url::from_file_path(entry.path()) else {
-                lsp::log_warn!("Can't convert file path to URI {:?}", entry.path());
-                continue;
-            };
-            if let Err(err) = create(&uri) {
-                lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
-            }
-        }
-    }
-
-    lsp::log_info!(
-        "Initial indexing finished after {}ms",
-        now.elapsed().as_millis()
-    );
+/// One file's workspace symbols, keyed by symbol name. Built by [`file_index`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, salsa::Update)]
+pub(crate) struct FileIndex {
+    pub(crate) symbols: rustc_hash::FxHashMap<String, IndexEntry>,
 }
 
-/// Search the workspace files and return the first symbol match
-pub fn find(symbol: &str) -> Option<(FileId, IndexEntry)> {
-    let index = WORKSPACE_INDEX.lock().unwrap();
-
-    for (file_id, index) in index.iter() {
-        if let Some(entry) = index.get(symbol) {
-            return Some((file_id.clone(), entry.clone()));
+/// Find the first workspace symbol matching `symbol`, scanning files in
+/// `workspace_files` order. `ark://` virtual docs are skipped: they show
+/// foreign code the user can't edit.
+pub(crate) fn find(db: &dyn ArkDb, symbol: &str) -> Option<IndexEntry> {
+    for &file in oak_db::workspace_files(db) {
+        if !is_indexable(db, file) {
+            continue;
+        }
+        if let Some(entry) = file_index(db, file).symbols.get(symbol) {
+            return Some(entry.clone());
         }
     }
-
     None
 }
 
-/// Search a specific workspace file for a symbol
-pub fn find_in_file(symbol: &str, uri: &Url) -> Option<(FileId, IndexEntry)> {
-    let index = WORKSPACE_INDEX.lock().unwrap();
+/// Extract a file's workspace symbols.
+#[salsa::tracked(returns(ref))]
+fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
+    let tree = file.tree_sitter(db);
+    let contents = file.source_text(db).as_str();
 
-    let file_id = FileId::from_uri(uri.clone());
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    let mut entries = Vec::new();
 
-    if let Some(symbol_index) = index.get(&file_id) {
-        if let Some(entry) = symbol_index.get(symbol) {
-            return Some((file_id, entry.clone()));
+    for node in root.children(&mut cursor) {
+        if let Err(err) = index_node(contents, &node, &mut entries) {
+            lsp::log_error!("Can't index document: {err:?}");
         }
     }
 
-    None
+    let mut symbols = rustc_hash::FxHashMap::default();
+    for entry in entries {
+        index_insert(&mut symbols, entry);
+    }
+
+    FileIndex { symbols }
 }
 
-pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
-    let index = WORKSPACE_INDEX.lock().unwrap();
-
-    for (file_id, symbol_index) in index.iter() {
-        let uri = file_id.as_uri();
-        for (symbol, entry) in symbol_index.iter() {
-            callback(uri, symbol, entry);
+/// Visit every workspace symbol across all indexable files. Callers that need a
+/// URL for messages to the frontend can resolve it from `File` via
+/// `WorldState::wire_url`.
+pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
+    for &file in oak_db::workspace_files(db) {
+        if !is_indexable(db, file) {
+            continue;
+        }
+        for (symbol, entry) in file_index(db, file).symbols.iter() {
+            callback(file, symbol, entry);
         }
     }
 }
 
-#[tracing::instrument(level = "trace", skip_all, fields(uri = %uri))]
-pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
-    // Defensive, callers are expected to filter virtual doc URIs before queuing
-    if !ExtUrl::is_indexable(uri) {
-        return Ok(());
+/// Call [`file_index()`] for every workspace file. This ensures workspace
+/// symbols are loaded before the user needs to read them (e.g. by looking up a
+/// workspace symbol without any file opened).
+pub(crate) fn warm(db: &dyn ArkDb) {
+    for &file in oak_db::workspace_files(db) {
+        file_index(db, file);
     }
-    delete(uri)?;
-    index_document(document, uri);
-    Ok(())
 }
 
-fn insert(uri: &Url, entry: IndexEntry) -> anyhow::Result<()> {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let file_id = FileId::from_uri(uri.clone());
-
-    let file_index = index.entry(file_id).or_default();
-    index_insert(file_index, entry);
-
-    Ok(())
+fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
+    match file.path(db) {
+        aether_path::FilePath::File(_) => true,
+        aether_path::FilePath::Virtual(uri) => uri.as_url().scheme() != "ark",
+    }
 }
 
-fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
+fn index_insert(index: &mut rustc_hash::FxHashMap<String, IndexEntry>, entry: IndexEntry) {
     // We generally retain only the first occurrence in the index. In the
     // future we'll track every occurrences and their scopes but for now we
     // only track the first definition of an object (in a way, its
@@ -191,128 +202,14 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
     }
 }
 
-#[tracing::instrument(level = "trace")]
-pub(crate) fn delete(uri: &Url) -> anyhow::Result<()> {
-    let file_id = FileId::from_uri(uri.clone());
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-
-    // Only clears if the key exists
-    index.entry(file_id).and_modify(|index| {
-        index.clear();
-    });
-
-    Ok(())
-}
-
-#[tracing::instrument(level = "trace")]
-pub(crate) fn rename(old_uri: &Url, new_uri: &Url) -> anyhow::Result<()> {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-
-    let old_file_id = FileId::from_uri(old_uri.clone());
-    let new_file_id = FileId::from_uri(new_uri.clone());
-
-    if let Some(entries) = index.remove(&old_file_id) {
-        index.insert(new_file_id, entries);
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn indexer_clear() {
-    let mut index = WORKSPACE_INDEX.lock().unwrap();
-    index.clear();
-}
-
-/// RAII guard that clears `WORKSPACE_INDEX` when dropped.
-/// Useful for ensuring a clean index state in tests.
-#[cfg(test)]
-pub(crate) struct ResetIndexerGuard;
-
-#[cfg(test)]
-impl Drop for ResetIndexerGuard {
-    fn drop(&mut self) {
-        indexer_clear();
-    }
-}
-
-// TODO: Should we consult the project .gitignore for ignored files?
-// TODO: What about front-end ignores?
-// TODO: What about other kinds of ignores (e.g. revdepcheck)?
-pub fn filter_entry(entry: &DirEntry) -> bool {
-    let name = entry.file_name();
-
-    // skip common ignores
-    for ignore in [".git", ".Rproj.user", "node_modules", "revdep"] {
-        if name == ignore {
-            return false;
-        }
-    }
-
-    // skip project 'renv' folder
-    if name == "renv" {
-        let companion = entry.path().join("activate.R");
-        if companion.exists() {
-            return false;
-        }
-    }
-
-    true
-}
-
-// Only called for actual files during workspace walking. Documents managed by
-// the LSP go through `update()` instead.
-pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
-    if uri.scheme() != "file" {
-        return Ok(());
-    }
-    let Ok(path) = uri.to_file_path() else {
-        return Ok(());
-    };
-
-    let ext = path.extension().unwrap_or_default();
-    if ext != "r" && ext != "R" {
-        return Ok(());
-    }
-
-    // TODO: Handle document encodings here.
-    // TODO: Check if there's an up-to-date buffer to be used.
-    let contents = std::fs::read(path)?;
-    let contents = String::from_utf8(contents)?;
-    let document = Document::new(contents.as_str(), None);
-
-    index_document(&document, uri);
-
-    Ok(())
-}
-
-fn index_document(doc: &Document, uri: &Url) {
-    let ast = &doc.ast;
-    let root = ast.root_node();
-    let mut cursor = root.walk();
-    let mut entries = Vec::new();
-
-    for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(doc, &node, &mut entries) {
-            lsp::log_error!("Can't index document: {err:?}");
-        }
-    }
-
-    for entry in entries {
-        if let Err(err) = insert(uri, entry) {
-            lsp::log_error!("Can't insert index entry: {err:?}");
-        }
-    }
-}
-
-fn index_node(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
-    index_assignment(doc, node, entries)?;
-    index_comment(doc, node, entries)?;
+fn index_node(contents: &str, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
+    index_assignment(contents, node, entries)?;
+    index_comment(contents, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
-    doc: &Document,
+    contents: &str,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -333,14 +230,14 @@ fn index_assignment(
         return Ok(());
     };
 
-    if crate::treesitter::node_is_call(&rhs, "R6Class", &doc.contents) ||
-        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", &doc.contents)
+    if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
+        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class_methods(doc, &rhs, entries)?;
+        index_r6_class_methods(contents, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
-    let lhs_text = lhs.node_to_string(&doc.contents)?;
+    let lhs_text = lhs.node_to_string(contents)?;
 
     // The method matching is super hacky but let's wait until the typed API to
     // do better
@@ -360,7 +257,7 @@ fn index_assignment(
             for child in parameters.children(&mut cursor) {
                 let name = unwrap!(child.child_by_field_name("name"), None => continue);
                 if name.is_identifier() {
-                    let name = name.node_to_string(&doc.contents)?;
+                    let name = name.node_to_string(contents)?;
                     arguments.push(name);
                 }
             }
@@ -368,12 +265,12 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
-
         entries.push(IndexEntry {
             key: lhs_text.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: lhs.start_position().into(),
+                end: lhs.end_position().into(),
+            },
             data: IndexEntryData::Function {
                 name: lhs_text,
                 arguments,
@@ -381,11 +278,12 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
         entries.push(IndexEntry {
             key: lhs_text.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: lhs.start_position().into(),
+                end: lhs.end_position().into(),
+            },
             data: IndexEntryData::Variable { name: lhs_text },
         });
     }
@@ -394,7 +292,7 @@ fn index_assignment(
 }
 
 fn index_r6_class_methods(
-    doc: &Document,
+    contents: &str,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -421,14 +319,15 @@ fn index_r6_class_methods(
     });
     let mut ts_query = TsQuery::from_query(&R6_METHODS_QUERY);
 
-    for method_node in ts_query.captures_for(*node, "method_name", doc.contents.as_bytes()) {
-        let name = method_node.node_to_string(&doc.contents)?;
-        let start = doc.lsp_position_from_tree_sitter_point(method_node.start_position())?;
-        let end = doc.lsp_position_from_tree_sitter_point(method_node.end_position())?;
+    for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
+        let name = method_node.node_to_string(contents)?;
 
         entries.push(IndexEntry {
             key: name.clone(),
-            range: Range { start, end },
+            range: IndexRange {
+                start: method_node.start_position().into(),
+                end: method_node.end_position().into(),
+            },
             data: IndexEntryData::Method { name },
         });
     }
@@ -436,14 +335,14 @@ fn index_r6_class_methods(
     Ok(())
 }
 
-fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
+fn index_comment(contents: &str, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
     // check for comment
     if !node.is_comment() {
         return Ok(());
     }
 
     // see if it looks like a section
-    let comment = node.node_as_str(&doc.contents)?;
+    let comment = node.node_as_str(contents)?;
     let matches = match RE_COMMENT_SECTION.captures(comment) {
         Some(m) => m,
         None => return Ok(()),
@@ -460,12 +359,12 @@ fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> 
         return Ok(());
     }
 
-    let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
-    let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
-
     entries.push(IndexEntry {
         key: title.clone(),
-        range: Range::new(start, end),
+        range: IndexRange {
+            start: node.start_position().into(),
+            end: node.end_position().into(),
+        },
         data: IndexEntryData::Section { level, title },
     });
 
@@ -477,20 +376,23 @@ mod tests {
 
     use assert_matches::assert_matches;
     use insta::assert_debug_snapshot;
-    use tower_lsp::lsp_types;
+    use oak_scan::DbScan;
+    use url::Url;
 
     use super::*;
-    use crate::lsp::document::Document;
+    use crate::lsp::open_file::test_open_file;
 
     macro_rules! test_index {
         ($code:expr) => {
-            let doc = Document::new($code, None);
-            let root = doc.ast.root_node();
+            let (db, file) = test_open_file($code);
+            let tree = file.tree_sitter(&db);
+            let contents = file.source_text(&db);
+            let root = tree.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(&doc, &node, &mut entries);
+                let _ = index_node(contents.as_str(), &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };
@@ -610,14 +512,14 @@ class <- R6::R6Class(
 
     #[test]
     fn test_index_insert_priority() {
-        let mut index = HashMap::new();
+        let mut index = rustc_hash::FxHashMap::default();
 
         let section_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(0, 0),
-                lsp_types::Position::new(0, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 0, column: 0 },
+                end: IndexPoint { row: 0, column: 3 },
+            },
             data: IndexEntryData::Section {
                 level: 1,
                 title: "foo".to_string(),
@@ -626,10 +528,10 @@ class <- R6::R6Class(
 
         let variable_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(1, 0),
-                lsp_types::Position::new(1, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 1, column: 0 },
+                end: IndexPoint { row: 1, column: 3 },
+            },
             data: IndexEntryData::Variable {
                 name: "foo".to_string(),
             },
@@ -652,10 +554,10 @@ class <- R6::R6Class(
 
         let function_entry = IndexEntry {
             key: "foo".to_string(),
-            range: Range::new(
-                lsp_types::Position::new(2, 0),
-                lsp_types::Position::new(2, 3),
-            ),
+            range: IndexRange {
+                start: IndexPoint { row: 2, column: 0 },
+                end: IndexPoint { row: 2, column: 3 },
+            },
             data: IndexEntryData::Function {
                 name: "foo".to_string(),
                 arguments: vec!["a".to_string()],
@@ -672,34 +574,20 @@ class <- R6::R6Class(
     }
 
     #[test]
-    fn test_update_skips_ark_virtual_doc() {
-        let _guard = ResetIndexerGuard;
-
-        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
-        let doc = Document::new("foo <- 1", None);
-
-        update(&doc, &ark_uri).unwrap();
-        assert!(find("foo").is_none());
+    fn test_index_skips_ark_virtual_doc() {
+        use aether_path::FilePath;
+        let mut db = oak_db::OakDatabase::new();
+        let url = Url::parse("ark://namespace/test.R").unwrap();
+        db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
+        assert!(find(&db, "foo").is_none());
     }
 
     #[test]
-    fn test_update_indexes_git_uri() {
-        let _guard = ResetIndexerGuard;
-
-        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
-        let doc = Document::new("foo <- 1", None);
-
-        update(&doc, &git_uri).unwrap();
-        assert!(find("foo").is_some());
-    }
-
-    #[test]
-    fn test_create_skips_non_file_uri() {
-        let _guard = ResetIndexerGuard;
-
-        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
-
-        create(&ark_uri).unwrap();
-        assert!(find("foo").is_none());
+    fn test_index_indexes_git_uri() {
+        use aether_path::FilePath;
+        let mut db = oak_db::OakDatabase::new();
+        let url = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
+        assert!(find(&db, "foo").is_some());
     }
 }

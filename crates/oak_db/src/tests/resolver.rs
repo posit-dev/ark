@@ -1,17 +1,26 @@
+use std::collections::HashSet;
+
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
-use crate::tests::test_db::file_url;
+use crate::tests::test_db::file_path;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
+use crate::FileRevision;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
-    File::new(db, file_url(name), contents.to_string(), None)
+    File::new(
+        db,
+        file_path(name),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
 }
 
 /// Build a fresh workspace root, attach the given scripts, register
@@ -50,7 +59,7 @@ fn test_cross_file_source_injection() {
 
     match import_def.unwrap().1.kind() {
         DefinitionKind::Import { file, name, .. } => {
-            assert_eq!(file, b.url(&db).as_url());
+            assert_eq!(file, &b.path(&db).to_url());
             assert_eq!(name, "x");
         },
         _ => unreachable!(),
@@ -71,7 +80,8 @@ fn test_editing_sourced_file_invalidates_caller_index() {
 
     // Add a new top-level definition in `b`. `a` sees `b`'s exports
     // change, so its index must re-run.
-    b.set_contents(&mut db).to("x <- 1\ny <- 2\n".to_string());
+    b.set_source_text_override(&mut db)
+        .to(Some("x <- 1\ny <- 2\n".to_string()));
     let _ = a.semantic_index(&db);
     // 4 = 2 initial (a + b) + 2 re-runs (b's parse and index invalidate
     // first via the contents bump, then a's index re-runs because its
@@ -326,11 +336,18 @@ fn test_source_anchors_relative_to_workspace_root() {
     let root = workspace_root(&db, "proj");
     let a = File::new(
         &db,
-        file_url("proj/sub/a.R"),
-        "source(\"b.R\")\n".to_string(),
+        file_path("proj/sub/a.R"),
+        FileRevision::zero(),
+        Some("source(\"b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_url("proj/b.R"), "x <- 1\n".to_string(), None);
+    let b = File::new(
+        &db,
+        file_path("proj/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
     root.set_scripts(&mut db).to(vec![a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -345,12 +362,21 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     let mut db = TestDb::new();
     let a = File::new(
         &db,
-        file_url("dir/a.R"),
-        "source(\"b.R\")\n".to_string(),
+        file_path("dir/a.R"),
+        FileRevision::zero(),
+        Some("source(\"b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+    let b = File::new(
+        &db,
+        file_path("dir/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([a, b]));
 
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));
@@ -363,12 +389,21 @@ fn test_source_path_with_parent_dir_segments() {
     let mut db = TestDb::new();
     let a = File::new(
         &db,
-        file_url("dir/sub/a.R"),
-        "source(\"../b.R\")\n".to_string(),
+        file_path("dir/sub/a.R"),
+        FileRevision::zero(),
+        Some("source(\"../b.R\")\n".to_string()),
         None,
     );
-    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
-    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+    let b = File::new(
+        &db,
+        file_path("dir/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    db.orphan_root()
+        .set_files(&mut db)
+        .to(HashSet::from([a, b]));
 
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));

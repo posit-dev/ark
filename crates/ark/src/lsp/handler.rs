@@ -39,7 +39,8 @@ impl Lsp {
     ) -> Self {
         let rt = Builder::new_multi_thread()
             .enable_all()
-            // One for the main loop and one spare
+            // Workers serve tower-lsp, the auxiliary loop, and the diagnostics
+            // queue. The main loop runs on its own thread.
             .worker_threads(2)
             // Used for diagnostics
             .max_blocking_threads(2)

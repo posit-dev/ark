@@ -1,11 +1,9 @@
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
-
-use aether_url::UrlId;
+use aether_path::FilePath;
+use camino::Utf8Component;
+use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
-use stdext::result::ResultExt;
 use url::Url;
 
 use crate::Db;
@@ -53,8 +51,20 @@ impl<'db> SalsaImportsResolver<'db> {
 impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
-        let url = resolve_relative_to(&anchor, path)?;
-        let file = self.db.file_by_url(&url)?;
+        let target_path = resolve_relative_to(&anchor, path)?;
+        // TODO: a `source()` target outside every workspace root never becomes
+        // a `File`, so `file_by_path()` misses it and the names it injects stay
+        // invisible. Minting can't happen here, so the work belongs on the
+        // write side in `oak_scan`. We should carry the resolved path on the
+        // directive even when no `File` exists (today the miss returns `None`
+        // and drops it), then have `oak_scan` enumerate source directives after
+        // a scan, mint an `OrphanRoot` `File` from disk for each
+        // out-of-workspace target, and iterate for `source()` chains. A file
+        // watcher is only needed for freshness (re-reading after an external
+        // edit), plus GC to drop the orphan once the directive goes away.
+        // TODO(diagnostics): Until we support out-of-workspace sourced files,
+        // should we at least lint so user knows that we can't analyse the file?
+        let file = self.db.file_by_path(&target_path)?;
 
         let names: Vec<String> = file
             .exports(self.db)
@@ -68,7 +78,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            url: url.as_url().clone(),
+            url: target_path.to_url(),
             names,
             packages,
         })
@@ -81,52 +91,48 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
 /// resolves `source("foo.R")` against `getwd()`, and IDEs (RStudio, Positron)
 /// `setwd()` to the project root, so workspace-root anchoring typically matches
 /// the runtime behaviour.
-fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
+fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<Utf8PathBuf> {
     if let Some(root) = calling_file
         .root(db)
         .filter(|r| r.kind(db) == RootKind::Workspace)
     {
         // Workspace roots are file URLs by construction.
-        return root.path(db).to_file_path().log_err();
+        return root.path(db).as_path().map(Utf8Path::to_path_buf);
     }
 
-    let url = calling_file.url(db);
-    if !url.is_file() {
-        return None;
-    }
-    let calling_path = url.to_file_path().log_err()?;
-    calling_path.parent().map(PathBuf::from)
+    let parent = calling_file.path(db).as_path()?.parent()?;
+    Some(parent.to_path_buf())
 }
 
 /// Resolve `path` (the literal `source("path")` argument) against the anchor
 /// directory. Applies pure `..` / `.` normalisation (no I/O). Returns `None` if
 /// the joined path can't be turned back into a file URL.
-fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<UrlId> {
-    // `from_file_path` failures are expected for ill-formed paths.
+fn resolve_relative_to(anchor_dir: &Utf8Path, path: &str) -> Option<FilePath> {
+    // `Url::from_file_path` failures are expected for ill-formed paths.
     // Drop silently rather than logging noise during discovery.
-    let raw: PathBuf = anchor_dir.join(path);
+    let raw = anchor_dir.join(path);
     let target_path = normalise_path(&raw);
-    let url = Url::from_file_path(&target_path).ok()?;
-    Some(UrlId::from_canonical(url))
+    let url = Url::from_file_path(target_path.as_std_path()).ok()?;
+    Some(FilePath::from_url(&url))
 }
 
 /// Resolve `..` and `.` components in `path` lexically, without
 /// touching the filesystem. Mirrors `Path::canonicalize` minus the
 /// symlink walk. Leading `..` against the root just drops (the root
 /// has no parent).
-fn normalise_path(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
+fn normalise_path(path: &Utf8Path) -> Utf8PathBuf {
+    let mut out = Utf8PathBuf::new();
     for component in path.components() {
         match component {
-            Component::CurDir => {},
-            Component::ParentDir => {
+            Utf8Component::CurDir => {},
+            Utf8Component::ParentDir => {
                 if !out.pop() {
                     // Already at the root (or before the prefix /
                     // root component); leading `..` has nothing to
                     // pop, so drop it.
                 }
             },
-            other => out.push(other.as_os_str()),
+            other => out.push(other.as_str()),
         }
     }
     out

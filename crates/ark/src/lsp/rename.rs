@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
+use aether_path::FilePath;
+use oak_core::identifier::to_identifier_text;
+use oak_db::Db;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::PrepareRenameResponse;
 use tower_lsp::lsp_types::RenameParams;
@@ -17,22 +20,21 @@ pub(crate) fn prepare_rename(
 ) -> anyhow::Result<Option<PrepareRenameResponse>> {
     let uri = params.text_document.uri;
     let position = params.position;
-    let document = state.get_document(&uri)?;
 
-    let offset = from_proto::offset_from_position(
-        position,
-        &document.line_index,
-        document.position_encoding,
-    )?;
-    let index = document.semantic_index();
-    let tree = document.syntax()?;
-    let pos = oak_ide::FilePosition { file: uri, offset };
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
 
-    let Some((range, placeholder)) = oak_ide::prepare_rename(&index, &tree, &pos) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
         return Ok(None);
     };
 
-    let range = to_proto::range(range, &document.line_index, document.position_encoding)?;
+    let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
+
+    let Some((range, placeholder)) = oak_ide::prepare_rename(db, file, offset)? else {
+        return Ok(None);
+    };
+
+    let range = to_proto::range(range, file.line_index(db), encoding)?;
     Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
         range,
         placeholder,
@@ -46,34 +48,31 @@ pub(crate) fn rename(
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
     let new_name = params.new_name;
-    let document = state.get_document(&uri)?;
 
-    let offset = from_proto::offset_from_position(
-        position,
-        &document.line_index,
-        document.position_encoding,
-    )?;
-    let index = document.semantic_index();
-    let root = document.syntax()?;
-    let pos = oak_ide::FilePosition {
-        file: uri.clone(),
-        offset,
+    let db = &state.db;
+    let encoding = state.config.position_encoding;
+
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
+        return Ok(None);
     };
 
-    let targets = oak_ide::rename(&index, &root, &pos, &new_name)?;
+    let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
 
-    // All edits target the current file (intra-file rename).
-    let mut edits: Vec<TextEdit> = Vec::with_capacity(targets.ranges.len());
-    for r in targets.ranges {
-        let range = to_proto::range(r.range, &document.line_index, document.position_encoding)?;
-        edits.push(TextEdit {
-            range,
-            new_text: targets.new_text.clone(),
-        });
-    }
+    // Normalize the new name to its canonical R syntax (backtick-wrapped if
+    // needed) before searching, so an invalid name fails fast.
+    let new_text = to_identifier_text(&new_name)?;
+    let ranges = oak_ide::rename(db, file, offset)?;
 
     let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
-    changes.insert(uri, edits);
+    for range in ranges {
+        let line_index = range.file.line_index(db);
+        let target_url = state.wire_url(range.file);
+        let range = to_proto::range(range.range, line_index, encoding)?;
+        changes.entry(target_url).or_default().push(TextEdit {
+            range,
+            new_text: new_text.clone(),
+        });
+    }
 
     Ok(Some(WorkspaceEdit {
         changes: Some(changes),
