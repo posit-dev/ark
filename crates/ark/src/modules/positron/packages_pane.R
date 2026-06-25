@@ -161,7 +161,12 @@
             return(NULL)
         }
         first <- trimws(strsplit(x, "\\|")[[1]][1])
-        first <- trimws(sub("\\s*\\+\\s*file\\s+.*$", "", first, ignore.case = TRUE))
+        first <- trimws(sub(
+            "\\s*\\+\\s*file\\s+.*$",
+            "",
+            first,
+            ignore.case = TRUE
+        ))
         if (!nzchar(first)) {
             return(NULL)
         }
