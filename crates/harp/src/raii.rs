@@ -133,19 +133,6 @@ impl RLocalSandbox {
             _interrupts_scope: RLocalInterruptsSuspended::new(true),
         }
     }
-
-    /// Like `new()` but leaves interrupts enabled so the sandboxed code can be
-    /// interrupted. We still suspend polled events to avoid re-entering the
-    /// event loop. Use this when running user code that might loop forever
-    /// (e.g. a debugger `evaluate`), so a timeout can break it with an R
-    /// interrupt. The `try_catch()` in `r_sandbox_interruptible()` catches the
-    /// resulting interrupt longjump just like it catches an R error.
-    pub fn interruptible() -> Self {
-        Self {
-            _interrupts_scope: RLocalInterruptsSuspended::new(false),
-            _polled_events_scope: crate::sys::polled_events::RLocalPolledEventsSuspended::new(true),
-        }
-    }
 }
 
 impl RLocalOptionBoolean {

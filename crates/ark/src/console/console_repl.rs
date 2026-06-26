@@ -2579,6 +2579,10 @@ impl Console {
         if let Some(text) = self.debug_filter.check_timeout() {
             self.emit_stdout(text);
         }
+
+        // Interrupt any in-flight evaluation (e.g. a Watch pane expression) that
+        // has outlived its timeout.
+        crate::timeout::check_timeout();
     }
 
     pub(super) fn eval_env(&self) -> RObject {
