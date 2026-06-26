@@ -143,17 +143,6 @@
         trimws(gsub("\\s+", " ", x, perl = TRUE))
     }
 
-    # Parse a comma-separated dependency field into bare package names
-    # (strip version constraints like "(>= 1.0)").
-    parse_deps <- function(x) {
-        if (is.null(x) || is.na(x)) {
-            return(character(0))
-        }
-        parts <- trimws(strsplit(x, ",")[[1]])
-        names <- trimws(sub("\\(.*\\)", "", parts))
-        names[nzchar(names)]
-    }
-
     # Reduce an R License field to its primary license: the first alternative
     # (before "|"), without the "+ file LICENSE" clause.
     primary_license <- function(x) {
@@ -173,15 +162,7 @@
         first
     }
 
-    base_pkgs <- rownames(utils::installed.packages(priority = "base"))
-    deps <- unique(c(
-        parse_deps(d$Depends),
-        parse_deps(d$Imports),
-        parse_deps(d$LinkingTo)
-    ))
-    deps <- setdiff(deps, c("R", base_pkgs))
-
-    out <- list(name = name, dependencyCount = length(deps))
+    out <- list(name = name)
 
     # Prefer Maintainer for author display; fall back to Author.
     author <- clean(d$Maintainer)
