@@ -2727,6 +2727,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_source"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "log",
+ "oak_cache",
+ "oak_fs",
+ "tar",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "oak_sources"
 version = "0.1.0"
 dependencies = [
