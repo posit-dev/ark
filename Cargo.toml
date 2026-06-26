@@ -75,6 +75,7 @@ log = "0.4.29"
 mime_guess = "2.0.5"
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal"] }
 notify = "8.2.0"
+oak_cache = { path = "crates/oak_cache" }
 oak_core = { path = "crates/oak_core" }
 oak_db = { path = "crates/oak_db" }
 oak_fs = { path = "crates/oak_fs" }
