@@ -32,12 +32,12 @@ use stdext::result::ResultExt;
 use crate::dap::dap_notebook;
 use crate::dap::dap_server::DapConsoleEvent;
 use crate::dap::dap_server::DapHandler;
+use crate::dap::dap_server::EvaluateOutcome;
 use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
 use crate::r_task;
-use crate::r_task::TryIdleOutcome;
 use crate::request::RRequest;
 
 pub struct DapJupyterHandler {
@@ -141,30 +141,35 @@ impl DapJupyterHandler {
 
         // This runs only if R is idle. Even though we stopped at some point,
         // causing the Evaluate request, R could be busy evaluating the next
-        // expression already. A runaway expression is interrupted after a
-        // timeout and reported as `TimedOut`.
-        let result = r_task::try_idle_task(move |capture| {
+        // expression already, in which case `try_idle_task()` returns `None`.
+        // `DapHandler::evaluate()` runs the eval under a timeout so a runaway
+        // expression is interrupted and doesn't freeze the kernel.
+        let outcome = r_task::try_idle_task(move |capture| {
             DapHandler::evaluate(&state, &expression, frame_id, capture)
         });
 
-        match result {
-            TryIdleOutcome::Busy => Ok(self.error_response(seq, "evaluate", "R is busy")),
-            TryIdleOutcome::TimedOut => {
-                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
-            },
-            // The task raised an R error, caught by the sandbox on the R thread.
-            TryIdleOutcome::Ran(Err(err)) => {
-                Ok(self.error_response(seq, "evaluate", &format!("{err}")))
-            },
-            TryIdleOutcome::Ran(Ok(Ok(body))) => {
-                let ResponseBody::Evaluate(eval) = body else {
-                    return Err(anyhow::anyhow!("Unexpected response body from evaluate"));
-                };
+        let Some(outcome) = outcome else {
+            return Ok(self.error_response(seq, "evaluate", "R is busy"));
+        };
+
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            // A longjump that escaped `DapHandler::evaluate()`'s own `try_catch`
+            // (e.g. while building the response), caught by the try-idle sandbox.
+            Err(err) => return Ok(self.error_response(seq, "evaluate", &err.to_string())),
+        };
+
+        match outcome {
+            EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
                 Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
             },
-            TryIdleOutcome::Ran(Ok(Err(err))) => {
-                Ok(self.error_response(seq, "evaluate", &format!("{err}")))
+            EvaluateOutcome::Ok(_) => {
+                Err(anyhow::anyhow!("Unexpected response body from evaluate"))
             },
+            EvaluateOutcome::TimedOut => {
+                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
+            },
+            EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
         }
     }
 

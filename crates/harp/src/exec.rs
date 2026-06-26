@@ -513,26 +513,6 @@ where
     try_catch(f)
 }
 
-/// Like `r_sandbox()` but keeps interrupts enabled so `f` can be interrupted.
-///
-/// An interrupt unwinds R back to the `try_catch()` boundary here, surfacing as
-/// an `Err` just like an R error would. That's how a watchdog can break out of
-/// runaway user code (e.g. an infinite loop in a debugger `evaluate`) by raising
-/// an interrupt after a timeout.
-///
-/// As with `r_sandbox()`, Rust objects with `Drop` must live outside the
-/// closure: the interrupt longjump bypasses destructors on the stack between
-/// the R interrupt check and this `setjmp`.
-pub fn r_sandbox_interruptible<'env, F, T>(f: F) -> Result<T>
-where
-    F: FnOnce() -> T,
-    F: 'env,
-    T: 'env,
-{
-    let _scope = crate::raii::RLocalSandbox::interruptible();
-    try_catch(f)
-}
-
 /// Unwrap Rust error and throw as R error
 ///
 /// Takes a lambda returning a `Result`. On error, converts the Rust error
