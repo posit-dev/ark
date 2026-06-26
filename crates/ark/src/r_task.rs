@@ -15,9 +15,12 @@ use std::time::Duration;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendTimeoutError;
 use crossbeam::channel::Sender;
+use harp::exec::r_sandbox;
 #[cfg(debug_assertions)]
 use libr::SEXP;
+use stdext::result::ResultExt;
 use uuid::Uuid;
 
 use crate::console::Console;
@@ -33,6 +36,17 @@ static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 /// Task channels for idle tasks that run at any idle prompt (top-level or browser)
 static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
+/// Rendezvous channel for try-idle tasks. `bounded(0)` means `try_send`
+/// succeeds only when the receiver is already parked in `Select`, giving
+/// an atomic check-and-wake with no race window.
+static TRY_IDLE: LazyLock<TryIdleChannels> = LazyLock::new(|| {
+    let (tx, rx) = bounded::<TryIdleTask>(0);
+    TryIdleChannels {
+        tx,
+        rx: Mutex::new(Some(rx)),
+    }
+});
+
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -43,6 +57,15 @@ type SharedOption<T> = Arc<Mutex<Option<T>>>;
 struct TaskChannels {
     tx: Sender<QueuedRTask>,
     rx: Mutex<Option<Receiver<QueuedRTask>>>,
+}
+
+struct TryIdleChannels {
+    tx: Sender<TryIdleTask>,
+    rx: Mutex<Option<Receiver<TryIdleTask>>>,
+}
+
+pub(crate) struct TryIdleTask {
+    pub(crate) fun: Box<dyn FnOnce(&mut ConsoleOutputCapture) + Send>,
 }
 
 impl TaskChannels {
@@ -64,19 +87,74 @@ impl TaskChannels {
     }
 }
 
-/// Returns receivers for interrupt, idle, and debug-idle tasks.
+/// Returns receivers for interrupt, idle, debug-idle, and try-idle tasks.
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `Console` during init).
 pub(crate) fn take_receivers() -> (
     Receiver<QueuedRTask>,
     Receiver<QueuedRTask>,
     Receiver<QueuedRTask>,
+    Receiver<TryIdleTask>,
 ) {
     (
         INTERRUPT_TASKS.take_rx(),
         IDLE_TASKS.take_rx(),
         IDLE_ANY_TASKS.take_rx(),
+        TRY_IDLE.rx.lock().unwrap().take().unwrap(),
     )
+}
+
+/// An idle R is not parked in its event loop continuously. It wakes every 50ms
+/// for the polled-events tick (see `console_repl.rs`), runs the events, then
+/// re-enters the `Select`. It also has a short gap right after an execution
+/// while it sends the idle status and rebuilds the `Select`. We wait longer
+/// than one tick to give a chance to ReadConsole to pick up the TryIdle task.
+const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Attempt to run `f` on the R thread if it is currently idle at a prompt.
+///
+/// Returns `None` if R was busy. Otherwise returns `Some` with the outcome:
+/// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
+///
+/// On the bounded(0) channel, `send_timeout` only hands off the task when the
+/// event loop's `Select` is parked receiving, so the task runs iff R is idle.
+/// Waiting up to `TRY_IDLE_TIMEOUT`.
+pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
+where
+    F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let result: SharedOption<harp::Result<T>> = Arc::new(Mutex::new(None));
+    let (done_tx, done_rx) = bounded::<()>(1);
+
+    let result_clone = Arc::clone(&result);
+    let task = TryIdleTask {
+        fun: Box::new(move |capture| {
+            // Run `f` inside `r_sandbox` so an R error longjumps back to here
+            // rather than unwinding past this frame. The `done` signal must
+            // stay outside the sandbox: a longjump skips everything between
+            // the error and the sandbox `setjmp`, so signalling inside would
+            // strand the caller forever in `recv()`.
+            let res = r_sandbox(|| f(capture));
+            *result_clone.lock().unwrap() = Some(res);
+            let _ = done_tx.send(());
+        }),
+    };
+
+    // Hand the task to the Console idle event loop. This only succeeds if the
+    // event loop parks in its `Select` within the timeout.
+    match TRY_IDLE.tx.send_timeout(task, TRY_IDLE_TIMEOUT) {
+        Ok(()) => {},
+        Err(SendTimeoutError::Timeout(_)) => return None,
+        Err(SendTimeoutError::Disconnected(_)) => {
+            log::error!("`try_idle_task`: `TRY_IDLE` is disconnected");
+            return None;
+        },
+    }
+
+    done_rx.recv().log_err()?;
+    let out = result.lock().unwrap().take();
+    out
 }
 
 pub enum QueuedRTask {

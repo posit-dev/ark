@@ -640,32 +640,6 @@ impl Dap {
         }
     }
 
-    pub(crate) fn evaluate(
-        &self,
-        expression: &str,
-        frame_id: Option<i64>,
-        capture: Option<&mut ConsoleOutputCapture>,
-    ) -> Result<RVariable, String> {
-        let env = self.frame_env(frame_id)?;
-
-        match harp::parse_eval0(expression, harp::RObject::view(env)) {
-            Ok(value) => {
-                if let Some(capture) = capture {
-                    harp::utils::r_print(value.sexp);
-                    Ok(RVariable {
-                        name: String::new(),
-                        value: capture.take().trim_end().to_string(),
-                        type_field: None,
-                        variables_reference_object: None,
-                    })
-                } else {
-                    Ok(object_variable(String::new(), value.sexp))
-                }
-            },
-            Err(err) => Err(evaluate_error_message(err)),
-        }
-    }
-
     pub(crate) fn frame_env(&self, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
         let Some(frame_id) = frame_id else {
             return Ok(R_ENVS.global);
@@ -906,6 +880,37 @@ impl Dap {
         };
         bp.hit_count += 1;
         bp.hit_count
+    }
+
+    /// Evaluate `expression` in `env` and build a DAP variable from the result.
+    ///
+    /// Takes a bare `env` SEXP rather than `&Dap` so the caller can resolve the
+    /// frame environment under the `Dap` lock and release it before calling
+    /// here. The lock must not be held across this call: evaluating user code
+    /// can re-enter the debugger (a breakpoint or `browser()` fires), which
+    /// locks the same `Dap` again and would deadlock.
+    pub(crate) fn evaluate(
+        expression: &str,
+        env: libr::SEXP,
+        capture: Option<&mut ConsoleOutputCapture>,
+    ) -> anyhow::Result<RVariable> {
+        match harp::parse_eval0(expression, harp::RObject::view(env)) {
+            Ok(value) => {
+                if let Some(capture) = capture {
+                    harp::utils::r_print(&value)
+                        .map_err(|err| anyhow!(evaluate_error_message(err)))?;
+                    Ok(RVariable {
+                        name: String::new(),
+                        value: capture.take().trim_end().to_string(),
+                        type_field: None,
+                        variables_reference_object: None,
+                    })
+                } else {
+                    Ok(object_variable(String::new(), value.sexp))
+                }
+            },
+            Err(err) => Err(anyhow!(evaluate_error_message(err))),
+        }
     }
 }
 

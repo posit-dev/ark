@@ -43,6 +43,7 @@ use super::dap_state::Dap;
 use super::dap_state::DapBackendEvent;
 use super::dap_state::THREAD_ID;
 use crate::console::Console;
+use crate::console::ConsoleOutputCapture;
 use crate::console::FrameInfo;
 use crate::console::FrameSource;
 use crate::dap::dap_variables::object_variables;
@@ -124,8 +125,10 @@ impl DapHandler {
 
     /// Dispatch a parsed DAP request to the appropriate handler.
     ///
-    /// `Evaluate` is intentionally not handled here because it requires
-    /// transport-specific async response delivery.
+    /// `Evaluate` is not handled here because `dispatch()` returns
+    /// synchronously, while Evaluate requires an async round-trip through the
+    /// R thread. Each transport calls [`DapHandler::evaluate()`] directly
+    /// inside its own async mechanism.
     pub fn dispatch(&self, req: Request) -> DapOutput {
         let cmd = req.command.clone();
 
@@ -462,8 +465,10 @@ impl DapHandler {
         drop(state);
 
         let console_events = if is_debugging {
+            log::trace!("DAP: Disconnect while debugging, injecting `Quit` to exit the browser");
             vec![DapConsoleEvent::DebugCommand(DebugRequest::Quit)]
         } else {
+            log::trace!("DAP: Disconnect while not debugging, no `Quit` needed");
             vec![]
         };
 
@@ -667,6 +672,52 @@ impl DapHandler {
             dap_events: vec![],
             console_events: vec![DapConsoleEvent::Interrupt],
         })
+    }
+
+    /// Core evaluate logic, must be called on the R thread.
+    pub(crate) fn evaluate(
+        state: &Mutex<Dap>,
+        expression: &str,
+        frame_id: Option<i64>,
+        capture: &mut ConsoleOutputCapture,
+    ) -> anyhow::Result<ResponseBody> {
+        if expression == SELECTED_FRAME_EXPRESSION {
+            log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
+            Console::get_mut().set_debug_selected_frame_id(frame_id);
+            return Ok(ResponseBody::Evaluate(EvaluateResponse {
+                result: String::new(),
+                type_field: None,
+                presentation_hint: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            }));
+        }
+
+        let (expr, print) = match expression.strip_prefix("/print ") {
+            Some(expr) => (expr, true),
+            None => (expression, false),
+        };
+
+        // Resolve the frame environment under the lock, then release it before
+        // evaluating. The `Dap` lock must not be held across R evaluation: an R
+        // error longjumps over this frame and skips the guard's `Drop`, which
+        // would leave the mutex locked forever. The env stays valid without the
+        // lock because its owning `RObject` remains in the state's map, which
+        // only the R thread mutates.
+        let env = state
+            .lock()
+            .unwrap()
+            .frame_env(frame_id)
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+
+        let capture = if print { Some(capture) } else { None };
+        let variable = Dap::evaluate(expr, env, capture)?;
+        log::trace!("DAP: Evaluate completed");
+
+        let response = state.lock().unwrap().into_evaluate_response(variable);
+        Ok(ResponseBody::Evaluate(response))
     }
 }
 
@@ -960,36 +1011,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
         r_task::spawn(RTask::send_idle_any_prompt(async move |mut capture| {
             log::trace!("DAP: Idle task started for evaluate");
 
-            // If expression starts with "/print ", evaluate and print result
-            let (expr, print) = match expression.strip_prefix("/print ") {
-                Some(expr) => (expr, true),
-                None => (expression.as_str(), false),
-            };
-
-            let rsp = if expression == SELECTED_FRAME_EXPRESSION {
-                log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
-                Console::get_mut().set_debug_selected_frame_id(frame_id);
-                req.success(ResponseBody::Evaluate(EvaluateResponse {
-                    result: String::new(),
-                    type_field: None,
-                    presentation_hint: None,
-                    variables_reference: 0,
-                    named_variables: None,
-                    indexed_variables: None,
-                    memory_reference: None,
-                }))
-            } else {
-                let capture = if print { Some(&mut capture) } else { None };
-                let result = state.lock().unwrap().evaluate(expr, frame_id, capture);
-                log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
-
-                match result {
-                    Ok(variable) => {
-                        let response = state.lock().unwrap().into_evaluate_response(variable);
-                        req.success(ResponseBody::Evaluate(response))
-                    },
-                    Err(err) => req.error(&format!("Error: {err}")),
-                }
+            let rsp = match DapHandler::evaluate(&state, &expression, frame_id, &mut capture) {
+                Ok(body) => req.success(body),
+                Err(err) => req.error(&format!("Error: {err}")),
             };
 
             responses_tx.send(rsp).log_err();
