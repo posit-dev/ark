@@ -12,133 +12,121 @@
 //! the outside other than an interrupt, which R polls for at loop iterations and
 //! other check points.
 //!
-//! [`InterruptTimeout`] pairs a waiter on the spawning thread with a runner on
-//! the R thread. The runner executes the work in an interruptible sandbox and
-//! signals when it's done. The waiter blocks on that signal, and if the work
-//! outlasts the timeout it asks R to interrupt itself (SIGINT on Unix,
-//! `UserBreak` on Windows). The interrupt unwinds R back to the nearest
-//! `try_catch`, which surfaces it as an error.
+//! Instead of watching the clock from another thread, we piggyback on R's own
+//! polled-events handler and call [`check_timeout()`] there. The interrupt
+//! unwinds R back to the nearest `try_catch`, which surfaces it as an error.
+//!
+//! FIXME: This is unix-only: on Windows R's process-events callback is a no-op
+//! (see `sys::windows::console`), so the handler never fires mid-computation
+//! and the deadline is never checked. Fixed by https://github.com/posit-dev/ark/pull/1222.
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::cell::Cell;
 use std::time::Duration;
+use std::time::Instant;
 
-use crossbeam::channel::bounded;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::RecvTimeoutError;
-use crossbeam::channel::Sender;
-use harp::exec::r_sandbox_interruptible;
-use stdext::result::ResultExt;
+use harp::raii::RLocalInterruptsSuspended;
 
-type SharedOption<T> = Arc<Mutex<Option<T>>>;
+/// How long an evaluation in `with_timeout()` may run before we interrupt it.
+pub(crate) const EVAL_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// The spawning-thread half of the timeout. See the [module docs](self).
+// These variables are thread-local to provide safe lock-free interior
+// mutability on the R thread
+thread_local! {
+    /// When the in-flight evaluation should be interrupted, if it's still
+    /// running. Set by `with_timeout()`, read by `check_timeout()`.
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+
+    /// Set by `check_timeout()` when it trips the interrupt, read by
+    /// `with_timeout()` which reports the timeout.
+    static TIMED_OUT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f` on the R thread, interrupting it if it outlasts `timeout`.
 ///
-/// Create the pair with [`InterruptTimeout::new`], move the [`InterruptRunner`]
-/// onto the R thread and call [`InterruptRunner::run`] there, and call
-/// [`InterruptTimeout::wait`] on the spawning thread.
-pub(crate) struct InterruptTimeout<T> {
-    timeout: Duration,
-    done_rx: Receiver<()>,
-    result: SharedOption<harp::Result<T>>,
-    /// Shared with the runner so it can tell whether we asked for an interrupt
-    /// and clear a stray one. An `Arc` rather than a global keeps it scoped to
-    /// this one task.
-    requested: Arc<AtomicBool>,
-}
+/// `f` runs in `try_catch()` with interrupts and polled events enabled so
+/// `check_timeout()` can fire at interrupt time and the resulting interrupt can
+/// longjump.
+///
+/// Note that the longjump is either caught by our `try_catch()`, or a
+/// `try_catch()` inside `f`. An alternative approach would be to try and
+/// propagate the interrupt with a Rust panic, but that needs to be carefully
+/// engineered. Be aware that because of the approach taken here, it's possible
+/// for code inside `f` to try and recover from Rust errors
+/// (`harp::Error::TopLevelExecError`) caused by the cancellation interrupt.
+///
+/// Returns `f`'s value wrapped in the `try_catch()` result and a boolean
+/// indicating whether the timeout fired.
+///
+/// Must run on the R thread.
+pub(crate) fn with_timeout<F, T>(timeout: Duration, f: F) -> (harp::Result<T>, bool)
+where
+    F: FnOnce() -> T,
+{
+    // Save and restore so a nested evaluation doesn't clobber an outer deadline.
+    let old_deadline = DEADLINE.replace(Some(Instant::now() + timeout));
+    let old_timed_out = TIMED_OUT.replace(false);
 
-/// The R-thread half of an [`InterruptTimeout`].
-pub(crate) struct InterruptRunner<T> {
-    done_tx: Sender<()>,
-    result: SharedOption<harp::Result<T>>,
-    requested: Arc<AtomicBool>,
-}
+    let res = try_catch_with_timeout(f);
 
-pub(crate) enum InterruptOutcome<T> {
-    /// The work signalled completion within the timeout.
-    Completed(harp::Result<T>),
-    /// The work outlasted the timeout and was interrupted.
-    TimedOut,
-    /// The runner went away without signalling (e.g. the event loop shut down).
-    Disconnected,
-}
+    let timed_out = TIMED_OUT.get();
 
-impl<T> InterruptTimeout<T> {
-    pub(crate) fn new(timeout: Duration) -> (Self, InterruptRunner<T>) {
-        let result: SharedOption<harp::Result<T>> = Arc::new(Mutex::new(None));
-        let requested = Arc::new(AtomicBool::new(false));
-        let (done_tx, done_rx) = bounded::<()>(1);
-
-        let waiter = Self {
-            timeout,
-            done_rx,
-            result: Arc::clone(&result),
-            requested: Arc::clone(&requested),
-        };
-        let runner = InterruptRunner {
-            done_tx,
-            result,
-            requested,
-        };
-        (waiter, runner)
+    // If `check_timeout()` tripped the interrupt but `f` finished before R
+    // acted on it, a stray interrupt is left pending. Clear it here so it can't
+    // fire on a later evaluation.
+    if timed_out {
+        crate::signals::set_interrupts_pending(false);
     }
 
-    /// Block until the runner signals completion. If that takes longer than the
-    /// timeout, ask R to interrupt itself and wait for the resulting unwind.
-    ///
-    /// We trust the timeout to label the outcome rather than inspecting the
-    /// result: an inner `try_catch` (e.g. in `parse_eval0`) often catches the
-    /// interrupt and turns it into an ordinary error, so the result alone can't
-    /// tell a timeout apart from a regular failure.
-    pub(crate) fn wait(self) -> InterruptOutcome<T> {
-        match self.done_rx.recv_timeout(self.timeout) {
-            Ok(()) => {},
-            Err(RecvTimeoutError::Timeout) => {
-                // Set the flag before requesting the interrupt so the runner can
-                // recognise our request and clean up after it.
-                self.requested.store(true, Ordering::SeqCst);
-                crate::sys::control::handle_interrupt_request();
-                if self.done_rx.recv().log_err().is_none() {
-                    return InterruptOutcome::Disconnected;
-                }
-                return InterruptOutcome::TimedOut;
-            },
-            Err(RecvTimeoutError::Disconnected) => return InterruptOutcome::Disconnected,
-        }
+    DEADLINE.set(old_deadline);
+    TIMED_OUT.set(old_timed_out);
 
-        let out = self.result.lock().unwrap().take();
-        match out {
-            Some(res) => InterruptOutcome::Completed(res),
-            None => InterruptOutcome::Disconnected,
-        }
+    (res, timed_out)
+}
+
+/// Called from the polled-events handler at R's interrupt check points. If the
+/// in-flight evaluation has outlived its deadline, ask R to interrupt itself.
+/// Runs on the R thread.
+pub(crate) fn check_timeout() {
+    if TIMED_OUT.get() {
+        // Already tripped, don't ask twice
+        return;
+    }
+    let Some(deadline) = DEADLINE.get() else {
+        // No evaluation under a timeout
+        return;
+    };
+    if Instant::now() >= deadline {
+        TIMED_OUT.set(true);
+        crate::signals::set_interrupts_pending(true);
     }
 }
 
-impl<T> InterruptRunner<T> {
-    /// Run `f` interruptibly on the R thread, store its result, and signal the
-    /// waiter. Must be called on the R thread.
-    pub(crate) fn run<F>(self, f: F)
-    where
-        F: FnOnce() -> T,
-    {
-        // Run `f` in an interruptible sandbox so an R error or a timeout
-        // interrupt longjumps back to here rather than unwinding past this
-        // frame. The `done` signal must stay outside the sandbox: a longjump
-        // skips everything between the error and the sandbox `setjmp`, so
-        // signalling inside would strand the waiter forever in `recv()`.
-        let res = r_sandbox_interruptible(f);
+/// Run `f` in a `try_catch` with interrupts and polled events live.
+///
+/// An outer sandbox (ReadConsole, or the task executor) suspends both; we
+/// re-enable them so the watchdog runs during `f` and the interrupt it trips can
+/// longjump. On Windows there's no polled-events handler to re-enable, so `f`
+/// runs interruptible but unwatched.
+#[cfg(unix)]
+fn try_catch_with_timeout<F, T>(f: F) -> harp::Result<T>
+where
+    F: FnOnce() -> T,
+{
+    let _interrupts = RLocalInterruptsSuspended::new(false);
+    // Re-enable Ark's polled-events handler so `check_timeout()` runs during `f`.
+    let _polled = harp::raii::RLocal::new(
+        Some(crate::console::r_polled_events as unsafe extern "C-unwind" fn()),
+        unsafe { libr::R_PolledEvents },
+    );
+    harp::try_catch(f)
+}
 
-        // If the waiter asked for a timeout interrupt but `f` finished just
-        // before R acted on it, a stray interrupt is left pending. Clear it
-        // here, on the R thread (the only safe place to touch it), so it can't
-        // fire on a later evaluation.
-        if self.requested.swap(false, Ordering::SeqCst) {
-            crate::signals::set_interrupts_pending(false);
-        }
-
-        *self.result.lock().unwrap() = Some(res);
-        let _ = self.done_tx.send(());
-    }
+#[cfg(not(unix))]
+fn try_catch_with_timeout<F, T>(f: F) -> harp::Result<T>
+where
+    F: FnOnce() -> T,
+{
+    // TODO: Update after https://github.com/posit-dev/ark/pull/1222 is merged
+    let _interrupts = RLocalInterruptsSuspended::new(false);
+    harp::try_catch(f)
 }

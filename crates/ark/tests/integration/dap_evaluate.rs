@@ -428,6 +428,43 @@ fn test_dap_evaluate_erroring_print_does_not_deadlock() {
     dap.recv_continued();
 }
 
+/// The watch pane evaluates expressions while stopped in a frame. A runaway
+/// expression there (`repeat 1`) must time out and leave the debug session
+/// intact rather than freezing the kernel. This is the console (TCP) path; the
+/// notebook path is checked in `test_notebook_watch_pane_infloop_times_out`.
+/// https://github.com/posit-dev/positron/issues/14481
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_dap_evaluate_infloop_times_out() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+local({
+  x <- 42
+  browser()
+})
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+
+    // `repeat 1` never returns. The kernel must interrupt it after the timeout.
+    let err = dap.evaluate_error("repeat 1", Some(frame_id));
+    assert!(err.contains("timed out"), "got: {err}");
+
+    // The session survived the interrupt: a normal watch expression in the same
+    // frame still resolves.
+    let result = dap.evaluate("x", Some(frame_id));
+    assert_eq!(result, "42");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
 #[test]
 fn test_dap_evaluate_unknown_frame_id() {
     let frontend = DummyArkFrontend::lock();
