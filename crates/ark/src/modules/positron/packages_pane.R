@@ -115,6 +115,85 @@
     as.list(version)
 }
 
+# Return detail fields for a single installed package by name.
+#' @export
+.ps.rpc.pkg_detail <- function(name) {
+    installed <- rownames(utils::installed.packages())
+    if (!nzchar(name) || !(name %in% installed)) {
+        return(NULL)
+    }
+    fields <- c(
+        "Title",
+        "Author",
+        "Maintainer",
+        "License",
+        "Depends",
+        "Imports",
+        "LinkingTo",
+        "Repository",
+        "Date/Publication"
+    )
+    d <- utils::packageDescription(name, fields = fields)
+
+    # Collapse DCF whitespace; return NULL for missing (NA) fields.
+    clean <- function(x) {
+        if (is.null(x) || is.na(x)) {
+            return(NULL)
+        }
+        trimws(gsub("\\s+", " ", x, perl = TRUE))
+    }
+
+    # Reduce an R License field to its primary license: the first alternative
+    # (before "|"), without the "+ file LICENSE" clause.
+    primary_license <- function(x) {
+        if (is.null(x)) {
+            return(NULL)
+        }
+        first <- trimws(strsplit(x, "\\|")[[1]][1])
+        first <- trimws(sub(
+            "\\s*\\+\\s*file\\s+.*$",
+            "",
+            first,
+            ignore.case = TRUE
+        ))
+        if (!nzchar(first)) {
+            return(NULL)
+        }
+        first
+    }
+
+    out <- list(name = name)
+
+    # Prefer Maintainer for author display; fall back to Author.
+    author <- clean(d$Maintainer)
+    if (is.null(author)) {
+        author <- clean(d$Author)
+    }
+    title <- clean(d$Title)
+    license <- primary_license(clean(d$License))
+    repo <- clean(d$Repository)
+    published <- clean(d[["Date/Publication"]])
+
+    if (!is.null(title)) {
+        out$title <- title
+    }
+    if (!is.null(author)) {
+        out$author <- author
+    }
+    if (!is.null(license)) {
+        out$license <- license
+    }
+    if (!is.null(repo)) {
+        out$sourceRepository <- repo
+    }
+    if (!is.null(published)) {
+        out$publishedDate <- published
+    }
+
+    out
+}
+
+
 # Return the list of outdated packages with their latest available versions.
 #
 # `utils::old.packages()` queries the user's configured repositories, so
