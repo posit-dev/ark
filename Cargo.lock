@@ -2762,6 +2762,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_srcref"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "log",
+ "oak_cache",
+ "oak_fs",
+ "oak_r_process",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
