@@ -1,3 +1,4 @@
 {
-    "recommendations": ["Posit.air-vscode"]
+    "recommendations": ["Posit.air-vscode"],
+    "unwantedRecommendations": ["reditorsupport.r"]
 }
