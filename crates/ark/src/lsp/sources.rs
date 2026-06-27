@@ -23,6 +23,7 @@ pub(crate) trait SourceHandler: Send + Sync {
 pub(crate) struct SourceRequest {
     name: String,
     version: String,
+    built: String,
     library_path: PathBuf,
 }
 
@@ -139,6 +140,13 @@ impl SourceRequest {
             ));
         };
 
+        let Some(built) = package.built(db).to_owned() else {
+            // Only ever runs on installed packages, which always carry a `Built:` field
+            return Err(anyhow::anyhow!(
+                "Package {name} is missing a `Built` field to provide sources for."
+            ));
+        };
+
         let library_path = match package.description_path(db) {
             FilePath::File(path) => {
                 match path.as_path().as_std_path().parent().and_then(Path::parent) {
@@ -160,6 +168,7 @@ impl SourceRequest {
         Ok(Self {
             name,
             version,
+            built,
             library_path,
         })
     }
@@ -174,6 +183,12 @@ impl SourceRequest {
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn version(&self) -> &str {
         &self.version
+    }
+
+    // TODO!: Remove when we have a production `SourceHandler`
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn built(&self) -> &str {
+        &self.built
     }
 
     // TODO!: Remove when we have a production `SourceHandler`

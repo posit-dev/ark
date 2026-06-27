@@ -1610,6 +1610,7 @@ foo
                 imports: vec![],
                 repository: None,
                 priority: None,
+                built: None,
                 fields: Dcf::new(),
             };
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
@@ -1705,6 +1706,7 @@ foo
                 imports: vec![],
                 repository: None,
                 priority: None,
+                built: None,
                 fields: Dcf::new(),
             };
             let package1 =
@@ -1723,6 +1725,7 @@ foo
                 imports: vec![],
                 repository: None,
                 priority: None,
+                built: None,
                 fields: Dcf::new(),
             };
             let package2 =
@@ -1782,6 +1785,7 @@ foo
                 imports: vec![],
                 repository: None,
                 priority: None,
+                built: None,
                 fields: Dcf::new(),
             };
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);

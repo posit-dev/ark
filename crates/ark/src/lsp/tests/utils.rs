@@ -46,7 +46,7 @@ pub(super) fn write_description(dir: &Path, name: &str) {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(
         dir.join("DESCRIPTION"),
-        format!("Package: {name}\nVersion: 0.0.0\n"),
+        format!("Package: {name}\nVersion: 0.0.0\nBuilt: dummy\n"),
     )
     .unwrap();
 }
