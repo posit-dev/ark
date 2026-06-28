@@ -6,6 +6,9 @@ use std::sync::Arc;
 use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::Package;
+use oak_db::Priority;
+use oak_source::SourceCache;
+use oak_srcref::SrcrefCache;
 use stdext::result::ResultExt;
 
 use crate::lsp::main_loop::Event;
@@ -19,16 +22,97 @@ pub(crate) trait SourceHandler: Send + Sync {
     fn handle(&self, request: &SourceRequest) -> SourceResponse;
 }
 
+/// The production [`SourceHandler`]
+///
+/// Recovers a package's R sources in the following order:
+/// - Base packages come from a downloaded CRAN's R source tarball
+/// - CRAN packages come from:
+///   - A local `srcref`, if available
+///   - A downloaded CRAN package tarball
+pub(crate) struct OakSourceHandler {
+    srcref: SrcrefCache,
+    source: SourceCache,
+}
+
+impl OakSourceHandler {
+    /// Build the handler, opening both caches against the shared on disk cache
+    pub(crate) fn new(r: PathBuf) -> anyhow::Result<Self> {
+        Ok(Self {
+            srcref: SrcrefCache::new(r)?,
+            source: SourceCache::new()?,
+        })
+    }
+
+    /// Build the handler with both caches rooted under `root`, so tests don't touch the
+    /// real on disk cache
+    #[cfg(test)]
+    pub(crate) fn new_in(root: &Path, r: PathBuf) -> anyhow::Result<Self> {
+        Ok(Self {
+            srcref: SrcrefCache::new_in(root.join("srcref"), r)?,
+            source: SourceCache::new_in(root.join("source"))?,
+        })
+    }
+}
+
+impl SourceHandler for OakSourceHandler {
+    fn handle(&self, request: &SourceRequest) -> SourceResponse {
+        let name = request.name();
+        let version = request.version();
+
+        // Base packages only exist in the R version source tarball, served from one
+        // download shared across all of them
+        if matches!(request.priority(), Some(Priority::Base)) {
+            return self
+                .source
+                .get_r(version)
+                .or_else(|| self.source.insert_r(version))
+                .map(|root| SourceResponse::Success(r_dir_for_base(&root, name)))
+                .unwrap_or(SourceResponse::Failure);
+        }
+
+        // Try to "get" from all sources before doing an expensive "insert"
+        if let Some(dir) = self.srcref.get(name, version, request.built()) {
+            return SourceResponse::Success(dir);
+        }
+        if let Some(root) = self.source.get_cran(name, version) {
+            return SourceResponse::Success(r_dir_for_cran(&root));
+        }
+
+        // Prefer `srcref` to CRAN download since it doesn't require internet and would
+        // be an exact match to the installed package
+        if let Some(dir) =
+            self.srcref
+                .insert(name, version, request.built(), request.library_path())
+        {
+            return SourceResponse::Success(dir);
+        }
+        if let Some(root) = self.source.insert_cran(name, version) {
+            return SourceResponse::Success(r_dir_for_cran(&root));
+        }
+
+        SourceResponse::Failure
+    }
+}
+
+/// Find `R/` from a CRAN package tarball
+fn r_dir_for_cran(root: &Path) -> PathBuf {
+    root.join("R")
+}
+
+/// Find `R/` from a R source tarball for a base package
+fn r_dir_for_base(root: &Path, name: &str) -> PathBuf {
+    root.join("src").join("library").join(name).join("R")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SourceRequest {
     name: String,
     version: String,
     built: String,
+    priority: Option<Priority>,
     library_path: PathBuf,
 }
 
-// TODO!: Remove when we have a production `SourceHandler`
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Debug)]
 pub(crate) enum SourceResponse {
     Success(PathBuf),
@@ -56,7 +140,6 @@ enum SourceState {
 }
 
 pub(crate) struct SourceScheduler {
-    // TODO!: Remove the `Option<>` when we implement a production `SourceHandler`
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
 }
@@ -147,6 +230,8 @@ impl SourceRequest {
             ));
         };
 
+        let priority = package.priority(db).clone();
+
         let library_path = match package.description_path(db) {
             FilePath::File(path) => {
                 match path.as_path().as_std_path().parent().and_then(Path::parent) {
@@ -169,30 +254,27 @@ impl SourceRequest {
             name,
             version,
             built,
+            priority,
             library_path,
         })
     }
 
-    // TODO!: Remove when we have a production `SourceHandler`
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
-    // TODO!: Remove when we have a production `SourceHandler`
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn version(&self) -> &str {
         &self.version
     }
 
-    // TODO!: Remove when we have a production `SourceHandler`
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn built(&self) -> &str {
         &self.built
     }
 
-    // TODO!: Remove when we have a production `SourceHandler`
-    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn priority(&self) -> Option<&Priority> {
+        self.priority.as_ref()
+    }
+
     pub(crate) fn library_path(&self) -> &Path {
         &self.library_path
     }
