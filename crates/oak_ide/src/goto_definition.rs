@@ -1,7 +1,9 @@
 use biome_rowan::TextSize;
 use oak_db::Db;
+use oak_db::Definition;
 use oak_db::File;
 use oak_db::Identifier;
+use oak_db::PackageVisibility;
 
 use crate::NavigationTarget;
 
@@ -19,20 +21,34 @@ use crate::NavigationTarget;
 /// snapped offset `resolve_at` expects. A member name (`$`/`@` RHS) has no
 /// binding to jump to, so it yields nothing.
 pub fn goto_definition(db: &dyn Db, file: File, offset: TextSize) -> Vec<NavigationTarget> {
-    let Some(Identifier::Variable { range, .. }) = Identifier::classify(db, file, offset) else {
-        return Vec::new();
+    let defs = match Identifier::classify(db, file, offset) {
+        Some(Identifier::Variable { range, .. }) => file.resolve_at(db, range.start()),
+        // TODO!: classify_namespace should tell you if its `::` or `:::` for `PackageVisibility`
+        Some(Identifier::NamespaceAccess {
+            namespace, name, ..
+        }) => db
+            .package_by_name(namespace.text(db).as_str())
+            .map(|package| package.resolve(db, name, PackageVisibility::Internal))
+            .unwrap_or_default(),
+        Some(Identifier::Member { .. }) => return Vec::new(),
+        None => return Vec::new(),
     };
 
-    file.resolve_at(db, range.start())
-        .into_iter()
-        .filter_map(|def| {
-            let range = def.name_range(db)?;
-            Some(NavigationTarget {
-                file: def.file(db),
-                name: def.name(db).text(db).to_string(),
-                full_range: range,
-                focus_range: range,
-            })
-        })
+    defs.into_iter()
+        .filter_map(|def| navigation_target(db, def))
         .collect()
+}
+
+/// Describe where `def` lives, in its own file's coordinates.
+///
+/// `None` when the definition has no name range to focus (e.g. a synthesized
+/// binding), in which case there's nothing to jump to.
+fn navigation_target(db: &dyn Db, def: Definition) -> Option<NavigationTarget> {
+    let range = def.name_range(db)?;
+    Some(NavigationTarget {
+        file: def.file(db),
+        name: def.name(db).text(db).to_string(),
+        full_range: range,
+        focus_range: range,
+    })
 }
