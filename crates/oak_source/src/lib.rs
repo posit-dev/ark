@@ -41,8 +41,17 @@ pub struct SourceCache {
 impl SourceCache {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
-            cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"), CRAN_CAPACITY)?,
-            r: Cache::open(&format!("source/{CACHE_VERSION}/r"), R_CAPACITY)?,
+            cran: Cache::new(&format!("source/{CACHE_VERSION}/cran"), CRAN_CAPACITY)?,
+            r: Cache::new(&format!("source/{CACHE_VERSION}/r"), R_CAPACITY)?,
+        })
+    }
+
+    /// Like [`SourceCache::new`], but rooted at an explicit `root` rather than the shared
+    /// cache directory. Only useful for testing against a temp directory.
+    pub fn new_in(root: PathBuf) -> anyhow::Result<Self> {
+        Ok(Self {
+            cran: Cache::new_in(root.join("cran"), CRAN_CAPACITY)?,
+            r: Cache::new_in(root.join("r"), R_CAPACITY)?,
         })
     }
 
@@ -85,26 +94,15 @@ impl SourceCache {
 
 #[cfg(test)]
 mod tests {
-    use oak_cache::Cache;
     use tempfile::TempDir;
 
     use crate::SourceCache;
-    use crate::CRAN_CAPACITY;
-    use crate::R_CAPACITY;
-
-    /// A `SourceCache` rooted in a temp dir so tests don't touch the real cache.
-    fn source_in(dir: &TempDir) -> SourceCache {
-        SourceCache {
-            cran: Cache::open_in(dir.path().join("cran"), CRAN_CAPACITY).unwrap(),
-            r: Cache::open_in(dir.path().join("r"), R_CAPACITY).unwrap(),
-        }
-    }
 
     /// Requires internet access
     #[test]
     fn test_cran_round_trip() {
         let dir = TempDir::new().unwrap();
-        let source = source_in(&dir);
+        let source = SourceCache::new_in(dir.path().to_path_buf()).unwrap();
 
         // Miss before insert
         assert_eq!(source.get_cran("vctrs", "0.7.2"), None);
@@ -129,7 +127,7 @@ mod tests {
     #[test]
     fn test_cran_not_found() {
         let dir = TempDir::new().unwrap();
-        let source = source_in(&dir);
+        let source = SourceCache::new_in(dir.path().to_path_buf()).unwrap();
         assert_eq!(
             source.insert_cran("definitely_not_a_package", "0.0.0"),
             None
@@ -141,7 +139,7 @@ mod tests {
     #[test]
     fn test_r_round_trip() {
         let dir = TempDir::new().unwrap();
-        let source = source_in(&dir);
+        let source = SourceCache::new_in(dir.path().to_path_buf()).unwrap();
 
         let root = source.insert_r("4.5.0").unwrap();
 
@@ -158,7 +156,7 @@ mod tests {
     #[test]
     fn test_r_unknown_version() {
         let dir = TempDir::new().unwrap();
-        let source = source_in(&dir);
+        let source = SourceCache::new_in(dir.path().to_path_buf()).unwrap();
         assert_eq!(source.insert_r("0.0.0"), None);
     }
 }
