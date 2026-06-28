@@ -39,6 +39,7 @@ pub use inputs::RootKind;
 pub use inputs::StaleRoot;
 pub use inputs::WorkspaceRoots;
 pub use name::Name;
+pub use oak_package_metadata::description::Priority;
 pub use package::Package;
 pub use package_resolve::PackageVisibility;
 pub use storage::OakDatabase;
