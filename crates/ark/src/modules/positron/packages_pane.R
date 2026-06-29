@@ -118,8 +118,7 @@
 # Return detail fields for a single installed package by name.
 #' @export
 .ps.rpc.pkg_detail <- function(name) {
-    installed <- rownames(utils::installed.packages())
-    if (!nzchar(name) || !(name %in% installed)) {
+    if (!nzchar(name)) {
         return(NULL)
     }
     fields <- c(
@@ -127,13 +126,17 @@
         "Author",
         "Maintainer",
         "License",
-        "Depends",
-        "Imports",
-        "LinkingTo",
         "Repository",
         "Date/Publication"
     )
-    d <- utils::packageDescription(name, fields = fields)
+    # Read straight from the package's DESCRIPTION. packageDescription() returns
+    # a length-1 NA (and warns) when the package isn't installed, which is far
+    # cheaper than installed.packages() -- that parses every installed package's
+    # DESCRIPTION just to answer an existence check.
+    d <- suppressWarnings(utils::packageDescription(name, fields = fields))
+    if (!inherits(d, "packageDescription")) {
+        return(NULL)
+    }
 
     # Collapse DCF whitespace; return NULL for missing (NA) fields.
     clean <- function(x) {
@@ -162,35 +165,22 @@
         first
     }
 
-    out <- list(name = name)
-
     # Prefer Maintainer for author display; fall back to Author.
     author <- clean(d$Maintainer)
     if (is.null(author)) {
         author <- clean(d$Author)
     }
-    title <- clean(d$Title)
-    license <- primary_license(clean(d$License))
-    repo <- clean(d$Repository)
-    published <- clean(d[["Date/Publication"]])
 
-    if (!is.null(title)) {
-        out$title <- title
-    }
-    if (!is.null(author)) {
-        out$author <- author
-    }
-    if (!is.null(license)) {
-        out$license <- license
-    }
-    if (!is.null(repo)) {
-        out$sourceRepository <- repo
-    }
-    if (!is.null(published)) {
-        out$publishedDate <- published
-    }
-
-    out
+    # Drop absent (NULL) fields so the other side only sees populated keys.
+    out <- list(
+        name = name,
+        title = clean(d$Title),
+        author = author,
+        license = primary_license(clean(d$License)),
+        sourceRepository = clean(d$Repository),
+        publishedDate = clean(d[["Date/Publication"]])
+    )
+    Filter(Negate(is.null), out)
 }
 
 
