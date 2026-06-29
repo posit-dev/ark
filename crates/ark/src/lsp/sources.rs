@@ -16,8 +16,8 @@ use crate::lsp::main_loop::TokioUnboundedSender;
 
 /// Handle source requests to provide R source files for an installed package
 ///
-/// Implementations live outside of oak, oak is only in charge of ingesting the
-/// returned directory.
+/// Implemented as a trait so we can have a production level [OakSourceHandler]
+/// and a test level `TestSourceHandler`.
 pub(crate) trait SourceHandler: Send + Sync {
     fn handle(&self, request: &SourceRequest) -> SourceResponse;
 }
