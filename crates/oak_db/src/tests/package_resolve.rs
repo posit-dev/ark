@@ -273,3 +273,23 @@ fn test_same_name_defined_in_multiple_files_returns_each() {
     assert!(target_files.contains(&files[0]));
     assert!(target_files.contains(&files[1]));
 }
+
+#[test]
+fn test_base_exports_every_top_level_binding() {
+    // `base` doesn't have a `NAMESPACE`, so there are no namespace exports for it.
+    // Instead, `PackageVisibility::Exported` lookups on `base` skip the export check and
+    // fall straight through to looking for a top-level binding anywhere in the `base`
+    // source files.
+    //
+    // Note that this won't find primitives! These have no top-level binding.
+    let mut db = TestDb::new();
+    let (pkg, files) = setup_package(&mut db, "base", &[], &[(
+        "workspace/base/R/a.R",
+        "foo <- function() 1\n",
+    )]);
+
+    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), files[0]);
+    assert_eq!(defs[0].name(&db).text(&db).as_str(), "foo");
+}
