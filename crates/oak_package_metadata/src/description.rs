@@ -16,6 +16,9 @@ pub struct Description {
 
     pub priority: Option<Priority>,
 
+    /// Only present for installed packages
+    pub built: Option<String>,
+
     /// Raw DCF fields
     pub fields: Dcf,
 }
@@ -81,6 +84,8 @@ impl Description {
             None
         });
 
+        let built = fields.get("Built").map(str::to_string);
+
         Ok(Description {
             name,
             version,
@@ -88,6 +93,7 @@ impl Description {
             imports,
             repository,
             priority,
+            built,
             fields,
         })
     }
@@ -230,6 +236,23 @@ Collate:
 Version: 1.0.0"#;
         let parsed = Description::parse(desc).unwrap();
         assert_eq!(parsed.collate(), None);
+    }
+
+    #[test]
+    fn parses_description_with_built() {
+        let desc = r#"Package: mypackage
+Version: 1.0.0
+Built: R 4.5.0; ; 2025-01-15 12:34:56 UTC; unix"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(
+            parsed.built.as_deref(),
+            Some("R 4.5.0; ; 2025-01-15 12:34:56 UTC; unix")
+        );
+
+        let desc = r#"Package: mypackage
+Version: 1.0.0"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.built, None);
     }
 
     #[test]
