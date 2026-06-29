@@ -55,7 +55,11 @@ impl<'db> Package {
         name: Name<'db>,
         visibility: PackageVisibility,
     ) -> Vec<Definition<'db>> {
+        // When resolving an export, the `name` must be present in the `NAMESPACE`
+        // exports. If the package is `base`, there is no `NAMESPACE`, but all top-level
+        // bindings in `base` are visible by construction, so we skip this check entirely.
         if visibility == PackageVisibility::Exported &&
+            self.name(db) != "base" &&
             !self
                 .namespace(db)
                 .exports
