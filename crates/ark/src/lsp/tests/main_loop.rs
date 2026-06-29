@@ -16,8 +16,8 @@ use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use super::utils::test_client;
-use super::utils::write_description;
 use super::utils::write_sources;
+use super::utils::DescriptionWriter;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::main_loop::init_aux_for_test;
@@ -44,7 +44,10 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
 
     let tmp = tempfile::tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
-    write_description(&pkg, "pkg");
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .write(&pkg);
     write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
 
     let params = DidChangeWorkspaceFoldersParams {
