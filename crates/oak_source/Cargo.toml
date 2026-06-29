@@ -1,0 +1,22 @@
+[package]
+name = "oak_source"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+flate2.workspace = true
+log.workspace = true
+oak_cache.workspace = true
+oak_fs.workspace = true
+tar.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
