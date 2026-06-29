@@ -1,14 +1,32 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use aether_path::FilePath;
 use assert_matches::assert_matches;
+use oak_db::Db;
+use oak_db::OakDatabase;
+use oak_scan::DbScan;
+use oak_semantic::library::Library;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use url::Url;
 
+use super::source_handler::TestBehavior;
+use super::source_handler::TestSourceHandler;
+use super::utils::did_change_workspace_folders;
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
+use super::utils::test_client;
+use super::utils::write_sources;
+use super::utils::DescriptionWriter;
+use super::utils::NamespaceWriter;
 use crate::lsp::goto_definition::goto_definition;
+use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::GlobalState;
+use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::util::test_path;
 
@@ -211,6 +229,138 @@ fn test_sourced_file_with_sequential_redef_offers_runtime_winner() {
             assert_eq!(links.len(), 1);
             assert_eq!(links[0].target_uri, helpers_uri);
             assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
+        }
+    );
+}
+
+/// Goto-def from a bare `foo()` through to `foopkg::foo()`'s definition via the
+/// workspace package's `import(foopkg)`
+#[tokio::test]
+async fn test_goto_definition_resolves_unqualified_import_into_package() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("foopkg"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    // Set up the library that our "installed" package lives in
+    let library = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("foopkg")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&library.path().join("foopkg"));
+    NamespaceWriter::new()
+        .export("foo")
+        .write(&library.path().join("foopkg"));
+
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db, Library::new(vec![])),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler)),
+        ),
+    );
+
+    // The workspace folder is itself the package that imports `foo`.
+    let workspace = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("mypackage")
+        .version("0.0.0")
+        .imports(&["foopkg"])
+        .write(workspace.path());
+    NamespaceWriter::new()
+        .import("foopkg")
+        .write(workspace.path());
+    let use_path = workspace.path().join("R").join("use.R");
+    let use_uri = Url::from_file_path(&use_path).unwrap();
+    write_sources(&workspace.path().join("R"), &[("use.R", "foo()\n")]);
+
+    // Open the workspace folder, triggering a workspace scan
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    let world = state.world();
+    let foo_file = world.db.package_by_name("foopkg").unwrap().files(&world.db)[0];
+
+    assert_matches!(
+        goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_url(foo_file));
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
+        }
+    );
+}
+
+/// Goto-def from a bare `bar()` through to `barpkg::bar()`'s definition via the
+/// workspace package's `importFrom(barpkg, bar)`
+#[tokio::test]
+async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("barpkg"),
+        TestBehavior::Success(vec![("bar.R", "bar <- function() 2\n")]),
+    )])));
+
+    // Set up the library that our "installed" package lives in
+    let library = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("barpkg")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&library.path().join("barpkg"));
+    NamespaceWriter::new()
+        .export("bar")
+        .write(&library.path().join("barpkg"));
+
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db, Library::new(vec![])),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler)),
+        ),
+    );
+
+    // The workspace folder is itself the package that imports `bar`.
+    let workspace = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("mypackage")
+        .version("0.0.0")
+        .imports(&["barpkg"])
+        .write(workspace.path());
+    NamespaceWriter::new()
+        .import_from("barpkg", "bar")
+        .write(workspace.path());
+    let use_path = workspace.path().join("R").join("use.R");
+    let use_uri = Url::from_file_path(&use_path).unwrap();
+    write_sources(&workspace.path().join("R"), &[("use.R", "bar()\n")]);
+
+    // Open the workspace folder, triggering a workspace scan
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    let world = state.world();
+    let bar_file = world.db.package_by_name("barpkg").unwrap().files(&world.db)[0];
+
+    assert_matches!(
+        goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_url(bar_file));
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
 }
