@@ -115,6 +115,75 @@
     as.list(version)
 }
 
+# Return detail fields for a single installed package by name.
+#' @export
+.ps.rpc.pkg_detail <- function(name) {
+    if (!nzchar(name)) {
+        return(NULL)
+    }
+    fields <- c(
+        "Title",
+        "Author",
+        "Maintainer",
+        "License",
+        "Repository",
+        "Date/Publication"
+    )
+    # Read straight from the package's DESCRIPTION. packageDescription() returns
+    # a length-1 NA (and warns) when the package isn't installed, which is far
+    # cheaper than installed.packages() -- that parses every installed package's
+    # DESCRIPTION just to answer an existence check.
+    d <- suppressWarnings(utils::packageDescription(name, fields = fields))
+    if (!inherits(d, "packageDescription")) {
+        return(NULL)
+    }
+
+    # Collapse DCF whitespace; return NULL for missing (NA) fields.
+    clean <- function(x) {
+        if (is.null(x) || is.na(x)) {
+            return(NULL)
+        }
+        trimws(gsub("\\s+", " ", x, perl = TRUE))
+    }
+
+    # Reduce an R License field to its primary license: the first alternative
+    # (before "|"), without the "+ file LICENSE" clause.
+    primary_license <- function(x) {
+        if (is.null(x)) {
+            return(NULL)
+        }
+        first <- trimws(strsplit(x, "\\|")[[1]][1])
+        first <- trimws(sub(
+            "\\s*\\+\\s*file\\s+.*$",
+            "",
+            first,
+            ignore.case = TRUE
+        ))
+        if (!nzchar(first)) {
+            return(NULL)
+        }
+        first
+    }
+
+    # Prefer Maintainer for author display; fall back to Author.
+    author <- clean(d$Maintainer)
+    if (is.null(author)) {
+        author <- clean(d$Author)
+    }
+
+    # Drop absent (NULL) fields so the other side only sees populated keys.
+    out <- list(
+        name = name,
+        title = clean(d$Title),
+        author = author,
+        license = primary_license(clean(d$License)),
+        sourceRepository = clean(d$Repository),
+        publishedDate = clean(d[["Date/Publication"]])
+    )
+    Filter(Negate(is.null), out)
+}
+
+
 # Return the list of outdated packages with their latest available versions.
 #
 # `utils::old.packages()` queries the user's configured repositories, so
