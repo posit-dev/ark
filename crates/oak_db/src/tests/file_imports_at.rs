@@ -45,6 +45,7 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
             FileRevision::zero(),
             FileRevision::zero(),
             None,
+            None,
             Vec::new(),
             Vec::new(),
         );
@@ -66,6 +67,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
         name.to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         Vec::new(),
         Vec::new(),

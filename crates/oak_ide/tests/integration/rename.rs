@@ -300,6 +300,7 @@ fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         vec![],
     )

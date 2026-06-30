@@ -46,6 +46,13 @@ pub struct Package {
     /// time, only stat it, so installed packages the user never imports cost
     /// nothing beyond the stat.
     pub namespace_revision: FileRevision,
+    /// Mtime of the package's `INDEX` file. [`FileRevision::zero`] when it can't be
+    /// stat'd, and [None] for workspace packages, which never have one. The lazy
+    /// [`Package::index`] query reads it so a watcher that bumps it on an `INDEX` change
+    /// forces the next parse to re-read disk, exactly like [`File::revision`] drives
+    /// [`File::source_text`]. We don't read or parse `INDEX` at scan time, only stat it,
+    /// so installed packages the user never imports cost nothing beyond the stat.
+    pub index_revision: Option<FileRevision>,
     /// In-memory `NAMESPACE`, checked by [`Package::namespace`] before it
     /// touches disk. Mirrors [`File::source_text_override`]: `None` means
     /// "read from disk". The scanners always leave it `None`. It's the
@@ -193,28 +200,41 @@ impl Package {
         }
     }
 
-    /// The package's parsed `INDEX`, or `None` when it's missing (like with workspace
-    /// packages) or unparseable
+    /// The package's parsed `INDEX`
     ///
-    /// Since an `INDEX` is only meaningful with immutable installed packages, we don't
-    /// need to track a revision to bump against
+    /// Returns `None` for workspace packages, which never have an `INDEX`.
+    ///
+    /// Returns an empty `Index` for installed packages with missing or unreadable
+    /// indexes.
     #[salsa::tracked(returns(ref))]
     pub fn index(self, db: &dyn Db) -> Option<Index> {
-        let path = self
+        // Depend on `index_revision()` so a bump forces a re-read
+        match self.index_revision(db) {
+            Some(revision) => report_untracked_if_zero(db, revision),
+            // Workspace packages don't have an `INDEX`
+            None => return None,
+        }
+
+        let Some(parent) = self
             .description_path(db)
             .as_path()
             .and_then(|path| path.parent())
-            .map(|parent| parent.join("INDEX"))?;
+        else {
+            log::error!("Failed to find `DESCRIPTION` parent for installed package.");
+            return Some(Index::default());
+        };
 
-        // Only installed packages ship an `INDEX`. So absence is normal for workspace
-        // packages and stays quiet. A file that exists but can't be read is logged so
-        // the failure isn't silently read as "no index".
+        let path = parent.join("INDEX");
+
+        // The `index_revision()` early exit handled workspace packages, so we only handle
+        // installed packages here. If an `INDEX` is missing, we silently return an empty
+        // one ({translations} is an example). Otherwise, failure to parse logs an error.
         match fs::read_to_string(path.as_std_path()) {
             Ok(text) => Some(Index::parse(&text)),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Some(Index::default()),
             Err(err) => {
                 log::error!("Failed to read `{path}`: {err:?}");
-                None
+                Some(Index::default())
             },
         }
     }

@@ -27,6 +27,7 @@ fn register_library(db: &mut TestDb, names: &[&str]) {
                 FileRevision::zero(),
                 FileRevision::zero(),
                 None,
+                None,
                 vec![],
                 Vec::new(),
             )
@@ -99,6 +100,7 @@ fn test_collects_imports_and_depends_from_workspace_package() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         Vec::new(),
     );
@@ -130,6 +132,7 @@ fn test_workspace_package_self_reference_is_dropped() {
         "mypkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         vec![],
         Vec::new(),
