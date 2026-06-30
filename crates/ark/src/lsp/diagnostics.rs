@@ -969,7 +969,7 @@ fn insert_package_exports(
     // false positives in favor of allowing some false negatives. This is admittedly a
     // bit of a stopgap!
     if let Some(index) = package.index(context.db) {
-        exports.extend(index.names().to_vec());
+        exports.extend(index.names().iter().cloned());
     }
 
     // No need to worry about sorting or deduplicating, the `HashSet` takes care of this

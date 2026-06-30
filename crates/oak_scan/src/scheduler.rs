@@ -129,12 +129,16 @@ impl ScanCompleted {
         let package_entities: Vec<Package> = packages
             .into_iter()
             .map(|pkg| {
+                // Workspace packages never have an `INDEX`
+                let index_revision = None;
+
                 root.set_package(
                     db,
                     pkg.description_path,
                     pkg.name,
                     pkg.description_revision,
                     pkg.namespace_revision,
+                    index_revision,
                     pkg.files,
                     pkg.scripts,
                 )

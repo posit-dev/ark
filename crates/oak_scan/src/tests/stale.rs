@@ -80,6 +80,7 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         Vec::new(),
     );
@@ -116,6 +117,7 @@ fn test_set_stale_routes_pkg_scripts_to_stale() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         Vec::new(),
     );
@@ -150,6 +152,7 @@ fn test_set_stale_routes_editor_owned_pkg_scripts_to_orphan() {
         "p".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         vec![],
         Vec::new(),

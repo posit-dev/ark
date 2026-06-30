@@ -153,6 +153,25 @@ fn test_package_version_rereads_when_revision_bumps() {
 }
 
 #[test]
+fn test_package_index_rereads_when_revision_bumps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("dplyr");
+    write_package(&pkg_dir, "dplyr", &[]);
+    fs::write(pkg_dir.join("INDEX"), "mutate     Mutate columns\n").unwrap();
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(pkg.index(&db).as_ref().unwrap().names(), &["mutate"]);
+
+    fs::write(pkg_dir.join("INDEX"), "select     Select columns\n").unwrap();
+    pkg.set_index_revision(&mut db)
+        .to(Some(oak_db::FileRevision::from(1u128)));
+    assert_eq!(pkg.index(&db).as_ref().unwrap().names(), &["select"]);
+}
+
+#[test]
 fn test_reset_same_library_paths_does_not_bump_salsa_revision() {
     // Re-declaring the identical library paths reuses every `Root` entity, so
     // the `LibraryRoots.roots` vec compares equal and the guarded setter is
@@ -415,6 +434,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -427,6 +447,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -450,6 +471,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -462,6 +484,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -496,6 +519,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         files.clone(),
         Vec::new(),
     );
@@ -506,6 +530,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         files,
         Vec::new(),
     );
@@ -552,6 +577,7 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         vec![FileEntry {
             path: r_path.clone(),
             revision: oak_db::FileRevision::zero(),
@@ -588,6 +614,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -606,6 +633,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
         "pkg".to_string(),
         oak_db::FileRevision::zero(),
         oak_db::FileRevision::zero(),
+        None,
         Vec::new(),
         Vec::new(),
     );
