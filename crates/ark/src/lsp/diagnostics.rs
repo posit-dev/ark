@@ -8,16 +8,14 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
+use oak_db::Db;
 use oak_db::File;
-use oak_semantic::library::Library;
-use oak_semantic::package::Package;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -31,7 +29,6 @@ use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
-use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
@@ -65,12 +62,6 @@ pub struct DiagnosticContext<'a> {
     // The set of packages that are currently installed.
     pub installed_packages: HashSet<String>,
 
-    /// Reference to source root, if any.
-    pub root: &'a Option<SourceRoot>,
-
-    /// Reference to the library for looking up package exports.
-    pub library: &'a Library,
-
     /// The symbols exported by packages loaded via `library()` calls in this
     /// document. Currently global.
     pub library_symbols: BTreeMap<Point, HashSet<String>>,
@@ -93,13 +84,7 @@ impl<'a> DiagnosticContext<'a> {
         self.file.source_text(self.db).as_str()
     }
 
-    pub(crate) fn new(
-        db: &'a dyn ArkDb,
-        root: &'a Option<SourceRoot>,
-        library: &'a Library,
-        file: File,
-        encoding: PositionEncoding,
-    ) -> Self {
+    pub(crate) fn new(db: &'a dyn ArkDb, file: File, encoding: PositionEncoding) -> Self {
         Self {
             file,
             encoding,
@@ -108,8 +93,6 @@ impl<'a> DiagnosticContext<'a> {
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
-            root,
-            library,
             library_symbols: BTreeMap::new(),
             in_formula: false,
             in_call_like_arguments: false,
@@ -172,7 +155,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     let encoding = state.config.position_encoding;
-    let mut context = DiagnosticContext::new(db, &state.root, &state.library, file, encoding);
+    let mut context = DiagnosticContext::new(db, file, encoding);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -189,16 +172,18 @@ pub(crate) fn generate_diagnostics(
     });
 
     // If this is a package, add imported symbols to workspace
-    if let Some(SourceRoot::Package(root)) = &state.root {
+    if let Some(package) = file.package(db) {
+        let namespace = package.namespace(&state.db);
+
         // Add symbols from `importFrom()` directives
-        for import in &root.namespace().imports {
+        for import in &namespace.imports {
             context.workspace_symbols.insert(import.name.clone());
         }
 
         // Add symbols from `import()` directives
-        for package_import in &root.namespace().package_imports {
-            if let Some(pkg) = state.library.get(package_import) {
-                for export in &pkg.namespace().exports {
+        for package_import in &namespace.package_imports {
+            if let Some(pkg) = state.db.package_by_name(package_import) {
+                for export in &pkg.namespace(&state.db).exports {
                     context.workspace_symbols.insert(export.clone());
                 }
             }
@@ -214,8 +199,8 @@ pub(crate) fn generate_diagnostics(
     // want to provide a mechanism for test packages to declare this sort of
     // test files setup.
     if testthat {
-        if let Some(pkg) = state.library.get("testthat") {
-            for export in &pkg.namespace().exports {
+        if let Some(pkg) = state.db.package_by_name("testthat") {
+            for export in &pkg.namespace(&state.db).exports {
                 context.workspace_symbols.insert(export.clone());
             }
         }
@@ -905,17 +890,23 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package_name = package_node.get_identifier_or_string_text(context.contents())?;
     let attach_pos = node.end_position();
 
-    let package = insert_package_exports(package_name, attach_pos, context)?;
+    insert_package_exports(package_name, attach_pos, context)?;
 
-    // Also attach packages from `Depends` field
-    for package_name in package.description().depends.iter() {
-        insert_package_exports(package_name, attach_pos, context)?;
+    // Also attach packages from `Depends` field, if any
+    if let Some(package_names) = context
+        .db
+        .package_by_name(package_name)
+        .and_then(|package| package.depends(context.db).as_ref())
+    {
+        for package_name in package_names.iter() {
+            insert_package_exports(package_name, attach_pos, context)?;
+        }
     }
 
     // Special handling for the tidyverse and tidymodels packages. Hard-coded
     // for now but in the future, this should probably be expressed as a
     // `DESCRIPTION` field like `Config/Needs/attach`.
-    let attach_field = match package.description().name.as_str() {
+    let attach_field = match package_name {
         // https://github.com/tidyverse/tidyverse/blob/0231aafb/R/attach.R#L1
         "tidyverse" => {
             vec![
@@ -964,20 +955,31 @@ fn insert_package_exports(
     package_name: &str,
     attach_pos: Point,
     context: &mut DiagnosticContext,
-) -> anyhow::Result<Arc<Package>> {
-    let Some(package) = context.library.get(package_name) else {
+) -> anyhow::Result<()> {
+    let Some(package) = context.db.package_by_name(package_name) else {
         return Err(anyhow::anyhow!(
             "Can't get exports from package {package_name} because it is not installed."
         ));
     };
 
+    // Start from explicit `NAMESPACE` exports
+    let mut exports = package.namespace(context.db).exports.clone().into_vec();
+
+    // Add all documented symbols. This should cover documented datasets to avoid some
+    // false positives in favor of allowing some false negatives. This is admittedly a
+    // bit of a stopgap!
+    if let Some(index) = package.index(context.db) {
+        exports.extend(index.names().iter().cloned());
+    }
+
+    // No need to worry about sorting or deduplicating, the `HashSet` takes care of this
     context
         .library_symbols
         .entry(attach_pos)
         .or_default()
-        .extend(package.exported_symbols().clone().into_vec());
+        .extend(exports);
 
-    Ok(package)
+    Ok(())
 }
 
 fn recurse_subset_or_subset2(
@@ -1167,16 +1169,13 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::Path;
 
     use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
-    use oak_package_metadata::dcf::Dcf;
-    use oak_package_metadata::description::Description;
-    use oak_package_metadata::namespace::Namespace;
-    use oak_semantic::library::Library;
-    use oak_semantic::package::Package;
-    use stdext::SortedVec;
+    use oak_db::OakDatabase;
+    use oak_scan::DbScan;
+    use tempfile::TempDir;
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
@@ -1204,6 +1203,20 @@ mod tests {
             installed_packages: inputs.installed_packages,
             ..Default::default()
         }
+    }
+
+    /// Install a package named `name` exporting `exports` into the library
+    /// directory `library`, writing the `DESCRIPTION` and `NAMESPACE` files
+    /// that the library scanner reads.
+    fn install_package(library: &Path, name: &str, exports: &[&str]) {
+        let package = library.join(name);
+        std::fs::create_dir(&package).unwrap();
+        std::fs::write(package.join("DESCRIPTION"), format!("Package: {name}\n")).unwrap();
+        let namespace: String = exports
+            .iter()
+            .map(|export| format!("export({export})\n"))
+            .collect();
+        std::fs::write(package.join("NAMESPACE"), namespace).unwrap();
     }
 
     #[test]
@@ -1596,151 +1609,98 @@ foo
 
     #[test]
     fn test_library_static_exports() {
-        r_task(|| {
-            // `mockpkg` exports `foo` and `bar`
-            let namespace = Namespace {
-                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
-                imports: vec![],
-                package_imports: vec![],
-            };
-            let description = Description {
-                name: "mockpkg".to_string(),
-                version: "1.0.0".to_string(),
-                depends: vec![],
-                imports: vec![],
-                repository: None,
-                priority: None,
-                fields: Dcf::new(),
-            };
-            let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
+        // `mockpkg` exports `foo` and `bar`
+        let library = TempDir::new().unwrap();
+        install_package(library.path(), "mockpkg", &["foo", "bar"]);
 
-            // Create a library with `mockpkg` installed
-            let library = Library::new(vec![]).insert("mockpkg", package);
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
 
-            // Simulate a search path with `library` in scope
-            let console_scopes = vec![vec!["library".to_string()]];
+        // Whereas `current_state()` returns a state with the base package
+        // attached, this world state only contains `mockpkg` as an installed
+        // package and `library()` on the search path.
+        let state = WorldState {
+            db,
+            console_scopes: vec![vec!["library".to_string()]],
+            ..Default::default()
+        };
 
-            // Whereas `current_state()` returns a state with the base package
-            // attached, this world state
-            // only contains `mockpkg` as installed package and `library()` on
-            // the search path.
-            let state = WorldState {
-                library,
-                console_scopes,
-                ..Default::default()
-            };
-
-            // Test that exported symbols are recognized
-            let code = "
+        // Test that exported symbols are recognized
+        let code = "
                 library(mockpkg)
                 foo()
                 bar
             ";
-            let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, state.clone());
 
-            assert_eq!(diagnostics.len(), 0);
+        assert_eq!(diagnostics.len(), 0);
 
-            // Test that non-exported symbols still generate diagnostics
-            let code = "
+        // Test that non-exported symbols still generate diagnostics
+        let code = "
                 library('mockpkg')
                 undefined()
                 also_undefined
             ";
 
-            let diagnostics = generate_diagnostics(code, state.clone());
-            assert_eq!(diagnostics.len(), 2);
+        let diagnostics = generate_diagnostics(code, state.clone());
+        assert_eq!(diagnostics.len(), 2);
 
-            assert!(diagnostics
-                .first()
-                .unwrap()
-                .message
-                .contains("No symbol named 'undefined' in scope"));
-            assert!(diagnostics
-                .get(1)
-                .unwrap()
-                .message
-                .contains("No symbol named 'also_undefined' in scope"));
+        assert!(diagnostics
+            .first()
+            .unwrap()
+            .message
+            .contains("No symbol named 'undefined' in scope"));
+        assert!(diagnostics
+            .get(1)
+            .unwrap()
+            .message
+            .contains("No symbol named 'also_undefined' in scope"));
 
-            // Test duplicate call
-            let code = "
+        // Test duplicate call
+        let code = "
                 library(mockpkg)
                 library(mockpkg)  # duplicate is fine
                 foo()
                 bar
             ";
-            let diagnostics = generate_diagnostics(code, state.clone());
-            assert_eq!(diagnostics.len(), 0);
+        let diagnostics = generate_diagnostics(code, state.clone());
+        assert_eq!(diagnostics.len(), 0);
 
-            // If the library call includes the `character.only` argument, we bail
-            let code = r#"
+        // If the library call includes the `character.only` argument, we bail
+        let code = r#"
                 library(mockpkg, character.only = TRUE)
                 foo()
             "#;
-            let diagnostics = generate_diagnostics(code, state.clone());
-            assert_eq!(diagnostics.len(), 1);
+        let diagnostics = generate_diagnostics(code, state.clone());
+        assert_eq!(diagnostics.len(), 1);
 
-            // Same if passed `FALSE`, we're not trying to be smart (yet)
-            let code = r#"
+        // Same if passed `FALSE`, we're not trying to be smart (yet)
+        let code = r#"
                 library(mockpkg, character.only = FALSE)
                 foo()
             "#;
-            let diagnostics = generate_diagnostics(code, state);
-            assert_eq!(diagnostics.len(), 1);
-        });
+        let diagnostics = generate_diagnostics(code, state);
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
     fn test_library_static_exports_multiple_packages() {
-        r_task(|| {
-            // pkg1 exports `foo` and `bar`
-            let namespace1 = Namespace {
-                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
-                imports: vec![],
-                package_imports: vec![],
-            };
-            let description1 = Description {
-                name: "pkg1".to_string(),
-                version: "1.0.0".to_string(),
-                depends: vec![],
-                imports: vec![],
-                repository: None,
-                priority: None,
-                fields: Dcf::new(),
-            };
-            let package1 =
-                Package::from_parts(PathBuf::from("/mock/path1"), description1, namespace1);
+        // pkg1 exports `foo` and `bar`, pkg2 exports `bar` and `baz`
+        let library = TempDir::new().unwrap();
+        install_package(library.path(), "pkg1", &["foo", "bar"]);
+        install_package(library.path(), "pkg2", &["bar", "baz"]);
 
-            // pkg2 exports `bar` and `baz`
-            let namespace2 = Namespace {
-                exports: SortedVec::from_vec(vec!["bar".to_string(), "baz".to_string()]),
-                imports: vec![],
-                package_imports: vec![],
-            };
-            let description2 = Description {
-                name: "pkg2".to_string(),
-                version: "1.0.0".to_string(),
-                depends: vec![],
-                imports: vec![],
-                repository: None,
-                priority: None,
-                fields: Dcf::new(),
-            };
-            let package2 =
-                Package::from_parts(PathBuf::from("/mock/path2"), description2, namespace2);
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
 
-            let library = Library::new(vec![])
-                .insert("pkg1", package1)
-                .insert("pkg2", package2);
+        let state = WorldState {
+            db,
+            console_scopes: vec![vec!["library".to_string()]],
+            ..Default::default()
+        };
 
-            let console_scopes = vec![vec!["library".to_string()]];
-            let state = WorldState {
-                library,
-                console_scopes,
-                ..Default::default()
-            };
-
-            // Code with two library calls at different points
-            let code = "
+        // Code with two library calls at different points
+        let code = "
                     foo           # not in scope
                     bar           # not in scope
                     baz           # not in scope
@@ -1755,91 +1715,75 @@ foo
                     bar           # in scope
                     baz           # in scope
                 ";
-            let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, state.clone());
 
-            let messages: Vec<_> = diagnostics.iter().map(|d| d.message.clone()).collect();
-            assert!(messages.iter().any(|m| m.contains("No symbol named 'foo'")));
-            assert!(messages.iter().any(|m| m.contains("No symbol named 'bar'")));
-            assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
-            assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
-            assert_eq!(messages.len(), 4);
-        });
+        let messages: Vec<_> = diagnostics.iter().map(|d| d.message.clone()).collect();
+        assert!(messages.iter().any(|m| m.contains("No symbol named 'foo'")));
+        assert!(messages.iter().any(|m| m.contains("No symbol named 'bar'")));
+        assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
+        assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
+        assert_eq!(messages.len(), 4);
     }
 
     #[test]
     fn test_library_static_exports_require() {
-        r_task(|| {
-            // `pkg` exports `foo` and `bar`
-            let namespace = Namespace {
-                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
-                imports: vec![],
-                package_imports: vec![],
-            };
-            let description = Description {
-                name: "pkg".to_string(),
-                version: "1.0.0".to_string(),
-                depends: vec![],
-                imports: vec![],
-                repository: None,
-                priority: None,
-                fields: Dcf::new(),
-            };
-            let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
+        // `pkg` exports `foo` and `bar`
+        let library = TempDir::new().unwrap();
+        install_package(library.path(), "pkg", &["foo", "bar"]);
 
-            let library = Library::new(vec![]).insert("pkg", package);
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
 
-            let console_scopes = vec![vec!["require".to_string()]];
-            let state = WorldState {
-                library,
-                console_scopes,
-                ..Default::default()
-            };
+        let state = WorldState {
+            db,
+            console_scopes: vec![vec!["require".to_string()]],
+            ..Default::default()
+        };
 
-            let code = "
+        let code = "
                     foo()
                     require(pkg)
                     bar
                     foo()
                 ";
-            let diagnostics = generate_diagnostics(code, state.clone());
-            assert!(diagnostics
-                .iter()
-                .any(|d| d.message.contains("No symbol named 'foo'")));
-            assert_eq!(diagnostics.len(), 1);
-        });
+        let diagnostics = generate_diagnostics(code, state.clone());
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("No symbol named 'foo'")));
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
     fn test_penguins_symbol_no_diagnostic() {
-        r_task(|| {
-            let palmerpenguins_dir = oak_semantic::package::temp_palmerpenguin();
-            let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
-                .unwrap()
-                .unwrap();
-            let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
+        let library = oak_package_metadata::tests::temp_palmerpenguin();
 
-            // Simulate a world state with the penguins package installed and attached
-            let mut state = current_state();
-            state.library = library;
-            state.console_scopes = vec![vec!["library".to_string()]];
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
 
-            let code = r#"
+        // Simulate a world state with the penguins package installed and
+        // `library()` on the search path
+        let state = WorldState {
+            db,
+            console_scopes: vec![vec!["library".to_string()]],
+            ..Default::default()
+        };
+
+        let code = r#"
                 library(penguins)
                 penguins
                 path_to_file
                 penguins_raw
             "#;
-            let diagnostics = generate_diagnostics(code, state.clone());
-            assert!(diagnostics.is_empty());
+        let diagnostics = generate_diagnostics(code, state.clone());
+        assert!(diagnostics.is_empty());
 
-            let code = r#"
+        let code = r#"
                 penguins
                 path_to_file
                 penguins_raw
                 library(penguins)
             "#;
-            let diagnostics = generate_diagnostics(code, state);
-            assert_eq!(diagnostics.len(), 3);
-        })
+        let diagnostics = generate_diagnostics(code, state);
+        assert_eq!(diagnostics.len(), 3);
     }
 }

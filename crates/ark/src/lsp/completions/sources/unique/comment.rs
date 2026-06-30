@@ -7,7 +7,9 @@
 
 use std::sync::LazyLock;
 
-use oak_semantic::library::Library;
+use oak_db::Db;
+use oak_db::OakDatabase;
+use oak_db::RootKind;
 use regex::Regex;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::Documentation;
@@ -39,7 +41,7 @@ impl CompletionSource for CommentSource {
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_comment(
             completion_context.document_context,
-            &completion_context.state.library,
+            &completion_context.state.db,
         )
     }
 }
@@ -49,7 +51,7 @@ static RE_UP_TO_LAST_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r
 
 fn completions_from_comment(
     context: &DocumentContext,
-    library: &Library,
+    db: &OakDatabase,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
@@ -68,11 +70,27 @@ fn completions_from_comment(
         return Ok(Some(completions));
     }
 
-    let Some(roxygen2) = library.get("roxygen2") else {
+    let Some(roxygen2) = db.package_by_name("roxygen2") else {
         return Ok(Some(completions));
     };
 
-    let tags = roxygen2.path().join("roxygen2-tags.yml");
+    let Some(root) = db.root_by_package(roxygen2) else {
+        return Ok(Some(completions));
+    };
+
+    let Some(dir) = roxygen2
+        .description_path(db)
+        .as_path()
+        .and_then(|path| path.parent())
+    else {
+        return Ok(Some(completions));
+    };
+
+    // When you're actively working on roxygen2 itself, pull the tags from `inst/`
+    let tags = match root.kind(db) {
+        RootKind::Workspace => dir.join("inst").join("roxygen2-tags.yml"),
+        RootKind::Library => dir.join("roxygen2-tags.yml"),
+    };
 
     if !tags.exists() {
         return Ok(Some(completions));
@@ -142,30 +160,26 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    let library = Library::new(vec![]);
+    let db = OakDatabase::new();
 
     // If not in a comment, return `None`
     let point = Point { row: 0, column: 1 };
     let doc = TestDocument::new("mean()");
     let context = doc.context(point);
-    let completions = completions_from_comment(&context, &library).unwrap();
+    let completions = completions_from_comment(&context, &db).unwrap();
     assert!(completions.is_none());
 
     // If in a comment, return empty vector
     let point = Point { row: 0, column: 1 };
     let doc = TestDocument::new("# mean");
     let context = doc.context(point);
-    let completions = completions_from_comment(&context, &library)
-        .unwrap()
-        .unwrap();
+    let completions = completions_from_comment(&context, &db).unwrap().unwrap();
     assert!(completions.is_empty());
 }
 
 #[test]
 fn test_roxygen_comment() {
-    use oak_package_metadata::description::Description;
-    use oak_package_metadata::namespace::Namespace;
-    use oak_semantic::package::Package;
+    use oak_scan::DbScan;
     use tempfile::TempDir;
     use tree_sitter::Point;
 
@@ -189,27 +203,21 @@ fn test_roxygen_comment() {
   recommend: true
 "#;
 
-    let path = TempDir::new().unwrap();
-    std::fs::write(path.path().join("roxygen2-tags.yml"), content).unwrap();
+    // Lay out an installed `roxygen2` package in a library directory, with the
+    // tags file beside its `DESCRIPTION` for the completion source to find.
+    let library = TempDir::new().unwrap();
+    let package_dir = library.path().join("roxygen2");
+    std::fs::create_dir(&package_dir).unwrap();
+    std::fs::write(package_dir.join("DESCRIPTION"), "Package: roxygen2\n").unwrap();
+    std::fs::write(package_dir.join("roxygen2-tags.yml"), content).unwrap();
 
-    let package = Package::from_parts(
-        path.path().to_path_buf(),
-        Description {
-            name: "roxygen2".to_string(),
-            ..Description::default()
-        },
-        Namespace::default(),
-    );
-
-    let library = Library::new(vec![]);
-    let library = library.insert("roxygen2", package);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
 
     let point = Point { row: 0, column: 4 };
     let doc = TestDocument::new("#' @");
     let context = doc.context(point);
-    let completions = completions_from_comment(&context, &library)
-        .unwrap()
-        .unwrap();
+    let completions = completions_from_comment(&context, &db).unwrap().unwrap();
 
     // Make sure we find it
     let aliases: Vec<&CompletionItem> = completions
@@ -232,6 +240,61 @@ fn test_roxygen_comment() {
             "description\n#' ${1:A short description...}\n#' "
         ))
     );
+}
+
+#[test]
+fn test_roxygen_comment_while_working_on_roxygen2() {
+    use std::collections::HashSet;
+
+    use oak_scan::ScanScheduler;
+    use tempfile::TempDir;
+    use tree_sitter::Point;
+
+    let content = r#"
+- name: aliases
+  description: Add additional aliases to the topic.
+"#;
+
+    // Lay out `roxygen2` as a package in the workspace. When you're actively
+    // working on roxygen2 itself, the tags file lives under `inst/`, only
+    // landing beside `DESCRIPTION` once the package is installed.
+    let workspace = TempDir::new().unwrap();
+    std::fs::write(
+        workspace.path().join("DESCRIPTION"),
+        "Package: roxygen2\nVersion: 1.0.0\n",
+    )
+    .unwrap();
+    std::fs::create_dir(workspace.path().join("inst")).unwrap();
+    std::fs::write(
+        workspace.path().join("inst").join("roxygen2-tags.yml"),
+        content,
+    )
+    .unwrap();
+
+    let mut db = OakDatabase::new();
+
+    // Drive the workspace scanner to quiescence so `roxygen2` registers as a
+    // workspace package
+    let mut scheduler = ScanScheduler::new();
+    let editor_owned = HashSet::new();
+    let mut requests =
+        scheduler.set_workspace_paths(&mut db, &[workspace.path().to_path_buf()], &editor_owned);
+    while let Some(request) = requests.pop() {
+        let completed = request.run();
+        requests.extend(scheduler.apply_scan_completed(&mut db, completed, &editor_owned));
+    }
+
+    let point = Point { row: 0, column: 4 };
+    let doc = TestDocument::new("#' @");
+    let context = doc.context(point);
+    let completions = completions_from_comment(&context, &db).unwrap().unwrap();
+
+    // The tags came from `inst/roxygen2-tags.yml`
+    let aliases: Vec<&CompletionItem> = completions
+        .iter()
+        .filter(|item| item.label == "aliases")
+        .collect();
+    assert_eq!(aliases.len(), 1);
 }
 
 #[test]

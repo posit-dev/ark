@@ -211,12 +211,12 @@ pub trait RootExt {
     /// `namespace_revision` fields are updated in place. Salsa backdates
     /// each setter call when the value doesn't actually change.
     ///
-    /// `description_revision` and `namespace_revision` are the `DESCRIPTION`
-    /// and `NAMESPACE` mtimes. The version, collation, and namespace are
-    /// parsed lazily by [`Package::version`] / [`Package::collation`] /
-    /// [`Package::namespace`], so the scanner never reads or parses those
-    /// files (the workspace scanner reads `DESCRIPTION` separately, for the
-    /// name and file ordering, before calling this).
+    /// `description_revision`, `namespace_revision`, and `index_revision` are the
+    /// `DESCRIPTION`, `NAMESPACE`, and `INDEX` mtimes. The version, collation, and
+    /// namespace are parsed lazily by [`Package::version`] / [`Package::collation`] /
+    /// [`Package::namespace`], so the scanner never reads or parses those files (the
+    /// workspace scanner reads `DESCRIPTION` separately, for the name and file ordering,
+    /// before calling this).
     ///
     /// Files are reused by URL via [`Db::file_by_path`]; see
     /// [`FileEntry`] for the content-preservation semantics. Wiring
@@ -229,6 +229,7 @@ pub trait RootExt {
         name: String,
         description_revision: FileRevision,
         namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package;
@@ -261,6 +262,7 @@ impl RootExt for Root {
         name: String,
         description_revision: FileRevision,
         namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package {
@@ -282,6 +284,7 @@ impl RootExt for Root {
                 name,
                 description_revision,
                 namespace_revision,
+                index_revision,
                 None,
                 Vec::new(),
                 Vec::new(),

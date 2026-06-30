@@ -72,6 +72,7 @@ fn test_root_dispatches_through_library_package_when_set() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -104,6 +105,7 @@ fn test_root_dispatches_through_workspace_package_when_set() {
         "mypkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         Vec::new(),
         Vec::new(),

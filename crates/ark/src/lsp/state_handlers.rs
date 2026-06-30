@@ -13,7 +13,6 @@ use anyhow::anyhow;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
-use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
@@ -55,7 +54,6 @@ use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::content_changes::apply_content_changes;
-use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
@@ -101,33 +99,6 @@ pub(crate) fn initialize(
         state.workspace.folders.push(uri.clone());
         if let Ok(path) = uri.to_file_path() {
             workspace_paths.push(path.clone());
-            // Try to load package from this workspace folder and set as
-            // root if found. This means we're dealing with a package
-            // source.
-            if state.root.is_none() {
-                match Package::load_from_folder(&path) {
-                    Ok(Some(pkg)) => {
-                        log::info!(
-                            "Root: Loaded package `{pkg}` from {path} as project root",
-                            pkg = pkg.description().name,
-                            path = path.display()
-                        );
-                        state.root = Some(SourceRoot::Package(pkg));
-                    },
-                    Ok(None) => {
-                        log::info!(
-                            "Root: No package found at {path}, treating as folder of scripts",
-                            path = path.display()
-                        );
-                    },
-                    Err(err) => {
-                        log::warn!(
-                            "Root: Error loading package at {path}: {err}",
-                            path = path.display()
-                        );
-                    },
-                }
-            }
         }
     }
 

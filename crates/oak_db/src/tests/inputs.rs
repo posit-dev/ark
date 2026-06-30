@@ -20,6 +20,7 @@ fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -35,6 +36,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         name.to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         Vec::new(),
         Vec::new(),

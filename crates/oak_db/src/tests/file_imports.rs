@@ -25,6 +25,7 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -144,6 +145,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         "pkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         Some(namespace),
         Vec::new(),
         Vec::new(),
@@ -221,6 +223,7 @@ fn test_package_script_resolves_as_standalone_script() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -267,6 +270,7 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
         "pkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         Vec::new(),
         Vec::new(),
@@ -345,6 +349,7 @@ fn test_package_r_file_does_not_take_testthat_path() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         Vec::new(),
         Vec::new(),
     );
@@ -390,6 +395,7 @@ fn test_testthat_file_includes_top_level_library_calls() {
         "pkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         Vec::new(),
         Vec::new(),

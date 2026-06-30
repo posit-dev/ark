@@ -95,13 +95,12 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
 /// Register one installed package under `root` without reading any of its
 /// files.
 ///
-/// R installs packages at `<libpath>/<PkgName>/`, so the directory basename
-/// is the package name. That lets us skip reading `DESCRIPTION` here: we only
-/// confirm it exists (that's what marks the directory as a package) and stat
-/// `DESCRIPTION` / `NAMESPACE` for the revisions that drive the lazy metadata
-/// queries. Version, collation, and namespace are parsed on demand, only if
-/// the package is ever imported. Returns `None` for a directory with no
-/// `DESCRIPTION` or a non-UTF8 name.
+/// R installs packages at `<libpath>/<PkgName>/`, so the directory basename is the
+/// package name. That lets us skip reading `DESCRIPTION` here: we only confirm it exists
+/// (that's what marks the directory as a package) and stat `DESCRIPTION` / `NAMESPACE` /
+/// `INDEX` for the revisions that drive the lazy metadata queries. Version, collation,
+/// and namespace are parsed on demand, only if the package is ever imported. Returns
+/// `None` for a directory with no `DESCRIPTION` or a non-UTF8 name.
 fn register_installed_package<DB: Db + DbInputs>(
     db: &mut DB,
     root: Root,
@@ -115,6 +114,7 @@ fn register_installed_package<DB: Db + DbInputs>(
     let name = package_dir.file_name()?.to_str()?.to_string();
     let description_revision = file_revision(&description_file);
     let namespace_revision = file_revision(&package_dir.join("NAMESPACE"));
+    let index_revision = Some(file_revision(&package_dir.join("INDEX")));
     let description_path = FilePath::from_path_buf(description_file)?;
 
     Some(root.set_package(
@@ -123,6 +123,7 @@ fn register_installed_package<DB: Db + DbInputs>(
         name,
         description_revision,
         namespace_revision,
+        index_revision,
         Vec::new(),
         Vec::new(),
     ))

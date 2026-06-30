@@ -9,7 +9,6 @@ use std::sync::Mutex;
 use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
-use oak_semantic::library::Library;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::TextDocumentItem;
@@ -141,7 +140,7 @@ async fn test_source_pipeline_ingests_package_sources() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db, Library::new(vec![])),
+        WorldState::new(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -194,7 +193,7 @@ async fn test_failed_source_is_not_retried() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db, Library::new(vec![])),
+        WorldState::new(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
