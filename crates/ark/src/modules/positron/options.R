@@ -55,6 +55,12 @@ initialize_options <- function() {
     # Enable HTML help
     set_default("help_type", "html")
 
+    # Disable the R >=4.6.0 HTML table of contents displayed in help pages. This
+    # was added for CRAN's HTML view of package documentation, but is not useful
+    # for Positron and results in mangled HTML for us, since we don't handle the
+    # `R-nav.css` file that accompanies it (posit-dev/positron#12840).
+    set_default("help.htmltoc", FALSE)
+
     set_default("viewer", viewer_option_handler)
 
     # Show Shiny applications in the viewer. This is technically redundant with
