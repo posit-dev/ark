@@ -1,6 +1,4 @@
 pub mod builder;
-pub mod library;
-pub mod package;
 pub mod resolver;
 pub mod semantic_index;
 pub mod use_def_map;

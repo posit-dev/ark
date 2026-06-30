@@ -3,6 +3,7 @@ use std::io;
 
 use aether_path::FilePath;
 use oak_package_metadata::description::Description;
+use oak_package_metadata::index::Index;
 use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
 
@@ -140,6 +141,16 @@ impl Package {
             .map(|description| description.version.clone())
     }
 
+    /// The package's `Depends:`, parsed lazily from `DESCRIPTION`. `None` when the file
+    /// is missing. Narrow query over [`Package::description`], same backdating story as
+    /// [`Package::version`].
+    #[salsa::tracked(returns(ref))]
+    pub fn depends(self, db: &dyn Db) -> Option<Vec<String>> {
+        self.description(db)
+            .as_ref()
+            .map(|description| description.depends.clone())
+    }
+
     /// The basename order from `DESCRIPTION`'s `Collate:` field, parsed
     /// lazily. `None` when the field (or the file) is absent. Narrow query
     /// over [`Package::description`], same backdating story as
@@ -174,6 +185,32 @@ impl Package {
             // A missing `DESCRIPTION` is the normal "gone after a rescan" case
             // and stays quiet. A file that exists but can't be read is logged
             // rather than silently treated as absent.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => {
+                log::error!("Failed to read `{path}`: {err:?}");
+                None
+            },
+        }
+    }
+
+    /// The package's parsed `INDEX`, or `None` when it's missing (like with workspace
+    /// packages) or unparseable
+    ///
+    /// Since an `INDEX` is only meaningful with immutable installed packages, we don't
+    /// need to track a revision to bump against
+    #[salsa::tracked(returns(ref))]
+    pub fn index(self, db: &dyn Db) -> Option<Index> {
+        let path = self
+            .description_path(db)
+            .as_path()
+            .and_then(|path| path.parent())
+            .map(|parent| parent.join("INDEX"))?;
+
+        // Only installed packages ship an `INDEX`. So absence is normal for workspace
+        // packages and stays quiet. A file that exists but can't be read is logged so
+        // the failure isn't silently read as "no index".
+        match fs::read_to_string(path.as_std_path()) {
+            Ok(text) => Some(Index::parse(&text)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => None,
             Err(err) => {
                 log::error!("Failed to read `{path}`: {err:?}");

@@ -4,11 +4,9 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::File;
 use oak_db::OakDatabase;
-use oak_semantic::library::Library;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
-use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::open_file::OpenFile;
 
 #[derive(Clone, Default, Debug)]
@@ -57,13 +55,6 @@ pub(crate) struct WorldState {
     /// Currently installed packages
     pub(crate) installed_packages: Vec<String>,
 
-    /// The root of the source tree (e.g., a package).
-    pub(crate) root: Option<SourceRoot>,
-
-    /// Map of package name to package metadata and package sources for installed
-    /// libraries. Lazily populated.
-    pub(crate) library: Library,
-
     pub(crate) config: LspConfig,
 }
 
@@ -73,10 +64,9 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(db: OakDatabase, library: Library) -> Self {
+    pub(crate) fn new(db: OakDatabase) -> Self {
         Self {
             db,
-            library,
             ..Default::default()
         }
     }
@@ -97,8 +87,6 @@ impl WorldState {
             db: self.db.clone(),
             console_scopes: self.console_scopes.clone(),
             installed_packages: self.installed_packages.clone(),
-            root: self.root.clone(),
-            library: self.library.clone(),
             config: self.config.clone(),
             open_files: HashMap::new(),
             virtual_documents: HashMap::new(),

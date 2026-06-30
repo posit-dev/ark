@@ -1,36 +1,18 @@
-use std::path::Path;
-
 /// This represents an INDEX file.
 ///
 /// We use it to complement the list of exported symbols in NAMESPACE, in
 /// particular for exported datasets. This is a stopgap approach that has known
 /// shortcomings (false negatives as we will treat actually non-exported symbols
 /// as exported in some cases).
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Index {
-    pub names: Vec<String>,
+    names: Vec<String>,
 }
 
 impl Index {
-    pub fn load_from_folder(path: &Path) -> anyhow::Result<Self> {
-        if !path.is_dir() {
-            return Err(anyhow::anyhow!(
-                "Can't load index as '{path}' is not a folder",
-                path = path.to_string_lossy()
-            ));
-        }
-
-        let index_path = path.join("INDEX");
-        if !index_path.is_file() {
-            return Ok(Self::default());
-        }
-
-        let contents = std::fs::read_to_string(&index_path)?;
-        Ok(Index::parse(&contents))
-    }
-
-    /// Parses a package index text, extracting valid R symbol names from the first column.
-    /// Only names starting at the beginning of a line and consisting of letters, digits, dots, or underscores are included.
+    /// Parses a package index text, extracting valid R symbol names from the first
+    /// column. Only names starting at the beginning of a line and consisting of letters,
+    /// digits, dots, or underscores are included.
     pub fn parse(input: &str) -> Self {
         let valid_name = regex::Regex::new(r"^[A-Za-z.][A-Za-z0-9._]*$").unwrap();
         let mut names = Vec::new();
@@ -49,14 +31,14 @@ impl Index {
 
         Index { names }
     }
+
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
     use super::*;
 
     #[test]
@@ -135,33 +117,5 @@ Nelder_Mead             Nelder-Mead Optimization of Parameters,
             "GHrule",
             "Nelder_Mead"
         ]);
-    }
-
-    #[test]
-    fn load_from_folder_returns_error_for_file() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        let result = Index::load_from_folder(file.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn load_from_folder_returns_default_without_index() {
-        let dir = tempdir().unwrap();
-        let idx = Index::load_from_folder(dir.path()).unwrap();
-        assert!(idx.names.is_empty());
-    }
-
-    #[test]
-    fn load_from_folder_reads_and_parses_index() {
-        let dir = tempdir().unwrap();
-        let index_path = dir.path().join("INDEX");
-        let content = "\
-foo     Description of foo
-bar     Description of bar
-";
-        fs::write(&index_path, content).unwrap();
-
-        let idx = Index::load_from_folder(dir.path()).unwrap();
-        assert_eq!(idx.names, vec!["foo", "bar"]);
     }
 }
