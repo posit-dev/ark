@@ -6,7 +6,6 @@ use assert_matches::assert_matches;
 use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
-use oak_semantic::library::Library;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
@@ -260,7 +259,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db, Library::new(vec![])),
+        WorldState::new(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),
@@ -326,7 +325,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db, Library::new(vec![])),
+        WorldState::new(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),

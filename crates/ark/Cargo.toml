@@ -93,7 +93,7 @@ assert_matches.workspace = true
 insta.workspace = true
 oak_r_process.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
-oak_package_metadata.workspace = true
+oak_package_metadata = { workspace = true, features = ["testing"] }
 stdext = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 

@@ -25,7 +25,6 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use oak_semantic::library::Library;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use tokio::runtime::Handle;
@@ -266,11 +265,9 @@ impl GlobalState {
         let mut db = OakDatabase::new();
         db.set_library_paths(&library_paths);
 
-        let library = Library::new(library_paths);
-
         Self::from_parts(
             client,
-            WorldState::new(db, library),
+            WorldState::new(db),
             LspState::new(
                 console_notification_tx,
                 SourceScheduler::new(source_handler(&r_home)),
