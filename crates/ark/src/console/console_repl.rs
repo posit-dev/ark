@@ -2509,6 +2509,9 @@ impl Console {
             return;
         }
 
+        // Interrupt any in-flight evaluations that have outlived their timeout
+        crate::timeout::check_timeout();
+
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
