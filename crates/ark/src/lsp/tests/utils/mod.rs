@@ -1,6 +1,14 @@
+mod description_writer;
+mod events;
+mod namespace_writer;
+
 use std::path::Path;
 
 use aether_path::FilePath;
+pub(super) use description_writer::DescriptionWriter;
+pub(super) use events::did_change_workspace_folders;
+pub(super) use events::did_open;
+pub(super) use namespace_writer::NamespaceWriter;
 use oak_scan::DbScan;
 use tower_lsp::lsp_types;
 use tower_lsp::Client;
@@ -40,15 +48,6 @@ pub(super) fn test_client() -> Client {
     // end of the block.
     let client = captured.lock().unwrap().take();
     client.unwrap()
-}
-
-pub(super) fn write_description(dir: &Path, name: &str) {
-    std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(
-        dir.join("DESCRIPTION"),
-        format!("Package: {name}\nVersion: 0.0.0\nBuilt: dummy\n"),
-    )
-    .unwrap();
 }
 
 pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
