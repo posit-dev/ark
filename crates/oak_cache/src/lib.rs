@@ -154,8 +154,11 @@ impl Cache {
         lock.remove_siblings()?;
 
         if !populate(&dir)? {
-            // Failed to fully populate. We don't write `.complete`, so any stray
-            // results will be cleaned in the future.
+            // If we fail to populate, clean up any stray files. Can't clean up the
+            // folder here because we don't have an exclusive lock (can create but not
+            // delete!), but since we don't write `.complete` the folder will be deleted
+            // on the next `clean()`.
+            lock.remove_siblings()?;
             return Ok(None);
         }
 
