@@ -441,7 +441,6 @@ dependencies = [
  "oak_scan",
  "oak_semantic",
  "oak_source",
- "oak_sources",
  "oak_srcref",
  "once_cell",
  "regex",
@@ -2738,27 +2737,6 @@ dependencies = [
  "log",
  "oak_cache",
  "oak_fs",
- "tar",
- "tempfile",
- "ureq",
-]
-
-[[package]]
-name = "oak_sources"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "etcetera",
- "flate2",
- "hex",
- "log",
- "oak_fs",
- "oak_package_metadata",
- "oak_r_process",
- "serde",
- "serde_json",
- "sha2 0.11.0",
  "tar",
  "tempfile",
  "ureq",

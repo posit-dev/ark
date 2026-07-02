@@ -36,7 +36,7 @@ pub enum ImportLayer {
 /// first, so `stats` is highest-priority and `base` is lowest).
 /// Materialised as `Package` layers; packages absent from the
 /// workspace and library roots drop out (the LSP fills them in later
-/// via `oak_sources`).
+/// via its source handler).
 const DEFAULT_SEARCH_PATH: [&str; 7] = [
     "stats",
     "graphics",
