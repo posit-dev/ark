@@ -140,6 +140,17 @@ impl Package {
             .map(|description| description.version.clone())
     }
 
+    /// The package's `Built:`, parsed lazily from `DESCRIPTION`. `None` when
+    /// the file is missing or has no `Built:` field (only installed packages have one).
+    ///
+    /// Build timestamps change on every install, so backdating probably isn't that
+    /// important here, so we don't track this method.
+    pub fn built(self, db: &dyn Db) -> Option<String> {
+        self.description(db)
+            .as_ref()
+            .and_then(|description| description.built.clone())
+    }
+
     /// The basename order from `DESCRIPTION`'s `Collate:` field, parsed
     /// lazily. `None` when the field (or the file) is absent. Narrow query
     /// over [`Package::description`], same backdating story as

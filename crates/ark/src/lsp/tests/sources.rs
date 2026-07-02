@@ -165,6 +165,7 @@ async fn test_source_pipeline_ingests_package_sources() {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].name(), "donor");
         assert_eq!(recorded[0].version(), "0.0.0");
+        assert_eq!(recorded[0].built(), "dummy");
         assert_eq!(recorded[0].library_path(), lib.path());
     }
 
