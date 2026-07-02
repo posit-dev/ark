@@ -90,6 +90,7 @@ These base R options have non-`NULL` defaults, so we can't detect user overrides
 These options are only set when the user has *not* already defined them (e.g. in `.Rprofile`). This allows users to simply set the option to any value to override Positron's default. They can also be listed in `ark.protected_options` to keep the option as `NULL`.
 
 - **`help_type`** — Set to `"html"`. Displays help pages as HTML rather than plain text.
+- **`help.htmltoc`** - Set to `FALSE`. If left unset, would result in a poorly styled table of contents being generated in Positron's Help pane. Only applicable in R >=4.6.0.
 - **`viewer`** — Displays HTML content in Positron's Viewer pane. Used by htmlwidgets, Shiny gadgets, etc.
 - **`shiny.launch.browser`** — Set to a function that shows the Shiny app URL in Positron's Viewer pane. Set `options(shiny.launch.browser = TRUE)` in your `.Rprofile` to open Shiny apps in the system browser instead. Note that `TRUE` causes Shiny to use the `browser` option, which defaults to Positron's viewer, so you may also want to protect `browser`.
 - **`plumber.docs.callback`** — Set to a function that shows Plumber API docs in Positron's Viewer pane.
