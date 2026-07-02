@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
@@ -53,7 +54,9 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::open_file::OpenFile;
+use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
+use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
@@ -240,7 +243,7 @@ impl GlobalState {
     ///   and auxiliary loop.
     pub(crate) fn new(
         client: Client,
-        _r_home: PathBuf,
+        r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
         // FIXME: We shouldn't call R code in the kernel to figure this out
@@ -268,7 +271,10 @@ impl GlobalState {
         Self::from_parts(
             client,
             WorldState::new(db, library),
-            LspState::new(console_notification_tx, SourceScheduler::new(None)),
+            LspState::new(
+                console_notification_tx,
+                SourceScheduler::new(source_handler(&r_home)),
+            ),
         )
     }
 
@@ -600,6 +606,33 @@ impl GlobalState {
         Handler: Send + 'static,
     {
         lsp::spawn_blocking(move || respond(response_tx, handler, into_lsp_response).and(Ok(None)))
+    }
+}
+
+/// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
+fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
+    if !cfg!(debug_assertions) {
+        // TODO!: Remove this to activate in release builds as well.
+        // Currently only active in debug builds (including unit and integration tests).
+        return None;
+    }
+
+    let Some(r) = harp::command::r_executable(r_home) else {
+        log::warn!(
+            "Can't locate an R executable under '{}', package source fetching is disabled",
+            r_home.display()
+        );
+        return None;
+    };
+
+    match OakSourceHandler::new(r) {
+        Ok(handler) => Some(Arc::new(handler)),
+        Err(err) => {
+            log::error!(
+                "Can't create package source handler, source fetching is disabled: {err:?}"
+            );
+            None
+        },
     }
 }
 
