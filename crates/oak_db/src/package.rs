@@ -144,8 +144,7 @@ impl Package {
     /// the file is missing or has no `Built:` field (only installed packages have one).
     ///
     /// Build timestamps change on every install, so backdating probably isn't that
-    /// important here, but having the field easily accessible is nice.
-    #[salsa::tracked(returns(ref))]
+    /// important here, so we don't track this method.
     pub fn built(self, db: &dyn Db) -> Option<String> {
         self.description(db)
             .as_ref()
