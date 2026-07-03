@@ -77,7 +77,7 @@ stop_no_fork <- function() {
     msg <- paste_line(c(
         sprintf("Can't fork the R session in %s.", app_name()),
         "Use a backend that starts fresh R processes instead: PSOCK clusters,",
-        "`future::multisession()`, or mirai."
+        "`future::multisession()`, mirai, or `purrr::in_parallel()`."
     ))
     stop(msg, call. = FALSE)
 }
