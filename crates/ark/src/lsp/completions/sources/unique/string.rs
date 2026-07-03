@@ -132,7 +132,7 @@ mod tests {
             assert_match!(res, Some(items) => { assert!(items.is_empty()) });
 
             // Check for same result when consulting (potentially all) unique sources
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let completion_context = CompletionContext::new(&context, &state);
             let res = unique::get_completions(&completion_context).unwrap();
 

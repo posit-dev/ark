@@ -13,18 +13,18 @@ use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldState;
+use crate::lsp::state::WorldSnapshot;
 use crate::treesitter::node_find_containing_call;
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,
-    pub(crate) state: &'a WorldState,
+    pub(crate) state: &'a WorldSnapshot,
     pipe_root_cell: OnceCell<Option<PipeRoot>>,
     containing_call_cell: OnceCell<Option<Node<'a>>>,
     function_context_cell: OnceCell<anyhow::Result<FunctionContext>>,
 }
 
 impl<'a> CompletionContext<'a> {
-    pub fn new(document_context: &'a DocumentContext, state: &'a WorldState) -> Self {
+    pub fn new(document_context: &'a DocumentContext, state: &'a WorldSnapshot) -> Self {
         Self {
             document_context,
             state,
