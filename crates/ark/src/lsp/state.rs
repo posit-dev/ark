@@ -4,6 +4,7 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::File;
 use oak_db::OakDatabase;
+use salsa::Database;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
@@ -104,6 +105,16 @@ impl WorldState {
             open_files: HashMap::new(),
             workspace: Workspace::default(),
         }
+    }
+
+    /// Advance the oak revision without changing any oak input.
+    ///
+    /// Currently used for state that lives on `WorldState` but not in the Oak
+    /// DB (e.g. console scopes and the diagnostics config). The revision bump
+    /// invalidates in-flight background workers (e.g. diagnostics), and
+    /// triggers a diagnostic refresh.
+    pub(crate) fn bump_revision(&mut self) {
+        self.db.synthetic_write(salsa::Durability::LOW);
     }
 
     pub(crate) fn open_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut OpenFile> {

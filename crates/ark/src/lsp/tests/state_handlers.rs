@@ -34,8 +34,10 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
+use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
+use crate::lsp::state_handlers::ConsoleInputs;
 
 /// Local sync wrappers around the async-shaped scheduler API. Tests
 /// don't need the timing flexibility, so each operation kicks off
@@ -660,4 +662,27 @@ fn test_did_close_releases_orphan_file_to_stale() {
         event,
         AuxiliaryEvent::PublishDiagnostics(u, diags, _) if u == url && diags.is_empty()
     ));
+}
+
+/// A console-inputs push carries no oak write, but diagnostics read the console
+/// scopes it updates. The handler advances the oak revision so the main loop's
+/// central refresh (and its snapshot barrier) fires. Pin that: reverting to a
+/// direct refresh that doesn't bump the revision would silently stop the
+/// central refresh and let a stale-scope pass publish last.
+#[test]
+fn test_console_inputs_advance_revision() {
+    let mut state = WorldState::default();
+    let before = salsa::plumbing::current_revision(&state.db);
+
+    did_change_console_inputs(
+        ConsoleInputs {
+            console_scopes: vec![vec!["foo".to_string()]],
+            installed_packages: vec![],
+        },
+        &mut state,
+    )
+    .unwrap();
+
+    let after = salsa::plumbing::current_revision(&state.db);
+    assert_ne!(before, after);
 }
