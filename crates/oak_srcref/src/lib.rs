@@ -28,20 +28,20 @@ pub struct SrcrefCache {
 }
 
 impl SrcrefCache {
-    pub fn new(r: PathBuf) -> anyhow::Result<Self> {
+    pub fn open(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             r,
-            cache: Cache::new(&format!("srcref/{CACHE_VERSION}"), CACHE_CAPACITY)?,
+            cache: Cache::open(&format!("srcref/{CACHE_VERSION}"), CACHE_CAPACITY)?,
         })
     }
 
     /// Open a `SrcrefCache` rooted at an explicit directory instead of the shared cache
     ///
     /// Useful for integration tests that don't want to touch the real on disk cache.
-    pub fn new_in(root: PathBuf, r: PathBuf) -> anyhow::Result<Self> {
+    pub fn open_in(root: PathBuf, r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             r,
-            cache: Cache::new_in(root, CACHE_CAPACITY)?,
+            cache: Cache::open_in(root, CACHE_CAPACITY)?,
         })
     }
 
