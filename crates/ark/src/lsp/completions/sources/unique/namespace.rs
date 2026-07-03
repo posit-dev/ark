@@ -256,7 +256,7 @@ mod tests {
         let (text, point) = point_from_cursor(cursor_text);
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
-        let state = WorldState::default();
+        let state = WorldState::default().snapshot();
         let context = CompletionContext::new(&document_context, &state);
 
         completions_from_namespace(&context)

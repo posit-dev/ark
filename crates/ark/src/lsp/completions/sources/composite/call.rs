@@ -94,7 +94,7 @@ fn completions_from_call(
         },
     };
 
-    completions_from_arguments(&context.state.db, document_context, callee, object)
+    completions_from_arguments(context.state.db.read(), document_context, callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
@@ -294,7 +294,7 @@ mod tests {
             let (text, point) = point_from_cursor("match(tab@)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -307,7 +307,7 @@ mod tests {
             let (text, point) = point_from_cursor("match(1, tab@)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -327,7 +327,7 @@ mod tests {
             let (text, point) = point_from_cursor("not_a_known_function(@)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
@@ -347,7 +347,7 @@ mod tests {
             let (text, point) = point_from_cursor("my_fun(@)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
             let (text, point) = point_from_cursor("my_fun@()");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
@@ -373,7 +373,7 @@ mod tests {
             let (text, point) = point_from_cursor("my_fun()@");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
@@ -396,7 +396,7 @@ mod tests {
             let (text, point) = point_from_cursor("my_fun(@)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 0);
@@ -413,7 +413,7 @@ mod tests {
             let (text, point) = point_from_cursor("match(\n  @\n)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
             let (text, point) = point_from_cursor("match(\n  tab@\n)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -437,7 +437,7 @@ mod tests {
             let (text, point) = point_from_cursor("match(\n  1,\n  tab@\n)");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
             let completions = completions_from_call(&context).unwrap().unwrap();
 
@@ -454,7 +454,7 @@ mod tests {
                 let (text, point) = point_from_cursor(code_with_cursor);
                 let doc = TestDocument::new(&text);
                 let document_context = doc.context(point);
-                let state = WorldState::default();
+                let state = WorldState::default().snapshot();
                 let context = CompletionContext::new(&document_context, &state);
                 let completions = completions_from_call(&context).unwrap();
 

@@ -18,7 +18,7 @@ pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec
     let (text, point) = point_from_cursor(cursor_text);
     let doc = TestDocument::new(&text);
     let document_context = doc.context(point);
-    let state = WorldState::default();
+    let state = WorldState::default().snapshot();
 
     match provide_completions(&document_context, &state) {
         Ok(completions) => Ok(completions),

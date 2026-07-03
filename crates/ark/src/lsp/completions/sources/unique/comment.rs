@@ -7,7 +7,7 @@
 
 use std::sync::LazyLock;
 
-use oak_db::Db;
+#[cfg(test)]
 use oak_db::OakDatabase;
 use oak_db::RootKind;
 use regex::Regex;
@@ -22,6 +22,7 @@ use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
+use crate::lsp::db::ArkDb;
 use crate::lsp::document_context::DocumentContext;
 #[cfg(test)]
 use crate::lsp::document_context::TestDocument;
@@ -41,7 +42,7 @@ impl CompletionSource for CommentSource {
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_comment(
             completion_context.document_context,
-            &completion_context.state.db,
+            completion_context.state.db.read(),
         )
     }
 }
@@ -51,7 +52,7 @@ static RE_UP_TO_LAST_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r
 
 fn completions_from_comment(
     context: &DocumentContext,
-    db: &OakDatabase,
+    db: &dyn ArkDb,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 

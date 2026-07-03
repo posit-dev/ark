@@ -69,7 +69,7 @@ fn completions_from_workspace(
     let token = token.as_str();
 
     // get entries from the index
-    indexer::map(&state.db, |file, symbol, entry| {
+    indexer::map(state.db.read(), |file, symbol, entry| {
         if !symbol.fuzzy_matches(token) {
             return;
         }
