@@ -54,7 +54,7 @@ const COMPLETE_FILENAME: &str = ".complete";
 ///   simultaneously. It keeps any [`PathBuf`] handed out by [`Cache::get`] valid for the
 ///   life of the cache.
 ///
-/// - **Exclusive** is only attempted once, at [`Cache::new`], to run [`Cache::clean`].
+/// - **Exclusive** is only attempted once, at [`Cache::open`], to run [`Cache::clean`].
 ///   It is skipped if another session already holds the shared lock, in which case we
 ///   just try again next time.
 ///
@@ -81,13 +81,13 @@ impl Cache {
     /// Runs a best-effort [`Cache::clean`] under the exclusive root lock (skipped if
     /// another session holds the shared lock), then holds the shared root lock for the
     /// life of the returned `Cache` so handed-out paths stay valid.
-    pub fn new(root: &str, capacity: usize) -> anyhow::Result<Self> {
-        Self::new_in(cache_dir()?.join(root), capacity)
+    pub fn open(root: &str, capacity: usize) -> anyhow::Result<Self> {
+        Self::open_in(cache_dir()?.join(root), capacity)
     }
 
-    /// Like [`Cache::new`], but rooted at an explicit `root` rather than a subfolder of
+    /// Like [`Cache::open`], but rooted at an explicit `root` rather than a subfolder of
     /// the shared cache directory. Only useful for testing against a temp directory.
-    pub fn new_in(root: PathBuf, capacity: usize) -> anyhow::Result<Self> {
+    pub fn open_in(root: PathBuf, capacity: usize) -> anyhow::Result<Self> {
         let root = Filesystem::new(root);
         root.create_dir()?;
 
@@ -293,7 +293,7 @@ mod tests {
     /// alive for the test.
     fn new(capacity: usize) -> (TempDir, Cache) {
         let dir = TempDir::new().unwrap();
-        let cache = Cache::new_in(dir.path().join("subfolder"), capacity).unwrap();
+        let cache = Cache::open_in(dir.path().join("subfolder"), capacity).unwrap();
         (dir, cache)
     }
 
@@ -357,7 +357,7 @@ mod tests {
 
         // Populate one good entry, then forge a crashed partial (no `.complete`).
         {
-            let cache = Cache::new_in(root.clone(), 10).unwrap();
+            let cache = Cache::open_in(root.clone(), 10).unwrap();
             cache.insert("good", write_file("ok")).unwrap();
         }
         let partial = root.join("partial");
@@ -365,7 +365,7 @@ mod tests {
         std::fs::write(partial.join("content.txt"), "junk").unwrap();
 
         // Reopening runs `clean`, which removes the partial but keeps the good entry.
-        let cache = Cache::new_in(root, 10).unwrap();
+        let cache = Cache::open_in(root, 10).unwrap();
         assert!(!partial.exists());
         assert!(cache.get("good").is_some());
     }
@@ -376,7 +376,7 @@ mod tests {
         let root = dir.path().join("subfolder");
 
         {
-            let cache = Cache::new_in(root.clone(), 10).unwrap();
+            let cache = Cache::open_in(root.clone(), 10).unwrap();
             cache.insert("good", write_file("ok")).unwrap();
         }
         // A stray file in the cache root that doesn't belong to any entry.
@@ -385,7 +385,7 @@ mod tests {
 
         // Reopening runs `clean`, which removes the stray file but keeps our root
         // `.lock` and the good entry.
-        let cache = Cache::new_in(root.clone(), 10).unwrap();
+        let cache = Cache::open_in(root.clone(), 10).unwrap();
         assert!(!stray.exists());
         assert!(root.join(".lock").exists());
         assert!(cache.get("good").is_some());
@@ -400,7 +400,7 @@ mod tests {
         // Insert four entries under a capacity that won't evict, then stamp their
         // access times so the ordering is deterministic.
         {
-            let cache = Cache::new_in(root.clone(), 10).unwrap();
+            let cache = Cache::open_in(root.clone(), 10).unwrap();
             for (index, key) in ["oldest", "older", "newer", "newest"].iter().enumerate() {
                 let entry = cache.insert(key, write_file(key)).unwrap().unwrap();
                 set_accessed(&entry, now + Duration::from_secs(index as u64));
@@ -408,7 +408,7 @@ mod tests {
         }
 
         // Reopening with capacity 2 evicts the two least-recently-accessed.
-        let cache = Cache::new_in(root, 2).unwrap();
+        let cache = Cache::open_in(root, 2).unwrap();
         assert_eq!(cache.get("oldest"), None);
         assert_eq!(cache.get("older"), None);
         assert!(cache.get("newer").is_some());

@@ -38,8 +38,8 @@ impl OakSourceHandler {
     /// Build the handler, opening both caches against the shared on disk cache
     pub(crate) fn new(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
-            srcref: SrcrefCache::new(r)?,
-            source: SourceCache::new()?,
+            srcref: SrcrefCache::open(r)?,
+            source: SourceCache::open()?,
         })
     }
 
@@ -48,8 +48,8 @@ impl OakSourceHandler {
     #[cfg(test)]
     pub(crate) fn new_in(root: &Path, r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
-            srcref: SrcrefCache::new_in(root.join("srcref"), r)?,
-            source: SourceCache::new_in(root.join("source"))?,
+            srcref: SrcrefCache::open_in(root.join("srcref"), r)?,
+            source: SourceCache::open_in(root.join("source"))?,
         })
     }
 }
