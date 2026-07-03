@@ -4,6 +4,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use filetime::set_file_mtime;
+use filetime::FileTime;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -67,6 +69,12 @@ fn remove_watched_file(db: &mut OakDatabase, path: FilePath) {
         }],
         &HashSet::new(),
     );
+}
+
+/// The global salsa revision. Bumps once per input setter that actually
+/// fires, so a delta of zero across an operation means it wrote no inputs.
+fn salsa_revision(db: &OakDatabase) -> salsa::Revision {
+    salsa::plumbing::current_revision(db)
 }
 
 /// Sync helper: force a fresh full rescan of `root`. Equivalent to the
@@ -625,4 +633,61 @@ fn test_apply_watcher_events_tolerates_non_package_description() {
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.packages(&db).is_empty());
+}
+
+#[test]
+fn test_noop_rescan_does_not_bump_salsa_revision() {
+    // Salsa has no backdating for inputs: setting an input to the value it
+    // already holds still bumps the global revision and invalidates every
+    // query downstream of it. So a rescan that finds nothing new on disk must
+    // not touch any input. We observe the revision directly. A clean rescan
+    // leaves it flat, a structural change moves it.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
+    fs::write(tmp.path().join("pkg/tests/test-foo.R"), "t\n").unwrap();
+    fs::write(tmp.path().join("top.R"), "y <- 2\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let root = db.workspace_roots().roots(&db)[0];
+
+    // Nothing changed on disk, so the rescan reuses every `Package` / `File`
+    // entity and finds every input field already equal.
+    let before = salsa_revision(&db);
+    rescan_workspace_root(&mut db, root);
+    assert_eq!(salsa_revision(&db), before);
+
+    // A new file under pkg/R/ is a real structural change, so it does move the
+    // revision. This proves the assertion above isn't vacuously true.
+    fs::write(tmp.path().join("pkg/R/b.R"), "z <- 3\n").unwrap();
+    rescan_workspace_root(&mut db, root);
+    assert!(salsa_revision(&db) > before);
+}
+
+#[test]
+fn test_watcher_reblip_same_mtime_does_not_bump_salsa_revision() {
+    // Watchers coalesce and re-emit events, so one save can deliver a Changed
+    // event whose re-stat matches the mtime we already stored.
+    // `add_watched_file` guards the `File::revision` write against that, so a
+    // duplicate event leaves the revision (and thus `source_text`) alone.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let fs_path = tmp.path().join("pkg/R/a.R");
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
+
+    // Duplicate event, nothing rewritten: same mtime, so the guard skips.
+    let before = salsa_revision(&db);
+    add_watched_file(&mut db, path.clone());
+    assert_eq!(salsa_revision(&db), before);
+
+    // A genuine save carries a distinct mtime, so the revision bumps and the
+    // next `source_text` re-reads. Set the mtime explicitly rather than trust
+    // the filesystem's mtime granularity to notice a back-to-back write.
+    fs::write(&fs_path, "x <- 2\n").unwrap();
+    set_file_mtime(&fs_path, FileTime::from_unix_time(1_000_000_000, 0)).unwrap();
+    add_watched_file(&mut db, path);
+    assert!(salsa_revision(&db) > before);
 }

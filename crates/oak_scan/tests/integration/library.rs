@@ -153,6 +153,32 @@ fn test_package_version_rereads_when_revision_bumps() {
 }
 
 #[test]
+fn test_reset_same_library_paths_does_not_bump_salsa_revision() {
+    // Re-declaring the identical library paths reuses every `Root` entity, so
+    // the `LibraryRoots.roots` vec compares equal and the guarded setter is
+    // skipped. Salsa has no backdating for inputs, so an unguarded set here
+    // would bump the global revision and invalidate everything keyed on the
+    // library set. We observe the revision: no change leaves it flat, a real
+    // change moves it.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("dplyr"), "dplyr", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+
+    let before = salsa::plumbing::current_revision(&db);
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+    assert_eq!(salsa::plumbing::current_revision(&db), before);
+
+    // Adding a second path is a real change, so the revision moves. This
+    // proves the assertion above isn't vacuously true.
+    let tmp2 = tempfile::tempdir().unwrap();
+    write_package(&tmp2.path().join("tibble"), "tibble", &[]);
+    db.set_library_paths(&[tmp.path().to_path_buf(), tmp2.path().to_path_buf()]);
+    assert!(salsa::plumbing::current_revision(&db) > before);
+}
+
+#[test]
 fn test_scan_multiple_library_paths_preserve_order() {
     let tmp1 = tempfile::tempdir().unwrap();
     let tmp2 = tempfile::tempdir().unwrap();
