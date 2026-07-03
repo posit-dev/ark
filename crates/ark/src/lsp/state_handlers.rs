@@ -506,10 +506,11 @@ async fn update_config(
         }
     }
 
-    // Refresh diagnostics if the configuration changed
+    // Refresh diagnostics if the configuration changed. The config lives
+    // outside Oak so we bump the revision manually.
     if state.config.diagnostics != diagnostics_config {
         tracing::info!("Refreshing diagnostics after configuration changed");
-        lsp::main_loop::diagnostics_refresh_all(state);
+        state.bump_revision();
     }
 
     Ok(())
@@ -526,8 +527,9 @@ pub(crate) fn did_change_console_inputs(
     // We currently rely on global console scopes for diagnostics, in particular
     // during package development in conjunction with `devtools::load_all()`.
     // Ideally diagnostics would not rely on these though, and we wouldn't need
-    // to refresh from here.
-    lsp::diagnostics_refresh_all(state);
+    // to refresh from here. The scopes live outside oak so we bump the revision
+    // manually.
+    state.bump_revision();
 
     Ok(())
 }

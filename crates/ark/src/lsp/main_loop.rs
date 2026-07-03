@@ -388,8 +388,9 @@ impl GlobalState {
         // resolved definitions), so any handler that writes to oak invalidates
         // them. Rather than have each write site remember to refresh, we watch
         // the oak revision across the whole tick: if a handler advanced it,
-        // refresh centrally. Config and console state live outside oak, so
-        // handlers that mutate those still refresh explicitly.
+        // refresh centrally. Config and console state live outside oak, so the
+        // handlers that mutate those advance the revision synthetically (see
+        // `WorldState::bump_revision`) to route through this same path.
         let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
         match event {
@@ -1031,15 +1032,12 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 /// Tasks are batched and deduplicated per URL (only the last task per URL is
 /// processed), so stale-version diagnostics get superseded within a batch.
 ///
-/// Batches triggered by an oak write can't publish out of order. Each pass
-/// holds a db snapshot, and a salsa write blocks until all snapshots drop, so
-/// by the time the write completes and the newer batch is enqueued, any older
-/// pass has either unwound with `Cancelled` or already produced its result.
-///
-/// FIXME: Batches triggered without an oak write (console inputs, diagnostics
-/// config) have no such barrier. An older pass can run concurrently with the
-/// newer one and publish last, leaving diagnostics computed from the older
-/// console scopes or config until the next refresh.
+/// Batches can't publish out of order. Each pass holds a db snapshot, and a
+/// salsa write blocks until all snapshots drop, so by the time the write
+/// completes and the newer batch is enqueued, any older pass has either unwound
+/// with `Cancelled` or already produced its result. Changes to state that lives
+/// outside oak (console inputs, diagnostics config) get the same barrier by
+/// advancing the revision synthetically (see `WorldState::bump_revision`).
 async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
         let mut batch = vec![task];
@@ -1249,6 +1247,18 @@ mod tests {
             FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
             "x <- 1".to_string(),
         );
+        let after = salsa::plumbing::current_revision(&state.db);
+        assert_ne!(before, after);
+    }
+
+    /// Console-scope and config changes live outside oak, so they lean on
+    /// `bump_revision` to advance the revision and trigger the same central
+    /// refresh. This pins that the synthetic write actually moves the revision.
+    #[test]
+    fn test_bump_revision_advances_revision() {
+        let mut state = WorldState::default();
+        let before = salsa::plumbing::current_revision(&state.db);
+        state.bump_revision();
         let after = salsa::plumbing::current_revision(&state.db);
         assert_ne!(before, after);
     }
