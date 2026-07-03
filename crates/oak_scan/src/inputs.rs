@@ -189,8 +189,12 @@ impl<DB: Db + DbInputs> DbScan for DB {
             .map(|entry| upsert_root_file(self, Some(package), entry))
             .collect();
 
-        package.set_files(self).to(files);
-        package.set_scripts(self).to(scripts);
+        if package.files(self) != &files {
+            package.set_files(self).to(files);
+        }
+        if package.scripts(self) != &scripts {
+            package.set_scripts(self).to(scripts);
+        }
     }
 }
 
@@ -202,26 +206,17 @@ impl<DB: Db + DbInputs> DbScan for DB {
 /// (`Root.scripts`, `Package.files`, `File.package`) in ways the raw
 /// salsa setters can't express on their own.
 pub trait RootExt {
-    /// Create or update a package under this root. Atomic
-    /// full-replacement of the package's file set.
+    /// Create or update a package under this root. Atomic full-replacement of
+    /// the package's file set.
     ///
-    /// Identity is keyed on `description_path`: if `self.packages`
-    /// already contains a `Package` with this URL, that entity is
-    /// reused and its `name` / `description_revision` /
-    /// `namespace_revision` fields are updated in place. Salsa backdates
-    /// each setter call when the value doesn't actually change.
+    /// The package identity is keyed on `description_path`: if `self.packages`
+    /// already contains a `Package` with this URL, that entity is reused and
+    /// its `name` / `description_revision` / `namespace_revision` fields are
+    /// refreshed (only where they actually changed to avoid an unnecessary
+    /// revision bump).
     ///
-    /// `description_revision` and `namespace_revision` are the `DESCRIPTION`
-    /// and `NAMESPACE` mtimes. The version, collation, and namespace are
-    /// parsed lazily by [`Package::version`] / [`Package::collation`] /
-    /// [`Package::namespace`], so the scanner never reads or parses those
-    /// files (the workspace scanner reads `DESCRIPTION` separately, for the
-    /// name and file ordering, before calling this).
-    ///
-    /// Files are reused by URL via [`Db::file_by_path`]; see
-    /// [`FileEntry`] for the content-preservation semantics. Wiring
-    /// the returned `Package` into `self.packages` is the caller's
-    /// job.
+    /// Invariant: The caller must wire the returned `Package` into
+    /// `self.packages` via `Root::set_packages()`.
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
@@ -270,9 +265,15 @@ impl RootExt for Root {
         // Either way we reuse the entity and refresh its metadata fields.
         let pkg = match package_by_path(db, &description_path) {
             Some(p) => {
-                p.set_name(db).to(name);
-                p.set_description_revision(db).to(description_revision);
-                p.set_namespace_revision(db).to(namespace_revision);
+                if p.name(db) != &name {
+                    p.set_name(db).to(name);
+                }
+                if p.description_revision(db) != description_revision {
+                    p.set_description_revision(db).to(description_revision);
+                }
+                if p.namespace_revision(db) != namespace_revision {
+                    p.set_namespace_revision(db).to(namespace_revision);
+                }
                 remove_from_stale_packages(db, p);
                 p
             },
@@ -297,8 +298,12 @@ impl RootExt for Root {
             .map(|entry| upsert_root_file(db, Some(pkg), entry))
             .collect();
 
-        pkg.set_files(db).to(file_entities);
-        pkg.set_scripts(db).to(script_entities);
+        if pkg.files(db) != &file_entities {
+            pkg.set_files(db).to(file_entities);
+        }
+        if pkg.scripts(db) != &script_entities {
+            pkg.set_scripts(db).to(script_entities);
+        }
         pkg
     }
 
@@ -348,8 +353,8 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
         //   the file is about to land in a `Root` container, so the orphan
         //   reference is stale by the time this returns.
         let old_package = existing.package(db);
-        existing.set_package(db).to(package);
         if old_package != package {
+            existing.set_package(db).to(package);
             if let Some(old_pkg) = old_package {
                 remove_from_pkg_files(db, old_pkg, existing);
             }
@@ -363,9 +368,15 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
         // disk-backed, so clear any stale override and update the revision.
         // The editor-owned variant lives in `orphan_root` instead; this branch
         // only sees scanner-discovered files.
-        stale.set_revision(db).to(entry.revision);
-        stale.set_source_text_override(db).to(None);
-        stale.set_package(db).to(package);
+        if stale.revision(db) != entry.revision {
+            stale.set_revision(db).to(entry.revision);
+        }
+        if stale.source_text_override(db).is_some() {
+            stale.set_source_text_override(db).to(None);
+        }
+        if stale.package(db) != package {
+            stale.set_package(db).to(package);
+        }
         remove_from_stale_files(db, stale);
         return stale;
     }
