@@ -101,7 +101,7 @@ rust-embed = "8.11.0"
 rustc-hash = "2.1.2"
 salsa = { version = "0.26.2", features = ["compact_str"] }
 salsa-macros = "0.26.2"
-scraper = "0.26.0"
+scraper = "0.27.0"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
