@@ -158,4 +158,5 @@ initialize <- function() {
     initialize_debug()
     initialize_hooks()
     initialize_hooks_source()
+    initialize_fork_guard()
 }

@@ -26,6 +26,7 @@ mod kernel_captured_output;
 mod kernel_debugger;
 mod kernel_execute;
 mod kernel_execute_error;
+mod kernel_fork_guard;
 mod kernel_hooks_session;
 mod kernel_hooks_source;
 mod kernel_hooks_timestamp;

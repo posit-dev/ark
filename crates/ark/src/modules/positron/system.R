@@ -18,6 +18,18 @@ is_windows <- function() {
     system_os() == "windows"
 }
 
+#' Name of the frontend Ark is running under.
+#'
+#' Positron sets the `POSITRON` env var when it launches Ark. Same signal
+#' `positron.R` uses to set `.Platform$GUI`.
+app_name <- function() {
+    if (Sys.getenv("POSITRON") == 1) {
+        "Positron"
+    } else {
+        "Ark"
+    }
+}
+
 has_aqua <- function() {
     capabilities("aqua")
 }
