@@ -42,7 +42,9 @@ Available options:
 -- arg1 arg2 ...             Set the argument list to pass to R; defaults to
                              --interactive
 --startup-file FILE          An R file to run on session startup
---session-mode MODE          The mode in which the session is running (console, notebook, background)
+--session-mode MODE          The mode in which the session is running: "console" (the
+                             default), "notebook", or "background". See the
+                             "Session modes" section.
 --no-capture-streams         Do not capture stdout/stderr from R
 --default-repos              Set the default repositories to use, by name:
                              "rstudio" ('cran.rstudio.com', the default), or
@@ -71,6 +73,28 @@ Available options:
     print!(
         r#"
 --help                       Print this help message
+
+Session modes:
+
+"console" mode (the default) is meant for a rich frontend like Positron, while
+"notebook" mode is meant for standard Jupyter frontends. They differ in how
+some output is reported to the frontend:
+
+- Errors. A Jupyter error message carries the error message in "evalue" and the
+  backtrace in "traceback". In "console" mode these are sent as-is. In
+  "notebook" mode the error message is also prepended to "traceback", because
+  frontends such as JupyterLab only display "traceback" when it is present,
+  discarding "evalue". Without the prepend the error message wouldn't show at
+  all.
+
+- Autoprint of intermediate expressions. When a single request contains several
+  top-level expressions (e.g. `a` and `b` in `a; b; c`), "console" mode streams
+  each intermediate result to the frontend, matching R behaviour. "notebook"
+  mode emits only the last expression's result, matching how a notebook cell is
+  typically evaluated by Jupyter kernels.
+
+Note that `ark --install` sets the generated kernelspec to run Ark in notebook
+mode.
 
 "#
     );
