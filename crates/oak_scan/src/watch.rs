@@ -64,7 +64,13 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
         // file is open in the editor, the override still wins in
         // `source_text`, so the on-disk change is ignored until the buffer
         // closes. Otherwise the bump forces the next `source_text` to re-read.
-        existing.set_revision(db).to(revision);
+        //
+        // Guard the write: watchers coalesce and duplicate events, so one save
+        // can re-stat to the same mtime we already stored. Setting the revision
+        // to that unchanged value would unnecessarily invalidate `source_text`.
+        if existing.revision(db) != revision {
+            existing.set_revision(db).to(revision);
+        }
         return;
     }
 

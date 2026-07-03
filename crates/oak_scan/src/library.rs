@@ -65,7 +65,9 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
         };
         new_roots.push(root);
     }
-    db.library_roots().set_roots(db).to(new_roots);
+    if db.library_roots().roots(db) != &new_roots {
+        db.library_roots().set_roots(db).to(new_roots);
+    }
 }
 
 /// Initial scan of a path that wasn't previously a library root. Walks only the

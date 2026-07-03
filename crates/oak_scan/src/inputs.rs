@@ -316,7 +316,9 @@ impl RootExt for Root {
             .into_iter()
             .map(|entry| upsert_root_file(db, None, entry))
             .collect();
-        self.set_scripts(db).to(scripts);
+        if self.scripts(db) != &scripts {
+            self.set_scripts(db).to(scripts);
+        }
     }
 }
 

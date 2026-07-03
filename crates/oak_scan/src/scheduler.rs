@@ -141,7 +141,9 @@ impl ScanCompleted {
             })
             .collect();
 
-        root.set_packages(db).to(package_entities);
+        if root.packages(db) != &package_entities {
+            root.set_packages(db).to(package_entities);
+        }
         root.set_workspace_scripts(db, scripts);
     }
 }
@@ -229,7 +231,9 @@ impl ScanScheduler {
             };
             new_roots.push(root);
         }
-        db.workspace_roots().set_roots(db).to(new_roots);
+        if db.workspace_roots().roots(db) != &new_roots {
+            db.workspace_roots().set_roots(db).to(new_roots);
+        }
 
         requests
     }
