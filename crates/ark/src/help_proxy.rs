@@ -44,9 +44,21 @@ struct AppState {
     target_port: u16,
 }
 
+/// Drop guard that ties the proxy server's lifetime to the help comm.
+///
+/// Dropping this stops the `actix_web` server and lets its thread and tokio
+/// runtime exit. We hold it in `RHelp` so the proxy lives exactly as long as
+/// the help comm. The field is never read. Dropping the `Sender` is the whole
+/// mechanism, because that's what the proxy thread waits on.
+#[derive(Debug)]
+pub struct ProxyHandle {
+    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
+}
+
 // Starts the help proxy.
-pub fn start(target_port: u16) -> anyhow::Result<u16> {
+pub fn start(target_port: u16) -> anyhow::Result<(u16, ProxyHandle)> {
     let (port_tx, port_rx) = crossbeam::channel::bounded::<u16>(1);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     spawn!("ark-help-proxy", move || -> anyhow::Result<()> {
         // Bind to port `0` to allow the OS to assign the port, avoiding any race conditions
@@ -85,9 +97,26 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
 
         // Execute the task within the runtime.
         rt.block_on(async {
-            match server.run().await {
-                Ok(value) => log::info!("Help proxy server exited with value: {:?}", value),
-                Err(error) => log::error!("Help proxy server exited unexpectedly: {}", error),
+            let server = server.run();
+            let handle = server.handle();
+
+            // Dropping the help comm must tear down the whole proxy and its
+            // runtime, not just stop the server. The trigger is `ProxyHandle`
+            // (this oneshot's sender) dropping with `RHelp`, which resolves
+            // `shutdown_rx`. The explicit `stop()` is required because dropping
+            // the `ServerHandle` can't stop the server (the `Server` future
+            // owns its own handle). `stop()` lets the `server.await` call
+            // return, allowing the task and runtime to exit.
+            tokio::spawn(async move {
+                // We never send on the sender, so this only resolves (to `Err`)
+                // when `ProxyHandle` drops. Either way it means "shut down".
+                shutdown_rx.await.ok();
+                handle.stop(false).await;
+            });
+
+            match server.await {
+                Ok(value) => log::info!("Help proxy server exited with value: {value:?}"),
+                Err(error) => log::error!("Help proxy server exited unexpectedly: {error}"),
             }
         });
 
@@ -96,7 +125,9 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
 
     // Wait for the returned port with an extensive timeout
     match port_rx.recv_timeout(Duration::from_secs(20)) {
-        Ok(port) => Ok(port),
+        Ok(port) => Ok((port, ProxyHandle {
+            _shutdown_tx: shutdown_tx,
+        })),
         Err(err) => Err(anyhow::anyhow!(
             "Help proxy server timed out while waiting for a port: {err:?}"
         )),
