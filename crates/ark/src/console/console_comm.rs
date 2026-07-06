@@ -173,13 +173,11 @@ impl Console {
     fn remove_comm(&self, comm_id: &str) -> Option<Rc<ConsoleComm>> {
         let comm = self.comms.borrow_mut().remove(comm_id)?;
 
-        let mut ui_comm_id = self.ui_comm_id.borrow_mut();
-        if ui_comm_id.as_deref() == Some(comm_id) {
-            *ui_comm_id = None;
+        if self.ui_comm_id.borrow().as_deref() == Some(comm_id) {
+            *self.ui_comm_id.borrow_mut() = None;
         }
-        let mut help_comm_id = self.help_comm_id.borrow_mut();
-        if help_comm_id.as_deref() == Some(comm_id) {
-            *help_comm_id = None;
+        if self.help_comm_id.borrow().as_deref() == Some(comm_id) {
+            *self.help_comm_id.borrow_mut() = None;
         }
 
         Some(comm)

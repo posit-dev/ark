@@ -33,6 +33,10 @@ pub const HELP_COMM_NAME: &str = "positron.help";
 
 /// The R Help handler (together with the help proxy) provides the server side
 /// of Positron's Help panel.
+///
+/// A stateless unit struct. The server and proxy ports live on `Console` as
+/// `help_ports` so they can be reached via `Console::get()` by the
+/// `browseURL()` hook.
 #[derive(Debug)]
 pub struct RHelp;
 
@@ -159,7 +163,6 @@ impl RHelp {
         Ok(found)
     }
 
-    // Must be called on the R thread.
     // Tries calling a custom help handler defined as an ark method.
     fn custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
         let env = console::selected_env();
@@ -231,9 +234,8 @@ impl CommHandler for RHelp {
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        let this = &*self;
         handle_rpc_request(&ctx.outgoing_tx, HELP_COMM_NAME, msg, |req| {
-            this.handle_rpc(req)
+            self.handle_rpc(req)
         });
     }
 }

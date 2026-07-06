@@ -48,7 +48,6 @@ impl Console {
         self.help_proxy_port = Some(proxy_port);
     }
 
-    /// Translate a help event and send it on the help comm's outgoing channel.
     pub(crate) fn send_help_event(&self, event: HelpEvent) -> anyhow::Result<()> {
         let (Some(r_port), Some(proxy_port)) = (self.help_port, self.help_proxy_port) else {
             return Err(anyhow!("No help ports available to handle help event. Is the help comm open? Event {event:?}."));

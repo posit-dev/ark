@@ -243,7 +243,9 @@ pub struct Console {
     try_idle_rx: Receiver<TryIdleTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Comm IDs of pinned comms, if connected.
+    /// Comm IDs of the singleton UI and help comms, if connected. Opening a
+    /// new one replaces the old. The comms themselves live in `comms` like
+    /// any others.
     ui_comm_id: DebugRefCell<Option<String>>,
     help_comm_id: DebugRefCell<Option<String>>,
 
