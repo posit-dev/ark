@@ -43,31 +43,32 @@ impl Console {
 
 /// Help integration.
 impl Console {
-    pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
-        self.help_event_tx = Some(help_event_tx);
-        self.help_port = Some(help_port);
+    pub(crate) fn set_help_ports(&mut self, r_port: u16, proxy_port: u16) {
+        self.help_ports = Some(HelpPorts { r_port, proxy_port });
     }
 
     pub(crate) fn send_help_event(&self, event: HelpEvent) -> anyhow::Result<()> {
-        let Some(ref tx) = self.help_event_tx else {
-            return Err(anyhow!("No help channel available to handle help event. Is the help comm open? Event {event:?}."));
+        let Some(HelpPorts { r_port, proxy_port }) = self.help_ports else {
+            return Err(anyhow!("No help ports available to handle help event. Is the help comm open? Event {event:?}."));
         };
 
-        if let Err(err) = tx.send(event) {
-            return Err(anyhow!("Failed to send help message: {err:?}"));
-        }
+        let Some(help) = self.lookup_help_comm() else {
+            return Err(anyhow!(
+                "No help comm available to handle help event. Is the help comm open? Event {event:?}."
+            ));
+        };
 
-        Ok(())
+        RHelp::handle_event(event, &help.ctx, r_port, proxy_port)
     }
 
     pub(crate) fn is_help_url(&self, url: &str) -> bool {
-        let Some(port) = self.help_port else {
+        let Some(HelpPorts { r_port, .. }) = self.help_ports else {
             log::error!("No help port is available to check if '{url}' is a help url. Is the help comm open?");
             // Fail to recognize this as a help url, allow any fallbacks methods to run instead.
             return false;
         };
 
-        RHelp::is_help_url(url, port)
+        RHelp::is_help_url(url, r_port)
     }
 }
 

@@ -150,6 +150,7 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::dap::dap_state::Breakpoint;
 use crate::dap::Dap;
 use crate::help::message::HelpEvent;
+use crate::help::r_help::HelpPorts;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -243,18 +244,19 @@ pub struct Console {
     try_idle_rx: Receiver<TryIdleTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Comm ID of the UI comm, if connected. The comm itself lives in `comms`
-    /// like any other.
+    /// Comm IDs of the singleton UI and help comms, if connected. Opening a
+    /// new one replaces the old. The comms themselves live in `comms` like
+    /// any others.
     ui_comm_id: DebugRefCell<Option<String>>,
+    help_comm_id: DebugRefCell<Option<String>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
     last_error: Option<Exception>,
 
-    /// Channel to communicate with the Help thread
-    help_event_tx: Option<Sender<HelpEvent>>,
-    /// R help port
-    help_port: Option<u16>,
+    /// Ports for the R help server and our proxy, set once both are running.
+    /// `None` until then.
+    help_ports: Option<HelpPorts>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
