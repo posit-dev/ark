@@ -116,7 +116,11 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            self.close_ui_comm();
+            let old_id = self.ui_comm_id.borrow().clone();
+            if let Some(old_id) = old_id {
+                log::info!("Replacing an existing UI comm.");
+                self.comm_handle_close(&old_id);
+            }
             *self.ui_comm_id.borrow_mut() = Some(comm_id.clone());
         }
 
@@ -163,20 +167,6 @@ impl Console {
         }
 
         Some(comm)
-    }
-
-    /// Close and drop the currently registered UI comm, if any.
-    fn close_ui_comm(&self) {
-        let Some(old) = self
-            .ui_comm_id
-            .borrow_mut()
-            .take()
-            .and_then(|old_id| self.comms.borrow_mut().remove(&old_id))
-        else {
-            return;
-        };
-        log::info!("Replacing an existing UI comm.");
-        old.handler.borrow_mut().handle_close(&old.ctx);
     }
 
     fn drain_closed(&self) {
