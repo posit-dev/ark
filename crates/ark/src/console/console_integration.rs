@@ -44,12 +44,12 @@ impl Console {
 /// Help integration.
 impl Console {
     pub(crate) fn set_help_ports(&mut self, r_port: u16, proxy_port: u16) {
-        self.help_port = Some(r_port);
+        self.help_r_port = Some(r_port);
         self.help_proxy_port = Some(proxy_port);
     }
 
     pub(crate) fn send_help_event(&self, event: HelpEvent) -> anyhow::Result<()> {
-        let (Some(r_port), Some(proxy_port)) = (self.help_port, self.help_proxy_port) else {
+        let (Some(r_port), Some(proxy_port)) = (self.help_r_port, self.help_proxy_port) else {
             return Err(anyhow!("No help ports available to handle help event. Is the help comm open? Event {event:?}."));
         };
 
@@ -63,7 +63,7 @@ impl Console {
     }
 
     pub(crate) fn is_help_url(&self, url: &str) -> bool {
-        let Some(port) = self.help_port else {
+        let Some(port) = self.help_r_port else {
             log::error!("No help port is available to check if '{url}' is a help url. Is the help comm open?");
             // Fail to recognize this as a help url, allow any fallbacks methods to run instead.
             return false;

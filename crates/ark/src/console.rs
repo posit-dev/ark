@@ -254,7 +254,7 @@ pub struct Console {
     last_error: Option<Exception>,
 
     /// R help server port, used to recognize help URLs.
-    help_port: Option<u16>,
+    help_r_port: Option<u16>,
 
     /// Our help proxy server port, used to rewrite help URLs sent to the frontend.
     help_proxy_port: Option<u16>,
