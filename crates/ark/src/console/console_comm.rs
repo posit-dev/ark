@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
+use std::rc::Rc;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
@@ -22,42 +24,31 @@ use crate::ui::UI_COMM_NAME;
 
 // All methods take `&self`.
 //
-// Regular comms use a take/remove pattern: we take the comm out of the
-// `comms` HashMap before calling the handler, so no `borrow_mut()` guard
-// is held during the call. This prevents panics if the handler reenters
-// the HashMap. For instance, a data explorer handler calls
-// `comm_open_backend` to open a child explorer for a column, which
-// needs to `borrow_mut()` the same HashMap to insert.
+// Dispatch clones the comm's `Rc` out of `comms` via `lookup_comm()` and drops
+// the map borrow before calling the handler. Two things fall out of that:
 //
-// The UI comm uses a different strategy: the handler is in its own
-// `DebugRefCell` inside the `ConsoleComm`, and we borrow the outer
-// `ui_comm: DebugRefCell<Option<ConsoleComm>>` with a shared `&` ref during
-// dispatch. This keeps the `CommHandlerContext` (and thus the outgoing channel)
-// visible to reentrant code that calls `ui_comm()`, e.g. R hooks that send
-// fire-and-forget events via `try_ui_comm()?.send_event()`.
+// 1. The map is free while the handler runs, so a handler that reenters the
+//    map is fine. For instance, a data explorer handler calls
+//    `comm_open_backend` to open a child explorer for a column, which
+//    `borrow_mut()`s the map to insert.
+//
+// 2. Unlike a take approach that moves the comm out of the map and passes by
+//    value to the handler, the comm stays in the map for the whole dispatch, and
+//    is reachable by the Console the whole time. The UI comm relies on this: R
+//    hooks send fire-and-forget events via `try_ui_comm()?.send_event().
 impl Console {
     pub(super) fn comm_handle_msg(&self, comm_id: &str, msg: CommMsg) {
-        if self.is_ui_comm(comm_id) {
-            self.with_ui_handler_mut(|handler, ctx| {
-                handler.handle_msg(msg, ctx);
-            });
+        let Some(comm) = self.lookup_comm(comm_id) else {
+            log::warn!("Received message for unknown registered comm {comm_id}");
             return;
-        }
-
-        self.with_comm_mut(comm_id, |comm| {
-            comm.handler.get_mut().handle_msg(msg, &comm.ctx);
-        });
+        };
+        comm.handler.borrow_mut().handle_msg(msg, &comm.ctx);
         self.drain_closed();
     }
 
     pub(super) fn comm_handle_close(&self, comm_id: &str) {
-        if let Some(ui) = self.take_ui_comm_if(comm_id) {
-            ui.handler.into_inner().handle_close(&ui.ctx);
-            return;
-        }
-
-        if let Some(comm) = self.take_comm(comm_id) {
-            comm.handler.into_inner().handle_close(&comm.ctx);
+        if let Some(comm) = self.remove_comm(comm_id) {
+            comm.handler.borrow_mut().handle_close(&comm.ctx);
         }
     }
 
@@ -89,13 +80,13 @@ impl Console {
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
         handler.handle_open(&ctx);
 
-        self.comms
-            .borrow_mut()
-            .insert(comm_id.clone(), ConsoleComm {
-                comm_id: comm_id.clone(),
+        self.comms.borrow_mut().insert(
+            comm_id.clone(),
+            Rc::new(ConsoleComm {
                 handler: DebugRefCell::new(handler),
                 ctx,
-            });
+            }),
+        );
 
         // Block until Shell has processed the open, ensuring the `comm_open`
         // message is on IOPub before we return. Any updates the caller sends
@@ -125,98 +116,57 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            if let Some(old) = self.take_ui_comm() {
+            let old_id = self.ui_comm_id.borrow().clone();
+            if let Some(old_id) = old_id {
                 log::info!("Replacing an existing UI comm.");
-                old.handler.into_inner().handle_close(&old.ctx);
+                self.comm_handle_close(&old_id);
             }
-            self.set_ui_comm(ConsoleComm {
-                comm_id,
+            *self.ui_comm_id.borrow_mut() = Some(comm_id.clone());
+        }
+
+        self.comms.borrow_mut().insert(
+            comm_id,
+            Rc::new(ConsoleComm {
                 handler: DebugRefCell::new(handler),
                 ctx,
-            });
-        } else {
-            self.comms
-                .borrow_mut()
-                .insert(comm_id.clone(), ConsoleComm {
-                    comm_id,
-                    handler: DebugRefCell::new(handler),
-                    ctx,
-                });
-        }
+            }),
+        );
     }
 
     pub(super) fn comm_notify_environment_changed(&self, event: &EnvironmentChanged) {
-        self.with_ui_handler_mut(|handler, ctx| {
-            handler.handle_environment(event, ctx);
-        });
-
-        let ids: Vec<String> = self.comms.borrow().keys().cloned().collect();
-        for id in ids {
-            self.with_comm_mut(&id, |comm| {
-                comm.handler.get_mut().handle_environment(event, &comm.ctx);
-            });
+        // Snapshot the `Rc`s so the `comms` borrow is dropped before we run any
+        // handler (a handler may reenter `self.comms`).
+        let comms: Vec<Rc<ConsoleComm>> = self.comms.borrow().values().map(Rc::clone).collect();
+        for comm in comms {
+            comm.handler
+                .borrow_mut()
+                .handle_environment(event, &comm.ctx);
         }
         self.drain_closed();
     }
 
-    // -- UI comm helpers --------------------------------------------------
-
-    fn is_ui_comm(&self, comm_id: &str) -> bool {
-        self.ui_comm
-            .borrow()
-            .as_ref()
-            .is_some_and(|ui| ui.comm_id == comm_id)
-    }
-
-    /// Borrow the UI comm with `&`, then borrow the handler with `&mut`.
-    ///
-    /// Because the outer `RefCell` is only borrowed by shared ref, `ui_comm()`
-    /// remains functional during handler dispatch and R code that calls
-    /// back into Rust (e.g. `navigateToFile` from a `frontend_ready`
-    /// hook) can still send events on the UI comm.
-    fn with_ui_handler_mut(&self, f: impl FnOnce(&mut Box<dyn CommHandler>, &CommHandlerContext)) {
-        let guard = self.ui_comm.borrow();
-        let Some(ui) = guard.as_ref() else {
-            log::warn!("UI comm is absent during dispatch (reentrant call?)");
-            return;
-        };
-        let mut handler = ui.handler.borrow_mut();
-        f(&mut handler, &ui.ctx);
-    }
-
-    fn take_ui_comm(&self) -> Option<ConsoleComm> {
-        self.ui_comm.borrow_mut().take()
-    }
-
-    /// Take the UI comm only if its `comm_id` matches. Checks and takes
-    /// in a single `borrow_mut()` so there is no TOCTOU gap.
-    fn take_ui_comm_if(&self, comm_id: &str) -> Option<ConsoleComm> {
-        let mut guard = self.ui_comm.borrow_mut();
-        if guard.as_ref().is_some_and(|ui| ui.comm_id == comm_id) {
-            guard.take()
-        } else {
-            None
-        }
-    }
-
-    fn set_ui_comm(&self, ui: ConsoleComm) {
-        *self.ui_comm.borrow_mut() = Some(ui);
-    }
-
     // -- Comms map helpers ------------------------------------------------
 
-    /// Take a comm out, call `f`, put it back.
-    fn with_comm_mut(&self, comm_id: &str, f: impl FnOnce(&mut ConsoleComm)) {
-        let Some(mut comm) = self.take_comm(comm_id) else {
-            log::warn!("Received message for unknown registered comm {comm_id}");
-            return;
-        };
-        f(&mut comm);
-        self.comms.borrow_mut().insert(comm.comm_id.clone(), comm);
+    fn lookup_comm(&self, comm_id: &str) -> Option<Rc<ConsoleComm>> {
+        self.comms.borrow().get(comm_id).map(Rc::clone)
     }
 
-    fn take_comm(&self, comm_id: &str) -> Option<ConsoleComm> {
-        self.comms.borrow_mut().remove(comm_id)
+    pub(super) fn lookup_ui_comm(&self) -> Option<Rc<ConsoleComm>> {
+        let comm_id = self.ui_comm_id.borrow();
+        let comm_id = comm_id.as_deref()?;
+        self.lookup_comm(comm_id)
+    }
+
+    /// Remove a comm from the map, keeping the UI index in sync.
+    fn remove_comm(&self, comm_id: &str) -> Option<Rc<ConsoleComm>> {
+        let comm = self.comms.borrow_mut().remove(comm_id)?;
+
+        let mut ui_comm_id = self.ui_comm_id.borrow_mut();
+        if ui_comm_id.as_deref() == Some(comm_id) {
+            *ui_comm_id = None;
+        }
+
+        Some(comm)
     }
 
     fn drain_closed(&self) {
@@ -229,7 +179,7 @@ impl Console {
             .collect();
 
         for comm_id in closed_ids {
-            if let Some(comm) = self.take_comm(&comm_id) {
+            if let Some(comm) = self.remove_comm(&comm_id) {
                 self.comm_notify_closed(&comm_id, &comm);
             }
         }

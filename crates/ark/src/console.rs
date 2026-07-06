@@ -243,9 +243,9 @@ pub struct Console {
     try_idle_rx: Receiver<TryIdleTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// The UI comm, stored separately from `comms` so that `ui_comm()` can
-    /// borrow it independently of the comms map.
-    ui_comm: DebugRefCell<Option<ConsoleComm>>,
+    /// Comm ID of the UI comm, if connected. The comm itself lives in `comms`
+    /// like any other.
+    ui_comm_id: DebugRefCell<Option<String>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
@@ -355,7 +355,11 @@ pub struct Console {
     read_console_env_stack: DebugRefCell<Vec<RObject>>,
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
-    comms: DebugRefCell<HashMap<String, ConsoleComm>>,
+    ///
+    /// Entries are `Rc` so dispatch can clone one out and drop the map borrow
+    /// before running the handler. That keeps the map free for the handler to
+    /// reenter (e.g. a data explorer opening a child comm).
+    comms: DebugRefCell<HashMap<String, Rc<ConsoleComm>>>,
 
     /// Graphics device state (plot recording, rendering, comm management).
     device_context: Rc<DeviceContext>,
