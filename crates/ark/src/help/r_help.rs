@@ -31,6 +31,14 @@ use crate::methods::ArkGenerics;
 
 pub const HELP_COMM_NAME: &str = "positron.help";
 
+/// Ports for the R help server and our proxy, recorded on `Console` once both
+/// are running.
+#[derive(Clone, Copy)]
+pub struct HelpPorts {
+    pub r_port: u16,
+    pub proxy_port: u16,
+}
+
 /// The R Help handler (together with the help proxy) provides the server side
 /// of Positron's Help panel.
 ///

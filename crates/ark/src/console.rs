@@ -150,6 +150,7 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::dap::dap_state::Breakpoint;
 use crate::dap::Dap;
 use crate::help::message::HelpEvent;
+use crate::help::r_help::HelpPorts;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -253,11 +254,9 @@ pub struct Console {
     /// of the REPL.
     last_error: Option<Exception>,
 
-    /// R help server port, used to recognize help URLs.
-    help_r_port: Option<u16>,
-
-    /// Our help proxy server port, used to rewrite help URLs sent to the frontend.
-    help_proxy_port: Option<u16>,
+    /// Ports for the R help server and our proxy, set once both are running.
+    /// `None` until then.
+    help_ports: Option<HelpPorts>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
