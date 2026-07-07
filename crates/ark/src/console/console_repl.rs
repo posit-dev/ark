@@ -1179,10 +1179,11 @@ impl Console {
             // need to propagate the interrupt to the R stack.
             //
             // This needs to happen before we `select()`, particularly for
-            // `process_events()` on Windows. `R_ProcessEvents()` will reset `UserBreak`
-            // there and call `onintr()`, but `onintr()` won't actually fire the interrupt
-            // b/c we have them disabled while inside `run_event_loop()`, so it would end
-            // up swallowing the user interrupt request.
+            // `Console::run_process_events()` on Windows. It calls `R_ProcessEvents()`,
+            // which will reset `UserBreak` and call `onintr()`, but `onintr()` won't
+            // actually fire the interrupt at that time b/c we have them disabled while
+            // inside `run_event_loop()`, so it would end up swallowing the user interrupt
+            // request.
             if matches!(wait_for, WaitFor::InputReply) && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
