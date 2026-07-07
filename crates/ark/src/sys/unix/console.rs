@@ -136,9 +136,9 @@ pub fn run_r() {
 /// responsive for that as well (posit-dev/positron#7235).
 ///
 /// Note that `R_runHandlers()` would call `R_PolledEvents()` if we give it a `NULL`
-/// `fdset` and we don't want necessarily want this, though in practice it would probably
-/// be fine since we don't register anything for `R_PolledEvents()`, making it a no-op by
-/// default.
+/// `fdset` and we don't want necessarily want this. Calling `R_PolledEvents()` would
+/// invoke `Console::interrupt_events()` at this time, but only on Unix, so we don't do
+/// that to avoid further OS specific differences.
 /// https://github.com/wch/r-source/blob/0cd50b1014de382cc27cf72b0e418565f611334a/src/unix/sys-std.c#L408
 pub fn run_activity_handlers() {
     unsafe {
