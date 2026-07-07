@@ -11,7 +11,6 @@ use std::sync::Condvar;
 use std::sync::Mutex;
 
 use libr::ptr_R_Busy;
-use libr::ptr_R_ProcessEvents;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
 use libr::ptr_R_Suicide;
@@ -24,6 +23,7 @@ use libr::R_HomeDir;
 use libr::R_InputHandlers;
 use libr::R_Interactive;
 use libr::R_Outputfile;
+use libr::R_PolledEvents;
 use libr::R_SignalHandlers;
 use libr::R_checkActivity;
 use libr::R_runHandlers;
@@ -32,7 +32,7 @@ use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
 use crate::console::r_busy;
-use crate::console::r_process_events;
+use crate::console::r_interrupt_events;
 use crate::console::r_read_console;
 use crate::console::r_show_message;
 use crate::console::r_suicide;
@@ -77,7 +77,9 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
-        libr::set(ptr_R_ProcessEvents, Some(r_process_events));
+
+        // See `Console::interrupt_events()` for documentation about this
+        libr::set(R_PolledEvents, Some(r_interrupt_events));
 
         // Install a CleanUp hook for integration tests that test the shutdown process.
         // We confirm that shutdown occurs by waiting in the test until `CLEANUP_SIGNAL`'s
@@ -99,11 +101,12 @@ pub fn setup_r(args: &Vec<String>) {
         }
 
         // Set for exactly 1 reason, so that `Rsleep()` on Unix will use it as the
-        // interval to call `R_CheckUserInterrupt()` (and therefore our
-        // `R_ProcessEvents()` hook) at while `Sys.sleep()` is running. This allows
-        // `debug_filter` to flush during a long sleep. Not needed on Windows because
-        // `R_wait_usec` doesn't exist there, and because `Rsleep()` regularly calls
-        // `R_ProcessEvents()` directly every 500ms (hardcoded). The test
+        // interval to call `R_CheckUserInterrupt()` (and therefore eventually our
+        // `Console::interrupt_events()` hook, see that for documentation) at while
+        // `Sys.sleep()` is running. This allows `debug_filter` to flush during a long
+        // sleep. Not needed on Windows because `R_wait_usec` doesn't exist there, and
+        // because `Rsleep()` regularly calls `R_ProcessEvents()` (which is set to
+        // `Console::interrupt_events()`) directly every 500ms (hardcoded). The test
         // `test_adversarial_cat_before_long_sleep` fails without this.
         libr::set(R_wait_usec, 10000);
 

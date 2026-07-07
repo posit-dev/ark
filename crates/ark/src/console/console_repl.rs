@@ -2503,44 +2503,65 @@ impl Console {
     /// Invoke `R_ProcessEvents()`
     ///
     /// We call this out of good faith at regular intervals while idling in the event
-    /// loop, but we don't think it actually does very much on the R side. It is what
-    /// ends up calling our `process_events()` hook, which drains `debug_filter` during
-    /// long computations, but that is a non-critical use case.
+    /// loop. It is also one of the ways our [Self::interrupt_events()] hook is called,
+    /// which drains `debug_filter` during long computations, but that is a non-critical
+    /// use case.
     ///
-    /// Also, R itself will call `R_ProcessEvents()` at regular times, like via
-    /// `R_CheckUserInterrupt()`.
+    /// R itself will separately call `R_ProcessEvents()` at regular times. The most
+    /// important is via `R_CheckUserInterrupt()`, which also causes
+    /// [Self::interrupt_events()] to get called.
+    ///
+    /// Here is the platform specific call chain of `R_ProcessEvents()`, which shows how
+    /// it eventually calls our [Self::interrupt_events()] hook:
     ///
     /// Unix <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/unix/sys-unix.c#L1168-L1181>:
-    /// - Calls `ptr_R_ProcessEvents()`, our `process_events()`
-    /// - Calls `R_PolledEvents()`, a no-op since we don't set it
+    /// - Calls `ptr_R_ProcessEvents()`, we don't set this, but Quartz is known to
+    /// - Calls `R_PolledEvents()`, bound to [Self::interrupt_events()]
     /// - Calls `R_CheckTimeLimits()`
     ///
     /// Windows <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/gnuwin32/system.c#L123-L158>:
-    /// - Calls graphapp's `doevent()` (but we are unsure if you can even use graphapp
-    ///   in Ark)
+    /// - Calls graphapp's `doevent()` (we are unsure if you can use graphapp in Ark)
     /// - Calls `R_CheckTimeLimits()`
     /// - If `UserBreak=true`, sets it to `false` and calls `onintr()`. Never the case
     ///   for us, since `run_event_loop()` always sets `set_interrupts_pending(false)`.
-    /// - Calls `ptr_R_ProcessEvents()`, i.e. `Rp->Callback`, i.e. our `process_events()`
-    /// - Calls `R_Tcl_do` (but we are unsure if you can even use tcktk in Ark)
+    /// - Calls `ptr_R_ProcessEvents()`, bound to [Self::interrupt_events()] via
+    ///   `Rp->Callback`
+    /// - Calls `R_Tcl_do` (we are unsure if you can use tcktk in Ark)
     fn run_process_events() {
         unsafe { R_ProcessEvents() };
     }
 
-    /// Hook invoked by `R_ProcessEvents()`
+    /// Interrupt time event hook invoked by `R_ProcessEvents()` on Windows and
+    /// `R_PolledEvents()` on Unix
     ///
     /// This hook is run at regular intervals in `run_event_loop()` via
-    /// `run_process_events()` calling `R_ProcessEvents()`, which ends up calling us via
-    /// `ptr_R_ProcessEvents()`.
+    /// [Self::run_process_events()], see that for details.
     ///
     /// It is also called at interrupt time via `R_CheckUserInterrupt()` calling
-    /// `R_ProcessEvents()`, but this happens very irregularly and is dependent on both
-    /// base R and other R packages checking this, so we should never rely on that.
+    /// `R_ProcessEvents()`. This is the ONLY place we run our code at interrupt time
+    /// (i.e. in the middle of an R evaluation), so we must be very careful about what we
+    /// run here. Ideally we keep any R API access here to the absolute minimum, and it
+    /// should be very carefully analyzed. We currently use this to flush buffered debug
+    /// output from long running computations to avoid silently swallowing it for too
+    /// long.
+    /// https://github.com/wch/r-source/blob/fe64b85fc32fc9c3f2ef788f42566d6d2a182a0a/src/main/errors.c#L141-L159
     ///
-    /// We should only use this for non-critical side effects / clean up. And ideally it
-    /// should not run any R code, because running R code at interrupt time is generally
-    /// unsafe.
-    fn process_events(&mut self) {
+    /// Ideally we'd set the same hook on all platforms, but we have the following
+    /// restrictions:
+    /// - Can't use `R_PolledEvents()` on Windows, as it doesn't exist
+    /// - Can't use `R_ProcessEvents()` on Unix, as `ptr_R_ProcessEvents` is taken over
+    ///   by some packages instead, like Quartz, and we break them if we take this hook.
+    ///
+    /// So instead we are left with this non-ideal scenario where our interrupt time
+    /// events run on slightly different hooks across OSes, but the most important thing
+    /// is that `R_CheckUserInterrupt()` runs us regardless of OS.
+    ///
+    /// It's also worth noting that tcltk takes over `R_PolledEvents()` on Unix at
+    /// initialization time, but does so in a way that it still calls the "old handler",
+    /// i.e. us, after performing its own event tasks. It seems like this works, unlike
+    /// the Quartz scenario.
+    /// https://github.com/wch/r-source/blob/fe64b85fc32fc9c3f2ef788f42566d6d2a182a0a/src/library/tcltk/src/tcltk_unix.c#L82-L102
+    fn interrupt_events(&mut self) {
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
         // confirm debug output within a reasonable amount of time, so
@@ -2921,9 +2942,10 @@ pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
     panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
+// `R_PolledEvents()` on Unix and `R_ProcessEvents()` on Windows
 #[cfg_attr(not(test), no_mangle)]
-pub unsafe extern "C-unwind" fn r_process_events() {
-    if let Err(err) = r_sandbox(|| Console::get_mut().process_events()) {
+pub unsafe extern "C-unwind" fn r_interrupt_events() {
+    if let Err(err) = r_sandbox(|| Console::get_mut().interrupt_events()) {
         panic!("Unexpected longjump while processing events: {err:?}");
     };
 }
