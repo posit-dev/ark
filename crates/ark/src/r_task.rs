@@ -404,13 +404,26 @@ impl RTask {
         RTask::Idle(Self::pin_with_capture(fun))
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn idle_any_prompt<F, Fut>(fun: F) -> Self
     where
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
         Fut: Future<Output = ()> + 'static,
     {
         RTask::IdleAnyPrompt(Self::pin_with_capture(fun))
+    }
+
+    /// [Self::idle_any_prompt()], but without capture support
+    ///
+    /// Can be useful for spawning long running event loops that don't emit R output to
+    /// avoid [Self::pin_with_capture()]'s behavior of setting `options(warn = 1)` for the
+    /// life of `fun`.
+    pub(crate) fn idle_any_prompt_without_capture<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::IdleAnyPrompt(Box::pin(fun()))
     }
 
     pub(crate) fn send_idle<F, Fut>(fun: F) -> Self
@@ -440,6 +453,9 @@ impl RTask {
         RTask::SendIdleAnyPrompt(Self::pin_with_capture(fun))
     }
 
+    // Note that `start_capture()` sets `options(warn = 1)` and this persists
+    // for the life of `f`, so avoid using capturing on long running event loops
+    // that don't emit R output
     fn pin_with_capture<F, Fut>(fun: F) -> BoxFuture<'static, ()>
     where
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,

@@ -41,3 +41,31 @@ fn test_env_vars() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+// It used to be the case that the permanent `process_console_notifications()` loop was
+// spawned via an `idle_any_prompt()` task with `ConsoleOutputCapture` enabled. Because
+// this loop never returned, the `warn` global option that `ConsoleOutputCapture` sets to
+// `1` was never reset back to `0`, and this leaked to the user. We no longer spawn the
+// `process_console_notifications()` task with capturing enabled, so this is no longer an
+// issue, and this is a regression test for that scenario.
+#[test]
+fn test_warn_option_is_zero_on_initialization() {
+    let frontend = DummyArkFrontend::lock();
+
+    // It took quite a awhile for R to fully start up, and for the idle task that
+    // `process_console_notifications()` is spawned from to get picked up by the main
+    // event loop, setting the `warn` option. This is "fragile" in reproducing the
+    // original issue, but now it should never fail, so we aren't worried about time based
+    // fragility. If it ever fails, we have a problem!
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let code = "stopifnot(identical(getOption('warn'), 0L))";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

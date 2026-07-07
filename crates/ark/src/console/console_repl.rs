@@ -535,11 +535,14 @@ impl Console {
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
         //
-        // Use `idle_any_prompt` so DAP breakpoint invalidation still fires when
-        // the LSP signals a document change while R is paused at `browser()`.
-        r_task::spawn(RTask::idle_any_prompt({
+        // Use idle-any so DAP breakpoint invalidation still fires when the LSP signals a
+        // document change while R is paused at `browser()`. Run without capture because
+        // this is a long running loop and we don't want capturing to permanently pin the
+        // `warn` global option to `1` for the lifetime of the loop. We don't emit any R
+        // output from this loop, so we don't need capturing anyways.
+        r_task::spawn(RTask::idle_any_prompt_without_capture({
             let dap_clone = console.debug_dap.clone();
-            async move |_| {
+            async move || {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         }));
