@@ -1128,11 +1128,11 @@ impl Console {
         // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
         let activity_handlers_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
-        // Run `R_ProcessEvents()` regularly out of good faith. We don't think this
-        // actually does all that much on the R side, and our use case to flush
-        // `debug_filter` isn't that critical, so we don't run them as often as activity
-        // handlers.
-        let process_events_rx = crossbeam::channel::tick(Duration::from_millis(200));
+        // Runs `Console::run_process_events()` (and therefore
+        // `Console::interrupt_events()`) regularly while waiting for console input. See
+        // those for documentation. We poll every 50ms because `R_ProcessEvents()` may
+        // involve GUI operations and should be responsive.
+        let process_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
         // This is the main kind of message from the frontend that we are
         // expecting. We either wait for `input_reply` messages on StdIn, or for
