@@ -509,8 +509,6 @@ where
     F: 'env,
     T: 'env,
 {
-    // TODO: These days this just means `RLocalInterruptsSuspended`.
-    // Should we simplify the name from `r_sandbox()` to `r_interrupts_suspended()`?
     let _scope = crate::raii::RLocalSandbox::new();
     try_catch(f)
 }
