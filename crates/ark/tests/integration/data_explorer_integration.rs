@@ -12,9 +12,16 @@
 use std::time::Duration;
 use std::time::Instant;
 
+use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnSelection;
+use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
+use amalthea::comm::data_explorer_comm::DataSelectionRange;
+use amalthea::comm::data_explorer_comm::FormatOptions;
+use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontend;
 
@@ -147,4 +154,173 @@ fn test_open_child_explorer_during_dispatch() {
     assert_eq!(reply, DataExplorerBackendReply::OpenDataExplorerReply());
 
     frontend.recv_iopub_idle();
+}
+
+/// Regression test for https://github.com/posit-dev/positron/issues/7385.
+///
+/// The magrittr pipe `df %>% View()` binds the piped object to `.` as a
+/// promise inside magrittr's pipe environment, and `View()` forces that
+/// promise to display it. When the data explorer re-resolves its binding on a
+/// later environment change, it must read the forced value rather than treat
+/// the promise object (which has no data frame shape) as a replacement value
+/// and close the comm, leaving a blank pane.
+#[test]
+fn test_magrittr_pipe_data_explorer_stays_open() {
+    let frontend = DummyArkFrontend::lock();
+
+    execute_silently(&frontend, "library(magrittr)");
+    execute_silently(
+        &frontend,
+        "mag_df <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
+    );
+
+    // Open the data explorer through the magrittr pipe.
+    frontend.send_execute_request("mag_df %>% View()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let comm_open = frontend.recv_iopub_comm_open();
+    assert_eq!(comm_open.target_name, "positron.dataExplorer");
+    let comm_id = comm_open.comm_id;
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Trigger an environment change so the explorer re-resolves its binding.
+    // Before the fix, re-resolving `.` returned the promise object and the
+    // comm closed here.
+    frontend.send_execute_request("1 + 1", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // No `comm_close` should have arrived while re-resolving the binding.
+    frontend.assert_iopub_empty();
+
+    // The comm is still open and still serves the underlying data frame (the
+    // `y` column), not the promise object.
+    let table = get_data_values(&frontend, &comm_id, 3);
+    assert_eq!(table.columns.len(), 1);
+    assert_eq!(
+        table.columns[0][0],
+        ColumnValue::FormattedValue("3.00".to_string())
+    );
+    assert_eq!(
+        table.columns[0][1],
+        ColumnValue::FormattedValue("2.00".to_string())
+    );
+    assert_eq!(
+        table.columns[0][2],
+        ColumnValue::FormattedValue("1.00".to_string())
+    );
+}
+
+/// Companion to `test_magrittr_pipe_data_explorer_stays_open`: reading a
+/// forced promise's value must not tempt the explorer into *forcing* one.
+///
+/// A watched binding can transition from a plain value to an unforced,
+/// delayed promise. The explorer must never force it, because forcing runs
+/// arbitrary R code from within a comm update. We assert this by watching a
+/// promise whose evaluation sets a flag: after an environment change the flag
+/// stays `FALSE`, and the explorer keeps showing the last resolved value.
+#[test]
+fn test_data_explorer_does_not_force_delayed_binding() {
+    let frontend = DummyArkFrontend::lock();
+
+    execute_silently(&frontend, "edge_df <- data.frame(a = c(1, 2, 3))");
+    let comm_id = frontend.open_data_explorer("edge_df");
+
+    // Replace the watched binding with a delayed promise that records whether
+    // it was ever forced. Assigning it already triggers an environment change,
+    // so the explorer re-resolves the (now unforced) binding here.
+    execute_silently(&frontend, "forced_flag <- FALSE");
+    execute_silently(
+        &frontend,
+        "delayedAssign('edge_df', {
+            forced_flag <<- TRUE
+            data.frame(a = c(4, 5, 6))
+        }, assign.env = globalenv())",
+    );
+
+    // A further environment change, to be sure the explorer had a chance to
+    // re-resolve the delayed binding.
+    frontend.send_execute_request("1 + 1", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.assert_iopub_empty();
+
+    // The explorer must not have forced the promise.
+    frontend.execute_request("forced_flag", |result| {
+        assert_eq!(result, "[1] FALSE");
+    });
+
+    // The comm stays open and keeps serving the last resolved value (`1, 2, 3`)
+    // rather than the delayed promise's value (`4, 5, 6`), which would require
+    // forcing to obtain.
+    let table = get_data_values(&frontend, &comm_id, 3);
+    assert_eq!(table.columns.len(), 1);
+    assert_eq!(
+        table.columns[0][0],
+        ColumnValue::FormattedValue("1.00".to_string())
+    );
+    assert_eq!(
+        table.columns[0][1],
+        ColumnValue::FormattedValue("2.00".to_string())
+    );
+    assert_eq!(
+        table.columns[0][2],
+        ColumnValue::FormattedValue("3.00".to_string())
+    );
+}
+
+/// Run `code` at top level, asserting the standard Busy/Idle message sequence
+/// with no output beyond the execute input.
+fn execute_silently(frontend: &DummyArkFrontend, code: &str) {
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Send a `get_data_values` RPC for the first `num_rows` rows of column 0 and
+/// return the resulting table data.
+fn get_data_values(frontend: &DummyArkFrontend, comm_id: &str, num_rows: i64) -> TableData {
+    let request = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        columns: vec![ColumnSelection {
+            column_index: 0,
+            spec: ArraySelection::SelectRange(DataSelectionRange {
+                first_index: 0,
+                last_index: num_rows - 1,
+            }),
+        }],
+        format_options: default_format_options(),
+    });
+    let mut data = serde_json::to_value(&request).unwrap();
+    data["id"] = serde_json::Value::String(String::from("get-data-rpc"));
+
+    frontend.send_shell_comm_msg(comm_id.to_string(), data);
+    frontend.recv_iopub_busy();
+    let msg = frontend.recv_iopub_comm_msg();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(msg.comm_id, comm_id);
+    let reply: DataExplorerBackendReply = serde_json::from_value(msg.data).unwrap();
+    match reply {
+        DataExplorerBackendReply::GetDataValuesReply(table) => table,
+        other => panic!("Expected GetDataValuesReply, got: {other:?}"),
+    }
+}
+
+fn default_format_options() -> FormatOptions {
+    FormatOptions {
+        large_num_digits: 2,
+        small_num_digits: 4,
+        max_integral_digits: 7,
+        thousands_sep: Some(",".to_string()),
+        max_value_length: 100,
+    }
 }

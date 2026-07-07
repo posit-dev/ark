@@ -143,51 +143,6 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
     })
 }
 
-// Open a data explorer whose binding tracks `.` bound to a *promise* in a
-// private environment. This mirrors how the magrittr pipe `df %>% View()`
-// binds the piped object inside its pipe environment, which used to cause the
-// comm to close on the next environment change (posit-dev/positron#7385).
-fn open_data_explorer_with_promise_binding() -> TestSetup {
-    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
-
-    let comm_id = uuid::Uuid::new_v4().to_string();
-    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
-    let (comm_event_tx, _) = bounded::<CommEvent>(10);
-    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
-
-    let inner = r_task(|| {
-        let env = harp::parse_eval_global(
-            "local({
-                e <- new.env()
-                delayedAssign(
-                    '.',
-                    data.frame(y = c(3, 2, 1), z = c(4, 5, 6)),
-                    assign.env = e
-                )
-                e
-            })",
-        )
-        .unwrap();
-
-        // Force the promise to obtain the underlying data frame, exactly as
-        // `View()` does before handing the object to the data explorer.
-        let data = RObject::new(unsafe { Rf_eval(r_symbol!("."), env.sexp) });
-
-        let binding = Some(DataObjectEnvInfo {
-            name: String::from("."),
-            env,
-        });
-        let handler =
-            RDataExplorer::new(String::from("obj"), data, binding, DataExplorerMode::Full).unwrap();
-        TestInner(handler, ctx)
-    });
-
-    TestSetup {
-        inner: Mutex::new(inner),
-        iopub_rx,
-    }
-}
-
 // Safety: The inner types contain `RObject` (`!Send`) and `Cell<bool>`
 // (`!Sync`), but in tests we only access them under the R test lock
 // via `r_task`, so cross-thread movement is safe.
@@ -1317,45 +1272,6 @@ fn test_search_filters() {
             assert_eq!(data.columns[1][1], ColumnValue::FormattedValue("2".to_string()));
             assert_eq!(data.columns[1][2], ColumnValue::FormattedValue("3".to_string()));
             assert_eq!(data.columns[1][3], ColumnValue::FormattedValue("4".to_string()));
-        }
-    );
-}
-
-// Regression test for https://github.com/posit-dev/positron/issues/7385.
-//
-// The magrittr pipe `df %>% View()` binds the piped object to `.` as a promise
-// inside magrittr's pipe environment. When the data explorer re-resolves the
-// binding on an environment change, it must force that promise instead of
-// treating the promise object (which has no data frame shape) as a replacement
-// value and closing the comm.
-#[test]
-fn test_promise_binding_does_not_close() {
-    let setup = open_data_explorer_with_promise_binding();
-
-    // Signal an environment change. Before the fix, re-resolving `.` returned
-    // the promise object rather than its value, which caused the comm to close.
-    let closed = r_task(|| {
-        let TestInner(handler, ctx) = &mut *setup.inner.lock().unwrap();
-        handler.handle_environment(
-            &EnvironmentChanged::Execution {
-                input_prompt: String::from("> "),
-                continuation_prompt: String::from("+ "),
-            },
-            ctx,
-        );
-        ctx.is_closed()
-    });
-    assert!(!closed);
-
-    // The comm still serves the underlying data frame (the `y` column), and not
-    // the promise object that the binding resolves to.
-    let req = get_data_values_request(0, 3, vec![0], default_format_options());
-    assert_match!(setup.rpc(req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            assert_eq!(data.columns.len(), 1);
-            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("3.00".to_string()));
-            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
-            assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("1.00".to_string()));
         }
     );
 }
