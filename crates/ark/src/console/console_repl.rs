@@ -885,7 +885,7 @@ impl Console {
     }
 
     // Async messages for the Console. Polled at any idle prompt (top-level or
-    // browser) so DAP doc-change handling continues during debug sessions.
+    // browser) so DAP `DidChangeDocument` handling continues during debug sessions.
     async fn process_console_notifications(
         mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
         dap: Arc<Mutex<Dap>>,
