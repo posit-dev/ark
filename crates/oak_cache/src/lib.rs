@@ -7,12 +7,14 @@
 //! completion-sentinel, last-access, and LRU-eviction machinery all live here so
 //! callers don't reimplement it.
 
+mod file_lock;
+
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use oak_fs::file_lock::FileLock;
-use oak_fs::file_lock::Filesystem;
+use crate::file_lock::FileLock;
+use crate::file_lock::Filesystem;
 
 /// Name of the root lock file and the per-key lock file.
 const LOCK_FILENAME: &str = ".lock";

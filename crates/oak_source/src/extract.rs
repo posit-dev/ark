@@ -45,7 +45,7 @@ pub(crate) fn extract(reader: impl Read, dir: &Path) -> anyhow::Result<()> {
         entry.unpack(&destination)?;
 
         if is_file {
-            oak_fs::permissions::set_readonly(&destination)?;
+            set_readonly(&destination)?;
         }
     }
 
@@ -73,4 +73,11 @@ fn strip_top_level(path: &Path) -> Option<&Path> {
     }
 
     Some(rest)
+}
+
+/// Mark a file as read only
+fn set_readonly(path: &Path) -> std::io::Result<()> {
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(path, permissions)
 }

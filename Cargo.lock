@@ -2590,9 +2590,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "etcetera",
+ "libc",
  "log",
- "oak_fs",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2628,16 +2629,6 @@ dependencies = [
  "stdext",
  "tempfile",
  "url",
-]
-
-[[package]]
-name = "oak_fs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "log",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2741,7 +2732,6 @@ dependencies = [
  "flate2",
  "log",
  "oak_cache",
- "oak_fs",
  "tar",
  "tempfile",
  "ureq",
@@ -2755,7 +2745,6 @@ dependencies = [
  "hex",
  "log",
  "oak_cache",
- "oak_fs",
  "oak_r_process",
  "sha2 0.11.0",
  "tempfile",

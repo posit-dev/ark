@@ -78,7 +78,6 @@ notify = "8.2.0"
 oak_cache = { path = "crates/oak_cache" }
 oak_core = { path = "crates/oak_core" }
 oak_db = { path = "crates/oak_db" }
-oak_fs = { path = "crates/oak_fs" }
 oak_ide = { path = "crates/oak_ide" }
 oak_index_vec = { path = "crates/oak_index_vec" }
 oak_package_metadata = { path = "crates/oak_package_metadata" }

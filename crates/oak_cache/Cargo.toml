@@ -9,8 +9,11 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 etcetera.workspace = true
+libc.workspace = true
 log.workspace = true
-oak_fs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -50,7 +50,7 @@ pub(crate) fn populate(
     for (file, contents) in parse_output(&stdout) {
         let path = dir.join(file);
         std::fs::write(&path, contents)?;
-        oak_fs::permissions::set_readonly(&path)?;
+        set_readonly(&path)?;
     }
 
     Ok(true)
@@ -106,6 +106,13 @@ fn parse_line_directive(line: &str) -> Option<String> {
     let path = path.strip_suffix('"')?;
     let file_name = Path::new(path).file_name()?;
     Some(file_name.to_string_lossy().into_owned())
+}
+
+/// Mark a file as read only
+fn set_readonly(path: &Path) -> std::io::Result<()> {
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(path, permissions)
 }
 
 #[cfg(test)]
