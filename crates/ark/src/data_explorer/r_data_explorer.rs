@@ -71,6 +71,9 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::table_kind;
 use harp::tbl_get_column;
+use harp::utils::r_is_promise;
+use harp::utils::r_promise_is_forced;
+use harp::utils::r_promise_value;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use harp::ColumnNames;
@@ -244,6 +247,26 @@ impl RDataExplorer {
         let new = unsafe {
             let sym = r_symbol!(binding.name);
             Rf_findVarInFrame(env, sym)
+        };
+
+        // A binding can hold a promise rather than a plain value. The magrittr
+        // pipe `df %>% View()` binds the object to `.` as a promise inside the
+        // pipe's environment, and `View()` has already forced that promise to
+        // obtain the value it displays. Here we only read the value of an
+        // already-forced promise; we never force one ourselves. Forcing runs
+        // arbitrary R code that could emit warnings or output, force other
+        // promises, or mutate bindings and options, and such side effects must
+        // never originate from a comm update. If the binding currently holds an
+        // unforced promise, we can't read its value without side effects, so we
+        // leave the current view in place until the binding resolves.
+        // See https://github.com/posit-dev/positron/issues/7385.
+        let new = if r_is_promise(new) {
+            if !r_promise_is_forced(new) {
+                return Ok(true);
+            }
+            r_promise_value(new)
+        } else {
+            new
         };
 
         let changed = if new == self.table.get().sexp {
