@@ -16,9 +16,6 @@ use sha2::Sha256;
 /// Cache version
 const CACHE_VERSION: &str = "v1";
 
-/// LRU capacity for the cache
-const CACHE_CAPACITY: usize = 200;
-
 /// Recovers and caches an installed package's sources from `srcref` metadata
 #[derive(Debug)]
 pub struct SrcrefCache {
@@ -31,7 +28,7 @@ impl SrcrefCache {
     pub fn open(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             r,
-            cache: Cache::open(&format!("srcref/{CACHE_VERSION}"), CACHE_CAPACITY)?,
+            cache: Cache::open(&format!("srcref/{CACHE_VERSION}"))?,
         })
     }
 
@@ -41,7 +38,7 @@ impl SrcrefCache {
     pub fn open_in(root: PathBuf, r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             r,
-            cache: Cache::open_in(root, CACHE_CAPACITY)?,
+            cache: Cache::open_in(root)?,
         })
     }
 

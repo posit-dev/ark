@@ -22,12 +22,6 @@ use oak_cache::Cache;
 /// Cache version
 const CACHE_VERSION: &str = "v1";
 
-/// LRU capacity for cached CRAN package source trees
-const CRAN_CAPACITY: usize = 200;
-
-/// LRU capacity for cached R version source trees, kept small because each is large
-const R_CAPACITY: usize = 5;
-
 /// Downloads and caches whole package / R version source trees
 ///
 /// Each cache holds its shared root lock for the life of this `SourceCache`, so any path
@@ -41,8 +35,8 @@ pub struct SourceCache {
 impl SourceCache {
     pub fn open() -> anyhow::Result<Self> {
         Ok(Self {
-            cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"), CRAN_CAPACITY)?,
-            r: Cache::open(&format!("source/{CACHE_VERSION}/r"), R_CAPACITY)?,
+            cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"))?,
+            r: Cache::open(&format!("source/{CACHE_VERSION}/r"))?,
         })
     }
 
@@ -50,8 +44,8 @@ impl SourceCache {
     /// shared cache directory. Only useful for testing against a temp directory.
     pub fn open_in(root: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
-            cran: Cache::open_in(root.join("cran"), CRAN_CAPACITY)?,
-            r: Cache::open_in(root.join("r"), R_CAPACITY)?,
+            cran: Cache::open_in(root.join("cran"))?,
+            r: Cache::open_in(root.join("r"))?,
         })
     }
 
