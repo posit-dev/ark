@@ -538,8 +538,9 @@ impl Console {
         // Use idle-any so DAP breakpoint invalidation still fires when the LSP signals a
         // document change while R is paused at `browser()`. Run without capture because
         // this is a long running loop and we don't want capturing to permanently pin the
-        // `warn` global option to `1` for the lifetime of the loop. We don't emit any R
-        // output from this loop, so we don't need capturing anyways.
+        // `warn` global option to `1` for the lifetime of the loop (posit-dev/ark#1322
+        // would probably fix this). We don't emit any R output from this loop, so we
+        // don't need capturing anyways.
         r_task::spawn(RTask::idle_any_prompt_without_capture({
             let dap_clone = console.debug_dap.clone();
             async move || {
@@ -2506,10 +2507,12 @@ impl Console {
 
     /// Invoke `R_ProcessEvents()`
     ///
-    /// We call this out of good faith at regular intervals while idling in the event
-    /// loop. It is also one of the ways our [Self::interrupt_events()] hook is called,
-    /// which drains `debug_filter` during long computations, but that is a non-critical
-    /// use case.
+    /// Called at regular intervals while idling in the event loop for two reasons:
+    /// - To invoke our [Self::interrupt_events()] hook (see below for how), which is
+    ///   used for draining `debug_filter` for long computations, and for our timeout
+    ///   check. This is the most important reason.
+    /// - To invoke some additional tasks that `R_ProcessEvents()` calls for us, like
+    ///   `R_Tcl_do()` (see below for full set of tasks).
     ///
     /// R itself will separately call `R_ProcessEvents()` at regular times. The most
     /// important is via `R_CheckUserInterrupt()`, which also causes
@@ -2518,19 +2521,20 @@ impl Console {
     /// Here is the platform specific call chain of `R_ProcessEvents()`, which shows how
     /// it eventually calls our [Self::interrupt_events()] hook:
     ///
-    /// Unix <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/unix/sys-unix.c#L1168-L1181>:
+    /// Unix <https://github.com/wch/r-source/blob/bcc8ef9/src/unix/sys-unix.c#L1168-L1181>:
     /// - Calls `ptr_R_ProcessEvents()`, we don't set this, but Quartz is known to
     /// - Calls `R_PolledEvents()`, bound to [Self::interrupt_events()]
     /// - Calls `R_CheckTimeLimits()`
     ///
-    /// Windows <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/gnuwin32/system.c#L123-L158>:
-    /// - Calls graphapp's `doevent()` (we are unsure if you can use graphapp in Ark)
+    /// Windows <https://github.com/wch/r-source/blob/bcc8ef9/src/gnuwin32/system.c#L123-L158>:
+    /// - Calls graphapp's `doevent()` (though this is for Rgui, so not useful for Ark)
     /// - Calls `R_CheckTimeLimits()`
     /// - If `UserBreak=true`, sets it to `false` and calls `onintr()`. Never the case
     ///   for us, since `run_event_loop()` always sets `set_interrupts_pending(false)`.
     /// - Calls `ptr_R_ProcessEvents()`, bound to [Self::interrupt_events()] via
     ///   `Rp->Callback`
-    /// - Calls `R_Tcl_do` (we are unsure if you can use tcktk in Ark)
+    /// - Calls `R_Tcl_do()` (tcltk does seem to have basic functionality in Ark, i.e.
+    ///   `tcltk::tkmessageBox()` seems to work correctly)
     fn run_process_events() {
         unsafe { R_ProcessEvents() };
     }
@@ -2548,7 +2552,7 @@ impl Console {
     /// should be very carefully analyzed. We currently use this to flush buffered debug
     /// output from long running computations to avoid silently swallowing it for too
     /// long.
-    /// https://github.com/wch/r-source/blob/fe64b85fc32fc9c3f2ef788f42566d6d2a182a0a/src/main/errors.c#L141-L159
+    /// https://github.com/wch/r-source/blob/fe64b85/src/main/errors.c#L141-L159
     ///
     /// Ideally we'd set the same hook on all platforms, but we have the following
     /// restrictions:
@@ -2564,7 +2568,7 @@ impl Console {
     /// initialization time, but does so in a way that it still calls the "old handler",
     /// i.e. us, after performing its own event tasks. It seems like this works, unlike
     /// the Quartz scenario.
-    /// https://github.com/wch/r-source/blob/fe64b85fc32fc9c3f2ef788f42566d6d2a182a0a/src/library/tcltk/src/tcltk_unix.c#L82-L102
+    /// https://github.com/wch/r-source/blob/fe64b85/src/library/tcltk/src/tcltk_unix.c#L82-L102
     fn interrupt_events(&mut self) {
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
