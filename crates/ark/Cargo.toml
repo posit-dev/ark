@@ -57,6 +57,7 @@ oak_scan.workspace = true
 oak_semantic.workspace = true
 oak_source.workspace = true
 oak_srcref.workspace = true
+oak_vendored.workspace = true
 once_cell.workspace = true
 regex.workspace = true
 reqwest.workspace = true

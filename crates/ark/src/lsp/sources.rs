@@ -9,6 +9,7 @@ use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
+use oak_vendored::VendoredCache;
 use stdext::result::ResultExt;
 
 use crate::lsp::main_loop::Event;
@@ -25,31 +26,34 @@ pub(crate) trait SourceHandler: Send + Sync {
 /// The production [`SourceHandler`]
 ///
 /// Recovers a package's R sources in the following order:
-/// - Base packages come from a downloaded CRAN's R source tarball
+/// - Base packages come from sources vendored inside the ark binary
 /// - CRAN packages come from:
 ///   - A local `srcref`, if available
 ///   - A downloaded CRAN package tarball
 pub(crate) struct OakSourceHandler {
     srcref: SrcrefCache,
     source: SourceCache,
+    vendored: VendoredCache,
 }
 
 impl OakSourceHandler {
-    /// Build the handler, opening both caches against the shared on disk cache
+    /// Build the handler, opening every cache against the shared on disk cache
     pub(crate) fn new(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             srcref: SrcrefCache::open(r)?,
             source: SourceCache::open()?,
+            vendored: VendoredCache::open()?,
         })
     }
 
-    /// Build the handler with both caches rooted under `root`, so tests don't touch the
+    /// Build the handler with every cache rooted under `root`, so tests don't touch the
     /// real on disk cache
     #[cfg(test)]
     pub(crate) fn new_in(root: &Path, r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             srcref: SrcrefCache::open_in(root.join("srcref"), r)?,
             source: SourceCache::open_in(root.join("source"))?,
+            vendored: VendoredCache::open_in(root.join("vendored"))?,
         })
     }
 }
@@ -59,13 +63,13 @@ impl SourceHandler for OakSourceHandler {
         let name = request.name();
         let version = request.version();
 
-        // Base packages only exist in the R version source tarball, served from one
-        // download shared across all of them
+        // Base packages have no CRAN download and no `srcref`, so they are served from
+        // sources vendored inside the ark binary, keyed by R version
         if matches!(request.priority(), Some(Priority::Base)) {
             return self
-                .source
-                .get_r(version)
-                .or_else(|| self.source.insert_r(version))
+                .vendored
+                .get(version)
+                .or_else(|| self.vendored.insert(version))
                 .map(|root| SourceResponse::Success(r_dir_for_base(&root, name)))
                 .unwrap_or(SourceResponse::Failure);
         }
@@ -99,9 +103,9 @@ fn r_dir_for_cran(root: &Path) -> PathBuf {
     root.join("R")
 }
 
-/// Find `R/` from a R source tarball for a base package
+/// Find `R/` from a vendored base package tree, laid out as `{name}/R`
 fn r_dir_for_base(root: &Path, name: &str) -> PathBuf {
-    root.join("src").join("library").join(name).join("R")
+    root.join(name).join("R")
 }
 
 #[derive(Debug, Clone)]

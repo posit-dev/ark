@@ -19,3 +19,7 @@ clippy:
 # Reformat source files
 format:
   cargo +nightly fmt --all
+
+# Regenerate the vendored base R sources archive from `versions.txt`
+vendor-r-sources:
+  cargo run -p oak_vendored --example vendor

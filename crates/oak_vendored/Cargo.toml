@@ -1,0 +1,22 @@
+[package]
+name = "oak_vendored"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+oak_cache.workspace = true
+tar.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+flate2.workspace = true
+tempfile.workspace = true
+ureq.workspace = true
+
+[lints]
+workspace = true
