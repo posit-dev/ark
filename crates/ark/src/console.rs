@@ -92,7 +92,6 @@ use harp::utils::r_typeof;
 use harp::CONSOLE_THREAD_ID;
 use libr::R_BaseNamespace;
 use libr::R_ProcessEvents;
-use libr::R_RunPendingFinalizers;
 use libr::Rf_ScalarInteger;
 use libr::Rf_error;
 use libr::Rf_findVarInFrame;
@@ -130,8 +129,7 @@ use console_filter::ConsoleFilter;
 pub use console_repl::catching_panics;
 pub(crate) use console_repl::console_inputs;
 pub(crate) use console_repl::r_busy;
-#[cfg(unix)]
-pub(crate) use console_repl::r_polled_events;
+pub(crate) use console_repl::r_interrupt_events;
 pub(crate) use console_repl::r_read_console;
 pub(crate) use console_repl::r_show_message;
 pub(crate) use console_repl::r_suicide;
@@ -238,7 +236,6 @@ pub struct Console {
     autoprint_output: String,
 
     /// Channel to send and receive tasks from `QueuedRTask`s
-    tasks_interrupt_rx: Receiver<QueuedRTask>,
     tasks_idle_rx: Receiver<QueuedRTask>,
     tasks_idle_any_rx: Receiver<QueuedRTask>,
     try_idle_rx: Receiver<TryIdleTask>,

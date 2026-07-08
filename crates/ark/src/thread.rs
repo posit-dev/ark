@@ -86,9 +86,8 @@ impl<T> Drop for RThreadSafe<T> {
         };
 
         // In tests we're already on the R thread, so drop directly.
-        // Going through `spawn_interrupt` would call `block_on` which
-        // panics if we're already inside an executor (e.g. from
-        // `spawn_idle`'s test path).
+        // Going through `r_task::spawn()` would call `block_on()` which
+        // panics if we're already inside an executor.
         if stdext::IS_TESTING {
             drop(shelter);
             return;
@@ -96,11 +95,14 @@ impl<T> Drop for RThreadSafe<T> {
 
         let _span = tracing::trace_span!("async drop").entered();
 
-        r_task::spawn(RTask::send_interrupt(async move || {
-            // Run the `drop()` method of the `RShelter`, which in turn
-            // runs the `drop()` method of the wrapped Rust object, which likely
-            // uses the R API (i.e. if it is an `RObject`) so it must be called
-            // on the main R thread.
+        r_task::spawn(RTask::send_idle_without_capture(async move || {
+            // Run the `drop()` method of the `RShelter`, which in turn runs the `drop()`
+            // method of the wrapped Rust object, which likely uses the R API (i.e. if it
+            // is an `RObject`) so it must be called on the main R thread. By using
+            // `send_idle_without_capture()`, it is asynchronously dropped at the next
+            // idle top-level prompt. We use the `send_idle_without_capture()` variant to
+            // avoid the overhead of `send_idle()`'s `pin_with_capture()`, because this
+            // runs quite often and we know we don't need to capture output.
             drop(shelter);
         }))
     }

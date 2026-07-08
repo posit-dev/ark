@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -89,7 +90,7 @@ macro_rules! cast_response {
             },
             RequestResponse::Crashed(err) => {
                 // Notify user that the LSP has crashed and is no longer active
-                report_crash();
+                report_crash($self.client()).await;
 
                 // The backtrace is reported via `err` and eventually shows up
                 // in the LSP logs on the client side
@@ -103,21 +104,34 @@ macro_rules! cast_response {
     }};
 }
 
-fn report_crash() {
+/// Send via `request::ShowMessageRequest` not `notification::ShowMessage` so that we can
+/// ensure that the message has been received on the frontend side. We are about to shut
+/// the LSP down, and sending out a fire-and-forget notification often won't get sent out
+/// before shutdown occurs. The request returns control to us when the user acknowledges
+/// the message. It doesn't matter if that takes awhile because we shut down right after,
+/// and we've already flipped the `LSP_HAS_CRASHED` global flag, but we do bound it with
+/// a 5 second timeout just in case the user ignores the message entirely, so we can still
+/// shutdown.
+async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
         "Smart features such as completions will no longer work in this session. ",
         "Please report this crash to https://github.com/posit-dev/positron/issues ",
         "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
     );
-
-    // NOTE: This is a legit use of interrupt-time task. No R access here, and
-    // we need to go through Console since it owns the UI comm.
-    r_task(|| {
-        if let Some(ui) = Console::get().ui_comm() {
-            ui.show_message(String::from(user_message));
-        }
+    let request = client.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
+        typ: MessageType::ERROR,
+        message: String::from(user_message),
+        actions: None,
     });
+    match tokio::time::timeout(Duration::from_secs(5), request).await {
+        Ok(result) => {
+            result.log_err();
+        },
+        Err(_) => {
+            log::warn!("Timed out waiting for frontend to acknowledge LSP crash notification");
+        },
+    }
 }
 
 #[derive(Debug)]
@@ -233,6 +247,9 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
+    /// Copy of the Client, for reporting crash messages.
+    client: Client,
+
     /// Handle to the LSP loops. Drop it to shut the loops down and drop all
     /// owned state.
     _main_loop: LoopHandles,
@@ -260,6 +277,10 @@ impl Backend {
         self.events_tx
             .send(Event::Lsp(LspMessage::Notification(notif)))
             .unwrap();
+    }
+
+    fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -569,7 +590,7 @@ pub(crate) fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client, r_home, console_notification_tx);
+            let state = GlobalState::new(client.clone(), r_home, console_notification_tx);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive
@@ -591,6 +612,7 @@ pub(crate) fn start_lsp(
             Backend {
                 shutdown_tx,
                 events_tx,
+                client,
                 _main_loop: main_loop,
             }
         };

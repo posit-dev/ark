@@ -28,6 +28,7 @@ use regex::bytes::Regex;
 use super::strings::code_page_to_utf8;
 use super::strings::get_system_code_page;
 use crate::console::r_busy;
+use crate::console::r_interrupt_events;
 use crate::console::r_read_console;
 use crate::console::r_show_message;
 use crate::console::r_suicide;
@@ -114,10 +115,13 @@ pub fn setup_r(args: &Vec<String>) {
         (*params).Busy = Some(r_busy);
         (*params).Suicide = Some(r_suicide);
 
-        // This is assigned to `ptr_ProcessEvents` (which we don't set on Unix),
-        // in `R_SetParams()` by `R_SetWin32()` and gets called by `R_ProcessEvents()`.
-        // It gets called unconditionally, so we have to set it to something, even if a no-op.
-        (*params).CallBack = Some(r_callback);
+        // See `Console::interrupt_events()` for documentation about this
+        //
+        // This is assigned to `ptr_ProcessEvents` in `R_SetParams()` by `R_SetWin32()`
+        // and gets called by `R_ProcessEvents()`. Note that it gets called
+        // unconditionally, so we have to set it to something, even if a no-op, which
+        // would only be important if we ever got rid of `r_interrupt_events()`.
+        (*params).CallBack = Some(r_interrupt_events);
 
         (*params).rhome = r_home;
         (*params).home = user_home;
@@ -207,11 +211,6 @@ fn get_user_home() -> String {
     };
 
     path.to_string()
-}
-
-#[cfg_attr(not(test), no_mangle)]
-extern "C-unwind" fn r_callback() {
-    // Do nothing!
 }
 
 #[cfg_attr(not(test), no_mangle)]

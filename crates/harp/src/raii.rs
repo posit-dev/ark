@@ -34,7 +34,6 @@ pub struct RLocalInteractive {
 
 pub struct RLocalSandbox {
     _interrupts_scope: RLocalInterruptsSuspended,
-    _polled_events_scope: crate::sys::polled_events::RLocalPolledEventsSuspended,
 }
 
 pub struct RLocalOptionBoolean {
@@ -132,7 +131,6 @@ impl RLocalSandbox {
     pub fn new() -> Self {
         Self {
             _interrupts_scope: RLocalInterruptsSuspended::new(true),
-            _polled_events_scope: crate::sys::polled_events::RLocalPolledEventsSuspended::new(true),
         }
     }
 }
