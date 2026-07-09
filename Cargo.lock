@@ -2625,7 +2625,7 @@ dependencies = [
  "oak_semantic",
  "rustc-hash",
  "salsa",
- "salsa-macros 0.26.2",
+ "salsa-macros",
  "stdext",
  "tempfile",
  "url",
@@ -3374,7 +3374,7 @@ dependencies = [
  "rayon",
  "rustc-hash",
  "salsa-macro-rules",
- "salsa-macros 0.27.2",
+ "salsa-macros",
  "smallvec",
  "thin-vec",
  "tracing",
@@ -3386,18 +3386,6 @@ name = "salsa-macro-rules"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de6872462ac73d39969a836273c24163e6a26a4e08f5114fcd80e25af30ea9c6"
-
-[[package]]
-name = "salsa-macros"
-version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3067861075c2b80608f84ad49fb88f2c7610b94cdf8b4201e79ddee87f8980c8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
- "synstructure",
-]
 
 [[package]]
 name = "salsa-macros"
