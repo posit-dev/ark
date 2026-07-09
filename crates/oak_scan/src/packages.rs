@@ -34,9 +34,7 @@ pub(crate) struct PackageEntry {
     /// Mtime of `DESCRIPTION`, stat'd during the walk. Drives the lazy
     /// `Package::description()` query (and `version` / `collation` on top).
     pub description_revision: FileRevision,
-    /// Mtime of the package's `NAMESPACE`, stat'd during the walk. Drives
-    /// the lazy `Package::namespace()` query. That query is the only place
-    /// `NAMESPACE` gets read and parsed. The walk only stats it.
+    /// See [PackageEntry::description_revision]
     pub namespace_revision: FileRevision,
     /// `R/*.R` files: the package's loadable namespace.
     pub files: Vec<FileEntry>,

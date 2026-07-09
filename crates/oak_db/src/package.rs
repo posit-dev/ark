@@ -39,20 +39,10 @@ pub struct Package {
     /// same way `namespace_revision` drives [`Package::namespace`]. We stat
     /// `DESCRIPTION` at scan time but parse it only on demand.
     pub description_revision: FileRevision,
-    /// Mtime of the package's `NAMESPACE` file, or [`FileRevision::zero`]
-    /// when it can't be stat'd. The lazy [`Package::namespace`] query reads
-    /// it so a watcher that bumps it on a `NAMESPACE` change forces the next
-    /// parse to re-read disk, exactly like [`File::revision`] drives
-    /// [`File::source_text`]. We don't read or parse `NAMESPACE` at scan
-    /// time, only stat it, so installed packages the user never imports cost
-    /// nothing beyond the stat.
+    /// See [Package::description_revision].
     pub namespace_revision: FileRevision,
-    /// Mtime of the package's `INDEX` file. [`FileRevision::zero`] when it can't be
-    /// stat'd, and [None] for workspace packages, which never have one. The lazy
-    /// [`Package::index`] query reads it so a watcher that bumps it on an `INDEX` change
-    /// forces the next parse to re-read disk, exactly like [`File::revision`] drives
-    /// [`File::source_text`]. We don't read or parse `INDEX` at scan time, only stat it,
-    /// so installed packages the user never imports cost nothing beyond the stat.
+    /// See [Package::description_revision]. [None] for workspace packages, which never
+    /// have an `INDEX`.
     pub index_revision: Option<FileRevision>,
     /// In-memory `NAMESPACE`, checked by [`Package::namespace`] before it
     /// touches disk. Mirrors [`File::source_text_override`]: `None` means
