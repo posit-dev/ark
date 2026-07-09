@@ -16,6 +16,8 @@ use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
 
+use crate::resolvers::TestImportsResolver;
+
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
 
@@ -24,6 +26,19 @@ fn index(source: &str) -> SemanticIndex {
     }
 
     build_index(&parsed.tree(), NoopImportsResolver)
+}
+
+/// Build with base attached. Attach recognition (`library()`/`require()`) runs
+/// on the resolve path now, so it needs a resolver that resolves base, unlike
+/// the resolver-independent `source()` recognition the `index()` helper covers.
+fn index_with_base(source: &str) -> SemanticIndex {
+    let parsed = parse(source, RParserOptions::default());
+
+    if parsed.has_error() {
+        panic!("source has syntax errors: {source}");
+    }
+
+    build_index(&parsed.tree(), TestImportsResolver::with_base())
 }
 
 fn semantic_call_kinds(index: &SemanticIndex) -> Vec<&SemanticCallKind> {
@@ -1312,7 +1327,7 @@ fn test_file_exports_sequential_redef_keeps_last() {
 
 #[test]
 fn test_directive_library_identifier() {
-    let index = index("library(dplyr)");
+    let index = index_with_base("library(dplyr)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "dplyr".into()
     }]);
@@ -1320,7 +1335,7 @@ fn test_directive_library_identifier() {
 
 #[test]
 fn test_directive_library_string() {
-    let index = index("library(\"tidyr\")");
+    let index = index_with_base("library(\"tidyr\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "tidyr".into()
     }]);
@@ -1328,7 +1343,7 @@ fn test_directive_library_string() {
 
 #[test]
 fn test_directive_library_single_quoted_string() {
-    let index = index("library('ggplot2')");
+    let index = index_with_base("library('ggplot2')");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "ggplot2".into()
     }]);
@@ -1336,7 +1351,7 @@ fn test_directive_library_single_quoted_string() {
 
 #[test]
 fn test_directive_require() {
-    let index = index("require(data.table)");
+    let index = index_with_base("require(data.table)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "data.table".into()
     }]);
@@ -1344,7 +1359,7 @@ fn test_directive_require() {
 
 #[test]
 fn test_directive_multiple_libraries() {
-    let index = index("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
+    let index = index_with_base("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
             package: "dplyr".into()
@@ -1359,27 +1374,34 @@ fn test_directive_multiple_libraries() {
 }
 
 #[test]
-fn test_directive_named_argument_ignored() {
-    let index = index("library(package = dplyr)");
-    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+fn test_directive_named_argument() {
+    // The package binds the `package` formal by name.
+    let index = index_with_base("library(package = dplyr)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
 }
 
 #[test]
-fn test_directive_multiple_arguments_ignored() {
-    let index = index("library(dplyr, warn.conflicts = FALSE)");
-    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+fn test_directive_multiple_arguments() {
+    // The package binds `package` positionally; the extra named argument binds
+    // no formal we track.
+    let index = index_with_base("library(dplyr, warn.conflicts = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
 }
 
 #[test]
 fn test_directive_no_arguments_ignored() {
-    let index = index("library()");
+    let index = index_with_base("library()");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_library_in_function_scope() {
     // library() in a function body now records a scoped directive
-    let index = index("f <- function() { library(dplyr) }");
+    let index = index_with_base("f <- function() { library(dplyr) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "dplyr".into()
     }]);
@@ -1389,13 +1411,13 @@ fn test_directive_library_in_function_scope() {
 
 #[test]
 fn test_directive_non_static_argument_ignored() {
-    let index = index("library(get_pkg())");
+    let index = index_with_base("library(get_pkg())");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_preserves_offset() {
-    let index = index("x <- 1\nlibrary(dplyr)");
+    let index = index_with_base("x <- 1\nlibrary(dplyr)");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].offset(), biome_rowan::TextSize::from(7));
@@ -1480,7 +1502,7 @@ fn test_source_call_local_true_recorded() {
 
 #[test]
 fn test_source_and_library_calls_coexist() {
-    let index = index("library(dplyr)\nsource(\"helpers.R\")\nrequire(tidyr)");
+    let index = index_with_base("library(dplyr)\nsource(\"helpers.R\")\nrequire(tidyr)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
             package: "dplyr".into()
@@ -1679,7 +1701,7 @@ fn test_fixme_directive_declare_library_transparent() {
     // `declare()` is transparent: the inner `library(dplyr)` is still
     // picked up as a directive.
     // FIXME: We should declare `declare()` as a quoting function.
-    let index = index("declare(library(dplyr))");
+    let index = index_with_base("declare(library(dplyr))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
         package: "dplyr".into()
     }]);
@@ -1707,7 +1729,8 @@ fn test_directive_tilde_declare_not_at_file_scope() {
 
 #[test]
 fn test_directive_declare_mixed_with_bare() {
-    let index = index("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
+    let index =
+        index_with_base("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
             package: "dplyr".into()

@@ -1,6 +1,4 @@
-use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
-use aether_syntax::RArgumentList;
 use aether_syntax::RCall;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
@@ -8,7 +6,6 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::TextRange;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 
 use super::assignment_name;
 use super::is_assignment;
@@ -17,8 +14,10 @@ use super::is_super_assignment;
 use super::BoundNames;
 use super::SemanticIndexBuilder;
 use crate::effects::Argument;
-use crate::effects::ArgumentsAnnotation;
+use crate::effects::CallContext;
 use crate::effects::Effects;
+use crate::effects::EffectsHandlers;
+use crate::effects::ResolvedArgumentEffects;
 use crate::effects_registry;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::NseScope;
@@ -27,13 +26,8 @@ use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Scan a call for effects (e.g. NSE scopes) and record its decision for
-    /// the walk to reuse.
-    ///
-    /// If the callee resolves to an NSE annotation, the annotation is recorded
-    /// in `call_resolutions` under the call's range (as the entry's `nse`).
-    /// Arguments evaluated in nested calls are scanned accordingly. Otherwise
-    /// all arguments are scanned in the current scope.
+    /// Scan a call for effects (NSE scopes, attaches) and record its decisions
+    /// for the walk to reuse. The callee is resolved once through [`resolve_effects`].
     ///
     /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
     /// `Current + Eager` transparently, `Nested + Eager` by descending into the
@@ -42,7 +36,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// because resolution of effects in these lazy scopes needs the child's own
     /// flow context.
     pub(super) fn scan_call(&mut self, call: &RCall) {
-        let Some(annotation) = self.resolve_nse(call) else {
+        let (nse_args, attach) = match self.resolve_effects(call) {
+            Some(effects) => (effects.arguments, effects.attach),
+            None => (None, None),
+        };
+
+        if let Some(package) = attach {
+            self.call_resolutions
+                .entry(call.syntax().text_trimmed_range())
+                .or_default()
+                .attach = Some(package.clone());
+            if !self.scopes[self.current_scope].kind.is_lazy() {
+                self.attached_flow.push(package);
+            }
+        }
+
+        let Some(nse_args) = nse_args else {
             if let Ok(args) = call.arguments() {
                 for item in args.items().iter() {
                     let Ok(arg) = item else { continue };
@@ -54,16 +63,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
-        self.call_resolutions
-            .entry(call.syntax().text_trimmed_range())
-            .or_default()
-            .nse = Some(annotation);
-
         let Ok(args) = call.arguments() else {
             return;
         };
         let items = args.items();
-        let nse_args = self.match_nse_arguments(&items, annotation);
 
         for (i, item) in items.iter().enumerate() {
             let Ok(arg) = item else { continue };
@@ -116,6 +119,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 },
             }
         }
+
+        // Hand the resolved NSE arguments to the walk (at the end to avoid a clone)
+        self.call_resolutions
+            .entry(call.syntax().text_trimmed_range())
+            .or_default()
+            .arguments = Some(nse_args);
     }
 
     /// Copy the names a `Current + Lazy` body defines into the owner's
@@ -214,13 +223,40 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Resolve a call's callee to an NSE annotation.
+    /// Resolve a call's effects.
+    fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
+        let handlers = self.resolve_effects_handlers(call)?;
+
+        // The closure carries `&self` access into the handlers without exposing
+        // the builder's resolver generic. Bound to a local so it outlives `ctx`.
+        let resolve_string = |name: &str| self.resolve_string(name);
+        let ctx = CallContext::new(&resolve_string);
+
+        let arguments = handlers
+            .arguments
+            .and_then(|handler| handler.resolve(call, &ctx));
+        let attach = handlers
+            .attach
+            .and_then(|handler| handler.resolve(call, &ctx));
+
+        Some(Effects { arguments, attach })
+    }
+
+    /// Resolve an identifier to a statically known string value, for a handler's
+    /// `character.only`-style needs. Always `None` until variable resolution lands.
+    fn resolve_string(&self, name: &str) -> Option<String> {
+        let _ = name;
+        None
+    }
+
+    /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
     ///
-    /// Two cases resolve here:
+    /// The shared core for both NSE recognition ([`scan_call`] reads `.arguments`) and
+    /// attach recognition ([`scan_call`] reads `.attach`). Two cases resolve:
     /// - A bare identifier. If bound locally it goes through the local
     ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
     ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path.
+    ///   search path, against the attach set in `attached_flow`.
     /// - A `pkg::fn` namespace expression, resolved through
     ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
     ///   so there's no search-path disambiguation; the resolver answers from
@@ -229,7 +265,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// The bound check reads the scan pass's flow-precise binding state
     /// for the current scope, so this must run during the scan, not the walk.
-    fn resolve_nse(&mut self, call: &RCall) -> Option<ArgumentsAnnotation> {
+    ///
+    /// [`EffectsHandlers`]: crate::effects::EffectsHandlers
+    /// [`scan_call`]: Self::scan_call
+    fn resolve_effects_handlers(&mut self, call: &RCall) -> Option<EffectsHandlers> {
         let func = call.function().ok()?;
 
         match &func {
@@ -237,7 +276,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let name = ident.name_text();
 
                 // First check for a local definition (which in the future may
-                // contain NSE annotations that we resolve here)
+                // carry declared effects that we resolve here)
                 //
                 // Looked up from `flow_state` which already carries every
                 // eager binding visible here: the scope's own flow-precise
@@ -246,9 +285,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // bindings are excluded. A forward one isn't in `flow_state`
                 // yet, and a deferred one (`on_load`, `<<-`) never enters it.
                 if self.flow_state.is_bound(&name) {
-                    return self
-                        .resolve_local_effects(&name)
-                        .and_then(|effects| effects.nse);
+                    return self.resolve_local_effects(&name);
                 }
 
                 // Bail early if it is known that no package annotates this name
@@ -260,17 +297,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // Now check imports since the symbol is locally unbound. The
                 // arena's `current_scope` is the scan unit's scope (the descent
                 // pushes no arena scopes), so its laziness is the "am I in a lazy
-                // context" test the resolver needs.
+                // context" test the resolver needs. `attached_flow` is the
+                // flow-precise attach prefix during the file scan and the
+                // complete end-of-file set during the walk.
                 let lazy = self.scopes[self.current_scope].kind.is_lazy();
-                let nse = self
+                let effects = self
                     .resolver
-                    .resolve_effects(&name, &[], lazy)
-                    .and_then(|effects| effects.nse)?;
+                    .resolve_effects(&name, &self.attached_flow, lazy)?;
 
-                // The callee is unbound by any eager binding, so it is NSE.
-                // If a lazy-crossed ancestor binds it whole-scope, that binding's
-                // timing relative to this deferred body is undetermined, so the
-                // decision is a guess. Flag it.
+                // The callee is unbound by any eager binding, so its effect
+                // holds. If a lazy-crossed ancestor binds it whole-scope, that
+                // binding's timing relative to this deferred body is
+                // undetermined, so the decision is a guess. Flag it.
+                //
+                // TODO(diagnostics): a symmetric attach ambiguity is out of
+                // scope here. A callee resolved not-effectful could be flipped
+                // by an attach from a sibling lazy body (`g <- function()
+                // library(shiny); f <- function() reactive({...}`). Detecting it
+                // needs the complete set of lazy-context attaches, a post-pass
+                // rather than this local ancestor check, so it belongs in the
+                // future salsa diagnostics query where this lint should move too.
                 if let Some(overwrite_range) = self.is_lazily_shadowed(&name) {
                     self.record_lazy_shadow_ambiguity(
                         name,
@@ -278,7 +324,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         overwrite_range,
                     );
                 }
-                Some(nse)
+                Some(effects)
             },
 
             AnyRExpression::RNamespaceExpression(ns_expr) => {
@@ -291,9 +337,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     return None;
                 }
 
-                self.resolver
-                    .resolve_qualified_effects(&pkg, &func_name)
-                    .and_then(|effects| effects.nse)
+                self.resolver.resolve_qualified_effects(&pkg, &func_name)
             },
 
             _ => None,
@@ -303,18 +347,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Local resolver for declared effects, mirroring the imports resolver's
     /// `resolve_effects()` method on the cross-file side.
     /// TODO(nse, annotations): always `None` until `declare()` parsing lands.
-    fn resolve_local_effects(&self, _name: &str) -> Option<Effects> {
+    fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
         None
     }
 
     /// Detect ambiguities caused by laziness.
     ///
-    /// We've decided `name` is NSE because it was locally unbound at the
-    /// current flow cursor, and eager-flow resolution found an NSE effect. If
-    /// we're in a lazy context, that decision could be wrong: an enclosing
-    /// scope may bind `name` with a timing we can't pin down, either a later
-    /// assignment, or one from another deferred body that could run before or
-    /// after us We detect this ambiguity here so it can be linted.
+    /// We've recognized an effect for `name` (NSE scope or attach) because it
+    /// was locally unbound at the current flow cursor and eager-flow resolution
+    /// found one. If we're in a lazy context, that decision could be wrong: an
+    /// enclosing scope may bind `name` with a timing we can't pin down, either a
+    /// later assignment, or one from another deferred body that could run before
+    /// or after us. We detect this ambiguity here so it can be linted.
     ///
     /// Returns the site of the shadowing binding.
     fn is_lazily_shadowed(&self, name: &str) -> Option<TextRange> {
@@ -351,15 +395,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             });
     }
 
-    /// Process a call the scan pass decided is NSE. Match its arguments
-    /// against the annotation, then handle each scoped argument, pushing NSE
-    /// scopes inline.
-    pub(super) fn collect_nse_call(&mut self, call: &RCall, annotation: ArgumentsAnnotation) {
+    /// Process a call the scan pass decided is NSE, using the resolved argument
+    /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
+    /// inline.
+    pub(super) fn collect_nse_call(&mut self, call: &RCall, nse_args: ResolvedArgumentEffects) {
         let Ok(args) = call.arguments() else {
             return;
         };
         let items = args.items();
-        let nse_args = self.match_nse_arguments(&items, annotation);
 
         for (i, item) in items.iter().enumerate() {
             let Ok(arg) = item else { continue };
@@ -370,53 +413,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 Some(nse_arg) => self.collect_nse_argument(nse_arg, &value),
             }
         }
-    }
-
-    /// Match a call's arguments against an NSE annotation. Returns, per argument
-    /// in call order, the scoped argument it matched (if any). Named arguments
-    /// match first, then unmatched positions fill by call-site position.
-    ///
-    /// FIXME: This is a stopgap helper. In the future, `Effects` will be
-    /// returned from the resolvers with the function signature, and we'll
-    /// implement a proper argument matching routine.
-    fn match_nse_arguments(
-        &self,
-        items: &RArgumentList,
-        annotation: ArgumentsAnnotation,
-    ) -> Vec<Option<&'static Argument>> {
-        let arg_count = items.iter().count();
-        let mut nse_args: Vec<Option<&'static Argument>> = vec![None; arg_count];
-        let mut consumed = vec![false; annotation.arguments.len()];
-
-        // Named pass
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            if let Some(nse_idx) = match_named_arg(&arg, &annotation, &consumed) {
-                consumed[nse_idx] = true;
-                nse_args[i] = Some(&annotation.arguments[nse_idx]);
-            }
-        }
-
-        // Positional pass. Only unnamed args reach the match, and none of them
-        // were set by the named pass, so no need to re-check `nse_args[i]`.
-        let mut position = 0usize;
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else {
-                position += 1;
-                continue;
-            };
-            if arg.name_clause().is_some() {
-                position += 1;
-                continue;
-            }
-            if let Some(scoped_idx) = match_positional_arg(&annotation, position, &consumed) {
-                consumed[scoped_idx] = true;
-                nse_args[i] = Some(&annotation.arguments[scoped_idx]);
-            }
-            position += 1;
-        }
-
-        nse_args
     }
 
     /// Walk a single NSE argument body, pushing a scope when appropriate.
@@ -478,51 +474,4 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             },
         }
     }
-}
-
-/// Match a named argument against the annotation's arguments. Returns the
-/// index into `annotation.arguments` if matched.
-///
-/// Should we do partial argument matching? Or rely on partial matching being linted?
-fn match_named_arg(
-    arg: &aether_syntax::RArgument,
-    annotation: &ArgumentsAnnotation,
-    consumed: &[bool],
-) -> Option<usize> {
-    let clause = arg.name_clause()?;
-    let name = clause.name().ok()?;
-    let name_text = match &name {
-        AnyRArgumentName::RIdentifier(ident) => ident.name_text(),
-        AnyRArgumentName::RStringValue(s) => s.string_text()?,
-        _ => return None,
-    };
-    annotation
-        .arguments
-        .iter()
-        .enumerate()
-        .find(|(i, nse_arg)| !consumed[*i] && nse_arg.name == name_text.as_str())
-        .map(|(i, _)| i)
-}
-
-/// Match an unnamed argument at `position` against the annotation's arguments.
-/// Returns the index into `annotation.arguments` if matched.
-///
-/// FIXME: This matches positionally on call-site position only: an unnamed
-/// argument at position N matches an annotation argument declared at position
-/// N. It doesn't replicate R's full matching, where named arguments are pulled
-/// out first and the rest fill the remaining formals in order. So `test_that({
-/// ... }, desc = "d")`, with the block at position 0 but the `code` formal at
-/// position 1, won't match. Good enough without the callee's formal list;
-/// revisit if it misses real cases.
-fn match_positional_arg(
-    annotation: &ArgumentsAnnotation,
-    position: usize,
-    consumed: &[bool],
-) -> Option<usize> {
-    annotation
-        .arguments
-        .iter()
-        .enumerate()
-        .find(|(i, scoped)| !consumed[*i] && scoped.position == position)
-        .map(|(i, _)| i)
 }
