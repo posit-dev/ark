@@ -31,13 +31,11 @@ pub enum Identifier<'db> {
     },
     /// Cursor anywhere on a `pkg::sym` or `pkg:::sym` namespace access. The
     /// whole qualified name is treated as one symbol, so the classification is
-    /// the same wherever the cursor sits. `part` records which half it was on.
+    /// the same wherever the cursor sits.
     NamespaceAccess {
-        namespace: Name<'db>,
+        package: Name<'db>,
         name: Name<'db>,
-        part: NamespacePart,
-        operator_range: TextRange,
-        name_range: TextRange,
+        visibility: NamespaceVisibility,
     },
 }
 
@@ -48,12 +46,11 @@ pub enum MemberKind {
     At,
 }
 
-/// Which half of a `pkg::sym` the cursor landed on. The operator is not listed
-/// here because a cursor inside the `::` operator is snapped onto the RHS.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum NamespacePart {
-    Package,
-    Symbol,
+/// R's `::` vs `:::` distinction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NamespaceVisibility {
+    Exported,
+    Internal,
 }
 
 impl<'db> Identifier<'db> {
@@ -96,15 +93,11 @@ impl<'db> Identifier<'db> {
             });
         }
 
-        if let Some((namespace, name, part, operator_range, name_range)) =
-            classify_namespace(&token)
-        {
+        if let Some((package, name, visibility)) = classify_namespace(&token) {
             return Some(Identifier::NamespaceAccess {
-                namespace: Name::new(db, namespace.as_str()),
+                package: Name::new(db, package.as_str()),
                 name: Name::new(db, name.as_str()),
-                part,
-                operator_range,
-                name_range,
+                visibility,
             });
         }
 
@@ -216,35 +209,28 @@ fn classify_member(token: &RSyntaxToken) -> Option<(String, MemberKind, TextRang
     Some((name, kind, op.text_trimmed_range(), range))
 }
 
-/// Check whether `token` is part of a `pkg::sym` / `pkg:::sym` namespace
-/// access. Returns `(namespace, name, part, operator_range, name_range)` on a
-/// match. `part` says which side of the operator the cursor is on. A cursor
-/// inside the operator has been snapped onto the symbol upstream, so it reads
-/// as `Symbol`.
-fn classify_namespace(
-    token: &RSyntaxToken,
-) -> Option<(String, String, NamespacePart, TextRange, TextRange)> {
+/// Check whether `token` is part of a `pkg::sym` / `pkg:::sym` namespace access. Returns
+/// `(package, name, visibility)` on a match.
+fn classify_namespace(token: &RSyntaxToken) -> Option<(String, String, NamespaceVisibility)> {
     // For `pkg::sym`: token -> parent `RIdentifier` -> parent `RNamespaceExpression`.
+    // A cursor inside the `::` operator is already snapped onto the RHS.
     let identifier = token.parent()?;
-    let namespace_expr = RNamespaceExpression::cast(identifier.parent()?)?;
+    let expr = RNamespaceExpression::cast(identifier.parent()?)?;
 
-    // `offset` has been snapped onto the LHS or RHS, so the cursor is never on
-    // the operator, which simplifies classification
-    let op = namespace_expr.operator().ok()?;
-    let part = if token.text_trimmed_range().start() < op.text_trimmed_range().end() {
-        NamespacePart::Package
-    } else {
-        NamespacePart::Symbol
+    let left = expr.left().ok()?;
+    let package: String = left.identifier_text()?;
+
+    let right = expr.right().ok()?;
+    let name = right.identifier_text()?;
+
+    let op = expr.operator().ok()?;
+    let visibility = match op.text_trimmed() {
+        "::" => NamespaceVisibility::Exported,
+        ":::" => NamespaceVisibility::Internal,
+        _ => return None,
     };
 
-    let left = namespace_expr.left().ok()?;
-    let namespace = left.identifier_text()?;
-
-    let right = namespace_expr.right().ok()?;
-    let name = right.identifier_text()?;
-    let range = right.syntax().text_trimmed_range();
-
-    Some((namespace, name, part, op.text_trimmed_range(), range))
+    Some((package, name, visibility))
 }
 
 /// The name token the cursor is on, after snapping to the nearest name-token

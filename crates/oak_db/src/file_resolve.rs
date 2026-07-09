@@ -13,7 +13,7 @@ use crate::ExportEntry;
 use crate::File;
 use crate::ImportLayer;
 use crate::Name;
-use crate::PackageVisibility;
+use crate::NamespaceVisibility;
 
 #[salsa::tracked]
 impl<'db> File {
@@ -77,7 +77,7 @@ impl<'db> File {
                     }
                 },
                 ImportLayer::Package(pkg) => {
-                    let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                    let defs = pkg.resolve(db, name, NamespaceVisibility::Exported);
                     if !defs.is_empty() {
                         return defs;
                     }
@@ -86,7 +86,7 @@ impl<'db> File {
                     let name_str = name.text(db).as_str();
                     if let Some(pkg_name) = map.get(name_str) {
                         if let Some(pkg) = db.package_by_name(pkg_name) {
-                            let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                            let defs = pkg.resolve(db, name, NamespaceVisibility::Exported);
                             if !defs.is_empty() {
                                 return defs;
                             }
@@ -160,7 +160,7 @@ impl<'db> File {
                     }
                 },
                 ImportLayer::Package(pkg) => {
-                    let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                    let defs = pkg.resolve(db, name, NamespaceVisibility::Exported);
                     if !defs.is_empty() {
                         return defs;
                     }
@@ -169,7 +169,7 @@ impl<'db> File {
                     let name_str = name.text(db).as_str();
                     if let Some(pkg_name) = map.get(name_str) {
                         if let Some(pkg) = db.package_by_name(pkg_name) {
-                            let defs = pkg.resolve(db, name, PackageVisibility::Exported);
+                            let defs = pkg.resolve(db, name, NamespaceVisibility::Exported);
                             if !defs.is_empty() {
                                 return defs;
                             }

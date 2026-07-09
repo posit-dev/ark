@@ -14,7 +14,7 @@ use crate::FileRevision;
 use crate::Identifier;
 use crate::MemberKind;
 use crate::Name;
-use crate::NamespacePart;
+use crate::NamespaceVisibility;
 
 fn make_file(db: &mut TestDb, contents: &str) -> File {
     File::new(
@@ -94,17 +94,13 @@ fn test_classify_on_namespace_symbol() {
 
     match Identifier::classify(&db, file, offset(7)) {
         Some(Identifier::NamespaceAccess {
-            namespace,
+            package,
             name,
-            part,
-            operator_range,
-            name_range,
+            visibility,
         }) => {
-            assert_eq!(namespace.text(&db).as_str(), "dplyr");
+            assert_eq!(package.text(&db).as_str(), "dplyr");
             assert_eq!(name.text(&db).as_str(), "mutate");
-            assert_eq!(part, NamespacePart::Symbol);
-            assert_eq!(operator_range, text_range(5, 7));
-            assert_eq!(name_range, text_range(7, 13));
+            assert_eq!(visibility, NamespaceVisibility::Exported);
         },
         other => panic!("expected NamespaceAccess, got {other:?}"),
     }
@@ -112,40 +108,40 @@ fn test_classify_on_namespace_symbol() {
 
 #[test]
 fn test_classify_on_namespace_package() {
-    // Cursor on the `dplyr` package half classifies as the same symbol, with
-    // `part` recording the package side.
+    // Cursor on the `dplyr` package half classifies as the same symbol
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr::mutate\n");
 
     match Identifier::classify(&db, file, offset(0)) {
         Some(Identifier::NamespaceAccess {
-            namespace,
+            package,
             name,
-            part,
-            name_range,
-            ..
+            visibility,
         }) => {
-            assert_eq!(namespace.text(&db).as_str(), "dplyr");
+            assert_eq!(package.text(&db).as_str(), "dplyr");
             assert_eq!(name.text(&db).as_str(), "mutate");
-            assert_eq!(part, NamespacePart::Package);
-            // The name range is the symbol's, regardless of cursor position.
-            assert_eq!(name_range, text_range(7, 13));
+            assert_eq!(visibility, NamespaceVisibility::Exported);
         },
         other => panic!("expected NamespaceAccess, got {other:?}"),
     }
 }
 
 #[test]
-fn test_classify_inside_namespace_operator_snaps_to_symbol() {
+fn test_classify_inside_namespace_operator() {
     // "dplyr:::mutate": `:::` 5..8. A cursor strictly inside the operator
     // (offset 6) snaps onto the symbol.
     let mut db = TestDb::new();
     let file = make_file(&mut db, "dplyr:::mutate\n");
 
     match Identifier::classify(&db, file, offset(6)) {
-        Some(Identifier::NamespaceAccess { name, part, .. }) => {
+        Some(Identifier::NamespaceAccess {
+            package,
+            name,
+            visibility,
+        }) => {
+            assert_eq!(package.text(&db).as_str(), "dplyr");
             assert_eq!(name.text(&db).as_str(), "mutate");
-            assert_eq!(part, NamespacePart::Symbol);
+            assert_eq!(visibility, NamespaceVisibility::Internal);
         },
         other => panic!("expected NamespaceAccess, got {other:?}"),
     }

@@ -8,7 +8,7 @@ use oak_db::File;
 use oak_db::Identifier;
 use oak_db::MemberKind;
 use oak_db::Name;
-use oak_db::PackageVisibility;
+use oak_db::NamespaceVisibility;
 use oak_db::RootKind;
 use oak_semantic::ScopeId;
 
@@ -40,8 +40,10 @@ pub fn find_references(
             find_member_references(db, file, name.text(db).as_str(), kind)
         },
         Identifier::NamespaceAccess {
-            namespace, name, ..
-        } => find_namespace_references(db, file, namespace, name, include_declaration),
+            package,
+            name,
+            visibility: _visibility,
+        } => find_namespace_references(db, file, package, name, include_declaration),
     };
 
     // Installed-package sources are read-only, so references there are noise we
@@ -198,12 +200,12 @@ fn find_member_references(db: &dyn Db, file: File, name: &str, kind: MemberKind)
 fn find_namespace_references<'db>(
     db: &'db dyn Db,
     primary: File,
-    namespace: Name<'db>,
+    package: Name<'db>,
     name: Name<'db>,
     include_declaration: bool,
 ) -> Vec<FileRange> {
-    if let Some(package) = db.package_by_name(namespace.text(db).as_str()) {
-        let defs = package.resolve(db, name, PackageVisibility::Internal);
+    if let Some(package) = db.package_by_name(package.text(db).as_str()) {
+        let defs = package.resolve(db, name, NamespaceVisibility::Internal);
         if !defs.is_empty() {
             return collect_definition_references(db, primary, name, defs, include_declaration);
         }
@@ -211,10 +213,11 @@ fn find_namespace_references<'db>(
 
     let mut results = Vec::new();
 
-    let namespace = namespace.text(db);
-    let name = name.text(db);
-    for file in all_matching_files(db, name.as_str()) {
-        for range in file.namespace_uses_of(db, namespace.as_str(), name.as_str()) {
+    let package = package.text(db).as_str();
+    let name = name.text(db).as_str();
+
+    for file in all_matching_files(db, name) {
+        for range in file.namespace_uses_of(db, package, name) {
             results.push(FileRange { file, range });
         }
     }
