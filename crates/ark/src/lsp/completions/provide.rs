@@ -11,7 +11,7 @@ use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldState;
+use crate::lsp::state::WorldSnapshot;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
@@ -19,7 +19,7 @@ use crate::treesitter::NodeTypeExt;
 // Must be within an `r_task()`.
 pub(crate) fn provide_completions(
     document_context: &DocumentContext,
-    state: &WorldState,
+    state: &WorldSnapshot,
 ) -> anyhow::Result<Vec<CompletionItem>> {
     log::info!(
         "provide_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",

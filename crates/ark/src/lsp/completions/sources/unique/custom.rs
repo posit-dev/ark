@@ -217,7 +217,7 @@ mod tests {
     // Helper functions for testing custom completions
     fn assert_has_completion(code_with_cursor: &str, name: &str, expected_insert_text: &str) {
         let (text, point) = point_from_cursor(code_with_cursor);
-        let state = WorldState::default();
+        let state = WorldState::default().snapshot();
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
         let context = CompletionContext::new(&document_context, &state);
@@ -235,7 +235,7 @@ mod tests {
 
     fn assert_no_completions(code_with_cursor: &str) {
         let (text, point) = point_from_cursor(code_with_cursor);
-        let state = WorldState::default();
+        let state = WorldState::default().snapshot();
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
         let context = CompletionContext::new(&document_context, &state);
@@ -254,7 +254,7 @@ mod tests {
             };
 
             let (text, point) = point_from_cursor("library(@)");
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
             let context = CompletionContext::new(&document_context, &state);
@@ -268,7 +268,7 @@ mod tests {
             assert_eq!(n_compls, n_packages);
 
             let (text, point) = point_from_cursor("library(uti@)");
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
             let context = CompletionContext::new(&document_context, &state);

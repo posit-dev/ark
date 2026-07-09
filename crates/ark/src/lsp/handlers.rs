@@ -233,10 +233,15 @@ pub(crate) fn handle_completion(
     );
     lsp::log_info!("Completion context: {:#?}", context);
 
-    // TODO(oak/completions): Clone so the closure captures by value. `r_task()`
-    // sends the closure across threads, and `&WorldState` isn't `Send` because
-    // `OakDatabase`'s salsa storage keeps thread-local query state.
-    let state = state.clone();
+    // Snapshot so the closure captures by value. `r_task()` sends the closure
+    // across threads, and `&WorldState` isn't `Send` because `OakDatabase`'s
+    // salsa storage keeps thread-local query state. `snapshot()` hands the
+    // reader a `WorldSnapshot`, so the background thread can query oak but
+    // can't call a setter.
+    // TODO(oak/completions): We don't really need a snapshot here since
+    // completions are serviced from the main loop, it's only needed for the
+    // `r_task()`.
+    let state = state.snapshot();
     let completions = r_task(move || provide_completions(&context, &state))?;
 
     if !completions.is_empty() {

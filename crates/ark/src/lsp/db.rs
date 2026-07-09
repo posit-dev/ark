@@ -17,6 +17,37 @@ pub(crate) trait ArkDb: oak_db::Db {}
 #[salsa::db]
 impl ArkDb for OakDatabase {}
 
+/// Read-only handle to an `OakDatabase` that acts as a read-only snapshot.
+///
+/// An `Analysis` snapshot holds the DB clone in a private field and lends a
+/// shared ref via `read()`. This prevents a read-only background workers
+/// from reaching DB setters and deadock with the main loop. This is oak's
+/// version of rust-analyzer's `Analysis` facade.
+#[derive(Clone, Debug)]
+pub(crate) struct Analysis {
+    db: OakDatabase,
+}
+
+impl Analysis {
+    pub(crate) fn new(db: OakDatabase) -> Self {
+        Self { db }
+    }
+
+    /// The database as a shared `&dyn ArkDb`. Only lends `&`, so a reader can
+    /// query but can't reach a setter through it.
+    pub(crate) fn read(&self) -> &dyn ArkDb {
+        &self.db
+    }
+
+    /// The database's salsa cancellation token. Read-side only: it observes and
+    /// arms cancellation, it doesn't mutate any input, so it's safe to expose
+    /// on the read-only facade. Only cancellation tests arm it by hand.
+    #[cfg(test)]
+    pub(crate) fn cancellation_token(&self) -> salsa::CancellationToken {
+        salsa::Database::cancellation_token(&self.db)
+    }
+}
+
 /// Extension trait that adds ark-side query methods to `oak_db::File`.
 pub(crate) trait FileArkExt {
     fn tree_sitter(self, db: &dyn ArkDb) -> &tree_sitter::Tree;

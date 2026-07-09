@@ -50,6 +50,7 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::db::Analysis;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
@@ -58,6 +59,7 @@ use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
+use crate::lsp::state::WorldSnapshot;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -559,7 +561,7 @@ impl GlobalState {
                 // and the diagnostics passes they trigger force the same
                 // memos.
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
-                    warm_workspace_index(self.world.db.clone());
+                    warm_workspace_index(Analysis::new(self.world.db.clone()));
                 }
             },
 
@@ -1005,7 +1007,7 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 pub(crate) struct RefreshDiagnosticsTask {
     /// Snapshot carrying the live oak plus the session context the diagnostics
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
-    state: WorldState,
+    state: WorldSnapshot,
     /// The file to diagnose, built against the live oak at enqueue time.
     file: OpenFile,
 }
@@ -1144,11 +1146,11 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
 /// cancelled (`spawn_blocking()` swallows the unwind). A cancelling write can
 /// only come from an editor buffer, so a document is open, and the diagnostics
 /// passes spawned by that same write force the same memos and finish the job.
-fn warm_workspace_index(db: OakDatabase) {
+fn warm_workspace_index(analysis: Analysis) {
     spawn_blocking(move || {
         let now = std::time::Instant::now();
         lsp::log_info!("Starting workspace index warmup");
-        indexer::warm(&db);
+        indexer::warm(analysis.read());
         lsp::log_info!("Finished workspace index warmup ({:.0?})", now.elapsed());
         Ok(None)
     })
@@ -1158,7 +1160,6 @@ fn warm_workspace_index(db: OakDatabase) {
 mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
-    use salsa::Database;
     use tower_lsp::jsonrpc;
     use url::Url;
 
@@ -1222,7 +1223,7 @@ mod tests {
         respond(
             response_tx,
             || {
-                let _ = file.tree_sitter(&snapshot.db);
+                let _ = file.tree_sitter(snapshot.db.read());
                 Ok(LspResponse::Hover(None))
             },
             |response| response,
