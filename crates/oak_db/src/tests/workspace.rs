@@ -158,3 +158,70 @@ fn test_empty_workspace_uses_nothing() {
     let db = TestDb::new();
     assert!(workspace_dependencies_names(&db).is_empty());
 }
+
+#[test]
+fn test_default_search_path_packages_are_always_available_to_workspace_scripts() {
+    let mut db = TestDb::new();
+    register_library(&mut db, &[
+        "base",
+        "datasets",
+        "grDevices",
+        "graphics",
+        "methods",
+        "stats",
+        "utils",
+        "unused",
+    ]);
+    // A script that attaches nothing and references no package.
+    workspace_with_script(&mut db, "1 + 1\n");
+
+    // Every installed default search path package is implicitly available, even
+    // though the script never references them. `unused` isn't on the search
+    // path and is never referenced, so it drops out.
+    assert_eq!(workspace_dependencies_names(&db), vec![
+        "base",
+        "datasets",
+        "grDevices",
+        "graphics",
+        "methods",
+        "stats",
+        "utils"
+    ]);
+}
+
+#[test]
+fn test_default_search_path_packages_are_always_available_to_workspace_packages() {
+    let mut db = TestDb::new();
+    register_library(&mut db, &["rlang", "base", "stats"]);
+
+    // Build a workspace package that only imports rlang
+    let dir = tempfile::tempdir().unwrap();
+    let description = dir.path().join("DESCRIPTION");
+    fs::write(
+        &description,
+        "Package: mypkg\nVersion: 1.0.0\nImports: rlang\n",
+    )
+    .unwrap();
+
+    let pkg = Package::new(
+        &db,
+        FilePath::from_path_buf(description).unwrap(),
+        "mypkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        vec![],
+        Vec::new(),
+    );
+
+    let root = workspace_root(&db, "proj");
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `mypkg` only declares `rlang` in `Imports` and nothing in `Depends`, but
+    // the default search path packages `base` and `stats` are always available
+    // even though the `DESCRIPTION` never mentions them.
+    assert_eq!(workspace_dependencies_names(&db), vec![
+        "base", "rlang", "stats"
+    ]);
+}

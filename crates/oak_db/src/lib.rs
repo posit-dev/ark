@@ -12,6 +12,7 @@ mod name;
 mod package;
 mod package_resolve;
 mod parse;
+mod search;
 mod storage;
 mod workspace;
 

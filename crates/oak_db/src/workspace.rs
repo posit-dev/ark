@@ -17,10 +17,13 @@ pub fn workspace_dependencies(db: &dyn Db) -> Vec<Package> {
     // shouldn't require re-querying `DESCRIPTION` dependencies)
     let from_files = workspace_file_dependencies(db);
     let from_packages = workspace_package_dependencies(db);
+    let from_search = default_search_package_packages(db);
 
-    let mut packages: Vec<Package> = Vec::with_capacity(from_files.len() + from_packages.len());
+    let mut packages: Vec<Package> =
+        Vec::with_capacity(from_files.len() + from_packages.len() + from_search.len());
     packages.extend(from_files);
     packages.extend(from_packages);
+    packages.extend(from_search);
 
     packages.sort_by_cached_key(|package| package.name(db));
     packages.dedup_by_key(|package| package.name(db));
@@ -75,6 +78,23 @@ fn workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
     names.dedup();
 
     as_packages(names, db)
+}
+
+/// Packages implicitly used by a workspace via R's default search path
+///
+/// - Workspace scripts always implicitly use these packages, even if they aren't
+///   mentioned via a `library()` / `::` call.
+///
+/// - Workspace package files technically only depend on {base}, but if your package has
+///   any arbitrary scripts in it then we are going need the rest of the base packages
+///   anyways, and returning them all here just ensures that their sources are available,
+///   it doesn't affect package diagnostics, so it's okay to over approximate for
+///   simplicity.
+///
+/// These are effectively static, so we don't need to sort them by name at this point
+#[salsa::tracked(returns(ref))]
+fn default_search_package_packages(db: &dyn Db) -> Vec<Package> {
+    as_packages(crate::search::DEFAULT_SEARCH_PATH_PACKAGES, db)
 }
 
 /// Converts an iterable of `names` into their corresponding `Package`s, throwing out:
