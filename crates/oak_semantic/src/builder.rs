@@ -57,7 +57,7 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
-use crate::effects::ArgumentsAnnotation;
+use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::Definition;
@@ -132,6 +132,14 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // by the scope's range. Captured from `flow_state`, and read by
     // `begin_scan()` to seed the scope's own scan.
     enclosing_flow: FxHashMap<TextRange, FlowState>,
+    // Packages attached in eager flow order (file level and eager NSE descents),
+    // appended only when `!is_lazy()`. Append-only, never restored across a
+    // descent or branch: attaches hit the global search path, they aren't scoped
+    // like `flow_state`. An eager callee reads the flow-precise prefix during
+    // the file scan. A lazy callee reads the complete set during the walk (which
+    // runs after the file scan finishes), so this doubles as the end-of-file
+    // attach view.
+    attached_flow: Vec<String>,
     // Bound names of Eager + Nested bodies like `local()` are discovered inline
     // by the scanner. See `EagerNestedDescent`.
     eager_descent: EagerNestedDescent,
@@ -179,6 +187,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             call_resolutions: FxHashMap::default(),
             flow_state: FlowState::default(),
             enclosing_flow: FxHashMap::default(),
+            attached_flow: Vec::new(),
             eager_descent: EagerNestedDescent::default(),
             diagnostics: Vec::new(),
             resolver,
@@ -698,8 +707,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// Only `source()` needs handling here. Its injected bindings shadow NSE
     /// callees, and the walk injects them too late for a later call in the same
-    /// scope to see. `library()`/`require()` attaches don't affect the scan
-    /// decisions yet, so they stay with the walk.
+    /// scope to see. `library()`/`require()` attaches are recognized on the
+    /// resolve path in [`scan_call`], not here.
+    ///
+    /// [`scan_call`]: Self::scan_call
     ///
     /// [`collect_semantic_call`]: Self::collect_semantic_call
     fn scan_semantic_call(&mut self, call: &aether_syntax::RCall) {
@@ -727,6 +738,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         for name in &resolution.names {
             self.record_binding(name.clone());
+        }
+
+        // A `source()`-forwarded `library()` attaches at this call's flow
+        // position, the same as an attach written here directly. Only in eager
+        // context, matching `scan_attach_call`'s `!is_lazy()` gate.
+        if !self.scopes[self.current_scope].kind.is_lazy() {
+            for pkg in &resolution.packages {
+                self.attached_flow.push(pkg.clone());
+            }
         }
 
         self.call_resolutions
@@ -770,10 +790,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    fn nse_effect(&self, call: &RCall) -> Option<ArgumentsAnnotation> {
+    fn nse_effect(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
         self.call_resolutions
             .get(&call.syntax().text_trimmed_range())
-            .and_then(|resolution| resolution.nse)
+            .and_then(|resolution| resolution.arguments.clone())
     }
 
     // --- Recursive descent ---
@@ -836,8 +856,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.collect_expression(&func);
                 }
 
-                if let Some(annotation) = self.nse_effect(call) {
-                    self.collect_nse_call(call, annotation)
+                if let Some(scoping) = self.nse_effect(call) {
+                    self.collect_nse_call(call, scoping)
                 } else if let Ok(args) = call.arguments() {
                     self.collect_arguments(&args.items());
                 }
@@ -1160,15 +1180,25 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
-        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
-            return;
-        };
+        // Attach: the scan recognized it (shadow- and mask-aware) and recorded
+        // the package by range. We emit the `SemanticCall::Attach` here so it
+        // carries the walk-time scope, e.g. the pushed NSE scope for a
+        // `library()` inside `local({...})`.
+        let range = call.syntax().text_trimmed_range();
+        if let Some(package) = self
+            .call_resolutions
+            .get(&range)
+            .and_then(|resolution| resolution.attach.clone())
+        {
+            self.record_attach(call, package);
+        }
 
-        let fn_name = ident.name_text();
-        if fn_name == "library" || fn_name == "require" {
-            self.collect_attach_call(call);
-        } else if fn_name == "source" {
-            self.collect_source_call(call);
+        // Source is still recognized by callee name here, reading the resolution
+        // the scan cached.
+        if let Ok(AnyRExpression::RIdentifier(ident)) = call.function() {
+            if ident.name_text() == "source" {
+                self.collect_source_call(call);
+            }
         }
     }
 
@@ -1180,37 +1210,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // execution is guaranteed), but inside a function it's only visible
     // within that function and its children, since the function might never
     // be called. Same reasoning as `source()` calls.
-    fn collect_attach_call(&mut self, call: &aether_syntax::RCall) {
-        let Ok(args) = call.arguments() else {
-            return;
-        };
-        let mut items = args.items().iter();
-
-        // For now, only recognise exactly one unnamed argument. We'll do
-        // argument matching later (`character.only` unquoting is another
-        // complication).
-        let Some(Ok(first_arg)) = items.next() else {
-            return;
-        };
-        if first_arg.name_clause().is_some() || items.next().is_some() {
-            return;
-        }
-        let Some(value) = first_arg.value() else {
-            return;
-        };
-
-        let pkg_name = match &value {
-            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
-            _ => None,
-        };
-        let Some(pkg_name) = pkg_name else {
-            return;
-        };
-
+    fn record_attach(&mut self, call: &RCall, package: String) {
         let call_offset = call.syntax().text_trimmed_range().start();
         self.semantic_calls.push(SemanticCall {
-            kind: SemanticCallKind::Attach { package: pkg_name },
+            kind: SemanticCallKind::Attach { package },
             offset: call_offset,
             scope: self.current_scope,
         });
@@ -1351,8 +1354,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         for diagnostic in &self.diagnostics {
             match diagnostic {
                 SemanticDiagnostic::LazyShadowAmbiguity { name, range } => log::warn!(
-                    "NSE lazy-shadow ambiguity: callee `{name}` at {range:?} is recognized \
-                     as NSE, but a lazy-crossed ancestor binds it with undetermined timing"
+                    "Lazy-shadow ambiguity: callee `{name}` at {range:?} is recognized \
+                     as effectful, but a lazy-crossed ancestor binds it with undetermined timing"
                 ),
             }
         }
@@ -1390,17 +1393,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 }
 
 /// What the scan resolved a single call to, for the walk to reuse. A call can
-/// carry both facts at once.
+/// carry several of these at once.
 ///
-/// - `nse`: the NSE effect the call resolved to, filled in flow order. `None`
+/// - `arguments`: the NSE effect the call resolved to, filled in flow order. `None`
 ///   means "not NSE".
 /// - `source`: the resolution of a `source()` call. The scan fills it once
 ///   (consulting `resolve_source`), the walk reads it back, so the resolver is
 ///   queried exactly once per `source()` call site.
+/// - `attach`: the package a `library()`/`require()` call attaches, recognized
+///   shadow-aware on the resolve path. The walk reads it back to emit a scoped
+///   `SemanticCall::Attach`.
 #[derive(Default)]
 struct CallResolution {
-    nse: Option<ArgumentsAnnotation>,
+    arguments: Option<ResolvedArgumentEffects>,
     source: Option<SourceResolution>,
+    attach: Option<String>,
 }
 
 /// The scan's flow-precise binding state: which names are bound at the current

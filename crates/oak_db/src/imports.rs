@@ -3,7 +3,7 @@ use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::effects_registry;
-use oak_semantic::Effects;
+use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -91,15 +91,13 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         name: &str,
         _attached: &[String],
         _lazy: bool,
-    ) -> Option<Effects> {
+    ) -> Option<EffectsHandlers> {
         // Base is the always-attached layer at the bottom of the search path,
         // resolved through the same registry lookup as any package.
         //
         // TODO!: walk the rest of the search path too (flow-order attaches,
         // package siblings via `who_defines`, NAMESPACE imports, re-export chase).
-        effects_registry::lookup("base", name)
-            .copied()
-            .map(Effects::nse)
+        effects_registry::lookup("base", name).copied()
     }
 }
 

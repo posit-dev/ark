@@ -809,8 +809,9 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An NSE call recognized in a lazy context whose binding is overwritten
-    /// later on (in subsequent parent code or in another lazy context).
+    /// An effectful call (NSE scope or attach) recognized in a lazy context
+    /// whose callee is bound elsewhere with undetermined timing (later parent
+    /// code, or another lazy context).
     LazyShadowAmbiguity { name: String, range: TextRange },
 }
 

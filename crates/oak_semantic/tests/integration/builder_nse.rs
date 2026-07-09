@@ -1486,3 +1486,261 @@ f <- function() {
         .collect();
     assert_eq!(local_lazy, vec![true, true]);
 }
+
+// --- Attach tracking ---
+
+#[test]
+fn test_nse_attach_enables_lazy_scope() {
+    // `library(shiny)` attaches shiny in eager flow, so the later `reactive`
+    // resolves to shiny's NSE annotation and pushes a lazy nested scope.
+    let index = index(
+        "\
+library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let reactive_scope = ScopeId::from(1);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+    assert_eq!(index.scope(reactive_scope).parent(), Some(file));
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_absent_leaves_callee_flat() {
+    // Without the attach, shiny is unattached, so `reactive` doesn't resolve to
+    // an NSE annotation and `x` stays at file scope.
+    let index = index(
+        "\
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert!(index.attached_packages().is_empty());
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_after_eager_callee_is_too_late() {
+    // Flow order: at the eager `reactive` position shiny isn't attached yet, so
+    // it is not NSE even though `library(shiny)` runs afterwards.
+    let index = index(
+        "\
+reactive({
+    x <- 1
+})
+library(shiny)
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_after_lazy_callee_is_visible() {
+    // A callee inside a function runs at an unknown later time, so it sees the
+    // end-of-file attach set. `reactive` inside `f` is resolved during the walk,
+    // after the file scan attached shiny, so it is NSE even though `library`
+    // comes after `f` textually.
+    let index = index(
+        "\
+f <- function() {
+    reactive({
+        x <- 1
+    })
+}
+library(shiny)
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+    assert_eq!(index.scope(reactive_scope).parent(), Some(f_scope));
+}
+
+#[test]
+fn test_nse_attach_inside_eager_body_counts() {
+    // The attach happens inside an eager `local` body, which the file scan
+    // descends into, so shiny is attached in flow before the later top-level
+    // `reactive`. This is where flow tracking beats a file-scope offset filter.
+    let index = index(
+        "\
+local({
+    library(shiny)
+})
+reactive({
+    x <- 1
+})
+",
+    );
+    let local_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_nse_attach_local_shadow_still_wins() {
+    // A local `reactive` def shadows shiny's, so the call is not NSE even with
+    // shiny attached.
+    let index = index(
+        "\
+reactive <- function(x) x
+library(shiny)
+reactive({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let fn_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(index.scope(fn_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_recognition_respects_shadowing() {
+    // `library` is rebound before the attach call, so `library(shiny)` isn't an
+    // attach: shiny never attaches and the later `reactive` is not NSE. The bug
+    // this fixes: a syntactic `fn_name == "library"` match recorded a bogus
+    // attach here.
+    let index = index(
+        "\
+library <- quote
+library(shiny)
+reactive({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert!(index.attached_packages().is_empty());
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_shadow_confined_to_nse_scope() {
+    // The `library` rebind is confined to `local`'s scope, so the top-level
+    // `library(shiny)` sees the unshadowed `library` and attaches. The descent
+    // keeps the rebind from leaking, so `reactive` is NSE.
+    let index = index(
+        "\
+local({
+    library <- quote
+})
+library(shiny)
+reactive({
+    y <- 1
+})
+",
+    );
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_nse_attach_in_body_verb_shadow_determined() {
+    // Inside `local`, `library` is rebound before `library(shiny)`, so the
+    // descent resolves the rebind first and the attach call is not an attach.
+    // shiny never attaches and `reactive` is not NSE. Neither the rebind nor a
+    // (non-)attach leaks out of `local`.
+    let index = index(
+        "\
+local({
+    library <- quote
+    library(shiny)
+})
+reactive({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert!(index.attached_packages().is_empty());
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_within_lazy_body_not_yet_supported() {
+    // Sequential-within-one-lazy-body: when `f` runs, `library(shiny)` runs
+    // before `reactive`, so `reactive` is determinately NSE. We don't promote it
+    // today: `attached_flow` only grows in eager context, so the attach inside
+    // `f` (a lazy body) isn't visible to `reactive` in the same body. The attach
+    // is still recorded as a `SemanticCall::Attach`. This could be supported by
+    // tracking a per-unit attach set seeded from the EOF view, parallel to
+    // `bound_so_far`; deferred for now.
+    let index = index(
+        "\
+f <- function() {
+    library(shiny)
+    reactive({
+        x <- 1
+    })
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+
+    // The attach is recorded (scoped to `f`), but not fed to `reactive`.
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+}
