@@ -6,6 +6,7 @@ use oak_semantic::semantic_index::NseScope;
 use oak_semantic::semantic_index::NseTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
@@ -225,9 +226,9 @@ local({
 }
 
 #[test]
-fn test_nse_rewalk_moves_definitions() {
-    // The re-walk should correctly move definitions from the parent scope
-    // into the NSE child scope.
+fn test_nse_moves_definitions_into_nested_scope() {
+    // Definitions inside an NSE body land in the NSE child scope, not the
+    // parent, even with sibling definitions on either side at file level.
     let index = index(
         "\
 x <- 0
@@ -323,10 +324,9 @@ local({
 
 #[test]
 fn test_nse_prescan_skips_nested_bodies() {
-    // The pre-scan for the file scope should NOT include definitions from
-    // inside `local()` bodies on the re-walk. This means a function defined
-    // AFTER the local() call should not see `x` from inside local via the
-    // pre-scan.
+    // The file scope's bound names must NOT include definitions from inside
+    // `local()` bodies. This means a function defined AFTER the local() call
+    // should not see `x` from inside local via the bound names.
     let index = index(
         "\
 local({
@@ -463,11 +463,11 @@ f <- function() x
 }
 
 #[test]
-fn test_nse_rewalk_convergence_unmasked_call() {
-    // Pathological case: redefining `local` inside a `local()` body unmasks
-    // a later `local()` call on the re-walk. The convergence loop handles
-    // this: the first re-walk discovers the second call, the second re-walk
-    // has the correct pre-scan skip set.
+fn test_nse_unmasked_call_via_nested_scope() {
+    // Redefining `local` inside a `local()` body doesn't shadow a later
+    // `local()` call: the rebind lands in the first body's NSE scope, so it
+    // never enters the file's bound names. The scan walks the first `local()`
+    // inline, so the second call sees `local` still unbound in the same pass.
     let index = index(
         "\
 local({
@@ -515,20 +515,14 @@ local({
 }
 
 #[test]
-fn test_nse_rewalk_convergence_ancestor_unmask_across_function() {
-    // Convergence where the ancestor shadowing check flips across iterations,
-    // and where a single re-walk would leave an observable mistake.
-    //
-    // `local <- identity` starts at file scope, so the `local()` call inside
-    // `f` sees an enclosing binding and is not NSE. The first re-walk moves
-    // `local <- identity` into the outer local scope, unmasking base `local`
-    // for the call in `f`, so that call becomes NSE and its body range is
-    // recorded. But during that same re-walk, `f`'s pre-scan hasn't been told
-    // to skip the inner local body yet, so it still collects `x`, which would
-    // give `g`'s free `x` a bogus enclosing snapshot in `f`. Only the next
-    // re-walk, with the inner body range known, pre-scans `f` without `x` and
-    // leaves `g`'s `x` correctly unresolved (the sibling `local()` binds `x` in
-    // its own env, invisible to `g`).
+fn test_nse_ancestor_unmask_across_function() {
+    // The `local <- identity` rebind lives inside the outer `local()` body, so
+    // it never enters the file's bound names. The scan of `f`'s body therefore
+    // sees base `local` unbound and marks the inner `local()` NSE, cutting its
+    // body out of `f`'s bound names in the same pass. So `x <- 1` lands in the
+    // inner NSE scope and `g`'s free `x` stays unresolved (the sibling
+    // `local()` binds `x` in its own env, invisible to `g`). The old re-walk
+    // needed a second iteration to reach this; the scan gets it in one.
     let index = index(
         "\
 local({
@@ -571,10 +565,111 @@ f <- function() {
     );
 
     // `g`'s free `x` resolves to nothing: the sibling `local()` binds `x` in
-    // its own scope, not in `f`. A single re-walk would wrongly point it at a
-    // stray `x` in `f`'s pre-scan.
+    // its own scope, not in `f`. Flow-insensitive bound names would wrongly
+    // point it at a stray `x` in `f`.
     let g_x = index.uses(g_scope)[UseId::from(0)].symbol();
     assert_eq!(index.enclosing_bindings(g_scope, g_x), None);
+}
+
+#[test]
+fn test_nse_sibling_branch_flow_precise() {
+    // Flow-precise scan across `if`/`else`. `local` is bound only on the
+    // consequence path, so on the else path base `local` is still unbound and
+    // `local({...})` is NSE. Flow-insensitive bound names would see `local`
+    // bound (from the consequence) and miss the NSE call, leaking `y` into the
+    // file scope.
+    let index = index(
+        "\
+if (c) local <- identity else local({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let nse_scope = ScopeId::from(1);
+
+    // Only the file scope and the else branch's NSE scope exist.
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(nse_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(nse_scope).parent(), Some(file));
+
+    // `y` lands in the NSE scope, not the file scope.
+    assert!(index.symbols(file).get("y").is_none());
+    assert_eq!(
+        index.symbols(nse_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // `local` is bound at file scope (from the consequence branch).
+    assert!(index
+        .symbols(file)
+        .get("local")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+}
+
+#[test]
+fn test_nse_eager_lazy_split_on_later_binding() {
+    // A later file-level `local <- identity` does NOT shadow `local()` inside the
+    // function `f`. `f`'s body is lazy, so its run time relative to the binding
+    // is unknown, and `is_locally_bound` reads only `f`'s eager predecessors (the
+    // predecessor snapshot, empty here). So the lazy `local()` is optimistically
+    // NSE and `x` moves into its own scope. The genuine ambiguity (does `f` run
+    // before or after the binding?) is the overturn lint's job, not a shadow.
+    //
+    // The eager `local()` at file scope is NSE too, but for a determined reason:
+    // it runs before the binding, so its flow-precise state has `local` unbound.
+    let index = index(
+        "\
+f <- function() {
+    local({
+        x <- 1
+    })
+}
+local({
+    y <- 1
+})
+local <- identity
+",
+    );
+    let file = ScopeId::from(0);
+    let f_scope = ScopeId::from(1);
+    let f_local = ScopeId::from(2);
+    let eager_local = ScopeId::from(3);
+
+    // Four scopes: file, `f`, the NSE `local()` in `f`, and the eager `local()`.
+    assert_eq!(index.scope_ids().count(), 4);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+
+    // Lazy `local()` in `f` is NSE (later binding is not a predecessor), so `x`
+    // moves into its own scope.
+    assert_eq!(
+        index.scope(f_local).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(f_local).parent(), Some(f_scope));
+    assert!(index.symbols(f_scope).get("x").is_none());
+    assert_eq!(
+        index.symbols(f_local).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // Eager file-level `local()` runs before the binding, so it is NSE and `y`
+    // lands in its own scope.
+    assert_eq!(
+        index.scope(eager_local).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(eager_local).parent(), Some(file));
+    assert!(index.symbols(f_scope).get("y").is_none());
+    assert_eq!(
+        index.symbols(eager_local).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
 }
 
 #[test]
@@ -858,4 +953,324 @@ fn test_nse_front_gate_consults_resolver_for_annotated_name() {
     build_with("local({ x <- 1 })", resolver);
 
     assert!(consultations.get() > 0);
+}
+
+// --- source() bindings visible to the scan ---
+
+#[test]
+fn test_nse_sourced_name_shadows_base_callee() {
+    // A `source()`-injected `local` shadows base `local`, so the later
+    // `local({...})` is NOT NSE. The scan binds the sourced names eagerly
+    // (source() runs at its position), so the later callee sees the shadow in
+    // the same pass, even though the walk injects the Import def later.
+    let index = build_with(
+        "\
+source(\"utils.R\")
+local({
+    x <- 1
+})
+",
+        TestImportsResolver::with_base().with_source("utils.R", &["local"]),
+    );
+    let file = ScopeId::from(0);
+
+    // No NSE scope: the sourced `local` shadows base, so `x` stays flat.
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_sourced_file_without_name_leaves_callee_nse() {
+    // Same shape, but the sourced file does not define `local`, so base
+    // `local` is unshadowed and `local({...})` IS NSE.
+    let index = build_with(
+        "\
+source(\"utils.R\")
+local({
+    x <- 1
+})
+",
+        TestImportsResolver::with_base().with_source("utils.R", &["other"]),
+    );
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(local_scope).parent(), Some(file));
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+// --- Current + Lazy owner bindings visible before the walk ---
+
+#[test]
+fn test_nse_on_load_binding_order_independent() {
+    // A `local` bound inside a `Current + Lazy` `on_load` body is deferred
+    // (lazy-provenance), so it is not a precise predecessor for the lazy `local()`
+    // in a sibling function `f`. Both bodies run in an order the engine can't
+    // know, so whether the shadow holds when `f` runs is undetermined. The
+    // predecessor snapshot excludes the deferred `local`, so `f`'s `local()` is
+    // optimistically NSE in both orderings (the overturn lint, pending, flags the
+    // ambiguity). `x` moves into its own scope regardless of order.
+    let first = index(
+        "\
+f <- function() local({ x <- 1 })
+rlang::on_load({ local <- identity })
+",
+    );
+    // Walk order: file, f, f's `local()` scope, on_load.
+    let f_first = ScopeId::from(1);
+    let f_local_first = ScopeId::from(2);
+    assert_eq!(first.scope_ids().count(), 4);
+    assert_eq!(first.scope(f_first).kind(), ScopeKind::Function);
+    assert_eq!(
+        first.scope(f_local_first).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(first.scope(f_local_first).parent(), Some(f_first));
+    assert!(first.symbols(f_first).get("x").is_none());
+    assert_eq!(
+        first.symbols(f_local_first).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    let second = index(
+        "\
+rlang::on_load({ local <- identity })
+f <- function() local({ x <- 1 })
+",
+    );
+    // Walk order: file, on_load, f, f's `local()` scope.
+    let f_second = ScopeId::from(2);
+    let f_local_second = ScopeId::from(3);
+    assert_eq!(second.scope_ids().count(), 4);
+    assert_eq!(second.scope(f_second).kind(), ScopeKind::Function);
+    assert_eq!(
+        second.scope(f_local_second).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(second.scope(f_local_second).parent(), Some(f_second));
+    assert!(second.symbols(f_second).get("x").is_none());
+    assert_eq!(
+        second.symbols(f_local_second).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_on_load_nested_binding_order_independent() {
+    // Same as the direct-binding case above, but the shadowing binding is buried
+    // in a nested transparent call (`evalq(...)`). It makes no difference to the
+    // NSE decision: the predecessor snapshot reads only `f`'s eager predecessors,
+    // and `on_load`'s deferred `local` is not one of them however it is written.
+    // So `f`'s `local()` is optimistically NSE in both orderings and `x` moves
+    // into its own scope. (Under the old whole-scope read this case was
+    // order-dependent, because it hinged on whether the walk had routed `local`
+    // to the owner's bound names before it reached `f`.)
+
+    // `f` before the `on_load`.
+    let first = index(
+        "\
+f <- function() local({ x <- 1 })
+rlang::on_load({ evalq(local <- identity) })
+",
+    );
+    let f = ScopeId::from(1);
+    let nested = ScopeId::from(2);
+    assert_eq!(first.scope_ids().count(), 4);
+    assert_eq!(first.scope(f).kind(), ScopeKind::Function);
+    assert_eq!(
+        first.scope(nested).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(first.scope(nested).parent(), Some(f));
+    assert!(first.symbols(f).get("x").is_none());
+    assert_eq!(
+        first.symbols(nested).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // `f` after the `on_load`: same result, `local()` is still NSE.
+    let second = index(
+        "\
+rlang::on_load({ evalq(local <- identity) })
+f <- function() local({ x <- 1 })
+",
+    );
+    let f_second = ScopeId::from(2);
+    let nested_second = ScopeId::from(3);
+    assert_eq!(second.scope_ids().count(), 4);
+    assert_eq!(second.scope(f_second).kind(), ScopeKind::Function);
+    assert_eq!(
+        second.scope(nested_second).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(second.scope(nested_second).parent(), Some(f_second));
+    assert!(second.symbols(f_second).get("x").is_none());
+    assert_eq!(
+        second.symbols(nested_second).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_on_load_deferred_binding_unbound_at_eager_position() {
+    // The eager stance: `on_load`'s `local` reaches only the owner's bound names,
+    // never `bound_so_far`. A file-level (eager) `local()` after the
+    // `on_load` runs before the deferred body, so it treats `local` as unbound
+    // and IS NSE. Contrast with the lazy sibling case above.
+    let index = index(
+        "\
+rlang::on_load({ local <- identity })
+local({ x <- 1 })
+",
+    );
+    let file = ScopeId::from(0);
+    let on_load_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(
+        index.scope(on_load_scope).kind(),
+        ScopeKind::Nse(NseScope::Current, NseTiming::Lazy)
+    );
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(local_scope).parent(), Some(file));
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+// --- NSE calls in parameter defaults ---
+
+#[test]
+fn test_nse_parameter_default_pushes_scope() {
+    // An NSE call in a parameter default is recognized and pushes its scope.
+    let index = index("f <- function(a = local({ x <- 1 })) a\n");
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(local_scope).parent(), Some(f_scope));
+
+    // `x` lands in the default's NSE scope, not the function scope.
+    assert!(index.symbols(f_scope).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_parameter_default_shadowed_by_param() {
+    // All formals bind at once, so a `local` parameter shadows base `local` in
+    // a later default, regardless of order: `local({...})` is NOT NSE and `x`
+    // stays flat in the function scope.
+    let index = index("f <- function(local, a = local({ x <- 1 })) a\n");
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+// --- Lazy shadow ambiguity diagnostics ---
+
+#[test]
+fn test_diagnostic_lazy_shadow_later_eager_binding() {
+    // `f`'s `local()` is optimistically NSE, but a later file-level `local`
+    // binding could shadow it depending on when `f` runs. Flagged.
+    let source = "\
+f <- function() local({ x <- 1 })
+local <- identity
+";
+    let index = index(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::LazyShadowAmbiguity { name, range } => {
+            assert_eq!(name, "local");
+            let start = u32::from(range.start()) as usize;
+            let end = u32::from(range.end()) as usize;
+            assert_eq!(&source[start..end], "local({ x <- 1 })");
+        },
+    }
+}
+
+#[test]
+fn test_diagnostic_lazy_shadow_on_load_binding() {
+    // A deferred `on_load` binding of `local` and a lazy sibling's `local()`
+    // run in an unknown order. Flagged.
+    let index = index(
+        "\
+f <- function() local({ x <- 1 })
+rlang::on_load({ local <- identity })
+",
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::LazyShadowAmbiguity { name, .. } => assert_eq!(name, "local"),
+    }
+}
+
+#[test]
+fn test_diagnostic_none_at_eager_position() {
+    // The file-level `local()` runs before the `on_load` hook fires, so its
+    // "unbound" reading is determined, not a guess. No diagnostic.
+    let index = index(
+        "\
+rlang::on_load({ local <- identity })
+local({ x <- 1 })
+",
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_diagnostic_none_when_callee_unbound_everywhere() {
+    // `local` is never bound anywhere, so the NSE decision is certain and
+    // nothing competes with it. No diagnostic.
+    let index = index(
+        "\
+x <- 1
+f <- function() local({ x })
+",
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_diagnostic_none_with_eager_predecessor() {
+    // `local` is bound before `f` is defined, a sure shadow, so `f`'s `local()`
+    // is not NSE at all. No diagnostic.
+    let index = index(
+        "\
+local <- identity
+f <- function() local({ x })
+",
+    );
+    assert!(index.diagnostics().is_empty());
 }

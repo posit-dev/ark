@@ -6,6 +6,7 @@ use aether_syntax::AnyRParameterName;
 use aether_syntax::AnyRValue;
 use aether_syntax::RArgumentList;
 use aether_syntax::RBinaryExpression;
+use aether_syntax::RCall;
 use aether_syntax::RExpressionList;
 use aether_syntax::RFunctionDefinition;
 use aether_syntax::RNamespaceExpression;
@@ -29,7 +30,9 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+use crate::effects::NseAnnotation;
 use crate::resolver::ImportsResolver;
+use crate::resolver::SourceResolution;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
@@ -44,6 +47,7 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticCall;
 use crate::semantic_index::SemanticCallKind;
+use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolTableBuilder;
@@ -57,67 +61,22 @@ mod builder_nse;
 /// information supplied by `resolver`. See [`ImportsResolver`] for the
 /// available impls.
 ///
-/// NSE scopes (`local()`, `test_that()`, ...) require a two-phase build.
-/// The first walk keeps everything flat and discovers which calls are NSE.
-/// If none are found, that result is final. Otherwise we re-walk with known
-/// nested NSE scope bodies.
+/// Each scope is built in two local phases. First a scan pass over the
+/// scope's direct level decides which calls are NSE, in flow order, and
+/// collects the scope's bound names (see [`scan_expression`]). Then the walk
+/// reuses those decisions and pushes NSE scopes inline as it reaches them
+/// ([`collect_expression`]). Walking `local({...})` inline means a later call
+/// sees the scope-push in the same pass, so there is no whole-file re-walk.
+///
+/// [`scan_expression`]: SemanticIndexBuilder::scan_expression
+/// [`collect_expression`]: SemanticIndexBuilder::collect_expression
 pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
 
-    // First walk: discover which calls are NSE, if any.
     let mut builder = SemanticIndexBuilder::new(range, resolver);
-    builder.pre_scan_scope(root.syntax());
+    builder.begin_scan();
+    builder.scan_expression_list(&root.expressions());
     builder.collect_expression_list(&root.expressions());
-
-    if !builder.found_nse {
-        return builder.finish();
-    }
-
-    // Re-walk until the set of NSE scope bodies stabilizes. One re-walk is
-    // typically enough to reach convergence. More walks are needed only when
-    // pushing an NSE scope unmasks a callee. For instance in:
-    //
-    // ```
-    // local({ with <- identity });
-    // with(df, y)
-    // ```
-    //
-    // The call to `with()` is recognized only once a re-walk has moved the
-    // `with` assignment into the `local()` scope. Each such level costs one
-    // extra walk. Convergence relies on decisions never flipping back from NSE
-    // to not-NSE, see `is_locally_bound()`.
-    //
-    // The loop terminates on its own because the set can only grow. Each
-    // re-walk is seeded with the previous set and only inserts. The cap only
-    // guards against pathological files.
-    //
-    // An important caveat is that each walk re-analyzes the whole file, so our
-    // passes never get cheaper, which is fine since rewalks should be rare.
-    // That's the opposite of Rust-Analyzer's fixpoint, where each pass touches
-    // only the shrinking unresolved frontier, which is why RA can afford a much
-    // larger cap of 8192 passes:
-    // https://github.com/rust-lang/rust-analyzer/blob/abb1301c/crates/hir-def/src/nameres/collector.rs#L61
-    const MAX_NSE_ITERATIONS: usize = 64;
-    for i in 0..MAX_NSE_ITERATIONS {
-        let prev_ranges = std::mem::take(&mut builder.nse_nested_ranges);
-        let resolver = builder.resolver;
-        builder = SemanticIndexBuilder::new_rewalk(range, prev_ranges.clone(), resolver);
-        builder.pre_scan_scope(root.syntax());
-        builder.collect_expression_list(&root.expressions());
-
-        if builder.nse_nested_ranges == prev_ranges {
-            if i >= 5 {
-                log::trace!("NSE re-walk converged after {i} iterations in range {range:?}");
-            }
-            return builder.finish();
-        }
-    }
-
-    // Hitting the cap means the returned index is inconsistent, not merely
-    // degraded, and valid R should never reach it. `error!` matches that.
-    log::error!(
-        "NSE re-walk did not converge after {MAX_NSE_ITERATIONS} iterations in range {range:?}"
-    );
     builder.finish()
 }
 
@@ -131,48 +90,43 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
     current_scope: ScopeId,
-    pre_scans: IndexVec<ScopeId, PreScanScope>,
+    bound_names: IndexVec<ScopeId, BoundNames>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
-    // The `Nested` NSE scope bodies found so far, as a set of ranges. This is
-    // the re-walk loop's fixpoint state. Each walk seeds it from the previous
-    // iteration, grows it as `record_nse_arg_decision()` recognizes more scopes,
-    // and stops once a walk no longer finds any NSE range.
-    nse_nested_ranges: FxHashSet<TextRange>,
-    // `true` once any scope-pushing NSE combo is found. Triggers the re-walk.
-    found_nse: bool,
-    // Whether to push NSE scopes at call sites. Only the re-walk does. On the
-    // first walk the pre-scan hasn't learned which bodies to skip, so it still
-    // records a nested body's definitions (e.g. `x` from `local({x <- 1})`)
-    // into the parent scope. Pushing the child scope on that walk too would
-    // then register `x`'s enclosing snapshot against the parent, one scope too
-    // high.
-    is_rewalk: bool,
+    // The NSE effect each call resolved to, keyed by the call's range. Filled
+    // in flow order by the scan. Absence means "not NSE".
+    //
+    // File-global on purpose, not per-scope: a `TextRange` is unique across the
+    // file, so entries from different scopes can't collide.
+    nse_annotations: FxHashMap<TextRange, NseAnnotation>,
+    // Resolved `source()` calls, keyed by the call's range. The scan fills
+    // this once per call (consulting `resolve_source`), the walk reads it back,
+    // so the resolver is queried exactly once per `source()` call site.
+    source_resolutions: FxHashMap<TextRange, SourceResolution>,
+    // Names bound so far in the scope currently being scanned, tracked
+    // flow-precisely (if/else restore, loop union). This is the scan
+    // pass's own flow state, standing in for the walk's use-def state which
+    // isn't built yet. Reset at each scope's `begin_scan()`.
+    bound_so_far: FxHashSet<String>,
+    // The enclosing eager environment captured when each child scope is
+    // entered, keyed by the child's range. Recorded from `bound_so_far` when
+    // the parent's scan reaches the child's definition point.
+    eager_bindings: FxHashMap<TextRange, FxHashSet<String>>,
+    // Diagnostics collected during the build and logged on `finish()`. A minimal
+    // channel for now, no user-facing surface.
+    diagnostics: Vec<SemanticDiagnostic>,
     resolver: R,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn new(range: TextRange, resolver: R) -> Self {
-        Self::new_impl(range, FxHashSet::default(), false, resolver)
-    }
-
-    fn new_rewalk(range: TextRange, nse_nested_ranges: FxHashSet<TextRange>, resolver: R) -> Self {
-        Self::new_impl(range, nse_nested_ranges, true, resolver)
-    }
-
-    fn new_impl(
-        range: TextRange,
-        nse_nested_ranges: FxHashSet<TextRange>,
-        is_rewalk: bool,
-        resolver: R,
-    ) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
         let mut uses = IndexVec::new();
         let mut use_def_maps = IndexVec::new();
-        let mut pre_scans = IndexVec::new();
+        let mut bound_names = IndexVec::new();
 
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
         // fills in `descendants.end` with the current arena length. Everything
@@ -191,7 +145,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
         use_def_maps.push(UseDefMapBuilder::new());
-        pre_scans.push(PreScanScope::new());
+        bound_names.push(BoundNames::new());
 
         Self {
             scopes,
@@ -200,13 +154,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             uses,
             use_def_maps,
             current_scope: file_scope,
-            pre_scans,
+            bound_names,
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
             namespace_accesses: Vec::new(),
-            nse_nested_ranges,
-            found_nse: false,
-            is_rewalk,
+            nse_annotations: FxHashMap::default(),
+            source_resolutions: FxHashMap::default(),
+            bound_so_far: FxHashSet::default(),
+            eager_bindings: FxHashMap::default(),
+            diagnostics: Vec::new(),
             resolver,
         }
     }
@@ -231,7 +187,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.definitions.push(IndexVec::new());
         self.uses.push(IndexVec::new());
         self.use_def_maps.push(UseDefMapBuilder::new());
-        self.pre_scans.push(PreScanScope::new());
+        self.bound_names.push(BoundNames::new());
 
         id
     }
@@ -481,26 +437,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Whether `scope` binds `name` in its flow state so far: some definition
-    /// reaches this point on the control-flow paths up to here. A name never
-    /// interned in `scope` has nothing binding it, so it counts as unbound.
-    ///
-    /// Used for eager scopes, see
-    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere) for the
-    /// flow-insensitive variant for lazy scopes.
-    fn scope_binds_so_far(&self, scope: ScopeId, name: &str) -> bool {
-        match self.symbol_tables[scope].id(name) {
-            Some(symbol_id) => !self.use_def_maps[scope].is_unbound(symbol_id),
-            None => false,
-        }
-    }
-
     /// Whether `scope` binds `name` anywhere, regardless of flow position: an
     /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.
-    ///
-    /// Used for lazy scopes, see `scope_binds_so_far` for the flow-sensitive
-    /// variant for eager scopes.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         let found_by_flag = self.symbol_tables[scope].id(name).is_some_and(|sym_id| {
             self.symbol_tables[scope]
@@ -508,7 +447,300 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .flags()
                 .contains(SymbolFlags::IS_BOUND)
         });
-        found_by_flag || self.pre_scans[scope].has_name(name)
+        found_by_flag || self.bound_names[scope].binds(name)
+    }
+
+    /// Record the eager environment for a child scope (function body, NSE
+    /// argument) about to be created at `range`, to seed the child's scan in
+    /// `begin_scan`. Called during the scan, where `bound_so_far` is the parent's
+    /// flow-precise state at the child's definition point (already carrying the
+    /// parent's own inherited ancestors, so the child inherits transitively).
+    pub(super) fn record_eager_bindings(&mut self, range: TextRange) {
+        self.eager_bindings.insert(range, self.bound_so_far.clone());
+    }
+
+    // --- Scan pass ---
+
+    /// Reset the flow-precise binding state for a fresh scope's scan.
+    ///
+    /// Seeds it with two things:
+    ///
+    /// - The enclosing eager environment captured when this scope was entered
+    ///   (`eager_bindings`). The parent's own scan was seeded the same way,
+    ///   so this is transitively complete: it holds every eager binding
+    ///   visible from an ancestor at this scope's definition point.
+    /// - The scope's own already-bound names. For a function scope that's the
+    ///   parameters, recorded just before the scan runs. For file and NSE scopes
+    ///   nothing local is bound yet.
+    ///
+    /// Parameter defaults are a special case: they are scanned before the params
+    /// are recorded, so `collect_function` seeds the full formal set by hand
+    /// (all formals bind at once in R, so a default sees every parameter name).
+    pub(super) fn begin_scan(&mut self) {
+        self.bound_so_far.clear();
+
+        let range = self.scopes[self.current_scope].range;
+        if let Some(entry) = self.eager_bindings.get(&range) {
+            self.bound_so_far.extend(entry.iter().cloned());
+        }
+
+        for (_id, symbol) in self.symbol_tables[self.current_scope].iter() {
+            if symbol.flags().contains(SymbolFlags::IS_BOUND) {
+                self.bound_so_far.insert(symbol.name().to_string());
+            }
+        }
+    }
+
+    pub(super) fn scan_expression_list(&mut self, list: &RExpressionList) {
+        for expr in list.iter() {
+            self.scan_expression(&expr);
+        }
+    }
+
+    /// Scan for NSE calls and collect the scope's bound names, in flow order.
+    ///
+    /// Runs before the walk of a scope. It decides NSE-ness at each call the
+    /// same way the walk's [`is_locally_bound`](Self::is_locally_bound) would,
+    /// records the decision in `nse_annotations` for the walk to reuse, and adds
+    /// non-skipped definition names to `bound_names`. The bound names must be
+    /// complete before the walk descends into any child scope, because a lazy
+    /// child body can reference an ancestor def the ancestor's walk hasn't
+    /// reached yet.
+    ///
+    /// The scan matches the walk's scope boundaries:
+    ///
+    /// - Function and `Nested` NSE bodies are child scopes, scanned
+    ///   separately in their own context.
+    /// - A `Current + Lazy` body is also a child scope, scanned separately for
+    ///   the same reason: NSE resolution needs the child's own flow context,
+    ///   which differs from this scope's.
+    /// - A `Current + Eager` body pushes no scope, so it stays part of this
+    ///   scope's direct level and is scanned through transparently.
+    ///
+    /// Branch analysis is precise. In `if (c) local <- f else local({ y <- 1
+    /// })` the else branch sees an NSE call because `local` is unbound on the
+    /// else path, which prevents `y` from leaking into the scope.
+    pub(super) fn scan_expression(&mut self, expr: &AnyRExpression) {
+        match expr {
+            AnyRExpression::RFunctionDefinition(func) => {
+                // A function body is a child scope, scanned when it's entered.
+                // Record this scope's eager bindings now so that when we later
+                // resolve an NSE callee inside the body, we can check whether one
+                // of them shadows it (see `bound_at_entry`).
+                self.record_eager_bindings(func.syntax().text_trimmed_range());
+            },
+
+            AnyRExpression::RBracedExpressions(braced) => {
+                self.scan_expression_list(&braced.expressions());
+            },
+
+            AnyRExpression::RBinaryExpression(bin) => {
+                if is_assignment(bin) {
+                    let right = is_right_assignment(bin);
+
+                    // Value side first, mirroring `collect_assignment`: it may
+                    // hold NSE calls or nested defs that flow before the binding.
+                    let value = if right { bin.left() } else { bin.right() };
+                    if let Ok(value) = value {
+                        self.scan_expression(&value);
+                    }
+
+                    let target = if right { bin.right() } else { bin.left() };
+                    if let Ok(target) = target {
+                        match assignment_name(&target) {
+                            // `<<-` binds in an ancestor, not here, so it doesn't
+                            // shadow a callee in this scope (matching the walk).
+                            Some((name, _)) if !is_super_assignment(bin) => {
+                                self.record_binding(name);
+                            },
+                            Some(_) => {},
+                            // Complex target (`x$foo <- v`): no binding, but the
+                            // target may hold NSE calls.
+                            None => self.scan_expression(&target),
+                        }
+                    }
+                } else {
+                    if let Ok(lhs) = bin.left() {
+                        self.scan_expression(&lhs);
+                    }
+                    if let Ok(rhs) = bin.right() {
+                        self.scan_expression(&rhs);
+                    }
+                }
+            },
+
+            AnyRExpression::RCall(call) => {
+                if let Ok(func) = call.function() {
+                    self.scan_expression(&func);
+                }
+                self.scan_call(call);
+                self.scan_semantic_call(call);
+            },
+
+            AnyRExpression::RForStatement(stmt) => {
+                // The for-variable is always bound (R sets it to NULL for empty
+                // sequences), so it binds before the body regardless of flow.
+                if let Ok(variable) = stmt.variable() {
+                    self.record_binding(variable.name_text());
+                }
+                if let Ok(sequence) = stmt.sequence() {
+                    self.scan_expression(&sequence);
+                }
+                // A loop body only adds bindings (a name bound inside still
+                // "reaches" on the ran path), so no restore is needed, unlike
+                // the two-branch `if`/`else` below.
+                if let Ok(body) = stmt.body() {
+                    self.scan_expression(&body);
+                }
+            },
+
+            AnyRExpression::RIfStatement(stmt) => {
+                if let Ok(condition) = stmt.condition() {
+                    self.scan_expression(&condition);
+                }
+
+                let pre_if = self.bound_so_far.clone();
+
+                if let Ok(consequence) = stmt.consequence() {
+                    self.scan_expression(&consequence);
+                }
+
+                let post_if = std::mem::replace(&mut self.bound_so_far, pre_if);
+
+                if let Some(else_clause) = stmt.else_clause() {
+                    if let Ok(alternative) = else_clause.alternative() {
+                        self.scan_expression(&alternative);
+                    }
+                }
+
+                // Both branches' bindings are live afterwards.
+                self.bound_so_far.extend(post_if);
+            },
+
+            // `while`/`repeat` loops, subsets, extractions, parentheses, unary
+            // ops, and literals: recurse into child expressions. Loops need no
+            // flow restore (see the `for` arm). Identifiers and dots are leaves
+            // with no bindings or calls, so they fall through to a no-op walk.
+            _ => {
+                self.scan_descendants(expr.syntax());
+            },
+        }
+    }
+
+    /// Walk descendant nodes of `expr`, scanning the outermost
+    /// `AnyRExpression` children. The scan analog of
+    /// `collect_descendants`.
+    fn scan_descendants(&mut self, node: &RSyntaxNode) {
+        let mut preorder = node.preorder();
+        preorder.next();
+
+        while let Some(event) = preorder.next() {
+            let WalkEvent::Enter(node) = event else {
+                continue;
+            };
+            if let Some(expr) = node.cast::<AnyRExpression>() {
+                self.scan_expression(&expr);
+                preorder.skip_subtree();
+            }
+        }
+    }
+
+    fn scan_parameter_defaults(&mut self, params: &RParameters) {
+        // Seed `bound_so_far` with every parameter names so a callee inside a
+        // default value sees the full formal set
+        for param in params.items().iter() {
+            let Ok(param) = param else { continue };
+            let Ok(name) = param.name() else { continue };
+            let text = match &name {
+                AnyRParameterName::RIdentifier(ident) => ident.name_text(),
+                AnyRParameterName::RDots(_) => String::from("..."),
+                AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
+            };
+            self.bound_so_far.insert(text);
+        }
+
+        for param in params.items().iter() {
+            let Ok(param) = param else { continue };
+            let Some(default) = param.default() else {
+                continue;
+            };
+            if let Ok(value) = default.value() {
+                self.scan_expression(&value);
+            }
+        }
+    }
+
+    /// Scan-time analog of [`collect_semantic_call`].
+    ///
+    /// Only `source()` needs handling here. Its injected bindings shadow NSE
+    /// callees, and the walk injects them too late for a later call in the same
+    /// scope to see. `library()`/`require()` attaches don't affect the scan
+    /// decisions yet, so they stay with the walk.
+    ///
+    /// [`collect_semantic_call`]: Self::collect_semantic_call
+    fn scan_semantic_call(&mut self, call: &aether_syntax::RCall) {
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        if ident.name_text() == "source" {
+            self.scan_source_call(call);
+        }
+    }
+
+    /// Resolve a `source()` call once, cache it, and bind the sourced names.
+    ///
+    /// The binding is eager: `source()` runs at its position, so the sourced
+    /// names ARE bound afterwards and can shadow a later NSE callee (e.g. a
+    /// sourced `local` masking base `local`). The resolution is cached by call
+    /// range so the walk reuses it instead of consulting the resolver again.
+    fn scan_source_call(&mut self, call: &aether_syntax::RCall) {
+        let Some(path) = self.parse_source_path(call) else {
+            return;
+        };
+        let Some(resolution) = self.resolver.resolve_source(&path) else {
+            return;
+        };
+
+        for name in &resolution.names {
+            self.record_binding(name.clone());
+        }
+
+        self.source_resolutions
+            .insert(call.syntax().text_trimmed_range(), resolution);
+    }
+
+    /// Record a binding in the scan's flow state.
+    ///
+    /// The flow-precise `bound_so_far` set always learns the name, so a
+    /// later callee in this scope sees it shadowed. The bound names only get it
+    /// when the current scope owns it. A `Current + Lazy` scope routes its defs
+    /// to the owner, so the name is added to the owner's bound names instead, the
+    /// same routing `add_definition_to_owner` does during the walk.
+    fn record_binding(&mut self, name: String) {
+        self.record_owner_name(name.clone());
+        self.bound_so_far.insert(name);
+    }
+
+    /// Route a binding NAME into its owner scope's bound names, matching
+    /// `add_definition`'s routing. A `Current + Lazy` scope routes to
+    /// `definition_owner()`, every other scope owns its bindings.
+    ///
+    /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
+    /// a deferred body's names to the owner's bound names without also marking them
+    /// bound in `bound_so_far` (see that helper for why).
+    fn record_owner_name(&mut self, name: String) {
+        if let Some(target) = match self.scopes[self.current_scope].kind {
+            ScopeKind::Nse(NseScope::Current, NseTiming::Lazy) => self.definition_owner(),
+            _ => Some(self.current_scope),
+        } {
+            self.bound_names[target].add(name);
+        }
+    }
+
+    fn nse_effect(&self, call: &RCall) -> Option<NseAnnotation> {
+        self.nse_annotations
+            .get(&call.syntax().text_trimmed_range())
+            .copied()
     }
 
     // --- Recursive descent ---
@@ -566,14 +798,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // as uses.
             AnyRExpression::RCall(call) => {
                 // Record the callee as a use (a no-op for `pkg::fn`) before
-                // resolving NSE. That interns the callee symbol, so
-                // `resolve_nse()` can look it up by name and read whether it's
-                // bound at this point.
+                // handling NSE.
                 if let Ok(func) = call.function() {
                     self.collect_expression(&func);
                 }
 
-                if let Some(annotation) = self.resolve_nse(call) {
+                if let Some(annotation) = self.nse_effect(call) {
                     self.collect_nse_call(call, annotation)
                 } else if let Ok(args) = call.arguments() {
                     self.collect_arguments(&args.items());
@@ -753,70 +983,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
         if let Ok(params) = fun.parameters() {
+            // Scan the default values before collecting them. R binds all
+            // formals into the frame at once, so a default sees every parameter
+            // name regardless of position: `function(local, b = local(...))` is
+            // not NSE. So we seed the whole formal set into `bound_so_far`
+            // up front rather than flow-ordered, then scan each default.
+            self.begin_scan();
+            self.scan_parameter_defaults(&params);
+
+            // `collect_parameters` adds the parameter definitions and walks
+            // each default in source order, finding the NSE decisions the scan
+            // above recorded.
             self.collect_parameters(&params);
         }
         if let Ok(body) = fun.body() {
-            self.pre_scan_scope(body.syntax());
+            self.begin_scan();
+            self.scan_expression(&body);
             self.collect_expression(&body);
         }
 
         self.pop_scope(scope);
-    }
-
-    /// Pre-scan a scope to collect all definition names (skipping nested
-    /// function bodies). Runs before the full walk so that enclosing
-    /// snapshot registration can find where free variables are bound,
-    /// even when the walk in the parent scope hasn't reached the
-    /// definition yet. Must stay in sync with the full walk's definition
-    /// handling: any construct that calls `add_definition` should have a
-    /// corresponding entry here.
-    fn pre_scan_scope(&mut self, root: &RSyntaxNode) {
-        let mut preorder = root.preorder();
-        while let Some(event) = preorder.next() {
-            let WalkEvent::Enter(node) = event else {
-                continue;
-            };
-            let is_root = &node == root;
-            let Some(expr) = AnyRExpression::cast(node) else {
-                continue;
-            };
-
-            // On the re-walk, skip nested NSE scope bodies, just like we skip
-            // function bodies: their definitions belong to the child scope, not
-            // the scope being pre-scanned. The root is the scope being
-            // pre-scanned, which may itself be an NSE body, so it's never
-            // skipped. `nse_nested_ranges` is empty on the first walk.
-            if !is_root &&
-                self.nse_nested_ranges
-                    .contains(&expr.syntax().text_trimmed_range())
-            {
-                preorder.skip_subtree();
-                continue;
-            }
-
-            match &expr {
-                AnyRExpression::RFunctionDefinition(_) => {
-                    preorder.skip_subtree();
-                },
-                AnyRExpression::RBinaryExpression(bin)
-                    if is_assignment(bin) && !is_super_assignment(bin) =>
-                {
-                    let right = is_right_assignment(bin);
-                    let target = if right { bin.right() } else { bin.left() };
-                    if let Ok(target) = target {
-                        if let Some((name, _)) = assignment_name(&target) {
-                            self.pre_scans[self.current_scope].add(name);
-                        }
-                    }
-                },
-                AnyRExpression::RForStatement(stmt) => {
-                    if let Ok(variable) = stmt.variable() {
-                        self.pre_scans[self.current_scope].add(variable.name_text());
-                    }
-                },
-                _ => {},
-            }
-        }
     }
 
     fn collect_parameters(&mut self, params: &RParameters) {
@@ -1014,52 +1200,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // regardless to keep the sourcing mechanism simple. A future diagnostic
     // should suggest `local = TRUE` in nested contexts.
     fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
-        let Ok(args) = call.arguments() else {
+        let Some(path) = self.parse_source_path(call) else {
             return;
         };
 
-        let mut path: Option<String> = None;
-        let mut bail = false;
+        let range = call.syntax().text_trimmed_range();
+        let call_offset = range.start();
 
-        for item in args.items().iter() {
-            let Ok(arg) = item else { continue };
-
-            if let Some(name_clause) = arg.name_clause() {
-                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
-                    continue;
-                };
-                if name_ident.name_text() == "local" {
-                    if let Some(value) = arg.value() {
-                        match value {
-                            // TRUE/FALSE are fine, we resolve uniformly. For
-                            // the FALSE in nested context case, we'll emit a
-                            // diagnostic.
-                            AnyRExpression::RTrueExpression(_) |
-                            AnyRExpression::RFalseExpression(_) => {},
-                            // With anything else (environment, non-statically
-                            // resolvable expression) is not we need to bail.
-                            _ => bail = true,
-                        }
-                    }
-                }
-            } else if path.is_none() {
-                // First positional argument: the file path
-                if let Some(AnyRExpression::AnyRValue(AnyRValue::RStringValue(s))) = arg.value() {
-                    path = s.string_text();
-                }
-            }
-        }
-
-        if bail {
-            return;
-        }
-
-        let Some(path) = path else {
-            return;
-        };
-
-        let call_offset = call.syntax().text_trimmed_range().start();
-        let resolution = self.resolver.resolve_source(&path);
+        // Read the resolution the scan already computed. The scan is the
+        // single point that consults `resolve_source`, so the walk never
+        // re-resolves. A cache miss means the scan bailed or the resolver
+        // returned `None`, both of which record the call with `resolved: None`.
+        let resolution = self.source_resolutions.get(&range).cloned();
 
         // Record every `source()` call site, independent of whether the
         // resolution was successful. `resolved` pins the canonical URL when
@@ -1113,8 +1265,61 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
+    /// Parse the file path out of a `source("path")` call.
+    ///
+    /// Shared by the scan and the walk so they agree on which calls are
+    /// statically analyzable. Returns `None` when there's no positional path,
+    /// or when `local =` is set to something other than TRUE/FALSE (an
+    /// environment or a non-literal expression we can't follow).
+    fn parse_source_path(&self, call: &aether_syntax::RCall) -> Option<String> {
+        let args = call.arguments().ok()?;
+
+        let mut path: Option<String> = None;
+
+        for item in args.items().iter() {
+            let Ok(arg) = item else { continue };
+
+            if let Some(name_clause) = arg.name_clause() {
+                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
+                    continue;
+                };
+                if name_ident.name_text() == "local" {
+                    if let Some(value) = arg.value() {
+                        match value {
+                            // TRUE/FALSE are fine, we resolve uniformly. For
+                            // the FALSE in nested context case, we'll emit a
+                            // diagnostic.
+                            AnyRExpression::RTrueExpression(_) |
+                            AnyRExpression::RFalseExpression(_) => {},
+                            // Anything else (environment, non-statically
+                            // resolvable expression) means we bail.
+                            _ => return None,
+                        }
+                    }
+                }
+            } else if path.is_none() {
+                // First positional argument: the file path
+                if let Some(AnyRExpression::AnyRValue(AnyRValue::RStringValue(s))) = arg.value() {
+                    path = s.string_text();
+                }
+            }
+        }
+
+        path
+    }
+
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
+
+        // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now
+        for diagnostic in &self.diagnostics {
+            match diagnostic {
+                SemanticDiagnostic::LazyShadowAmbiguity { name, range } => log::warn!(
+                    "NSE lazy-shadow ambiguity: callee `{name}` at {range:?} is recognized \
+                     as NSE, but a lazy-crossed ancestor binds it with undetermined timing"
+                ),
+            }
+        }
 
         let symbol_tables = self
             .symbol_tables
@@ -1142,30 +1347,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.enclosing_snapshots,
             self.semantic_calls,
             self.namespace_accesses,
+            self.diagnostics,
             file_final_bindings,
         )
     }
 }
 
-/// All definitions in a scope, collected before the full walk. Skips nested
-/// function bodies (those belong to child scopes). Two consumers:
-///
-/// - Enclosing snapshots: `has_name()` checks whether a symbol will be
-///   defined in an ancestor scope (even when the ancestor's walk hasn't reached
-///   that definition yet), so that `register_enclosing_snapshot()` can find the
-///   right ancestor for free variables.
-/// - NSE resolution: With NSE, each function call potentially pushes a scope
-///   (which can be lazy or eager). We need to resolve the called function's
-///   semantic during the walk. Inside lazy scopes (e.g. function bodies),
-///   `by_name` provides the complete set of parent definitions so that the
-///   function can be resolved against all the parent scope's definitions (if NSE
-///   semantics don't match across definitions, we pick one and lint). Intra-scope
-///   resolution is linear and uses the current `symbol_states` directly instead.
-struct PreScanScope {
+/// All definitions in a scope, collected by the scan pass before the
+/// walk. Skips child-scope bodies (nested functions and `Nested` NSE bodies).
+struct BoundNames {
     by_name: FxHashSet<String>,
 }
 
-impl PreScanScope {
+impl BoundNames {
     fn new() -> Self {
         Self {
             by_name: FxHashSet::default(),
@@ -1176,7 +1370,7 @@ impl PreScanScope {
         self.by_name.insert(name);
     }
 
-    fn has_name(&self, name: &str) -> bool {
+    fn binds(&self, name: &str) -> bool {
         self.by_name.contains(name)
     }
 }

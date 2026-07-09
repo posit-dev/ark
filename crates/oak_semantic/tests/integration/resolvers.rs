@@ -1,10 +1,12 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use oak_semantic::effects_registry;
 use oak_semantic::Effects;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
+use url::Url;
 
 /// Test resolver: an explicit search path resolved against the registry.
 ///
@@ -19,6 +21,8 @@ pub struct TestImportsResolver {
     /// Count of `resolve_effects` consultations, so tests can assert the front
     /// gate keeps unannotated names off the resolver.
     consultations: Rc<Cell<usize>>,
+    /// `source()` paths this resolver knows, mapped to the names they export.
+    sources: HashMap<String, SourceResolution>,
 }
 
 impl TestImportsResolver {
@@ -28,7 +32,20 @@ impl TestImportsResolver {
         Self {
             always_attached: vec![String::from("base")],
             consultations: Rc::new(Cell::new(0)),
+            sources: HashMap::new(),
         }
+    }
+
+    /// Register a sourced file at `path` exporting `names`, so `resolve_source`
+    /// returns a resolution for it. The URL is synthesized from the path.
+    pub fn with_source(mut self, path: &str, names: &[&str]) -> Self {
+        let resolution = SourceResolution {
+            url: Url::parse(&format!("file:///{path}")).unwrap(),
+            names: names.iter().map(|name| name.to_string()).collect(),
+            packages: vec![],
+        };
+        self.sources.insert(path.to_string(), resolution);
+        self
     }
 
     /// A handle to the consultation counter. Clone it before moving the
@@ -39,8 +56,8 @@ impl TestImportsResolver {
 }
 
 impl ImportsResolver for TestImportsResolver {
-    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
-        None
+    fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
+        self.sources.get(path).cloned()
     }
 
     fn resolve_effects(&mut self, name: &str, attached: &[String], _lazy: bool) -> Option<Effects> {
