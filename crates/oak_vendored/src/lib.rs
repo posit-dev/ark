@@ -68,7 +68,7 @@ impl VendoredCache {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct Version {
     name: String,
     major: u32,
@@ -102,9 +102,22 @@ impl Version {
         })
     }
 
-    /// Compare by version number
-    fn cmp(&self, other: &Self) -> Ordering {
-        (self.major, self.minor, self.patch).cmp(&(other.major, other.minor, other.patch))
+    /// The `(major, minor, patch)` triple used for ordering and equality
+    fn number(&self) -> (u32, u32, u32) {
+        (self.major, self.minor, self.patch)
+    }
+}
+
+// Ordering and equality compare by version number only
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.number().cmp(&other.number()))
+    }
+}
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.number() == other.number()
     }
 }
 
@@ -122,16 +135,13 @@ fn resolve_version(version: &str) -> Option<&'static str> {
     let version = Version::parse(version)?;
 
     // Look for exact match
-    if let Some(version) = VERSIONS
-        .iter()
-        .find(|candidate| candidate.cmp(&version) == Ordering::Equal)
-    {
+    if let Some(version) = VERSIONS.iter().find(|candidate| **candidate == version) {
         return Some(version.name.as_str());
     }
 
     // Return the newest version we have if applicable
     let newest_version = VERSIONS.last().expect("must have at least one version");
-    if version.cmp(newest_version) == Ordering::Greater {
+    if version > *newest_version {
         Some(newest_version.name.as_str())
     } else {
         None
@@ -165,6 +175,11 @@ mod tests {
     /// The newest vendored version, i.e. the last entry of `versions.txt`
     fn newest() -> &'static str {
         VERSIONS.last().unwrap().name.as_str()
+    }
+
+    #[test]
+    fn test_versions_are_sorted() {
+        assert!(VERSIONS.is_sorted());
     }
 
     #[test]
