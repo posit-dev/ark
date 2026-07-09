@@ -4,6 +4,7 @@ use std::io;
 use aether_path::FilePath;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::description::Priority;
+use oak_package_metadata::index::Index;
 use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
 
@@ -46,6 +47,13 @@ pub struct Package {
     /// time, only stat it, so installed packages the user never imports cost
     /// nothing beyond the stat.
     pub namespace_revision: FileRevision,
+    /// Mtime of the package's `INDEX` file. [`FileRevision::zero`] when it can't be
+    /// stat'd, and [None] for workspace packages, which never have one. The lazy
+    /// [`Package::index`] query reads it so a watcher that bumps it on an `INDEX` change
+    /// forces the next parse to re-read disk, exactly like [`File::revision`] drives
+    /// [`File::source_text`]. We don't read or parse `INDEX` at scan time, only stat it,
+    /// so installed packages the user never imports cost nothing beyond the stat.
+    pub index_revision: Option<FileRevision>,
     /// In-memory `NAMESPACE`, checked by [`Package::namespace`] before it
     /// touches disk. Mirrors [`File::source_text_override`]: `None` means
     /// "read from disk". The scanners always leave it `None`. It's the
@@ -162,6 +170,16 @@ impl Package {
             .and_then(|description| description.priority.clone())
     }
 
+    /// The package's `Depends:`, parsed lazily from `DESCRIPTION`. `None` when the file
+    /// is missing. Narrow query over [`Package::description`], same backdating story as
+    /// [`Package::version`].
+    #[salsa::tracked(returns(ref))]
+    pub fn depends(self, db: &dyn Db) -> Option<Vec<String>> {
+        self.description(db)
+            .as_ref()
+            .map(|description| description.depends.clone())
+    }
+
     /// The basename order from `DESCRIPTION`'s `Collate:` field, parsed
     /// lazily. `None` when the field (or the file) is absent. Narrow query
     /// over [`Package::description`], same backdating story as
@@ -200,6 +218,45 @@ impl Package {
             Err(err) => {
                 log::error!("Failed to read `{path}`: {err:?}");
                 None
+            },
+        }
+    }
+
+    /// The package's parsed `INDEX`
+    ///
+    /// Returns `None` for workspace packages, which never have an `INDEX`.
+    ///
+    /// Returns an empty `Index` for installed packages with missing or unreadable
+    /// indexes.
+    #[salsa::tracked(returns(ref))]
+    pub fn index(self, db: &dyn Db) -> Option<Index> {
+        // Depend on `index_revision()` so a bump forces a re-read
+        match self.index_revision(db) {
+            Some(revision) => report_untracked_if_zero(db, revision),
+            // Workspace packages don't have an `INDEX`
+            None => return None,
+        }
+
+        let Some(parent) = self
+            .description_path(db)
+            .as_path()
+            .and_then(|path| path.parent())
+        else {
+            log::error!("Failed to find `DESCRIPTION` parent for installed package.");
+            return Some(Index::default());
+        };
+
+        let path = parent.join("INDEX");
+
+        // The `index_revision()` early exit handled workspace packages, so we only handle
+        // installed packages here. If an `INDEX` is missing, we silently return an empty
+        // one ({translations} is an example). Otherwise, failure to parse logs an error.
+        match fs::read_to_string(path.as_std_path()) {
+            Ok(text) => Some(Index::parse(&text)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Some(Index::default()),
+            Err(err) => {
+                log::error!("Failed to read `{path}`: {err:?}");
+                Some(Index::default())
             },
         }
     }

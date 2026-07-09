@@ -38,6 +38,7 @@ fn test_file_by_path_finds_workspace_package_file() {
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         Vec::new(),
     );
@@ -65,6 +66,7 @@ fn test_file_by_path_finds_library_package_file() {
         "foo".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         None,
         vec![],
         Vec::new(),

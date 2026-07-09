@@ -9,7 +9,6 @@
 
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
-use oak_semantic::library::Library;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp::lsp_types::WorkspaceFolder;
 use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
@@ -35,7 +34,7 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     let _aux = init_aux_for_test();
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(OakDatabase::new(), Library::new(vec![])),
+        WorldState::new(OakDatabase::new()),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(None),

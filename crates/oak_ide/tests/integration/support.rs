@@ -111,6 +111,7 @@ fn install_pkg(
         name.to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
+        None,
         Some(namespace),
         Vec::new(),
         Vec::new(),

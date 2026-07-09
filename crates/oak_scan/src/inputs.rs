@@ -224,6 +224,7 @@ pub trait RootExt {
         name: String,
         description_revision: FileRevision,
         namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package;
@@ -256,6 +257,7 @@ impl RootExt for Root {
         name: String,
         description_revision: FileRevision,
         namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package {
@@ -283,6 +285,7 @@ impl RootExt for Root {
                 name,
                 description_revision,
                 namespace_revision,
+                index_revision,
                 None,
                 Vec::new(),
                 Vec::new(),
