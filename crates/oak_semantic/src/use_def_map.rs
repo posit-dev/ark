@@ -478,13 +478,6 @@ impl UseDefMapBuilder {
         self.symbol_states[symbol_id].may_be_unbound()
     }
 
-    /// Returns `true` if `symbol_id` is definitely unbound at this point: no
-    /// definition reaches it on any control-flow path.
-    pub(crate) fn is_unbound(&self, symbol_id: SymbolId) -> bool {
-        let state = &self.symbol_states[symbol_id];
-        state.may_be_unbound() && state.definitions().is_empty()
-    }
-
     /// Register an enclosing snapshot for `symbol_id`. The snapshot starts from
     /// the current flow state (prior shadowing applied). A watcher is
     /// registered so that each subsequent definition of this symbol we

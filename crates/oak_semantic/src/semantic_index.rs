@@ -85,6 +85,10 @@ pub struct SemanticIndex {
     // `package:::symbol`
     namespace_accesses: Vec<NamespaceAccess>,
 
+    // Diagnostics surfaced during indexing, for downstream consumers to turn
+    // into user-facing diagnostics.
+    diagnostics: Vec<SemanticDiagnostic>,
+
     // The file scope's exit flow state: for each top-level symbol, the
     // definitions still in effect once the file has run top to bottom. This is
     // the file's exports (see `exports()`). Only the file scope's exit state is
@@ -102,6 +106,7 @@ impl SemanticIndex {
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         semantic_calls: Vec<SemanticCall>,
         namespace_accesses: Vec<NamespaceAccess>,
+        diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
     ) -> Self {
         Self {
@@ -113,6 +118,7 @@ impl SemanticIndex {
             enclosing_snapshots,
             semantic_calls,
             namespace_accesses,
+            diagnostics,
             final_bindings,
         }
     }
@@ -188,6 +194,12 @@ impl SemanticIndex {
     /// `package:::symbol`
     pub fn namespace_accesses(&self) -> &[NamespaceAccess] {
         &self.namespace_accesses
+    }
+
+    /// Diagnostics surfaced during indexing, for downstream consumers to turn
+    /// into user-facing diagnostics.
+    pub fn diagnostics(&self) -> &[SemanticDiagnostic] {
+        &self.diagnostics
     }
 
     /// Find the innermost scope containing `offset`.
@@ -791,6 +803,15 @@ pub enum NamespaceAccessKind {
     Export,
     /// `:::`
     Internal,
+}
+
+/// A diagnostic surfaced while building the semantic index, for downstream
+/// consumers to turn into user-facing diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticDiagnostic {
+    /// An NSE call recognized in a lazy context whose binding is overwritten
+    /// later on (in subsequent parent code or in another lazy context).
+    LazyShadowAmbiguity { name: String, range: TextRange },
 }
 
 // --- Iterators ---
