@@ -19,7 +19,7 @@ static VERSIONS: LazyLock<Vec<Version>> =
     LazyLock::new(|| read_versions(include_str!("../vendor/versions.txt")));
 
 /// Solid zstd archive of every vendored version's base R sources
-const ARCHIVE: &[u8] = include_bytes!("../vendor/r-base-sources.tar.zst");
+const ARCHIVE: &[u8] = include_bytes!("../vendor/base-sources.tar.zst");
 
 /// Cache for vendored base R package sources
 ///

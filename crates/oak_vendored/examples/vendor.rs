@@ -2,7 +2,7 @@
 //!
 //! Maintainer tool, run via `just vendor-r-sources`. Reads `vendor/versions.txt`,
 //! downloads each listed R source tarball from CRAN, keeps only the `src/library/*/R/`
-//! subtree of each, and writes a single solid `vendor/r-base-sources.tar.zst` in a highly
+//! subtree of each, and writes a single solid `vendor/base-sources.tar.zst` in a highly
 //! compressed format.
 //!
 //! To regenerate after a new version of R comes out, just add it to `vendor/versions.txt`
@@ -84,7 +84,7 @@ fn main() -> anyhow::Result<()> {
             .then(left.version_number.cmp(&right.version_number))
     });
 
-    let output = vendor_dir.join("r-base-sources.tar.zst");
+    let output = vendor_dir.join("base-sources.tar.zst");
     write_archive(&entries, &output)?;
 
     eprintln!(
