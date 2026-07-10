@@ -229,6 +229,25 @@ fn test_sourced_file_library_attaches_in_caller() {
 }
 
 #[test]
+fn test_lazy_library_in_sourced_file_does_not_attach_in_caller() {
+    // `b.R` calls `library(shiny)` inside a function body, so it attaches only
+    // if that function runs. Sourcing `b.R` defines the function but never
+    // calls it, so `shiny` must not be forwarded into the caller. `b.R`'s
+    // eager top-level `library(dplyr)` does forward.
+    let mut db = TestDb::new();
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "library(dplyr)\nf <- function() library(shiny)\n"),
+    ]);
+    let a = scripts[0];
+
+    let index = a.semantic_index(&db);
+    let attaches = index.attached_packages();
+    assert!(attaches.contains(&"dplyr"));
+    assert!(!attaches.contains(&"shiny"));
+}
+
+#[test]
 fn test_source_to_unregistered_url_resolves_to_none() {
     // `a.R` sources `b.R` but `b.R` isn't registered. The `Source`
     // semantic call is still recorded so diagnostics can flag the

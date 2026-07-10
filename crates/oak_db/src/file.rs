@@ -193,15 +193,34 @@ impl File {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
     }
 
-    /// Package names from `library()` / `require()` calls in this file,
-    /// including those propagated transitively through `source()` chains.
-    /// Ordered by call-site position, which preserves R's search-path
-    /// semantics: a later `library(b)` shadows an earlier `library(a)`
-    /// when both export the same name.
+    /// Package names from `library()` / `require()` calls that run at the
+    /// file's own top level, including those propagated transitively through
+    /// `source()` chains. Ordered by call-site position, which preserves R's
+    /// search-path semantics: a later `library(b)` shadows an earlier
+    /// `library(a)` when both export the same name.
+    ///
+    /// A `library()` in a function body does not count here; for every attach
+    /// regardless of context see [`Self::attached_packages_anywhere`].
     #[salsa::tracked(returns(ref))]
     pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
             .attached_packages()
+            .into_iter()
+            .map(|s| Name::new(db, s))
+            .collect()
+    }
+
+    /// Every `library()` / `require()` package in the file, including attaches
+    /// in function bodies and other lazy contexts (see
+    /// [`SemanticIndex::attached_packages_anywhere`]).
+    ///
+    /// Over-approximates the load-time search path. Used for workspace
+    /// dependency discovery, where a package attached only inside a function
+    /// still counts as a dependency.
+    #[salsa::tracked(returns(ref))]
+    pub fn attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> {
+        self.semantic_index(db)
+            .attached_packages_anywhere()
             .into_iter()
             .map(|s| Name::new(db, s))
             .collect()
@@ -229,7 +248,9 @@ impl File {
     /// All packages used in this file
     ///
     /// Sources:
-    /// - [Self::attached_packages()], i.e. `library()` or `require()`
+    /// - [Self::attached_packages_anywhere()], i.e. `library()` or `require()`
+    ///   anywhere in the file (a package attached only inside a function is
+    ///   still a dependency)
     /// - [Self::namespace_accessed_packages()], i.e. `::` or `:::`
     ///
     /// Packages are sorted by name and are unique. This maximizes the ability to
@@ -237,7 +258,7 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub fn used_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
         let mut names: Vec<Name<'_>> = Vec::new();
-        names.extend(self.attached_packages(db));
+        names.extend(self.attached_packages_anywhere(db));
         names.extend(self.namespace_accessed_packages(db));
         names.sort_by_cached_key(|package| package.text(db));
         names.dedup();

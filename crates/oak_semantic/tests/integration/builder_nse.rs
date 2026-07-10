@@ -1666,6 +1666,35 @@ reactive({
 }
 
 #[test]
+fn test_nse_attach_eager_body_inside_lazy_body_is_deferred() {
+    // `local` is eager, but it sits inside `f`'s function body, so reaching
+    // its `library(shiny)` waits on `f()` being called. The attach is recorded
+    // (at `local`'s eager scope) but does not run at the file's top level: the
+    // eager `attached_packages()` must exclude it, only `_anywhere()` sees it.
+    // Guards against a one-scope `is_lazy()` check that misses the lazy
+    // ancestor.
+    let index = index(
+        "\
+f <- function() {
+    local({
+        library(shiny)
+    })
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert!(index.attached_packages().is_empty());
+    assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+}
+
+#[test]
 fn test_nse_attach_local_shadow_still_wins() {
     // A local `reactive` def shadows shiny's, so the call is not NSE even with
     // shiny attached.
@@ -1787,8 +1816,11 @@ f <- function() {
     );
     let f_scope = ScopeId::from(1);
 
-    // The attach is recorded (scoped to `f`), but not fed to `reactive`.
-    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    // The attach is recorded (scoped to `f`), but not fed to `reactive`, and
+    // not counted at the file's top level: only `attached_packages_anywhere()`
+    // sees a `library()` buried in a function body.
+    assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
+    assert!(index.attached_packages().is_empty());
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
 }
