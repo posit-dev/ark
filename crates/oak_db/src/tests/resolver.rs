@@ -1,16 +1,25 @@
 use std::collections::HashSet;
 
+use oak_package_metadata::namespace::Import;
+use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::DefinitionKind;
+use oak_semantic::semantic_index::NseScope;
+use oak_semantic::semantic_index::NseTiming;
 use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
+use stdext::SortedVec;
 
 use crate::tests::test_db::file_path;
+use crate::tests::test_db::library_root;
+use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
+use crate::Package;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
@@ -34,6 +43,410 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<File
     root.set_scripts(db).to(scripts.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
     (root, scripts)
+}
+
+/// Build a `pkg`-named workspace package with `files` as its collation-ordered
+/// `R/` sources and an empty NAMESPACE. Returns the files in collation order.
+fn setup_package(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {
+    let root = workspace_root(db, "pkg");
+    let pkg = Package::new(
+        db,
+        file_path("pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    );
+    let entities: Vec<File> = files
+        .iter()
+        .map(|(path, contents)| {
+            File::new(
+                db,
+                file_path(path),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
+        .collect();
+    pkg.set_files(db).to(entities.clone());
+    root.set_packages(db).to(vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    entities
+}
+
+/// Build a `pkg` package whose `tests/testthat/` files are `scripts` (so they
+/// resolve as test files, not `R/` sources). Returns the script files in the
+/// given order.
+fn setup_testthat(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
+    let root = workspace_root(db, "pkg");
+    let pkg = Package::new(
+        db,
+        file_path("pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    );
+    let entities: Vec<File> = scripts
+        .iter()
+        .map(|(path, contents)| {
+            File::new(
+                db,
+                file_path(path),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
+        .collect();
+    pkg.set_scripts(db).to(entities.clone());
+    root.set_packages(db).to(vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    entities
+}
+
+/// Register bare installed packages (empty namespace) on `LibraryRoots`, one
+/// root each, so `package_by_name` finds them. Their NSE effects come from the
+/// static registry keyed on the name, so no namespace is needed here.
+fn install_packages(db: &mut TestDb, names: &[&str]) {
+    let roots: Vec<Root> = names
+        .iter()
+        .map(|&name| {
+            let root = library_root(db, &format!("libs/{name}"));
+            let pkg = Package::new(
+                db,
+                file_path(&format!("libs/{name}/DESCRIPTION")),
+                name.to_string(),
+                FileRevision::zero(),
+                FileRevision::zero(),
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+            );
+            root.set_packages(db).to(vec![pkg]);
+            root
+        })
+        .collect();
+    db.library_roots().set_roots(db).to(roots);
+}
+
+#[test]
+fn test_testthat_test_that_is_nse_without_library() {
+    // The runner attaches testthat before a test file's body runs, so a bare
+    // `test_that` resolves to its NSE annotation with no `library(testthat)`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["testthat"]);
+    let files = setup_testthat(&mut db, &[(
+        "pkg/tests/testthat/test-a.R",
+        "test_that(\"x\", {\n    y <- 1\n})\n",
+    )]);
+
+    let index = files[0].semantic_index(&db);
+    let test_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(test_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+}
+
+#[test]
+fn test_testthat_helper_attach_enables_nse() {
+    // A `helper*.R` file is sourced into the test env before the body runs, so
+    // its `library(shiny)` puts shiny on the search path and the test's bare
+    // `reactive` is NSE.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let files = setup_testthat(&mut db, &[
+        ("pkg/tests/testthat/helper-x.R", "library(shiny)\n"),
+        (
+            "pkg/tests/testthat/test-a.R",
+            "reactive({\n    x <- 1\n})\n",
+        ),
+    ]);
+
+    let index = files[1].semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_testthat_helper_definition_shadows() {
+    // A `helper*.R` file defines `local`, so the test's bare `local` resolves
+    // to that helper definition rather than base's NSE `local`. No NSE scope.
+    let mut db = TestDb::new();
+    let files = setup_testthat(&mut db, &[
+        ("pkg/tests/testthat/helper-x.R", "local <- function(x) x\n"),
+        ("pkg/tests/testthat/test-a.R", "local({\n    y <- 1\n})\n"),
+    ]);
+
+    let index = files[1].semantic_index(&db);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
+#[test]
+fn test_namespace_import_from_enables_nse() {
+    // `importFrom(shiny, reactive)` brings `reactive` into the package
+    // namespace, so a bare `reactive` call resolves to shiny's NSE annotation
+    // with no `library()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let root = workspace_root(&db, "ws");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "shiny".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (pkg, files) = make_package(&mut db, "pkg", namespace, &[(
+        "ws/pkg/R/a.R",
+        "reactive({\n    x <- 1\n})\n",
+    )]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_namespace_bulk_import_enables_nse() {
+    // `import(shiny)` makes all of shiny's exports visible. shiny exports
+    // `reactive`, so the bare call is NSE. The registry supplies the effect.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+
+    let caller_ns = Namespace {
+        package_imports: vec!["shiny".to_string()],
+        ..Default::default()
+    };
+    let (caller, files) = make_package(&mut db, "caller", caller_ns, &[(
+        "ws/caller/R/a.R",
+        "reactive({\n    x <- 1\n})\n",
+    )]);
+
+    let shiny_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["reactive".to_string()]),
+        ..Default::default()
+    };
+    let (shiny, _) = make_package(&mut db, "shiny", shiny_ns, &[]);
+
+    root.set_packages(&mut db).to(vec![caller, shiny]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_namespace_reexport_chases_to_source_package() {
+    // `caller` imports `reactive` from `mypkg`, which re-exports it from shiny
+    // (`importFrom(shiny, reactive)`). The NSE annotation lives under shiny, so
+    // resolution follows one hop through `mypkg`'s import to `shiny`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+
+    let caller_ns = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "mypkg".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (caller, files) = make_package(&mut db, "caller", caller_ns, &[(
+        "ws/caller/R/a.R",
+        "reactive({\n    x <- 1\n})\n",
+    )]);
+
+    let mypkg_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["reactive".to_string()]),
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "shiny".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (mypkg, _) = make_package(&mut db, "mypkg", mypkg_ns, &[]);
+
+    root.set_packages(&mut db).to(vec![caller, mypkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_namespace_reexport_requires_export() {
+    // `caller` importFroms `reactive` from `mypkg`, but `mypkg` only importFroms
+    // it from shiny without re-exporting it. mypkg doesn't hand `reactive` to
+    // its importers (R errors "could not find function"), so the bare call is
+    // not NSE. The re-export chase is gated on mypkg's own exports, same as
+    // `Package::resolve`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+
+    let caller_ns = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "mypkg".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (caller, files) = make_package(&mut db, "caller", caller_ns, &[(
+        "ws/caller/R/a.R",
+        "reactive({\n    x <- 1\n})\n",
+    )]);
+
+    // mypkg imports reactive from shiny but does NOT export it.
+    let mypkg_ns = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "shiny".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (mypkg, _) = make_package(&mut db, "mypkg", mypkg_ns, &[]);
+
+    root.set_packages(&mut db).to(vec![caller, mypkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
+#[test]
+fn test_testthat_namespace_import_enables_nse() {
+    // A test file runs in a child of the package's namespace, so the package's
+    // `importFrom(shiny, reactive)` is visible to the test body: a bare
+    // `reactive` is NSE without any `library()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let root = workspace_root(&db, "pkg");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "shiny".to_string(),
+        }],
+        ..Default::default()
+    };
+    let pkg = Package::new(
+        &db,
+        file_path("pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(namespace),
+        Vec::new(),
+        Vec::new(),
+    );
+    let test = File::new(
+        &db,
+        file_path("pkg/tests/testthat/test-a.R"),
+        FileRevision::zero(),
+        Some("reactive({\n    x <- 1\n})\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_scripts(&mut db).to(vec![test]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = test.semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_sibling_definition_shadows_attached_nse() {
+    // `a.R` defines `reactive`, so in the later `b.R` the bare `reactive` call
+    // resolves to that sibling definition, not shiny's NSE function, even
+    // though `b.R` attaches shiny. A collation predecessor's binding beats the
+    // attached search path, so no NSE scope is pushed.
+    let mut db = TestDb::new();
+    let files = setup_package(&mut db, &[
+        ("pkg/R/a.R", "reactive <- function(x) x\n"),
+        ("pkg/R/b.R", "library(shiny)\nreactive({\n    x <- 1\n})\n"),
+    ]);
+    let b = files[1];
+
+    let index = b.semantic_index(&db);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
+#[test]
+fn test_later_sibling_does_not_shadow() {
+    // `b.R` defines `reactive`, but it's a collation successor of `a.R`, so it
+    // hasn't loaded when `a.R` runs. `a.R`'s bare `reactive` still resolves to
+    // shiny (attached in `a.R`) and stays NSE. The predecessors-only rule.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let files = setup_package(&mut db, &[
+        ("pkg/R/a.R", "library(shiny)\nreactive({\n    x <- 1\n})\n"),
+        ("pkg/R/b.R", "reactive <- function(x) x\n"),
+    ]);
+    let a = files[0];
+
+    let index = a.semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_predecessor_sibling_attach_enables_nse() {
+    // `a.R` attaches shiny at top level. By the time `b.R` loads shiny is on
+    // the search path, so `b.R`'s bare `reactive` is NSE without a `library()`
+    // of its own.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let files = setup_package(&mut db, &[
+        ("pkg/R/a.R", "library(shiny)\n"),
+        ("pkg/R/b.R", "reactive({\n    x <- 1\n})\n"),
+    ]);
+    let b = files[1];
+
+    let index = b.semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
 }
 
 #[test]
@@ -225,6 +638,47 @@ fn test_sourced_file_library_attaches_in_caller() {
 
     let index = a.semantic_index(&db);
     assert!(index.attached_packages().contains(&"foo"));
+}
+
+#[test]
+fn test_attached_package_enables_nse_scope() {
+    // `library(shiny)` attaches shiny, so the eager `reactive` resolves through
+    // `SalsaImportsResolver::resolve_effects` walking the `attached` set to
+    // shiny's NSE annotation and pushes a lazy nested scope. Base-only
+    // resolution would miss it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let (_, scripts) = setup_workspace(&mut db, &[(
+        "app.R",
+        "library(shiny)\nreactive({\n    x <- 1\n})\n",
+    )]);
+    let app = scripts[0];
+
+    let index = app.semantic_index(&db);
+    let reactive_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_base_nse_resolves_with_no_attaches() {
+    // No attaches, so the search-path walk falls straight through to base:
+    // `local` is a base NSE function and still pushes its nested scope. Guards
+    // the base fallback through the new attached-walk code path.
+    let mut db = TestDb::new();
+    let (_, scripts) = setup_workspace(&mut db, &[("s.R", "local({\n    x <- 1\n})\n")]);
+    let s = scripts[0];
+
+    let index = s.semantic_index(&db);
+    let local_scope = ScopeId::from(1);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
 }
 
 #[test]
