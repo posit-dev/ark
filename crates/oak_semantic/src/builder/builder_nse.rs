@@ -14,6 +14,7 @@ use super::assignment_name;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
+use super::BoundNames;
 use super::SemanticIndexBuilder;
 use crate::effects::Effects;
 use crate::effects::NseAnnotation;
@@ -29,14 +30,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Scan a call for effects (e.g. NSE scopes) and record its decision for
     /// the walk to reuse.
     ///
-    /// If the callee resolves to an NSE annotation, the annotation is stored in
-    /// `nse_annotations` keyed by the call's range. Arguments evaluated in nested
-    /// calls are scanned accordingly. Otherwise all arguments are scanned in
-    /// the current scope.
+    /// If the callee resolves to an NSE annotation, the annotation is recorded
+    /// in `call_resolutions` under the call's range (as the entry's `nse`).
+    /// Arguments evaluated in nested calls are scanned accordingly. Otherwise
+    /// all arguments are scanned in the current scope.
     ///
-    /// We only fully scan `Current + Eager` arguments here. The child scopes
-    /// created by `Nested` and `Current + Lazy` bodies are scanned by the later
-    /// walk because callee resolution needs the child's own flow context.
+    /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
+    /// `Current + Eager` transparently, `Nested + Eager` by descending into the
+    /// body and holding the names it binds as pending. `Nested + Lazy` and
+    /// `Current + Lazy` bodies are their own scan units and deferred to the walk
+    /// because resolution of effects in these lazy scopes needs the child's own
+    /// flow context.
     pub(super) fn scan_call(&mut self, call: &RCall) {
         let Some(annotation) = self.resolve_nse(call) else {
             if let Ok(args) = call.arguments() {
@@ -50,8 +54,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
-        self.nse_annotations
-            .insert(call.syntax().text_trimmed_range(), annotation);
+        self.call_resolutions
+            .entry(call.syntax().text_trimmed_range())
+            .or_default()
+            .nse = Some(annotation);
 
         let Ok(args) = call.arguments() else {
             return;
@@ -66,21 +72,46 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             match nse_args[i] {
                 None => self.scan_expression(&value),
                 Some(nse_arg) => match (nse_arg.scope, nse_arg.timing) {
+                    // Calls like `evalq()`
                     (NseScope::Current, NseTiming::Eager) => self.scan_expression(&value),
-                    // e.g. `on_load({ ... })`. Its body runs later, so its defs
+
+                    // Calls like `on_load()`. Its body runs later, so its defs
                     // land in the enclosing scope. We don't resolve the body's
                     // calls here. The walk does that once it enters the child
                     // scope. But we do grab the names it defines now, so the
                     // owner's bound names are complete before the walk reaches a sibling.
                     (NseScope::Current, NseTiming::Lazy) => {
-                        self.record_eager_bindings(value.syntax().text_trimmed_range());
+                        self.record_inherited_at_entry(value.syntax().text_trimmed_range());
                         self.scan_lazy_owner_bindings(&value);
                     },
-                    // A `Nested` body is a child scope scanned when it's entered.
-                    // Capture this scope's eager bindings for its callee
+
+                    // Calls like `local()`. Its body runs eagerly at the call
+                    // site, so its environment IS the current `bound_so_far`.
+                    // Descend now, holding the names bound in this scope as
+                    // pending so the walk has access to them. No `bound_so_far`
+                    // reset: the child sees exactly what `begin_scan()` would
+                    // have seeded.
+                    // No `record_inherited_at_entry()`: eager `Nested` bodies are
+                    // never scanned at walk time, so nothing would read it.
+                    (NseScope::Nested, NseTiming::Eager) => {
+                        let old = self.bound_so_far.clone();
+
+                        let range = value.syntax().text_trimmed_range();
+                        self.descent.open.push(BoundNames::new());
+                        self.scan_expression(&value);
+                        if let Some(bound) = self.descent.open.pop() {
+                            self.descent.pending.insert(range, bound);
+                        }
+
+                        self.bound_so_far = old;
+                    },
+
+                    // Calls like `reactive()`. Its body runs at an unknown
+                    // later time, so it's a child scope scanned when the walk
+                    // enters it. Record the names it inherits for its callee
                     // resolution, same as a function body.
-                    (NseScope::Nested, _) => {
-                        self.record_eager_bindings(value.syntax().text_trimmed_range());
+                    (NseScope::Nested, NseTiming::Lazy) => {
+                        self.record_inherited_at_entry(value.syntax().text_trimmed_range());
                     },
                 },
             }
@@ -223,10 +254,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         .and_then(|effects| effects.nse);
                 }
 
-                // Now check imports since the symbol is locally unbound
+                // Now check imports since the symbol is locally unbound. The
+                // arena's `current_scope` is the scan unit's scope (the descent
+                // pushes no arena scopes), so its laziness is the "am I in a lazy
+                // context" test the resolver needs.
+                let lazy = self.scopes[self.current_scope].kind.is_lazy();
                 let nse = self
                     .resolver
-                    .resolve_effects(&name, &[], false)
+                    .resolve_effects(&name, &[], lazy)
                     .and_then(|effects| effects.nse)?;
 
                 // The callee is unbound by any eager binding, so it is NSE.
@@ -365,10 +400,47 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Walk a single NSE argument body, pushing a scope when appropriate.
+    ///
+    /// `Current + Eager` stays in the current scope. `Nested + Eager` was
+    /// already scanned by the descent, so we install its pending names and only
+    /// walk. The remaining lazy bodies are their own scan units that we scan
+    /// here on entry.
     fn collect_nse_argument(&mut self, nse_arg: &NseArgument, value: &AnyRExpression) {
         match (nse_arg.scope, nse_arg.timing) {
+            // Calls like `evalq()`
             (NseScope::Current, NseTiming::Eager) => {
                 self.collect_expression(value);
+            },
+
+            // Calls like `local()`
+            (NseScope::Nested, NseTiming::Eager) => {
+                let range = value.syntax().text_trimmed_range();
+                let kind = ScopeKind::Nse(NseScope::Nested, NseTiming::Eager);
+                let scope = self.push_scope(kind, range);
+
+                // Install the pending names the descent recorded for this body,
+                // before collecting so lazy children inside can see them via
+                // `scope_binds_anywhere()`.
+                match self.descent.pending.remove(&range) {
+                    Some(bound) => self.bound_names[scope] = bound,
+                    None => {
+                        // An eager NSE scope is reachable only through the scan
+                        // unit that descended into it, so the pending set must
+                        // exist. If not this is a builder bug. In release
+                        // builds we still scan the body here so the walk can
+                        // proceed. This fallback runs with an empty eager
+                        // environment and its shadow decisions are more
+                        // degraded than a real lazy unit's.
+                        stdext::debug_panic!(
+                            "Missing pending bound names for eager NSE body at {range:?}"
+                        );
+                        self.begin_scan();
+                        self.scan_expression(value);
+                    },
+                }
+
+                self.collect_expression(value);
+                self.pop_scope(scope);
             },
 
             (nse_scope, nse_timing) => {
