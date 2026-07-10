@@ -78,6 +78,7 @@ impl<'db> Definition<'db> {
                 node.variable().ok()?.into_syntax()
             },
             DefinitionKind::Import { .. } => return None,
+            DefinitionKind::Assign { name, .. } => name.to_node(&root).into_syntax(),
         };
         Some(name_node.text_trimmed_range())
     }

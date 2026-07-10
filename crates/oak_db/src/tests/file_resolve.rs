@@ -300,6 +300,18 @@ fn test_name_range_for_string_as_name() {
 }
 
 #[test]
+fn test_name_range_for_assign_call() {
+    // `assign("x", 1)` binds `x` through the base `assign` effect. Goto lands on
+    // the name literal, so the range covers the quoted `"x"` argument.
+    let mut db = TestDb::new();
+    let source = "assign(\"x\", 1)\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = resolve_one(&db, files[0], "x");
+    let range = def.name_range(&db).expect("assign() def has a name range");
+    assert_eq!(slice(source, range), "\"x\"");
+}
+
+#[test]
 fn test_name_range_returns_none_for_import_kind() {
     // `File::resolve` chases past every `Import` and only ever returns a
     // `Local`-kinded `Definition`, so the `Import` arm of `name_range` is

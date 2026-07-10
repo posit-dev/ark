@@ -27,9 +27,9 @@ use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Scan a call for effects (NSE scopes, attaches, sources) and record its
-    /// decisions for the walk to reuse. The callee is resolved once through
-    /// [`resolve_effects`].
+    /// Scan a call for effects (NSE scopes, attaches, sources, assigns) and
+    /// record its decisions for the walk to reuse. The callee is resolved once
+    /// through [`resolve_effects`].
     ///
     /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
     /// `Current + Eager` transparently, `Nested + Eager` by descending into the
@@ -38,9 +38,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// because resolution of effects in these lazy scopes needs the child's own
     /// flow context.
     pub(super) fn scan_call(&mut self, call: &RCall) {
-        let (nse_args, attach, source) = match self.resolve_effects(call) {
-            Some(effects) => (effects.arguments, effects.attach, effects.source),
-            None => (None, None, None),
+        let (nse_args, attach, source, assign) = match self.resolve_effects(call) {
+            Some(effects) => (
+                effects.arguments,
+                effects.attach,
+                effects.source,
+                effects.assign,
+            ),
+            None => (None, None, None, None),
         };
 
         if let Some(package) = attach {
@@ -66,6 +71,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     .or_default()
                     .source
                     .push(SourcedFile { path, resolution });
+            }
+        }
+
+        // Record each assigned name as a binding so a later callee in this scope
+        // sees it shadowed (the correctness win: `assign("local", identity)`
+        // masks base `local`), and cache the bindings for the walk to define.
+        if let Some(bindings) = assign {
+            let range = call.syntax().text_trimmed_range();
+            for binding in bindings {
+                self.record_binding(binding.name.clone());
+                self.call_resolutions
+                    .entry(range)
+                    .or_default()
+                    .assign
+                    .push(binding);
             }
         }
 
@@ -256,11 +276,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let source = handlers
             .source
             .and_then(|handler| handler.resolve(call, &ctx));
+        let assign = handlers
+            .assign
+            .and_then(|handler| handler.resolve(call, &ctx));
 
         Some(Effects {
             arguments,
             attach,
             source,
+            assign,
         })
     }
 

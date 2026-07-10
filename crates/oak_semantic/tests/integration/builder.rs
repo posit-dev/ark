@@ -2,7 +2,11 @@ use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
+use biome_rowan::AstNode;
+use biome_rowan::AstPtr;
+use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
+use oak_semantic::effects::AssignBinding;
 use oak_semantic::effects::CallContext;
 use oak_semantic::effects::EffectHandler;
 use oak_semantic::effects::SourceAnnotation;
@@ -1545,6 +1549,115 @@ fn test_source_call_recognized_under_base_resolver() {
     assert_eq!(index.semantic_calls().len(), 1);
 }
 
+// --- assign() ---
+
+/// The single `DefinitionKind::Assign` def in a file, or `None`.
+fn only_assign_def(index: &SemanticIndex) -> Option<&DefinitionKind> {
+    let file = ScopeId::from(0);
+    let mut defs = index
+        .definitions(file)
+        .iter()
+        .map(|(_, def)| def.kind())
+        .filter(|kind| matches!(kind, DefinitionKind::Assign { .. }));
+    let first = defs.next();
+    assert!(defs.next().is_none());
+    first
+}
+
+#[test]
+fn test_assign_records_definition() {
+    // `assign("x", 1)` binds `x` in the current scope, and the later use of `x`
+    // resolves to that definition.
+    let index = index_with_base("assign(\"x\", 1)\nx");
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    // Uses: assign(0), x(1). The `x` use binds to the assign-created def.
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_assign_qualified_base_call_recognized() {
+    // The namespaced form resolves through `resolve_qualified_effects`.
+    let index = index_with_base("base::assign(\"x\", 1)");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_delayed_assign_records_definition() {
+    let index = index_with_base("delayedAssign(\"x\", expensive())");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_assign_non_literal_name_not_recorded() {
+    // A dynamic name can't be pinned, so the effect is recognized but nothing
+    // is recorded (same spirit as a dynamic `source()` path).
+    let index = index_with_base("assign(nm, 1)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_explicit_envir_not_recorded() {
+    // An explicit target environment binds outside the current scope, so we
+    // skip it rather than record a def in the wrong place.
+    let index = index_with_base("assign(\"x\", 1, envir = e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_shadowed_by_local_binding_not_recognized() {
+    // A user-defined `assign` shadows base `assign`, so the call binds nothing.
+    let index = index_with_base("assign <- function(...) {}\nassign(\"x\", 1)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_value_handle_points_at_value_expression() {
+    // The stored `value` handle resolves to the value argument, which is what a
+    // type checker infers the binding's type from.
+    let parsed = parse("assign(\"x\", 1 + 2)", RParserOptions::default());
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
+
+    let kind = only_assign_def(&index).expect("assign def");
+    let DefinitionKind::Assign {
+        value: Some(value), ..
+    } = kind
+    else {
+        panic!("expected a value handle");
+    };
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "1 + 2"
+    );
+}
+
+#[test]
+fn test_assign_without_value_has_no_value_handle() {
+    // The name still binds, but there's no value argument to infer from.
+    let index = index_with_base("assign(\"x\")");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { value: None, .. })
+    ));
+}
+
 /// Project each access into a comparable tuple via the public accessors.
 fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
     index
@@ -1874,6 +1987,7 @@ impl ImportsResolver for MultiFileResolver {
                 arguments: None,
                 attach: None,
                 source: Some(&COLLATION_HANDLER),
+                assign: None,
             });
         }
         effects_registry::lookup("base", name).copied()
@@ -1897,6 +2011,64 @@ impl ImportsResolver for PositionResolver {
                 arguments: None,
                 attach: None,
                 source: Some(&SOURCE_AT_POSITION_1),
+                assign: None,
+            });
+        }
+        None
+    }
+}
+
+/// An assign handler that binds a fixed set of names, standing in for a
+/// multi-binding callee. Attached to `assign` by [`MultiAssignResolver`].
+#[derive(Debug)]
+struct MultiAssignHandler;
+
+static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
+
+impl EffectHandler for MultiAssignHandler {
+    type Output = Vec<AssignBinding>;
+
+    fn resolve(&self, call: &RCall, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        // Point every binding's handles at the first argument. This test only
+        // checks that multiple defs are created and resolve, not their ranges.
+        let expr = call
+            .arguments()
+            .ok()?
+            .items()
+            .iter()
+            .next()?
+            .ok()?
+            .value()?;
+        let ptr = AstPtr::new(&expr);
+        Some(vec![
+            AssignBinding {
+                name: "a".into(),
+                name_expr: ptr.clone(),
+                value_expr: None,
+            },
+            AssignBinding {
+                name: "b".into(),
+                name_expr: ptr,
+                value_expr: None,
+            },
+        ])
+    }
+}
+
+struct MultiAssignResolver;
+
+impl ImportsResolver for MultiAssignResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        if name == "assign" {
+            return Some(EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: None,
+                assign: Some(&MULTI_ASSIGN_HANDLER),
             });
         }
         None
@@ -2191,4 +2363,29 @@ fn test_source_call_leading_named_arg_still_finds_path() {
         path: "helpers.R".into(),
         resolved: None,
     }]);
+}
+
+#[test]
+fn test_assign_resolver_multiple_names_each_defined() {
+    // An assign handler can bind several names from one call. Each becomes its
+    // own definition and resolves at its use.
+    let code = "assign(\"unused\")\na\nb\n";
+    let index = build_test_index(code, MultiAssignResolver);
+    let file = ScopeId::from(0);
+
+    let assign_defs = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, def)| matches!(def.kind(), DefinitionKind::Assign { .. }))
+        .count();
+    assert_eq!(assign_defs, 2);
+
+    // Uses: assign(0), a(1), b(2). Both resolve to an assign-created def.
+    let map = index.use_def_map(file);
+    for use_index in [1, 2] {
+        let bindings = map.bindings_at_use(UseId::from(use_index));
+        assert_eq!(bindings.definitions().len(), 1);
+        let def = &index.definitions(file)[bindings.definitions()[0]];
+        assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+    }
 }
