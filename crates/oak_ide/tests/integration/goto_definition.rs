@@ -189,3 +189,32 @@ fn test_navigates_to_both_candidates_through_source() {
     assert_eq!(targets[0].focus_range, range(10, 13));
     assert_eq!(targets[1].focus_range, range(24, 27));
 }
+
+#[test]
+fn test_navigates_to_assign_binding() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "a.R", "assign(\"x\", 1)\nx\n");
+
+    // Cursor on the use `x` on line 2.
+    let offset = TextSize::from("assign(\"x\", 1)\n".len() as u32);
+    let targets = goto_definition(&db, file, offset);
+    assert_eq!(targets.len(), 1);
+    let target = &targets[0];
+
+    assert_eq!(target.file, file);
+    assert_eq!(target.name, "x");
+    // Lands on the quoted name argument `"x"`.
+    assert_eq!(target.full_range, range(7, 10));
+}
+
+#[test]
+fn test_navigates_to_delayed_assign_binding() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "a.R", "delayedAssign(\"x\", expr)\nx\n");
+
+    let offset = TextSize::from("delayedAssign(\"x\", expr)\n".len() as u32);
+    let targets = goto_definition(&db, file, offset);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+    assert_eq!(targets[0].full_range, range(14, 17));
+}

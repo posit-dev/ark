@@ -1,5 +1,6 @@
 use crate::effects::Argument;
 use crate::effects::ArgumentsAnnotation;
+use crate::effects::AssignAnnotation;
 use crate::effects::AttachAnnotation;
 use crate::effects::EffectsHandlers;
 use crate::effects::SourceAnnotation;
@@ -50,6 +51,7 @@ macro_rules! nse {
                 }),
                 attach: None,
                 source: None,
+                assign: None,
             },
         }
     };
@@ -67,6 +69,7 @@ macro_rules! attach {
                     character_only: $character_only,
                 }),
                 source: None,
+                assign: None,
             },
         }
     };
@@ -83,6 +86,24 @@ macro_rules! source {
                 arguments: None,
                 attach: None,
                 source: Some(&SourceAnnotation { position: $pos }),
+                assign: None,
+            },
+        }
+    };
+}
+
+/// An assign entry: `(name-argument position)`. The function binds a name in the
+/// current scope.
+macro_rules! assign {
+    ($pkg:literal, $func:literal, $pos:literal) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: None,
+                assign: Some(&AssignAnnotation { position: $pos }),
             },
         }
     };
@@ -101,6 +122,9 @@ static REGISTRY: &[Entry] = &[
     attach!("base", "require", 0, true),
     // base source
     source!("base", "source", 0),
+    // base assign
+    assign!("base", "assign", 0),
+    assign!("base", "delayedAssign", 0),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny
