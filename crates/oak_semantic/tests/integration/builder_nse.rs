@@ -1274,3 +1274,184 @@ f <- function() local({ x })
     );
     assert!(index.diagnostics().is_empty());
 }
+
+// --- Eager linear scan: descent and pending names ---
+
+#[test]
+fn test_nse_descent_consults_each_call_once() {
+    // The inner `local` sits inside the outer `local`'s eager body. The descent
+    // scans it once and the walk installs the pending names instead of
+    // re-scanning, so each of the two calls reaches the resolver exactly once.
+    let resolver = TestImportsResolver::with_base();
+    let consultations = resolver.consultations();
+
+    build_with("local({ local({ x <- 1 }) })", resolver);
+
+    assert_eq!(consultations.get(), 2);
+}
+
+#[test]
+fn test_nse_descent_current_lazy_owner_routes_to_descent_top() {
+    // A `Current + Lazy` body (`on_load`) inside an eager `local` body binds `x`.
+    // During the descent, `record_owner_name` must route `x` to the descent top
+    // (local), not to the current scope. `scan_lazy_owner_bindings` runs while
+    // the arena's `current_scope` is still the file, so only the descent-top
+    // shortcut lands `x` in local's pending names.
+    //
+    // We pin it through a FORWARD reference: `f` uses `x` before `on_load` binds
+    // it, so the walk resolves the use through local's `bound_names` (the pending
+    // set), not through an already-recorded definition. If the routing regressed,
+    // `x` would land in the file and the use would resolve to the file scope.
+    let index = index(
+        "\
+local({
+    f <- function() x
+    rlang::on_load({ x <- 1 })
+})
+",
+    );
+    let local_scope = ScopeId::from(1);
+    let f_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+
+    let x_sym = index.uses(f_scope)[UseId::from(0)].symbol();
+    let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, x_sym).unwrap();
+    assert_eq!(enclosing_scope, local_scope);
+}
+
+#[test]
+fn test_nse_descent_snapshot_through_pending_scope() {
+    // The descent records `y` as pending for `local`'s scope; the walk installs
+    // it before walking `f`, so `f`'s use of `y` resolves to the enclosing
+    // snapshot in `local`.
+    let index = index(
+        "\
+local({
+    y <- 1
+    f <- function() y
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+    let f_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(local_scope).parent(), Some(file));
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(index.scope(f_scope).parent(), Some(local_scope));
+
+    // `y` lands in local's scope.
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // `f`'s use of `y` resolves to local's snapshot. In local, `y` is
+    // DefinitionId 0 (`f` is DefinitionId 1).
+    let y_sym = index.uses(f_scope)[UseId::from(0)].symbol();
+    let (enclosing_scope, bindings) = index.enclosing_bindings(f_scope, y_sym).unwrap();
+    assert_eq!(enclosing_scope, local_scope);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+}
+
+#[test]
+fn test_nse_descent_eager_under_lazy() {
+    // `local` resolves during `f`'s walk-time scan (unit = `f`), which descends
+    // into the body and records its names as pending. `x` lands in local's
+    // Nested+Eager scope, not in `f`.
+    let index = index(
+        "\
+f <- function() {
+    local({
+        x <- 1
+    })
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(local_scope).parent(), Some(f_scope));
+
+    assert!(index.symbols(f_scope).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_descent_nested_eager_in_eager() {
+    // `local({ local({ y <- 1 }) })`: descent stack depth 2, each body's names
+    // pending under its own range. `y` lands in the inner scope.
+    let index = index(
+        "\
+local({
+    local({
+        y <- 1
+    })
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let outer_local = ScopeId::from(1);
+    let inner_local = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(
+        index.scope(outer_local).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(outer_local).parent(), Some(file));
+    assert_eq!(
+        index.scope(inner_local).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(index.scope(inner_local).parent(), Some(outer_local));
+
+    assert!(index.symbols(outer_local).get("y").is_none());
+    assert_eq!(
+        index.symbols(inner_local).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_descent_lazy_flag_eager_vs_lazy_context() {
+    // An eager callee at file scope consults with `lazy = false`; the same
+    // callee inside a function body consults with `lazy = true`.
+    let resolver = TestImportsResolver::with_base();
+    let log = resolver.consultation_log();
+
+    build_with(
+        "\
+local({ x <- 1 })
+f <- function() {
+    local({ y <- 1 })
+}
+",
+        resolver,
+    );
+
+    let records = log.borrow();
+    let local_lazy: Vec<bool> = records
+        .iter()
+        .filter(|(name, _lazy)| name == "local")
+        .map(|(_name, lazy)| *lazy)
+        .collect();
+    assert_eq!(local_lazy, vec![false, true]);
+}
