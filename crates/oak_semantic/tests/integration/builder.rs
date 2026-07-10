@@ -1,7 +1,12 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
+use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
 use oak_semantic::build_index;
+use oak_semantic::effects::CallContext;
+use oak_semantic::effects::EffectHandler;
+use oak_semantic::effects::SourceAnnotation;
+use oak_semantic::effects_registry;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::NamespaceAccessKind;
@@ -11,6 +16,7 @@ use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
+use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
@@ -1433,7 +1439,7 @@ fn test_directive_preserves_offset() {
 
 #[test]
 fn test_source_call_records_path() {
-    let index = index("source(\"helpers.R\")");
+    let index = index_with_base("source(\"helpers.R\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1442,7 +1448,7 @@ fn test_source_call_records_path() {
 
 #[test]
 fn test_source_call_single_quoted_string() {
-    let index = index("source('helpers.R')");
+    let index = index_with_base("source('helpers.R')");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1451,7 +1457,7 @@ fn test_source_call_single_quoted_string() {
 
 #[test]
 fn test_source_call_preserves_offset() {
-    let index = index("x <- 1\nsource(\"helpers.R\")");
+    let index = index_with_base("x <- 1\nsource(\"helpers.R\")");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].offset(), biome_rowan::TextSize::from(7));
@@ -1459,7 +1465,7 @@ fn test_source_call_preserves_offset() {
 
 #[test]
 fn test_source_call_records_file_scope() {
-    let index = index("source(\"helpers.R\")");
+    let index = index_with_base("source(\"helpers.R\")");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].scope(), ScopeId::from(0));
@@ -1467,7 +1473,7 @@ fn test_source_call_records_file_scope() {
 
 #[test]
 fn test_source_call_in_function_body_records_inner_scope() {
-    let index = index("f <- function() { source(\"helpers.R\") }");
+    let index = index_with_base("f <- function() { source(\"helpers.R\") }");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
@@ -1479,7 +1485,7 @@ fn test_source_call_in_function_body_records_inner_scope() {
 
 #[test]
 fn test_source_call_non_static_path_ignored() {
-    let index = index("source(get_path())");
+    let index = index_with_base("source(get_path())");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
@@ -1487,17 +1493,26 @@ fn test_source_call_non_static_path_ignored() {
 fn test_source_call_non_static_local_ignored() {
     // `local = some_env()` isn't statically resolvable; we bail rather
     // than record the call.
-    let index = index("source(\"helpers.R\", local = some_env())");
+    let index = index_with_base("source(\"helpers.R\", local = some_env())");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_source_call_local_true_recorded() {
-    let index = index("source(\"helpers.R\", local = TRUE)");
+    let index = index_with_base("source(\"helpers.R\", local = TRUE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
     }]);
+}
+
+#[test]
+fn test_source_call_shadowed_by_local_binding_not_recognized() {
+    // A user-defined `source` shadows base `source`, so the call isn't a source
+    // directive and injects nothing. Recognition runs on the resolve path, which
+    // sees the local binding first.
+    let index = index_with_base("source <- function(...) {}\nsource(\"helpers.R\")");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
@@ -1518,13 +1533,13 @@ fn test_source_and_library_calls_coexist() {
 }
 
 #[test]
-fn test_source_call_emitted_without_resolver() {
-    // The pure `semantic_index` (no resolver) doesn't produce
-    // `DefinitionKind::Import` for sourced names — those come from
-    // the legacy `_with_source_resolver` path. But the `Source`
-    // semantic call IS recorded, so downstream queries in `oak_db`
-    // can still chase the forwarding chain.
-    let index = index("source(\"helpers.R\")");
+fn test_source_call_recognized_under_base_resolver() {
+    // Recognition runs on the resolve path now, so `source()` needs a resolver
+    // that resolves base. With base attached but no registered source, the
+    // resolver's `resolve_source` returns `None`: no `DefinitionKind::Import` is
+    // injected for sourced names, but the `Source` semantic call IS recorded, so
+    // downstream queries in `oak_db` can still chase the forwarding chain.
+    let index = index_with_base("source(\"helpers.R\")");
     let file_scope = ScopeId::from(0);
     assert_eq!(index.definitions(file_scope).iter().count(), 0);
     assert_eq!(index.semantic_calls().len(), 1);
@@ -1671,7 +1686,7 @@ fn test_source_call_no_arguments_ignored() {
 
 #[test]
 fn test_directive_declare_source_no_resolver() {
-    let index = index("declare(source(\"helpers.R\"))");
+    let index = index_with_base("declare(source(\"helpers.R\"))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1680,7 +1695,7 @@ fn test_directive_declare_source_no_resolver() {
 
 #[test]
 fn test_directive_declare_source_single_quotes_no_resolver() {
-    let index = index("declare(source('utils.R'))");
+    let index = index_with_base("declare(source('utils.R'))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "utils.R".into(),
         resolved: None,
@@ -1689,7 +1704,7 @@ fn test_directive_declare_source_single_quotes_no_resolver() {
 
 #[test]
 fn test_directive_tilde_declare_source_no_resolver() {
-    let index = index("~declare(source(\"helpers.R\"))");
+    let index = index_with_base("~declare(source(\"helpers.R\"))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1711,7 +1726,7 @@ fn test_fixme_directive_declare_library_transparent() {
 fn test_directive_declare_not_at_file_scope() {
     // declare()'s argument is walked into regardless of position, so a
     // nested source() inside a function body is still recorded.
-    let index = index("f <- function() { declare(source(\"helpers.R\")) }");
+    let index = index_with_base("f <- function() { declare(source(\"helpers.R\")) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1720,7 +1735,7 @@ fn test_directive_declare_not_at_file_scope() {
 
 #[test]
 fn test_directive_tilde_declare_not_at_file_scope() {
-    let index = index("f <- function() { ~declare(source(\"helpers.R\")) }");
+    let index = index_with_base("f <- function() { ~declare(source(\"helpers.R\")) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -1748,7 +1763,7 @@ fn test_directive_declare_mixed_with_bare() {
 
 #[test]
 fn test_directive_declare_source_no_resolver_records_call() {
-    let index = index("x <- 1\ndeclare(source(\"helpers.R\"))");
+    let index = index_with_base("x <- 1\ndeclare(source(\"helpers.R\"))");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
@@ -1759,7 +1774,7 @@ fn test_directive_declare_source_no_resolver_records_call() {
 
 #[test]
 fn test_directive_tilde_declare_source_no_resolver_records_call() {
-    let index = index("x <- 1\n~declare(source(\"helpers.R\"))");
+    let index = index_with_base("x <- 1\n~declare(source(\"helpers.R\"))");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
@@ -1805,6 +1820,12 @@ impl ImportsResolver for ConstResolver {
     fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
         Some(self.0.clone())
     }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        // `source()` recognition runs on the resolve path, so a source-only
+        // resolver still has to resolve base effects for `source` to be seen.
+        effects_registry::lookup("base", name).copied()
+    }
 }
 
 /// Returns per-path resolutions; unknown paths yield `None`.
@@ -1813,6 +1834,72 @@ struct MapResolver(std::collections::HashMap<String, SourceResolution>);
 impl ImportsResolver for MapResolver {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         self.0.get(path).cloned()
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        effects_registry::lookup("base", name).copied()
+    }
+}
+
+/// A source handler that resolves one call to a fixed collation of files,
+/// standing in for a collation-style callee. Attached to the `source` name
+/// (which passes the `is_annotated` front gate) by [`MultiFileResolver`].
+#[derive(Debug)]
+struct CollationHandler;
+
+static COLLATION_HANDLER: CollationHandler = CollationHandler;
+
+impl EffectHandler for CollationHandler {
+    type Output = Vec<String>;
+
+    fn resolve(&self, _call: &RCall, _ctx: &CallContext) -> Option<Vec<String>> {
+        Some(vec!["a.R".into(), "b.R".into()])
+    }
+}
+
+/// Resolves `source` to the multi-file [`CollationHandler`] and maps the
+/// collated paths through `sources`.
+struct MultiFileResolver {
+    sources: std::collections::HashMap<String, SourceResolution>,
+}
+
+impl ImportsResolver for MultiFileResolver {
+    fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
+        self.sources.get(path).cloned()
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        if name == "source" {
+            return Some(EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: Some(&COLLATION_HANDLER),
+            });
+        }
+        effects_registry::lookup("base", name).copied()
+    }
+}
+
+/// Resolves `source` to a [`SourceAnnotation`] whose path sits at the second
+/// positional slot, exercising the configurable `position`.
+struct PositionResolver;
+
+static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation { position: 1 };
+
+impl ImportsResolver for PositionResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        if name == "source" {
+            return Some(EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: Some(&SOURCE_AT_POSITION_1),
+            });
+        }
+        None
     }
 }
 
@@ -2036,4 +2123,72 @@ fn test_source_resolver_local_def_shadowed_by_source() {
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
     assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+}
+
+#[test]
+fn test_source_resolver_multiple_files_each_emitted_and_injected() {
+    // A source handler can resolve one call to several files (a collation).
+    // Each file becomes its own `Source` semantic call and injects its own
+    // names, in file order, with each file's forwarded packages after it.
+    let sources = std::collections::HashMap::from([
+        ("a.R".to_string(), SourceResolution {
+            url: Url::parse("file:///a.R").unwrap(),
+            names: vec!["a_name".into()],
+            packages: vec!["pkgA".into()],
+        }),
+        ("b.R".to_string(), SourceResolution {
+            url: Url::parse("file:///b.R").unwrap(),
+            names: vec!["b_name".into()],
+            packages: vec![],
+        }),
+    ]);
+    let code = "source(\"collate\")\na_name\nb_name\n";
+    let index = build_test_index(code, MultiFileResolver { sources });
+
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Source {
+            path: "a.R".into(),
+            resolved: Some(Url::parse("file:///a.R").unwrap()),
+        },
+        &SemanticCallKind::Attach {
+            package: "pkgA".into()
+        },
+        &SemanticCallKind::Source {
+            path: "b.R".into(),
+            resolved: Some(Url::parse("file:///b.R").unwrap()),
+        },
+    ]);
+
+    // Both files' names are injected and resolve at their uses.
+    // Uses: source(0), a_name(1), b_name(2)
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+    for use_index in [1, 2] {
+        let bindings = map.bindings_at_use(UseId::from(use_index));
+        assert_eq!(bindings.definitions().len(), 1);
+        let def = &index.definitions(file)[bindings.definitions()[0]];
+        assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    }
+}
+
+#[test]
+fn test_source_resolver_honors_configured_path_position() {
+    // A `SourceAnnotation` with `position: 1` takes the path from the second
+    // positional argument, not the first.
+    let index = build_test_index("source(\"ignored\", \"real.R\")", PositionResolver);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "real.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_leading_named_arg_still_finds_path() {
+    // A named argument before the path doesn't consume the positional slot, so
+    // the path is still recognized (unlike full call-position matching).
+    let index = index_with_base("source(echo = TRUE, \"helpers.R\")");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
 }

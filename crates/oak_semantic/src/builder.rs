@@ -27,7 +27,6 @@
 
 use std::sync::Arc;
 
-use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
 use aether_syntax::AnyRValue;
@@ -606,7 +605,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&func);
                 }
                 self.scan_call(call);
-                self.scan_semantic_call(call);
             },
 
             AnyRExpression::RForStatement(stmt) => {
@@ -703,38 +701,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Scan-time analog of [`collect_semantic_call`].
-    ///
-    /// Only `source()` needs handling here. Its injected bindings shadow NSE
-    /// callees, and the walk injects them too late for a later call in the same
-    /// scope to see. `library()`/`require()` attaches are recognized on the
-    /// resolve path in [`scan_call`], not here.
-    ///
-    /// [`scan_call`]: Self::scan_call
-    ///
-    /// [`collect_semantic_call`]: Self::collect_semantic_call
-    fn scan_semantic_call(&mut self, call: &aether_syntax::RCall) {
-        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
-            return;
-        };
-        if ident.name_text() == "source" {
-            self.scan_source_call(call);
-        }
-    }
-
-    /// Resolve a `source()` call once, cache it, and bind the sourced names.
+    /// Resolve one sourced `path`, bind the names it brings in, and return its
+    /// resolution for the caller to cache.
     ///
     /// The binding is eager: `source()` runs at its position, so the sourced
-    /// names ARE bound afterwards and can shadow a later NSE callee (e.g. a
-    /// sourced `local` masking base `local`). The resolution is cached by call
-    /// range so the walk reuses it instead of consulting the resolver again.
-    fn scan_source_call(&mut self, call: &aether_syntax::RCall) {
-        let Some(path) = self.parse_source_path(call) else {
-            return;
-        };
-        let Some(resolution) = self.resolver.resolve_source(&path) else {
-            return;
-        };
+    /// names are bound afterwards and can shadow a later NSE callee (e.g. a
+    /// sourced `local` masking base `local`). Returns `None` when the resolver
+    /// can't locate the target.
+    ///
+    /// [`scan_call`]: Self::scan_call
+    fn scan_source_call(&mut self, path: &str) -> Option<SourceResolution> {
+        let resolution = self.resolver.resolve_source(path)?;
 
         for name in &resolution.names {
             self.record_binding(name.clone());
@@ -749,10 +726,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             }
         }
 
-        self.call_resolutions
-            .entry(call.syntax().text_trimmed_range())
-            .or_default()
-            .source = Some(resolution);
+        Some(resolution)
     }
 
     /// Record a binding in the scan's flow state.
@@ -1193,12 +1167,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.record_attach(call, package);
         }
 
-        // Source is still recognized by callee name here, reading the resolution
-        // the scan cached.
-        if let Ok(AnyRExpression::RIdentifier(ident)) = call.function() {
-            if ident.name_text() == "source" {
-                self.collect_source_call(call);
-            }
+        // Source: the scan recognized it (shadow- and mask-aware) on the resolve
+        // path and cached the sourced files by range. Their presence is the
+        // recognition marker, so we dispatch on it rather than the callee name.
+        if self
+            .call_resolutions
+            .get(&range)
+            .is_some_and(|resolution| !resolution.source.is_empty())
+        {
+            self.collect_source_call(call);
         }
     }
 
@@ -1236,115 +1213,66 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // regardless to keep the sourcing mechanism simple. A future diagnostic
     // should suggest `local = TRUE` in nested contexts.
     fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
-        let Some(path) = self.parse_source_path(call) else {
-            return;
-        };
-
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
 
-        // Read the resolution the scan already computed. The scan is the
-        // single point that consults `resolve_source`, so the walk never
-        // re-resolves. A cache miss means the scan bailed or the resolver
-        // returned `None`, both of which record the call with `resolved: None`.
-        let resolution = self
-            .call_resolutions
-            .get(&range)
-            .and_then(|resolution| resolution.source.clone());
-
-        // Record every `source()` call site, independent of whether the
-        // resolution was successful. `resolved` pins the canonical URL when
-        // resolution succeeded so reflective queries (diagnostics for
-        // unresolved `source()`, file-dependency views) read the outcome
-        // without re-resolving.
-        self.semantic_calls.push(SemanticCall {
-            kind: SemanticCallKind::Source {
-                path: path.clone(),
-                resolved: resolution.as_ref().map(|r| r.url.clone()),
-            },
-            offset: call_offset,
-            scope: self.current_scope,
-        });
-
-        let Some(resolution) = resolution else {
-            return;
+        // Read back what the scan cached: the sourced files, each with its
+        // resolution. The scan is the single point that extracts the paths and
+        // consults `resolve_source`, so the walk never re-parses or re-resolves.
+        let sourced = match self.call_resolutions.get(&range) {
+            Some(resolution) => resolution.source.clone(),
+            None => return,
         };
 
-        let file = resolution.url;
-
-        for name in resolution.names {
-            // Empty range: R's `source()` imports names implicitly (unlike
-            // Python's `from x import y` where `y` appears in the text).
-            // There's no text span to assign to these definitions.
-            let range = TextRange::empty(call_offset);
-
-            self.add_definition(
-                &name,
-                SymbolFlags::IS_BOUND,
-                DefinitionKind::Import {
-                    call: AstPtr::new(call),
-                    file: file.clone(),
-                    name: name.clone(),
-                },
-                range,
-            );
-        }
-
-        // `library()` calls inside the sourced file attach packages to R's
-        // global search path at runtime, the same as a `library()` written
-        // here directly would. Emit them as `Attach` semantic calls scoped
-        // to this `source()`'s offset so scope-layer composition treats
-        // them identically to local `library()` calls.
-        for pkg in resolution.packages {
+        for SourcedFile { path, resolution } in sourced {
+            // Record every sourced file, independent of whether it resolved.
+            // `resolved` pins the canonical URL when resolution succeeded so
+            // reflective queries (diagnostics for unresolved `source()`,
+            // file-dependency views) read the outcome without re-resolving.
+            let resolved = resolution.as_ref().map(|r| r.url.clone());
             self.semantic_calls.push(SemanticCall {
-                kind: SemanticCallKind::Attach { package: pkg },
+                kind: SemanticCallKind::Source { path, resolved },
                 offset: call_offset,
                 scope: self.current_scope,
             });
-        }
-    }
 
-    /// Parse the file path out of a `source("path")` call.
-    ///
-    /// Shared by the scan and the walk so they agree on which calls are
-    /// statically analyzable. Returns `None` when there's no positional path,
-    /// or when `local =` is set to something other than TRUE/FALSE (an
-    /// environment or a non-literal expression we can't follow).
-    fn parse_source_path(&self, call: &aether_syntax::RCall) -> Option<String> {
-        let args = call.arguments().ok()?;
+            let Some(resolution) = resolution else {
+                continue;
+            };
 
-        let mut path: Option<String> = None;
+            let file = resolution.url;
 
-        for item in args.items().iter() {
-            let Ok(arg) = item else { continue };
+            for name in resolution.names {
+                // Empty range: R's `source()` imports names implicitly (unlike
+                // Python's `from x import y` where `y` appears in the text).
+                // There's no text span to assign to these definitions.
+                let name_range = TextRange::empty(call_offset);
 
-            if let Some(name_clause) = arg.name_clause() {
-                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
-                    continue;
-                };
-                if name_ident.name_text() == "local" {
-                    if let Some(value) = arg.value() {
-                        match value {
-                            // TRUE/FALSE are fine, we resolve uniformly. For
-                            // the FALSE in nested context case, we'll emit a
-                            // diagnostic.
-                            AnyRExpression::RTrueExpression(_) |
-                            AnyRExpression::RFalseExpression(_) => {},
-                            // Anything else (environment, non-statically
-                            // resolvable expression) means we bail.
-                            _ => return None,
-                        }
-                    }
-                }
-            } else if path.is_none() {
-                // First positional argument: the file path
-                if let Some(AnyRExpression::AnyRValue(AnyRValue::RStringValue(s))) = arg.value() {
-                    path = s.string_text();
-                }
+                self.add_definition(
+                    &name,
+                    SymbolFlags::IS_BOUND,
+                    DefinitionKind::Import {
+                        call: AstPtr::new(call),
+                        file: file.clone(),
+                        name: name.clone(),
+                    },
+                    name_range,
+                );
+            }
+
+            // `library()` calls inside the sourced file attach packages to R's
+            // global search path at runtime, the same as a `library()` written
+            // here directly would. Emit them as `Attach` semantic calls scoped
+            // to this `source()`'s offset so scope-layer composition treats
+            // them identically to local `library()` calls.
+            for pkg in resolution.packages {
+                self.semantic_calls.push(SemanticCall {
+                    kind: SemanticCallKind::Attach { package: pkg },
+                    offset: call_offset,
+                    scope: self.current_scope,
+                });
             }
         }
-
-        path
     }
 
     fn finish(mut self) -> SemanticIndex {
@@ -1397,17 +1325,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 ///
 /// - `arguments`: the NSE effect the call resolved to, filled in flow order. `None`
 ///   means "not NSE".
-/// - `source`: the resolution of a `source()` call. The scan fills it once
-///   (consulting `resolve_source`), the walk reads it back, so the resolver is
-///   queried exactly once per `source()` call site.
 /// - `attach`: the package a `library()`/`require()` call attaches, recognized
 ///   shadow-aware on the resolve path. The walk reads it back to emit a scoped
 ///   `SemanticCall::Attach`.
+/// - `source`: the files a recognized `source()` call brings in, each with its
+///   resolution.
 #[derive(Default)]
 struct CallResolution {
     arguments: Option<ResolvedArgumentEffects>,
-    source: Option<SourceResolution>,
     attach: Option<String>,
+    source: Vec<SourcedFile>,
+}
+
+/// A single file a `source()` call brings in: its statically-extracted path and
+/// the resolution the scan computed for it (`None` when it didn't resolve).
+#[derive(Clone)]
+struct SourcedFile {
+    path: String,
+    resolution: Option<SourceResolution>,
 }
 
 /// The scan's flow-precise binding state: which names are bound at the current
