@@ -50,9 +50,15 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
 #[test]
 fn test_script_with_no_attaches_returns_only_default_search_path() {
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["base", "stats"]);
-    let base = packages[0];
-    let stats = packages[1];
+    install_packages(&mut db, &[
+        "stats",
+        "graphics",
+        "grDevices",
+        "utils",
+        "datasets",
+        "methods",
+        "base",
+    ]);
 
     let file = File::new(
         &db,
@@ -61,26 +67,26 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
         Some("x <- 1\n".to_string()),
         None,
     );
-    let layers = file.imports(&db);
 
-    // Only `stats` and `base` are registered in this test; the other
-    // default-search-path packages are absent and drop out.
-    let packages: Vec<Package> = layers
-        .iter()
-        .map(|layer| match layer {
-            ImportLayer::Package(p) => *p,
-            other => panic!("unexpected layer: {other:?}"),
-        })
-        .collect();
-    assert_eq!(packages, vec![stats, base]);
+    // The whole default search path shows up as `Package` layers in R's
+    // `search()` order (`stats` first, `base` last).
+    assert_eq!(shape(&db, file.imports(&db)), vec![
+        "Package(stats)".to_string(),
+        "Package(graphics)".to_string(),
+        "Package(grDevices)".to_string(),
+        "Package(utils)".to_string(),
+        "Package(datasets)".to_string(),
+        "Package(methods)".to_string(),
+        "Package(base)".to_string(),
+    ]);
 }
 
 #[test]
 fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["dplyr", "ggplot2"]);
-    let dplyr = packages[0];
-    let ggplot2 = packages[1];
+    // Only the attached packages are installed, so the default search path
+    // drops out and the assertion sees just the two `library()` calls.
+    install_packages(&mut db, &["dplyr", "ggplot2"]);
 
     let file = File::new(
         &db,
@@ -89,25 +95,20 @@ fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
         Some("library(dplyr)\nlibrary(ggplot2)\n".to_string()),
         None,
     );
-    let layers = file.imports(&db);
 
-    let attached: Vec<Package> = layers
-        .iter()
-        .filter_map(|layer| match layer {
-            ImportLayer::Package(p) => Some(*p),
-            _ => None,
-        })
-        .collect();
-
-    // LIFO: latest `library()` call comes first (matching R's runtime
-    // search order). Then the default search path (empty in this setup).
-    assert_eq!(attached, vec![ggplot2, dplyr]);
+    // LIFO: latest `library()` call comes first (matching R's runtime search
+    // order).
+    assert_eq!(shape(&db, file.imports(&db)), vec![
+        "Package(ggplot2)".to_string(),
+        "Package(dplyr)".to_string(),
+    ]);
 }
 
 #[test]
 fn test_script_attach_to_unregistered_package_drops_layer() {
     let db = TestDb::new();
-    // No `dplyr` in any library root.
+    // No `dplyr` (or default search path) in any root, so nothing has a
+    // `Package` entity and every layer drops out.
     let file = File::new(
         &db,
         file_path("a.R"),
@@ -116,8 +117,7 @@ fn test_script_attach_to_unregistered_package_drops_layer() {
         None,
     );
 
-    let layers = file.imports(&db);
-    assert!(layers.is_empty());
+    assert!(file.imports(&db).is_empty());
 }
 
 #[test]
@@ -247,9 +247,9 @@ fn test_package_script_resolves_as_standalone_script() {
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
     let _ = dplyr;
-    // Only its own `library(dplyr)` and `base` from the default search path
-    // (the only other registered package). `R/a.R` and the namespace are
-    // absent because the script isn't part of the package's namespace.
+    // Its own `library(dplyr)` on top of the default search path (only `base`
+    // installed here). `R/a.R` and the namespace are absent because the script
+    // isn't part of the package's namespace.
     assert_eq!(shape(&db, data_raw.imports(&db)), vec![
         "Package(dplyr)".to_string(),
         "Package(base)".to_string(),
@@ -427,6 +427,94 @@ fn test_testthat_file_includes_top_level_library_calls() {
         // above testthat (attached more recently than the runner attached
         // testthat).
         "Package(cli)".to_string(),
+        "Package(testthat)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_package_file_includes_predecessor_attaches() {
+    // A collation predecessor's own `library(dep)` puts dep on the search path
+    // for files loaded after it, so `b.R`'s imports carry it as a `Package`
+    // layer, below the predecessor's `File` layer and above `base`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dep", "base"]);
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    );
+    let a = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("library(dep)\n".to_string()),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("w/pkg/R/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(dep)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_testthat_file_includes_package_namespace_imports() {
+    // A test file runs under the package namespace, so the package's
+    // `importFrom(rlang, abort)` shows up as a `From` layer, ranked above the
+    // implicit testthat/base attaches.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["testthat", "base"]);
+    let workspace = workspace_root(&db, "w");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "abort".to_string(),
+            package: "rlang".to_string(),
+        }],
+        ..Default::default()
+    };
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(namespace),
+        Vec::new(),
+        Vec::new(),
+    );
+    let test_foo = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/test-foo.R"),
+        FileRevision::zero(),
+        Some("test_that('x', expect_true(TRUE))\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_scripts(&mut db).to(vec![test_foo]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
+        "From([(\"abort\", \"rlang\")])".to_string(),
         "Package(testthat)".to_string(),
         "Package(base)".to_string(),
     ]);
