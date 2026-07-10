@@ -13,8 +13,13 @@ use crate::semantic_index::NseTiming;
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]
 pub struct Effects {
+    /// Evaluate arguments in non-standard fashion
     pub arguments: Option<ResolvedArgumentEffects>,
+    /// Attach a package
     pub attach: Option<String>,
+    /// Source one or more files. A vector so a collation-style callee can name
+    /// several; base `source` resolves to one.
+    pub source: Option<Vec<String>>,
 }
 
 /// The handlers that compute a function's effects.
@@ -22,12 +27,12 @@ pub struct Effects {
 pub struct EffectsHandlers {
     pub arguments: Option<&'static dyn EffectHandler<Output = ResolvedArgumentEffects>>,
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
+    pub source: Option<&'static dyn EffectHandler<Output = Vec<String>>>,
 }
 
 /// Resolver for an effect of a call.
 ///
-/// The single interface behind every effect kind (NSE, attach, and `source`
-/// later).
+/// The single interface behind every effect kind (NSE, attach, source).
 ///
 /// Handlers are contributed statically for now (a `&'static dyn` in the
 /// registry), so the trait is `Sync`, which every registry `static` needs.
@@ -98,6 +103,16 @@ impl CallContext {
         }
 
         matched
+    }
+
+    /// Statically evaluate an argument's value expression to a string. `None`
+    /// when it's dynamic.
+    pub fn resolve_static_string(&self, value: &AnyRExpression) -> Option<String> {
+        match value {
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+            // Static resolution of expressions is not implemented yet
+            _ => None,
+        }
     }
 }
 
@@ -187,6 +202,70 @@ impl EffectHandler for AttachAnnotation {
             AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
             _ => None,
         }
+    }
+}
+
+/// Declares how a source function (`source()`) names the file it reads, and
+/// serves as the default [`EffectHandler`] for it by pulling that path out of a
+/// call.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceAnnotation {
+    /// Which positional argument holds the path, counting only unnamed
+    /// arguments (0 for base `source`). Other source-like functions may put the
+    /// path elsewhere, so it's configured per entry rather than assumed.
+    pub position: usize,
+}
+
+impl EffectHandler for SourceAnnotation {
+    type Output = Vec<String>;
+
+    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Vec<String>> {
+        let args = call.arguments().ok()?;
+
+        // The path is matched positionally among unnamed arguments rather than
+        // through [`CallContext::match_arguments`], for two reasons. We need to
+        // inspect the `local =` value to bail on non-static calls, which
+        // argument matching doesn't do. And counting unnamed arguments is robust
+        // to a named argument coming first (e.g. `source(echo = TRUE, "x.R")`),
+        // which the call-position matching isn't yet. A named `file =` therefore
+        // isn't recognized today.
+        let mut path: Option<String> = None;
+        let mut positional = 0;
+
+        for item in args.items().iter() {
+            let Ok(arg) = item else { continue };
+
+            if let Some(name_clause) = arg.name_clause() {
+                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
+                    continue;
+                };
+                if name_ident.name_text() == "local" {
+                    if let Some(value) = arg.value() {
+                        match value {
+                            // TRUE/FALSE are fine, we resolve uniformly. For
+                            // the FALSE in nested context case, we'll emit a
+                            // diagnostic.
+                            AnyRExpression::RTrueExpression(_) |
+                            AnyRExpression::RFalseExpression(_) => {},
+                            // Anything else (environment, non-statically
+                            // resolvable expression) means the call isn't
+                            // statically analyzable, so it's not recognized.
+                            _ => return None,
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if positional == self.position {
+                path = arg
+                    .value()
+                    .and_then(|value| ctx.resolve_static_string(&value));
+            }
+            positional += 1;
+        }
+
+        path.map(|resolved| vec![resolved])
     }
 }
 
