@@ -174,15 +174,58 @@ impl SemanticIndex {
         exports
     }
 
-    /// Package names from `library()` / `require()` calls in this file.
+    /// Package names from `library()` / `require()` calls that run at the
+    /// file's own top level.
+    ///
+    /// A `library()` reached only by running a lazy body attaches only if that
+    /// body runs, which may be never, so it does not count here. That covers a
+    /// function body, a lazy NSE argument, and an eager `local()` *nested*
+    /// inside one (see [`Self::scope_is_eager`]). This is the load-time
+    /// search-path view: what another file sees after `source()`-ing this one,
+    /// and what an eager callee resolves against. For every `library()`
+    /// regardless of context, see [`Self::attached_packages_anywhere`].
     pub fn attached_packages(&self) -> Vec<&str> {
         self.semantic_calls
             .iter()
-            .filter_map(|c| match &c.kind {
+            .filter(|call| self.scope_is_eager(call.scope))
+            .filter_map(|call| match &call.kind {
                 SemanticCallKind::Attach { package } => Some(package.as_str()),
                 SemanticCallKind::Source { .. } => None,
             })
             .collect()
+    }
+
+    /// Every `library()` / `require()` call in the file, including those in
+    /// function bodies and other lazy contexts.
+    ///
+    /// Over-approximates the load-time search path, since a lazy body may never
+    /// run, so most callers want [`Self::attached_packages`]. Use this only
+    /// where a lazy attach still counts, e.g. "which packages does this file
+    /// depend on" for workspace dependency discovery.
+    pub fn attached_packages_anywhere(&self) -> Vec<&str> {
+        self.semantic_calls
+            .iter()
+            .filter_map(|call| match &call.kind {
+                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Source { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Whether `scope` runs during the file's own top-level execution, i.e. no
+    /// enclosing scope is lazy.
+    fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
+        let mut ancestor_id = Some(scope_id);
+
+        while let Some(id) = ancestor_id {
+            let ancestor_scope = self.scope(id);
+            if ancestor_scope.kind.is_lazy() {
+                return false;
+            }
+            ancestor_id = ancestor_scope.parent;
+        }
+
+        true
     }
 
     /// Cross-file call sites (`library()`, `source()`, …) recorded
