@@ -84,6 +84,7 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
 // parallel arrays are pushed in lockstep so they stay indexed by the same
 // `ScopeId`.
 struct SemanticIndexBuilder<R: ImportsResolver> {
+    resolver: R,
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
@@ -94,29 +95,24 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
-    // The NSE effect each call resolved to, keyed by the call's range. Filled
-    // in flow order by the scan. Absence means "not NSE".
-    //
-    // File-global on purpose, not per-scope: a `TextRange` is unique across the
-    // file, so entries from different scopes can't collide.
-    nse_annotations: FxHashMap<TextRange, NseAnnotation>,
-    // Resolved `source()` calls, keyed by the call's range. The scan fills
-    // this once per call (consulting `resolve_source`), the walk reads it back,
-    // so the resolver is queried exactly once per `source()` call site.
-    source_resolutions: FxHashMap<TextRange, SourceResolution>,
+    // Per-call facts resolved by the scanner in flow order, keyed by the call's
+    // range. See `CallResolution`.
+    call_resolutions: FxHashMap<TextRange, CallResolution>,
     // Names bound so far in the scope currently being scanned, tracked
     // flow-precisely (if/else restore, loop union). This is the scan
     // pass's own flow state, standing in for the walk's use-def state which
     // isn't built yet. Reset at each scope's `begin_scan()`.
     bound_so_far: FxHashSet<String>,
-    // The enclosing eager environment captured when each child scope is
-    // entered, keyed by the child's range. Recorded from `bound_so_far` when
-    // the parent's scan reaches the child's definition point.
-    eager_bindings: FxHashMap<TextRange, FxHashSet<String>>,
+    // Names inherited from enclosing scopes at this scope's entry point, keyed
+    // by the scope's range. Captured from `bound_so_far`, and read by
+    // `begin_scan()` to seed the scope's own scan.
+    inherited_at_entry: FxHashMap<TextRange, FxHashSet<String>>,
+    // Bound names of Eager + Nested bodies like `local()` are discovered inline
+    // by the scanner. See `EagerNestedDescent`.
+    descent: EagerNestedDescent,
     // Diagnostics collected during the build and logged on `finish()`. A minimal
     // channel for now, no user-facing surface.
     diagnostics: Vec<SemanticDiagnostic>,
-    resolver: R,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -158,10 +154,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
             namespace_accesses: Vec::new(),
-            nse_annotations: FxHashMap::default(),
-            source_resolutions: FxHashMap::default(),
+            call_resolutions: FxHashMap::default(),
             bound_so_far: FxHashSet::default(),
-            eager_bindings: FxHashMap::default(),
+            inherited_at_entry: FxHashMap::default(),
+            descent: EagerNestedDescent::default(),
             diagnostics: Vec::new(),
             resolver,
         }
@@ -450,13 +446,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         found_by_flag || self.bound_names[scope].binds(name)
     }
 
-    /// Record the eager environment for a child scope (function body, NSE
-    /// argument) about to be created at `range`, to seed the child's scan in
-    /// `begin_scan`. Called during the scan, where `bound_so_far` is the parent's
-    /// flow-precise state at the child's definition point (already carrying the
-    /// parent's own inherited ancestors, so the child inherits transitively).
-    pub(super) fn record_eager_bindings(&mut self, range: TextRange) {
-        self.eager_bindings.insert(range, self.bound_so_far.clone());
+    /// Record the names a child scope (function body, NSE argument) about to be
+    /// created at `range` inherits from its ancestors, to seed the child's scan
+    /// in `begin_scan`. Called during the scan, where `bound_so_far` is the
+    /// parent's flow-precise state at the child's definition point (already
+    /// carrying the parent's own inherited ancestors, so the child inherits
+    /// transitively).
+    pub(super) fn record_inherited_at_entry(&mut self, range: TextRange) {
+        self.inherited_at_entry
+            .insert(range, self.bound_so_far.clone());
     }
 
     // --- Scan pass ---
@@ -465,9 +463,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// Seeds it with two things:
     ///
-    /// - The enclosing eager environment captured when this scope was entered
-    ///   (`eager_bindings`). The parent's own scan was seeded the same way,
-    ///   so this is transitively complete: it holds every eager binding
+    /// - The names inherited from enclosing scopes, captured when this scope was
+    ///   entered (`inherited_at_entry`). The parent's own scan was seeded the same
+    ///   way, so this is transitively complete: it holds every eager binding
     ///   visible from an ancestor at this scope's definition point.
     /// - The scope's own already-bound names. For a function scope that's the
     ///   parameters, recorded just before the scan runs. For file and NSE scopes
@@ -480,7 +478,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.bound_so_far.clear();
 
         let range = self.scopes[self.current_scope].range;
-        if let Some(entry) = self.eager_bindings.get(&range) {
+        if let Some(entry) = self.inherited_at_entry.get(&range) {
             self.bound_so_far.extend(entry.iter().cloned());
         }
 
@@ -501,21 +499,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// Runs before the walk of a scope. It decides NSE-ness at each call the
     /// same way the walk's [`is_locally_bound`](Self::is_locally_bound) would,
-    /// records the decision in `nse_annotations` for the walk to reuse, and adds
+    /// records the decision in `call_resolutions` for the walk to reuse, and adds
     /// non-skipped definition names to `bound_names`. The bound names must be
     /// complete before the walk descends into any child scope, because a lazy
     /// child body can reference an ancestor def the ancestor's walk hasn't
     /// reached yet.
     ///
-    /// The scan matches the walk's scope boundaries:
+    /// A scan unit is the file or a lazy body (function, `Nested + Lazy`,
+    /// `Current + Lazy`). Each unit is scanned once. Within a unit the scan
+    /// descends through every eager boundary it meets, in flow order:
     ///
-    /// - Function and `Nested` NSE bodies are child scopes, scanned
-    ///   separately in their own context.
-    /// - A `Current + Lazy` body is also a child scope, scanned separately for
-    ///   the same reason: NSE resolution needs the child's own flow context,
-    ///   which differs from this scope's.
     /// - A `Current + Eager` body pushes no scope, so it stays part of this
     ///   scope's direct level and is scanned through transparently.
+    /// - A `Nested + Eager` body is descended into with a save/restore of
+    ///   `bound_so_far`, and the names it binds are left pending for the walk to
+    ///   install without re-scanning.
+    /// - Function and lazy bodies (`Nested + Lazy`, `Current + Lazy`) are their
+    ///   own scan units, scanned separately when the walk enters them, because
+    ///   NSE resolution there needs the child's own flow context.
     ///
     /// Branch analysis is precise. In `if (c) local <- f else local({ y <- 1
     /// })` the else branch sees an NSE call because `local` is unbound on the
@@ -524,10 +525,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match expr {
             AnyRExpression::RFunctionDefinition(func) => {
                 // A function body is a child scope, scanned when it's entered.
-                // Record this scope's eager bindings now so that when we later
-                // resolve an NSE callee inside the body, we can check whether one
-                // of them shadows it (see `bound_at_entry`).
-                self.record_eager_bindings(func.syntax().text_trimmed_range());
+                // Record the names it inherits now so that when we later resolve
+                // an NSE callee inside the body, we can check whether one of them
+                // shadows it (see `inherited_at_entry`).
+                self.record_inherited_at_entry(func.syntax().text_trimmed_range());
             },
 
             AnyRExpression::RBracedExpressions(braced) => {
@@ -705,8 +706,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.record_binding(name.clone());
         }
 
-        self.source_resolutions
-            .insert(call.syntax().text_trimmed_range(), resolution);
+        self.call_resolutions
+            .entry(call.syntax().text_trimmed_range())
+            .or_default()
+            .source = Some(resolution);
     }
 
     /// Record a binding in the scan's flow state.
@@ -722,13 +725,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Route a binding NAME into its owner scope's bound names, matching
-    /// `add_definition`'s routing. A `Current + Lazy` scope routes to
-    /// `definition_owner()`, every other scope owns its bindings.
+    /// `add_definition`'s routing. When a descent is open the name goes to the
+    /// descent top, which is always an eager `Nested` body scanned inline and so
+    /// owns its bindings. Otherwise a `Current + Lazy` scope routes to
+    /// `definition_owner()` and every other scope owns its bindings.
     ///
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
     /// bound in `bound_so_far` (see that helper for why).
     fn record_owner_name(&mut self, name: String) {
+        if let Some(bound) = self.descent.open.last_mut() {
+            bound.add(name);
+            return;
+        }
+
         if let Some(target) = match self.scopes[self.current_scope].kind {
             ScopeKind::Nse(NseScope::Current, NseTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
@@ -738,9 +748,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn nse_effect(&self, call: &RCall) -> Option<NseAnnotation> {
-        self.nse_annotations
+        self.call_resolutions
             .get(&call.syntax().text_trimmed_range())
-            .copied()
+            .and_then(|resolution| resolution.nse)
     }
 
     // --- Recursive descent ---
@@ -1211,7 +1221,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // single point that consults `resolve_source`, so the walk never
         // re-resolves. A cache miss means the scan bailed or the resolver
         // returned `None`, both of which record the call with `resolved: None`.
-        let resolution = self.source_resolutions.get(&range).cloned();
+        let resolution = self
+            .call_resolutions
+            .get(&range)
+            .and_then(|resolution| resolution.source.clone());
 
         // Record every `source()` call site, independent of whether the
         // resolution was successful. `resolved` pins the canonical URL when
@@ -1351,6 +1364,49 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             file_final_bindings,
         )
     }
+}
+
+/// What the scan resolved a single call to, for the walk to reuse. A call can
+/// carry both facts at once.
+///
+/// - `nse`: the NSE effect the call resolved to, filled in flow order. `None`
+///   means "not NSE".
+/// - `source`: the resolution of a `source()` call. The scan fills it once
+///   (consulting `resolve_source`), the walk reads it back, so the resolver is
+///   queried exactly once per `source()` call site.
+#[derive(Default)]
+struct CallResolution {
+    nse: Option<NseAnnotation>,
+    source: Option<SourceResolution>,
+}
+
+/// Tracks eager `Nested` NSE bodies scanned inline during the scan.
+///
+/// An eager `Nested` body like `local()` runs immediately at its call site, so
+/// we scan it inline instead of deferring it to the walk. `open` is the stack
+/// of bodies being scanned right now, with the innermost on top.
+/// `record_owner_name()` routes a binding to the top so names land on the body
+/// that owns them. When a descent finishes, its names move to `pending`, keyed
+/// by the body's range.
+///
+/// `pending` is keyed by range rather than written straight into
+/// `bound_names[scope]` because the body's arena scope doesn't exist yet: the
+/// walk allocates scopes in preorder, and allocating one mid-scan would break
+/// the `Scope::descendants` invariant. The range is the body's pre-arena
+/// identity until the walk pushes its scope.
+///
+/// Once the walk pushes that scope, it installs the pending names into it
+/// instead of re-scanning. It does this before collecting the body, because a
+/// lazy child inside (a function or lazy NSE body) runs later than the walk
+/// reaches it, so it can reference a binding defined further down this scope.
+/// Resolving that name checks whether an enclosing scope binds it
+/// (`scope_binds_anywhere()`), and the walk hasn't recorded that binding yet, so
+/// the scan-populated bound set has to be complete up front. That's the reason
+/// the scan collects bound names ahead of the walk at all.
+#[derive(Default)]
+struct EagerNestedDescent {
+    open: Vec<BoundNames>,
+    pending: FxHashMap<TextRange, BoundNames>,
 }
 
 /// All definitions in a scope, collected by the scan pass before the
