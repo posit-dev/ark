@@ -56,6 +56,7 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
@@ -1177,6 +1178,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         {
             self.collect_source_call(call);
         }
+
+        // Assign: same recognition path. The scan cached the bound names; here we
+        // emit the definitions so they feed the use-def map, `exports()`, and
+        // goto.
+        if self
+            .call_resolutions
+            .get(&range)
+            .is_some_and(|resolution| !resolution.assign.is_empty())
+        {
+            self.collect_assign_call(call);
+        }
     }
 
     // ## `library()` / `require()` scoping
@@ -1275,6 +1287,42 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
+    // ## `assign()` binding
+    //
+    // `assign("x", value)` binds `x` in the current scope, the same as `x <-
+    // value` would. We record a `DefinitionKind::Assign` def so it feeds the
+    // use-def map, `exports()`, and goto exactly like a syntactic assignment.
+    // The name is not chased to its value, so an `assign("f", local)` def
+    // carries no NSE, just like `f <- local`.
+    fn collect_assign_call(&mut self, call: &aether_syntax::RCall) {
+        let range = call.syntax().text_trimmed_range();
+        let call_offset = range.start();
+
+        // Read back the bindings the scan extracted (their presence is what the
+        // caller checked before dispatching here).
+        let bindings = match self.call_resolutions.get(&range) {
+            Some(resolution) => resolution.assign.clone(),
+            None => return,
+        };
+
+        for binding in bindings {
+            // The precise name-token range is recovered from the stored `name`
+            // handle downstream, so the def's own range is the empty span at the
+            // call offset, mirroring `source()` imports.
+            let name_range = TextRange::empty(call_offset);
+            self.add_definition(
+                &binding.name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::Assign {
+                    call: AstPtr::new(call),
+                    name: binding.name_expr,
+                    value: binding.value_expr,
+                },
+                name_range,
+            );
+        }
+    }
+
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
@@ -1330,11 +1378,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 ///   `SemanticCall::Attach`.
 /// - `source`: the files a recognized `source()` call brings in, each with its
 ///   resolution.
+/// - `assign`: the bindings a recognized `assign()` call creates in the current
+///   scope. Non-empty is the recognition marker; the walk defines each binding.
 #[derive(Default)]
 struct CallResolution {
     arguments: Option<ResolvedArgumentEffects>,
     attach: Option<String>,
     source: Vec<SourcedFile>,
+    assign: Vec<AssignBinding>,
 }
 
 /// A single file a `source()` call brings in: its statically-extracted path and
