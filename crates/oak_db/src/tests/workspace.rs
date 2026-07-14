@@ -210,6 +210,7 @@ fn test_default_search_path_packages_are_always_available_to_workspace_packages(
         FileRevision::zero(),
         FileRevision::zero(),
         None,
+        None,
         vec![],
         Vec::new(),
     );
