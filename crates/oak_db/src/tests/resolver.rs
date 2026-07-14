@@ -406,6 +406,71 @@ fn test_sibling_definition_shadows_attached_nse() {
 }
 
 #[test]
+fn test_namespace_import_shadows_attached_nse() {
+    // The package importFroms `reactive` from `dep`, which exports it as a plain
+    // function, and `a.R` also attaches shiny, whose `reactive` is NSE. R
+    // searches the namespace before the attached search path, so the plain
+    // `dep::reactive` binds the name and shadows shiny's NSE one. Export-driven
+    // shadowing: the namespace import stops the walk even though it has no
+    // effect, so the bare call is not NSE.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let root = workspace_root(&db, "ws");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "dep".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (pkg, files) = make_package(&mut db, "pkg", namespace, &[(
+        "ws/pkg/R/a.R",
+        "library(shiny)\nreactive({\n    x <- 1\n})\n",
+    )]);
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["reactive".to_string()]),
+        ..Default::default()
+    };
+    let (dep, _) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "reactive <- function(x) x\n",
+    )]);
+    root.set_packages(&mut db).to(vec![pkg, dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
+#[test]
+fn test_higher_attach_plain_export_shadows_lower_nse() {
+    // `a.R` attaches shiny (NSE `reactive`) then `dep`, which exports `reactive`
+    // as a plain function. `dep` is attached last, so it's highest on the search
+    // path and its plain `reactive` binds the name, shadowing shiny's NSE one.
+    // The bare call is not NSE.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["reactive".to_string()]),
+        ..Default::default()
+    };
+    let (dep, _) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "reactive <- function(x) x\n",
+    )]);
+    let (pkg, files) = make_package(&mut db, "pkg", Namespace::default(), &[(
+        "ws/pkg/R/a.R",
+        "library(shiny)\nlibrary(dep)\nreactive({\n    x <- 1\n})\n",
+    )]);
+    root.set_packages(&mut db).to(vec![pkg, dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
+#[test]
 fn test_later_sibling_does_not_shadow() {
     // `b.R` defines `reactive`, but it's a collation successor of `a.R`, so it
     // hasn't loaded when `a.R` runs. `a.R`'s bare `reactive` still resolves to
