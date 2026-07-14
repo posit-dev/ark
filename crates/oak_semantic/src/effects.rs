@@ -32,8 +32,8 @@ pub struct Effects {
 
 /// One name an assign call binds, with the syntax handles its consumers need.
 /// - The bound name feeds the symbol table.
-/// - `name_expr` anchors the goto target and carries the trimmed range the
-///   cursor hit-tests against, so goto/rename can start from the definition site.
+/// - `name_expr` anchors the goto target and carries a trimmed range that can
+///   be matched against a cursor (e.g. for goto/rename).
 /// - `value_expr` is what a type checker infers the binding's type from (`None`
 ///   with no value argument).
 #[derive(Debug, Clone)]

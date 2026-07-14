@@ -13,12 +13,12 @@ use oak_ide::rename;
 use salsa::Setter;
 use url::Url;
 
+use crate::support::edit_pairs;
+use crate::support::edit_ranges;
 use crate::support::install_library_package;
 use crate::support::install_workspace_package;
 use crate::support::offset;
-use crate::support::pairs;
 use crate::support::range;
-use crate::support::ranges;
 use crate::support::upsert;
 
 // --- prepare_rename ---
@@ -76,8 +76,8 @@ fn test_rename_def_and_use() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo <- 1\nfoo + foo\n");
 
-    let targets = rename(&db, file, offset(0)).unwrap();
-    assert_eq!(ranges(&targets), vec![
+    let targets = rename(&db, file, offset(0), "bar").unwrap();
+    assert_eq!(edit_ranges(&targets), vec![
         range(0, 3),
         range(9, 12),
         range(15, 18)
@@ -92,8 +92,8 @@ fn test_rename_excludes_shadowed_outer() {
 
     let inner_def = source.find("x <- 2").unwrap() as u32;
     let inner_use = source.rfind('x').unwrap() as u32;
-    let targets = rename(&db, file, offset(inner_def)).unwrap();
-    assert_eq!(ranges(&targets), vec![
+    let targets = rename(&db, file, offset(inner_def), "bar").unwrap();
+    assert_eq!(edit_ranges(&targets), vec![
         range(inner_def, inner_def + 1),
         range(inner_use, inner_use + 1),
     ]);
@@ -106,7 +106,7 @@ fn test_rename_non_renamable_errors() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "dplyr::mutate\n");
 
-    let err = rename(&db, file, offset(7)).unwrap_err();
+    let err = rename(&db, file, offset(7), "bar").unwrap_err();
     assert!(err.to_string().contains("Can't rename identifier"));
 }
 
@@ -116,19 +116,86 @@ fn test_rename_unbound_use_errors() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "foo\n");
 
-    let err = rename(&db, file, offset(0)).unwrap_err();
+    let err = rename(&db, file, offset(0), "bar").unwrap_err();
     assert!(err.to_string().contains("no binding"));
 }
 
 // --- rename: string definitions ---
 
+/// Project edits to `(range, new_text)`, for asserting how each site renders.
+fn rendered(edits: &[oak_ide::RenameEdit]) -> Vec<(biome_rowan::TextRange, &str)> {
+    edits
+        .iter()
+        .map(|e| (e.range, e.new_text.as_str()))
+        .collect()
+}
+
 #[test]
-fn test_rename_string_def_spans_quoted_range() {
+fn test_rename_string_def_keeps_quotes() {
+    // `"foo" <- 1` binds `foo` via a string. The def site stays a quoted string
+    // (`"bar"`), spanning the quotes; the use is a bare identifier.
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "test.R", "\"foo\" <- 1\nfoo\n");
 
-    let targets = rename(&db, file, offset(11)).unwrap();
-    assert_eq!(ranges(&targets), vec![range(0, 5), range(11, 14)]);
+    let edits = rename(&db, file, offset(11), "bar").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(0, 5), "\"bar\""),
+        (range(11, 14), "bar"),
+    ]);
+}
+
+#[test]
+fn test_rename_assign_call_keeps_quotes() {
+    // `assign("foo", 1)` binds `foo` via a string argument. Unquoting it would
+    // turn the name into a variable reference, so the def site stays quoted.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign(\"foo\", 1)\nfoo\n");
+
+    let edits = rename(&db, file, offset(17), "bar").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(7, 12), "\"bar\""),
+        (range(17, 20), "bar"),
+    ]);
+}
+
+#[test]
+fn test_rename_string_def_preserves_single_quote_delimiter() {
+    // The rendered string reuses the site's own delimiter.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign('foo', 1)\nfoo\n");
+
+    let edits = rename(&db, file, offset(17), "bar").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(7, 12), "'bar'"),
+        (range(17, 20), "bar"),
+    ]);
+}
+
+#[test]
+fn test_rename_rejects_invalid_name_even_for_string_only_symbol() {
+    // Name validation is uniform: even a symbol only ever spelled as a string
+    // (no bare-identifier site) is rejected for an invalid name up front, rather
+    // than silently producing a string that couldn't be used as an identifier.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign(\"foo\", 1)\n");
+
+    let err = rename(&db, file, offset(8), "if").unwrap_err();
+    assert!(err.to_string().contains("reserved"));
+}
+
+#[test]
+fn test_rename_to_non_syntactic_name_quotes_string_site_backticks_use() {
+    // A non-syntactic target lands verbatim inside the quotes (a string holds
+    // any name, no backticks), while the bare-identifier use gets backticks. The
+    // string site renders the raw name, not the backtick-wrapped identifier form.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign(\"foo\", 1)\nfoo\n");
+
+    let edits = rename(&db, file, offset(17), "non-syntactic").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(7, 12), "\"non-syntactic\""),
+        (range(17, 20), "`non-syntactic`"),
+    ]);
 }
 
 // --- rename: cross-file workspace scripts ---
@@ -143,9 +210,9 @@ fn test_rename_cross_file_workspace_scripts() {
     place_in_workspace_scripts(&mut db, vec![helpers, script]);
 
     let use_start = "source(\"helpers.R\")\n".len() as u32;
-    let targets = rename(&db, script, offset(use_start)).unwrap();
+    let targets = rename(&db, script, offset(use_start), "helper2").unwrap();
     // script.R (cursor's file) first, then helpers.R.
-    assert_eq!(pairs(&targets), vec![
+    assert_eq!(edit_pairs(&targets), vec![
         (script, range(use_start, use_start + 6)),
         (helpers, range(0, 6)),
     ]);
@@ -166,9 +233,9 @@ fn test_rename_cross_file_workspace_package() {
     let (a, b) = (files[0], files[1]);
 
     // Cursor on the def `shared` in a.R at offset 0.
-    let targets = rename(&db, a, offset(0)).unwrap();
+    let targets = rename(&db, a, offset(0), "renamed").unwrap();
     let use_start = "use_shared <- function() ".len() as u32;
-    assert_eq!(pairs(&targets), vec![
+    assert_eq!(edit_pairs(&targets), vec![
         (a, range(0, 6)),
         (b, range(use_start, use_start + 6)),
     ]);
@@ -185,7 +252,7 @@ fn test_rename_refuses_library_package_symbol() {
     let lib_file = build_library_package_file(&mut db, "foo <- function() {}\n");
 
     // Cursor on the def `foo` at offset 0.
-    let err = rename(&db, lib_file, offset(0)).unwrap_err();
+    let err = rename(&db, lib_file, offset(0), "bar").unwrap_err();
     assert_eq!(
         err.to_string(),
         "Can't rename: symbol is defined in an installed package."
@@ -204,7 +271,7 @@ fn test_rename_refuses_package_export_used_via_library() {
     let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
 
     let use_start = "library(mypkg)\n".len() as u32;
-    let err = rename(&db, script, offset(use_start)).unwrap_err();
+    let err = rename(&db, script, offset(use_start), "bar").unwrap_err();
     assert_eq!(
         err.to_string(),
         "Can't rename: symbol is defined in an installed package."
@@ -222,8 +289,8 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
     let script = upsert(&mut db, "script.R", "library(mypkg)\nfoo\n");
 
     let use_start = "library(mypkg)\n".len() as u32;
-    let result = rename(&db, script, offset(use_start)).unwrap();
-    assert_eq!(pairs(&result), vec![
+    let result = rename(&db, script, offset(use_start), "bar").unwrap();
+    assert_eq!(edit_pairs(&result), vec![
         (script, range(use_start, use_start + 3)),
         (pkg_file, range(0, 3)),
     ]);

@@ -46,6 +46,21 @@ pub fn to_identifier_text(name: &str) -> anyhow::Result<String> {
     Ok(format!("`{name}`"))
 }
 
+/// Render `name` as a quoted R string literal using `delimiter` (`"` or `'`).
+///
+/// Counterpart to [`to_identifier_text`] for a site that binds a name in string
+/// form (`assign("x", ..)`, `"x" <- ..`). The rename edit there must stay a
+/// string, or dropping the quotes would turn the name into a variable reference
+/// and change the program. Backslash and the delimiter are escaped so an unusual
+/// name can't break out of the string. Mostly defensive, identifiers never
+/// contain either.
+pub fn quote_name(name: &str, delimiter: char) -> String {
+    let escaped = name
+        .replace('\\', "\\\\")
+        .replace(delimiter, &format!("\\{delimiter}"));
+    format!("{delimiter}{escaped}{delimiter}")
+}
+
 /// Whether `name` is a valid bare R identifier (no backticks needed).
 ///
 /// R's rule: starts with a letter or `.`, then letters, digits, `.`, or
@@ -228,5 +243,21 @@ mod tests {
         assert!(to_identifier_text("``").is_err());
         // Stray backtick inside the pre-wrapped name.
         assert!(to_identifier_text("`foo`bar`").is_err());
+    }
+
+    #[test]
+    fn test_quote_name_wraps_in_delimiter() {
+        assert_eq!(quote_name("bar", '"'), "\"bar\"");
+        assert_eq!(quote_name("bar", '\''), "'bar'");
+    }
+
+    #[test]
+    fn test_quote_name_escapes_delimiter_and_backslash() {
+        // Defensive: a real identifier never contains these, but if a name did,
+        // it stays inside the string rather than breaking out of it.
+        assert_eq!(quote_name("a\"b", '"'), "\"a\\\"b\"");
+        assert_eq!(quote_name("a\\b", '"'), "\"a\\\\b\"");
+        // The other delimiter isn't escaped: a `'` inside a `"`-string is literal.
+        assert_eq!(quote_name("a'b", '"'), "\"a'b\"");
     }
 }

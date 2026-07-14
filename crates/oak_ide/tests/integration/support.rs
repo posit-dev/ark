@@ -11,6 +11,7 @@ use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_ide::FileRange;
+use oak_ide::RenameEdit;
 use oak_package_metadata::namespace::Namespace;
 use oak_scan::DbScan;
 use salsa::Setter;
@@ -55,6 +56,16 @@ pub fn ranges(refs: &[FileRange]) -> Vec<TextRange> {
 /// Project results to `(file, range)` pairs (cross-file tests).
 pub fn pairs(refs: &[FileRange]) -> Vec<(File, TextRange)> {
     refs.iter().map(|r| (r.file, r.range)).collect()
+}
+
+/// Project rename edits to in-file ranges (single-file tests).
+pub fn edit_ranges(edits: &[RenameEdit]) -> Vec<TextRange> {
+    edits.iter().map(|e| e.range).collect()
+}
+
+/// Project rename edits to `(file, range)` pairs (cross-file tests).
+pub fn edit_pairs(edits: &[RenameEdit]) -> Vec<(File, TextRange)> {
+    edits.iter().map(|e| (e.file, e.range)).collect()
 }
 
 /// Install `name` as a library package exporting `exports`, with one file at
