@@ -3,6 +3,9 @@
 /// Listed in the order R's `search()` reports them (last attached = searched first, so
 /// `stats` is highest-priority and `base` is lowest), which is important for when they
 /// are attached as [crate::ImportLayer::Package] layers.
+///
+/// One day we may want to retrieve these from R's `R_DEFAULT_PACKAGES` environment
+/// variable, or via `getOption("defaultPackages")`.
 pub(crate) const DEFAULT_SEARCH_PATH_PACKAGES: [&str; 7] = [
     "stats",
     "graphics",
