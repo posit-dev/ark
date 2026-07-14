@@ -9,11 +9,6 @@ use oak_cache::Cache;
 /// Cache version
 const CACHE_VERSION: &str = "v1";
 
-/// LRU capacity for cached vendored version trees, kept small because each is large
-///
-/// TODO!: Remove me after merging posit-dev/ark#1323
-const CAPACITY: usize = 5;
-
 /// Vendored R versions, sorted ascending
 static VERSIONS: LazyLock<Vec<Version>> =
     LazyLock::new(|| read_versions(include_str!("../vendor/versions.txt")));
@@ -38,7 +33,7 @@ pub struct VendoredCache {
 impl VendoredCache {
     pub fn open() -> anyhow::Result<Self> {
         Ok(Self {
-            cache: Cache::open(&format!("vendored/{CACHE_VERSION}/r"), CAPACITY)?,
+            cache: Cache::open(&format!("vendored/{CACHE_VERSION}/r"))?,
         })
     }
 
@@ -46,7 +41,7 @@ impl VendoredCache {
     /// shared cache directory. Only useful for testing against a temp directory.
     pub fn open_in(root: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
-            cache: Cache::open_in(root, CAPACITY)?,
+            cache: Cache::open_in(root)?,
         })
     }
 
