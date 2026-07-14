@@ -3,11 +3,11 @@ use std::fs;
 use aether_path::FilePath;
 use salsa::Setter;
 
+use crate::all_package_dependencies;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
-use crate::workspace_dependencies;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
@@ -52,8 +52,8 @@ fn workspace_with_script(db: &mut TestDb, contents: &str) {
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
 
-fn workspace_dependencies_names(db: &TestDb) -> Vec<String> {
-    workspace_dependencies(db)
+fn all_package_dependencies_names(db: &TestDb) -> Vec<String> {
+    all_package_dependencies(db)
         .iter()
         .map(|&pkg| pkg.name(db).clone())
         .collect()
@@ -67,7 +67,7 @@ fn test_collects_library_and_namespace_accesses() {
 
     // `foo` via `library()`, `bar` via `::`; `unused` is installed but never
     // referenced. Sorted by name.
-    assert_eq!(workspace_dependencies_names(&db), vec!["bar", "foo"]);
+    assert_eq!(all_package_dependencies_names(&db), vec!["bar", "foo"]);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_collects_internal_namespace_access() {
     register_library(&mut db, &["rlang"]);
     workspace_with_script(&mut db, "rlang:::abort()\n");
 
-    assert_eq!(workspace_dependencies_names(&db), vec!["rlang"]);
+    assert_eq!(all_package_dependencies_names(&db), vec!["rlang"]);
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_collects_imports_and_depends_from_workspace_package() {
 
     // `cli` via `Depends`, `rlang` via `Imports`. The workspace package
     // `mypkg` itself is not included (it resolves to a workspace root).
-    assert_eq!(workspace_dependencies_names(&db), vec!["cli", "rlang"]);
+    assert_eq!(all_package_dependencies_names(&db), vec!["cli", "rlang"]);
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn test_uninstalled_name_is_dropped() {
     workspace_with_script(&mut db, "library(ghost)\nfoo::thing()\n");
 
     // `ghost` has no installed entity to populate, so only `foo` survives.
-    assert_eq!(workspace_dependencies_names(&db), vec!["foo"]);
+    assert_eq!(all_package_dependencies_names(&db), vec!["foo"]);
 }
 
 #[test]
@@ -150,13 +150,13 @@ fn test_workspace_package_self_reference_is_dropped() {
 
     // `mypkg::helper` resolves to the workspace package, which already has its
     // source, so it's dropped.
-    assert!(workspace_dependencies_names(&db).is_empty());
+    assert!(all_package_dependencies_names(&db).is_empty());
 }
 
 #[test]
 fn test_empty_workspace_uses_nothing() {
     let db = TestDb::new();
-    assert!(workspace_dependencies_names(&db).is_empty());
+    assert!(all_package_dependencies_names(&db).is_empty());
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn test_default_search_path_packages_are_always_available_to_workspace_scripts()
     // Every installed default search path package is implicitly available, even
     // though the script never references them. `unused` isn't on the search
     // path and is never referenced, so it drops out.
-    assert_eq!(workspace_dependencies_names(&db), vec![
+    assert_eq!(all_package_dependencies_names(&db), vec![
         "base",
         "datasets",
         "grDevices",
@@ -221,7 +221,7 @@ fn test_default_search_path_packages_are_always_available_to_workspace_packages(
     // `mypkg` only declares `rlang` in `Imports` and nothing in `Depends`, but
     // the default search path packages `base` and `stats` are always available
     // even though the `DESCRIPTION` never mentions them.
-    assert_eq!(workspace_dependencies_names(&db), vec![
+    assert_eq!(all_package_dependencies_names(&db), vec![
         "base", "rlang", "stats"
     ]);
 }

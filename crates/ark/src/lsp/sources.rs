@@ -157,9 +157,9 @@ impl SourceScheduler {
             return;
         };
 
-        // For each package used by the workspace, request its sources if we have never
-        // seen it before
-        for package in oak_db::workspace_dependencies(db) {
+        // For each package used across all of the workspace roots, request its sources if
+        // we have never seen it before
+        for package in oak_db::all_package_dependencies(db) {
             if self.state.contains_key(package) {
                 // If we've seen this package before, don't request sources again!
                 continue;
