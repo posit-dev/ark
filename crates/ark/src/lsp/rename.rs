@@ -72,10 +72,10 @@ pub(crate) fn rename(
         let target_url = state.wire_url(site.file);
 
         // A site spelled as a quoted string is a string-form binding
-        // (`assign("x", ..)`, `"x" <- ..`). Rename it in place, keeping the
-        // quotes, rather than unquoting it: dropping the quotes on an
-        // `assign()` argument would turn the name into a variable reference and
-        // change the program.
+        // (`assign("x", ..)`, `"x" <- ..`). We rename it in place, keeping the
+        // quotes if there are any because they have semantic significance:
+        // dropping the quotes on an `assign("foo", ...)` argument would turn
+        // the name into a variable reference and change the program.
         let source = site.file.source_text(db);
         let new_text = match string_delimiter(source, site.range) {
             Some(delimiter) => quote_name(&new_name, delimiter),
@@ -97,8 +97,7 @@ pub(crate) fn rename(
 }
 
 /// The opening quote of the string literal at `range` in `source`, or `None`
-/// when the site is a bare identifier. A string-form name binding renders its
-/// name as a quoted argument, so its rename edit has to stay quoted.
+/// when the site is a bare identifier.
 fn string_delimiter(source: &str, range: TextRange) -> Option<char> {
     let slice = &source[usize::from(range.start())..usize::from(range.end())];
     match slice.chars().next() {
