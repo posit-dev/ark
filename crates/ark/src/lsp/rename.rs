@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_path::FilePath;
-use biome_rowan::TextRange;
-use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::PrepareRenameResponse;
@@ -59,34 +57,19 @@ pub(crate) fn rename(
 
     let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
 
-    // Normalize the new name to its canonical R identifier syntax
-    // (backtick-wrapped if needed) up front, so an invalid name fails fast. Use
-    // sites are always bare identifiers, so the name must be a valid identifier
-    // regardless of how any one site is spelled.
-    let identifier_text = to_identifier_text(&new_name)?;
-    let ranges = oak_ide::rename(db, file, offset)?;
+    // oak_ide resolves the sites and renders each edit in its own spelling
+    // (bare identifier, or a quoted string for a string-form binding).
+    let edits = oak_ide::rename(db, file, offset, &new_name)?;
 
     let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
-    for site in ranges {
-        let line_index = site.file.line_index(db);
-        let target_url = state.wire_url(site.file);
-
-        // A site spelled as a quoted string is a string-form binding
-        // (`assign("x", ..)`, `"x" <- ..`). We rename it in place, keeping the
-        // quotes if there are any because they have semantic significance:
-        // dropping the quotes on an `assign("foo", ...)` argument would turn
-        // the name into a variable reference and change the program.
-        let source = site.file.source_text(db);
-        let new_text = match string_delimiter(source, site.range) {
-            Some(delimiter) => quote_name(&new_name, delimiter),
-            None => identifier_text.clone(),
-        };
-
-        let range = to_proto::range(site.range, line_index, encoding)?;
-        changes
-            .entry(target_url)
-            .or_default()
-            .push(TextEdit { range, new_text });
+    for edit in edits {
+        let line_index = edit.file.line_index(db);
+        let target_url = state.wire_url(edit.file);
+        let range = to_proto::range(edit.range, line_index, encoding)?;
+        changes.entry(target_url).or_default().push(TextEdit {
+            range,
+            new_text: edit.new_text,
+        });
     }
 
     Ok(Some(WorkspaceEdit {
@@ -94,24 +77,4 @@ pub(crate) fn rename(
         document_changes: None,
         change_annotations: None,
     }))
-}
-
-/// The opening quote of the string literal at `range` in `source`, or `None`
-/// when the site is a bare identifier.
-fn string_delimiter(source: &str, range: TextRange) -> Option<char> {
-    let slice = &source[usize::from(range.start())..usize::from(range.end())];
-    match slice.chars().next() {
-        Some(delimiter @ ('"' | '\'')) => Some(delimiter),
-        _ => None,
-    }
-}
-
-/// Render `name` as a quoted string literal using `delimiter`. Identifiers
-/// don't contain quotes or backslashes, but we escape defensively so an unusual
-/// name can't break out of the string.
-fn quote_name(name: &str, delimiter: char) -> String {
-    let escaped = name
-        .replace('\\', "\\\\")
-        .replace(delimiter, &format!("\\{delimiter}"));
-    format!("{delimiter}{escaped}{delimiter}")
 }

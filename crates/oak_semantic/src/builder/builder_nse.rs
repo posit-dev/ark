@@ -80,8 +80,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         // Record each assigned name as a binding so a later callee in this scope
-        // sees it shadowed (the correctness win: `assign("local", identity)`
-        // masks base `local`), and cache the bindings for the walk to define.
+        // sees it shadowed (e.g. `assign("local", identity)` masks base
+        // `local`).
         if let Some(bindings) = assign {
             let range = call.syntax().text_trimmed_range();
             for binding in bindings {

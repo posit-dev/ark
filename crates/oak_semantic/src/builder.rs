@@ -1190,9 +1190,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.collect_source_call(call);
         }
 
-        // Assign: same recognition path. The scan cached the bound names; here we
-        // emit the definitions so they feed the use-def map, `exports()`, and
-        // goto.
+        // Assign: same recognition path. The scan cached the bound names and we
+        // emit the corresponding definitions so they feed the use-def map,
+        // `exports()`, and goto.
         if self
             .call_resolutions
             .get(&range)
@@ -1338,7 +1338,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Emit the `Assign` definition for a binding operator (`x %<>% f()`) the
+    /// Emit the `Assign` definition for a binding operator (e.g. `x %<>% f()`) the
     /// scan recognized, after its operands were collected as uses.
     fn collect_assign_operator(&mut self, bin: &RBinaryExpression) {
         let range = bin.syntax().text_trimmed_range();
@@ -1405,8 +1405,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 ///   `SemanticCall::Attach`.
 /// - `source`: the files a recognized `source()` call brings in, each with its
 ///   resolution.
-/// - `assign`: the bindings a recognized `assign()` call creates in the current
-///   scope. Non-empty is the recognition marker; the walk defines each binding.
+/// - `assign`: the bindings `assign()`-like calls create in the current scope.
 #[derive(Default)]
 struct CallResolution {
     arguments: Option<ResolvedArgumentEffects>,
