@@ -19,6 +19,7 @@ use super::BoundNames;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
 use crate::effects::Argument;
+use crate::effects::ArgumentEffect;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::Effects;
@@ -43,7 +44,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// because resolution of effects in these lazy scopes needs the child's own
     /// flow context.
     pub(super) fn scan_call(&mut self, call: &RCall) {
-        let (nse_args, attach, source, assign) = match self.resolve_effects(call) {
+        let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
             Some(effects) => (
                 effects.arguments,
                 effects.attach,
@@ -94,7 +95,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             }
         }
 
-        let Some(nse_args) = nse_args else {
+        let Some(arg_effects) = arg_effects else {
             if let Ok(args) = call.arguments() {
                 for item in args.items().iter() {
                     let Ok(arg) = item else { continue };
@@ -115,9 +116,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            match nse_args[i] {
+            match arg_effects[i] {
                 None => self.scan_expression(&value),
-                Some(nse_arg) => match (nse_arg.scope, nse_arg.timing) {
+                Some(Argument {
+                    effect: ArgumentEffect::Nse { scope, timing },
+                    ..
+                }) => match (scope, timing) {
                     // Calls like `evalq()`
                     (NseScope::Current, NseTiming::Eager) => self.scan_expression(&value),
 
@@ -163,11 +167,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             }
         }
 
-        // Hand the resolved NSE arguments to the walk (at the end to avoid a clone)
+        // Hand the resolved argument effects to the walk (at the end to avoid a clone)
         self.call_resolutions
             .entry(call.syntax().text_trimmed_range())
             .or_default()
-            .arguments = Some(nse_args);
+            .arguments = Some(arg_effects);
     }
 
     /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
@@ -492,7 +496,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Process a call the scan pass decided is NSE, using the resolved argument
     /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
     /// inline.
-    pub(super) fn collect_nse_call(&mut self, call: &RCall, nse_args: ResolvedArgumentEffects) {
+    pub(super) fn collect_nse_call(&mut self, call: &RCall, arg_effects: ResolvedArgumentEffects) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -502,9 +506,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            match nse_args[i] {
+            match arg_effects[i] {
                 None => self.collect_expression(&value),
-                Some(nse_arg) => self.collect_nse_argument(nse_arg, &value),
+                Some(argument) => self.collect_nse_argument(argument, &value),
             }
         }
     }
@@ -515,8 +519,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already scanned by the descent, so we install its pending names and only
     /// walk. The remaining lazy bodies are their own scan units that we scan
     /// here on entry.
-    fn collect_nse_argument(&mut self, nse_arg: &Argument, value: &AnyRExpression) {
-        match (nse_arg.scope, nse_arg.timing) {
+    fn collect_nse_argument(&mut self, argument: &Argument, value: &AnyRExpression) {
+        let ArgumentEffect::Nse { scope, timing } = argument.effect;
+        match (scope, timing) {
             // Calls like `evalq()`
             (NseScope::Current, NseTiming::Eager) => {
                 self.collect_expression(value);

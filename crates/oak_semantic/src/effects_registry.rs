@@ -1,4 +1,5 @@
 use crate::effects::Argument;
+use crate::effects::ArgumentEffect;
 use crate::effects::ArgumentsAnnotation;
 use crate::effects::AssignAnnotation;
 use crate::effects::AttachAnnotation;
@@ -45,8 +46,10 @@ macro_rules! nse {
                     arguments: &[$(Argument {
                         name: $name,
                         position: $pos,
-                        scope: $scope,
-                        timing: $timing,
+                        effect: ArgumentEffect::Nse {
+                            scope: $scope,
+                            timing: $timing,
+                        },
                     }),+],
                 }),
                 attach: None,

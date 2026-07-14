@@ -17,7 +17,9 @@ use crate::semantic_index::NseTiming;
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]
 pub struct Effects {
-    /// Evaluate arguments in non-standard fashion
+    /// Per-argument evaluation effects, resolved against the call and aligned
+    /// 1:1 with its arguments. `None` at a slot means a plain (standard-eval)
+    /// argument.
     pub arguments: Option<ResolvedArgumentEffects>,
     /// Attach a package
     pub attach: Option<String>,
@@ -152,24 +154,33 @@ pub struct Formal {
     pub position: usize,
 }
 
-/// A call's resolved NSE arguments: for each argument in call order, the scoped
-/// argument it matched, or `None` for a plain argument.
+/// A call's resolved argument effects: for each argument in call order, the
+/// annotated argument it matched, or `None` for a plain (standard-eval)
+/// argument.
 pub type ResolvedArgumentEffects = Vec<Option<&'static Argument>>;
 
-/// Declares how an NSE function's arguments create scopes, and serves as the
+/// Declares how a function evaluates its annotated arguments, and serves as the
 /// default [`EffectHandler`] for it by matching the declaration to a call.
 #[derive(Debug, Clone, Copy)]
 pub struct ArgumentsAnnotation {
     pub arguments: &'static [Argument],
 }
 
-/// A single argument that creates an NSE scope.
+/// A single annotated argument: its effect, plus where to find it in a call.
 #[derive(Debug)]
 pub struct Argument {
     pub name: &'static str,
     pub position: usize,
-    pub scope: NseScope,
-    pub timing: NseTiming,
+    pub effect: ArgumentEffect,
+}
+
+/// What static operation an argument's evaluation calls for, mirroring R's
+/// evaluation model. Absence (an argument not listed on an annotation) means
+/// standard evaluation of an unquoted expression, the common case.
+#[derive(Debug, Clone, Copy)]
+pub enum ArgumentEffect {
+    /// Quote plus Eval in a controlled scope, fused
+    Nse { scope: NseScope, timing: NseTiming },
 }
 
 impl EffectHandler for ArgumentsAnnotation {
