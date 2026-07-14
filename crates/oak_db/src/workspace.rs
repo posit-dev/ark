@@ -5,22 +5,25 @@ use crate::Db;
 use crate::Package;
 use crate::RootKind;
 
-/// Packages the workspace depends on
+/// Packages that any workspace root depends on
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 ///
 /// Unknown packages (not installed) are dropped, along with those that resolve to a
 /// workspace package (which is currently being worked on).
 #[salsa::tracked(returns(ref))]
-pub fn workspace_dependencies(db: &dyn Db) -> Vec<Package> {
+pub fn all_package_dependencies(db: &dyn Db) -> Vec<Package> {
     // Split into several queries to maximize backdating (changing a workspace file
     // shouldn't require re-querying `DESCRIPTION` dependencies)
-    let from_files = workspace_file_dependencies(db);
-    let from_packages = workspace_package_dependencies(db);
+    let from_files = all_workspace_file_dependencies(db);
+    let from_packages = all_workspace_package_dependencies(db);
+    let from_search = default_search_path_packages(db);
 
-    let mut packages: Vec<Package> = Vec::with_capacity(from_files.len() + from_packages.len());
+    let mut packages: Vec<Package> =
+        Vec::with_capacity(from_files.len() + from_packages.len() + from_search.len());
     packages.extend(from_files);
     packages.extend(from_packages);
+    packages.extend(from_search);
 
     packages.sort_by_cached_key(|package| package.name(db));
     packages.dedup_by_key(|package| package.name(db));
@@ -28,13 +31,13 @@ pub fn workspace_dependencies(db: &dyn Db) -> Vec<Package> {
     packages
 }
 
-/// Packages used by files / scripts in the workspace
+/// Packages used by files / scripts in any workspace root
 ///
 /// i.e. `library()` / `require()` / `::` / `:::`
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 #[salsa::tracked(returns(ref))]
-fn workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
+fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
     // It's likely that we will have a lot of duplicated package use across workspace
     // files, so we use a BTreeSet to avoid having to sort and dedup a large vector
     let mut names: BTreeSet<&str> = BTreeSet::new();
@@ -50,14 +53,14 @@ fn workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
     as_packages(names, db)
 }
 
-/// Packages used by a workspace package's `DESCRIPTION` file
+/// Packages used by any workspace package's `DESCRIPTION` file
 ///
 /// We take `Depends` and `Imports`, but not `Suggests`, as `Suggests` will
 /// instead be referenced by `::` elsewhere as required
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 #[salsa::tracked(returns(ref))]
-fn workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
+fn all_workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
     // We aren't expecting there to be many duplicates here (probably none for single
     // package workspaces), so a simple Vec is fine
     let mut names = Vec::new();
@@ -75,6 +78,23 @@ fn workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
     names.dedup();
 
     as_packages(names, db)
+}
+
+/// Packages implicitly used by a workspace via R's default search path
+///
+/// - Workspace scripts always implicitly use these packages, even if they aren't
+///   mentioned via a `library()` / `::` call.
+///
+/// - Workspace package files technically only depend on {base}, but if your package has
+///   any arbitrary scripts in it then we are going need the rest of the base packages
+///   anyways, and returning them all here just ensures that their sources are available,
+///   it doesn't affect package diagnostics, so it's okay to over approximate for
+///   simplicity.
+///
+/// These are effectively static, so we don't need to sort them by name at this point
+#[salsa::tracked(returns(ref))]
+fn default_search_path_packages(db: &dyn Db) -> Vec<Package> {
+    as_packages(crate::search::DEFAULT_SEARCH_PATH_PACKAGES, db)
 }
 
 /// Converts an iterable of `names` into their corresponding `Package`s, throwing out:

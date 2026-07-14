@@ -12,6 +12,7 @@ mod name;
 mod package;
 mod package_resolve;
 mod parse;
+mod search;
 mod storage;
 mod workspace;
 
@@ -43,4 +44,4 @@ pub use oak_package_metadata::description::Priority;
 pub use package::Package;
 pub use package_resolve::PackageVisibility;
 pub use storage::OakDatabase;
-pub use workspace::workspace_dependencies;
+pub use workspace::all_package_dependencies;

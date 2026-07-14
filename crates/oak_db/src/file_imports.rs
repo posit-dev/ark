@@ -31,22 +31,6 @@ pub enum ImportLayer {
     Package(Package),
 }
 
-/// The default R search path: packages always attached at startup, in
-/// the order R's `search()` reports them (last attached = searched
-/// first, so `stats` is highest-priority and `base` is lowest).
-/// Materialised as `Package` layers; packages absent from the
-/// workspace and library roots drop out (the LSP fills them in later
-/// via its source handler).
-const DEFAULT_SEARCH_PATH: [&str; 7] = [
-    "stats",
-    "graphics",
-    "grDevices",
-    "utils",
-    "datasets",
-    "methods",
-    "base",
-];
-
 #[salsa::tracked]
 impl File {
     /// The import layers visible to this file at end-of-file, in R's lookup
@@ -395,7 +379,7 @@ fn extend_with_base(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
 }
 
 fn extend_with_default_search_path(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
-    for pkg_name in DEFAULT_SEARCH_PATH {
+    for pkg_name in crate::search::DEFAULT_SEARCH_PATH_PACKAGES {
         if let Some(pkg) = db.package_by_name(pkg_name) {
             layers.push(ImportLayer::Package(pkg));
         }
