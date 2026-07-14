@@ -1411,8 +1411,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 /// What the scan resolved a single call to, for the walk to reuse. A call can
 /// carry several of these at once.
 ///
-/// - `arguments`: the NSE effect the call resolved to, filled in flow order. `None`
-///   means "not NSE".
+/// - `arguments`: the per-argument evaluation effects the call resolved to,
+///   filled in flow order. `None` means no annotated arguments (not NSE today).
 /// - `attach`: the package a `library()`/`require()` call attaches, recognized
 ///   shadow-aware on the resolve path. The walk reads it back to emit a scoped
 ///   `SemanticCall::Attach`.
