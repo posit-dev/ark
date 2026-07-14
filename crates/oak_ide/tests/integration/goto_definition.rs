@@ -218,3 +218,22 @@ fn test_navigates_to_delayed_assign_binding() {
     assert_eq!(targets[0].name, "x");
     assert_eq!(targets[0].full_range, range(14, 17));
 }
+
+#[test]
+fn test_navigates_from_assign_definition_site() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "a.R", "assign(\"x\", 1)\nx\n");
+
+    // Cursor on the `"x"` name literal at the definition site (offset 8, the `x`
+    // inside the quotes), not a later use. Resolving lands on the def itself.
+    let offset = TextSize::from("assign(\"".len() as u32);
+    let targets = goto_definition(&db, file, offset);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+    assert_eq!(targets[0].full_range, range(7, 10));
+
+    // TODO!(nse-resolver): goto for a `%<>%`/`%<~%` binding can't be tested here
+    // yet, from a use or from its definition site. `SalsaImportsResolver` only
+    // resolves `base`, so the operators aren't recognized at this layer until
+    // the resolver walks the search path.
+}

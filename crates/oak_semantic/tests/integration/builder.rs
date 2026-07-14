@@ -3,12 +3,12 @@ use aether_parser::RParserOptions;
 use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
-use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
 use oak_semantic::effects::AssignBinding;
 use oak_semantic::effects::CallContext;
 use oak_semantic::effects::EffectHandler;
+use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects_registry;
 use oak_semantic::semantic_index::DefinitionId;
@@ -1658,6 +1658,161 @@ fn test_assign_without_value_has_no_value_handle() {
     ));
 }
 
+// --- binding operators (`%<>%`, `%<~%`) ---
+
+/// Build with `packages` attached (plus base), for package-contributed effects
+/// like magrittr's `%<>%` operator.
+fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIndex {
+    let parsed = parse(source, RParserOptions::default());
+    if parsed.has_error() {
+        panic!("source has syntax errors: {source}");
+    }
+    build_index(&parsed.tree(), TestImportsResolver::with_attached(packages))
+}
+
+#[test]
+fn test_magrittr_compound_assignment_binds_lhs() {
+    // `x %<>% f()` is sugar for `x <- f(x)`, so it binds `x`, and both `x` and
+    // `f` are reads.
+    let index = index_with_attached("x %<>% f()", &["magrittr"]);
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    // Operand uses, in collection order: `x` (left), then `f` (right).
+    assert_eq!(index.uses(file).len(), 2);
+    let symbols = index.symbols(file);
+    assert_eq!(
+        symbols
+            .symbol(index.uses(file)[UseId::from(0)].symbol())
+            .name(),
+        "x"
+    );
+    assert_eq!(
+        symbols
+            .symbol(index.uses(file)[UseId::from(1)].symbol())
+            .name(),
+        "f"
+    );
+}
+
+#[test]
+fn test_magrittr_compound_assignment_name_and_value_handles() {
+    // The `name` handle is the left operand (goto, rename), the `value` handle
+    // the right operand.
+    let source = "x %<>% f()";
+    let parsed = parse(source, RParserOptions::default());
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(
+        &parsed.tree(),
+        TestImportsResolver::with_attached(&["magrittr"]),
+    );
+
+    let Some(DefinitionKind::Assign {
+        name,
+        value: Some(value),
+        ..
+    }) = only_assign_def(&index)
+    else {
+        panic!("expected an assign def with a value handle");
+    };
+    assert_eq!(name.to_node(&root).syntax().text_trimmed().to_string(), "x");
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "f()"
+    );
+}
+
+#[test]
+fn test_rlang_lazy_assignment_binds_lhs() {
+    let index = index_with_attached("x %<~% compute()", &["rlang"]);
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_s7_walrus_assignment_binds_lhs() {
+    // S7's `:=` binds its left operand, like `%<>%`. It's the `WALRUS` token
+    // kind rather than `SPECIAL`, so it exercises the other arm of the operator
+    // gate.
+    let index = index_with_attached("x := f()", &["S7"]);
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_plain_operators_do_not_bind() {
+    // A pipe and a plain infix operator are not assign effects, even with
+    // magrittr attached: the match is on the exact operator text.
+    assert!(only_assign_def(&index_with_attached("x %>% f()", &["magrittr"])).is_none());
+    assert!(only_assign_def(&index_with_attached("x %in% y", &["magrittr"])).is_none());
+}
+
+#[test]
+fn test_compound_assignment_shadowed_by_local_binding_not_recognized() {
+    // A user-defined `%<>%` shadows magrittr's, so the operator binds nothing.
+    let index = index_with_attached("`%<>%` <- function(lhs, rhs) {}\nx %<>% f()", &["magrittr"]);
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_complex_lhs_not_recorded() {
+    // A complex target binds no name, matching `<-` on `x$y <- v`.
+    let index = index_with_attached("x$y %<>% f()", &["magrittr"]);
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_not_recognized_without_magrittr() {
+    // Package-aware: without magrittr attached, `%<>%` doesn't resolve, so it
+    // stays a plain operator and binds nothing.
+    let index = index_with_base("x %<>% f()");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_use_resolves_to_binding() {
+    // A later use resolves to the operator's binding, the same as `assign()`.
+    let index = index_with_attached("y %<>% f()\ny", &["magrittr"]);
+    let file = ScopeId::from(0);
+
+    // Uses in order: `y` (left), `f` (right), then the trailing `y`.
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(2));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_compound_assignment_definition_range_is_name() {
+    // The def's range is the left operand, so `definition_at` locates it when the
+    // cursor is on the name at the definition site (not an empty span).
+    let index = index_with_attached("value %<>% f()", &["magrittr"]);
+    let (scope, _id, def) = index
+        .definition_at(biome_rowan::TextSize::from(0))
+        .expect("assign def at the name offset");
+    assert_eq!(scope, ScopeId::from(0));
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_compound_assignment_binding_masks_later_callee() {
+    // `local %<>% f()` binds `local`, so the later `local({ ... })` is shadowed
+    // and not treated as NSE (no nested scope pushed). The correctness win,
+    // parallel to `assign("local", identity)` masking base `local`.
+    let index = index_with_attached("local %<>% f()\nlocal({ x <- 1 })", &["magrittr"]);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
 /// Project each access into a comparable tuple via the public accessors.
 fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
     index
@@ -2039,7 +2194,7 @@ impl EffectHandler for MultiAssignHandler {
             .next()?
             .ok()?
             .value()?;
-        let ptr = AstPtr::new(&expr);
+        let ptr = RangedAstPtr::new(&expr);
         Some(vec![
             AssignBinding {
                 name: "a".into(),

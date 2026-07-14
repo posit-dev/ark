@@ -312,6 +312,24 @@ fn test_name_range_for_assign_call() {
 }
 
 #[test]
+fn test_resolve_from_assign_definition_site() {
+    // Cursor on the `"x"` name of `assign("x", 1)` resolves to its own binding,
+    // so goto/rename can start from the definition site. The def's range is the
+    // name token, not an empty span, which is what `definition_at` hit-tests.
+    use biome_rowan::TextSize;
+    use oak_semantic::semantic_index::DefinitionKind;
+
+    let mut db = TestDb::new();
+    let source = "assign(\"x\", 1)\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let offset = source.find("\"x\"").unwrap();
+
+    let defs = files[0].resolve_at(&db, TextSize::from(offset as u32));
+    assert_eq!(defs.len(), 1);
+    assert!(matches!(defs[0].kind(&db), DefinitionKind::Assign { .. }));
+}
+
+#[test]
 fn test_name_range_returns_none_for_import_kind() {
     // `File::resolve` chases past every `Import` and only ever returns a
     // `Local`-kinded `Definition`, so the `Import` arm of `name_range` is

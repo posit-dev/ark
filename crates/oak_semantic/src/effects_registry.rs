@@ -125,6 +125,10 @@ static REGISTRY: &[Entry] = &[
     // base assign
     assign!("base", "assign", 0),
     assign!("base", "delayedAssign", 0),
+    // magrittr / rlang / S7 binding operators
+    assign!("magrittr", "%<>%", 0),
+    assign!("rlang", "%<~%", 0),
+    assign!("S7", ":=", 0),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny

@@ -5,6 +5,9 @@ use aether_syntax::RArgument;
 use aether_syntax::RCall;
 use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
+// Re-exported so consumers building an `AssignBinding` (custom `EffectHandler`s)
+// can name the `name_expr` field's type without depending on oak_core directly.
+pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 
@@ -28,13 +31,15 @@ pub struct Effects {
 }
 
 /// One name an assign call binds, with the syntax handles its consumers need.
-/// The bound name feeds the symbol table; `name_expr` anchors goto and rename;
-/// `value_expr` is what a type checker infers the binding's type from (`None`
-/// when the call has no value argument).
+/// - The bound name feeds the symbol table.
+/// - `name_expr` anchors the goto target and carries the trimmed range the
+///   cursor hit-tests against, so goto/rename can start from the definition site.
+/// - `value_expr` is what a type checker infers the binding's type from (`None`
+///   with no value argument).
 #[derive(Debug, Clone)]
 pub struct AssignBinding {
     pub name: String,
-    pub name_expr: AstPtr<AnyRExpression>,
+    pub name_expr: RangedAstPtr<AnyRExpression>,
     pub value_expr: Option<AstPtr<AnyRExpression>>,
 }
 
@@ -66,7 +71,9 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
 
 /// Context for effect handlers.
 ///
-/// Allows querying the properties or static values of arguments.
+/// Allows querying the properties or static values of arguments. Stateless
+/// today, an extension point for information a call's syntax doesn't carry (e.g.
+/// resolving a `character.only` variable to its string value) once that lands.
 #[derive(Default)]
 pub struct CallContext;
 
@@ -246,6 +253,10 @@ impl EffectHandler for SourceAnnotation {
         // to a named argument coming first (e.g. `source(echo = TRUE, "x.R")`),
         // which the call-position matching isn't yet. A named `file =` therefore
         // isn't recognized today.
+        //
+        // TODO(nse): once `match_arguments` is signature-aware (see `Formal`),
+        // the leading-named-arg robustness comes for free and this scan could
+        // fold onto it, keeping only the `local =` bail on top.
         let mut path: Option<String> = None;
         let mut positional = 0;
 
@@ -305,8 +316,13 @@ impl EffectHandler for AssignAnnotation {
         // Matched positionally among unnamed arguments, same as `source`, so a
         // leading named argument doesn't shift the count and a named `x =` isn't
         // recognized. The value is the positional right after the name (base
-        // `assign(x, value, ...)`); a named `value =` isn't captured yet.
-        let mut name: Option<(String, AstPtr<AnyRExpression>)> = None;
+        // `assign(x, value, ...)`).
+        //
+        // FIXME: A named `value =` isn't captured yet.
+        // TODO(nse): Fold onto `match_arguments()` once it's signature-aware,
+        // same as `source` (see `SourceAnnotation::resolve`), keeping only the
+        // `envir`/`pos` bail and the value-after-name read on top.
+        let mut name: Option<(String, RangedAstPtr<AnyRExpression>)> = None;
         let mut value_expr: Option<AstPtr<AnyRExpression>> = None;
         let mut positional = 0;
 
@@ -317,9 +333,11 @@ impl EffectHandler for AssignAnnotation {
                 let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
                     continue;
                 };
+
                 // An explicit target environment means the binding lands
                 // somewhere other than the current scope, so it isn't a fact we
-                // can record here.
+                // can record here. In the future, we could statically recognise
+                // some environment selectors like `parent.frame()`.
                 if matches!(name_ident.name_text().as_str(), "envir" | "pos") {
                     return None;
                 }
@@ -329,7 +347,7 @@ impl EffectHandler for AssignAnnotation {
             if positional == self.position {
                 if let Some(value) = arg.value() {
                     if let Some(resolved) = ctx.resolve_static_string(&value) {
-                        name = Some((resolved, AstPtr::new(&value)));
+                        name = Some((resolved, RangedAstPtr::new(&value)));
                     }
                 }
             } else if positional == self.position + 1 {
