@@ -118,6 +118,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
             match arg_effects[i] {
                 None => self.scan_expression(&value),
+                // Quoted argument: captured unevaluated. No effects to scan, no
+                // names to bind.
+                Some(Argument {
+                    effect: ArgumentEffect::Quote,
+                    ..
+                }) => {},
                 Some(Argument {
                     effect: ArgumentEffect::Nse { scope, timing },
                     ..
@@ -490,9 +496,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            match arg_effects[i] {
-                None => self.collect_expression(&value),
-                Some(argument) => self.collect_nse_argument(argument, &value),
+            let Some(argument) = arg_effects[i] else {
+                self.collect_expression(&value);
+                continue;
+            };
+            match argument.effect {
+                ArgumentEffect::Nse { scope, timing } => {
+                    self.collect_nse_argument(scope, timing, &value)
+                },
+                // Quoted argument: No uses inside.
+                ArgumentEffect::Quote => {},
             }
         }
     }
@@ -503,8 +516,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already scanned by the descent, so we install its pending names and only
     /// walk. The remaining lazy bodies are their own scan units that we scan
     /// here on entry.
-    fn collect_nse_argument(&mut self, argument: &Argument, value: &AnyRExpression) {
-        let ArgumentEffect::Nse { scope, timing } = argument.effect;
+    fn collect_nse_argument(&mut self, scope: NseScope, timing: NseTiming, value: &AnyRExpression) {
         match (scope, timing) {
             // Calls like `evalq()`
             (NseScope::Current, NseTiming::Eager) => {
