@@ -1,9 +1,13 @@
 use aether_syntax::AnyRExpression;
+use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
+use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
+use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::TextRange;
+use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
 
@@ -15,6 +19,7 @@ use super::BoundNames;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
 use crate::effects::Argument;
+use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
@@ -165,6 +170,53 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .arguments = Some(nse_args);
     }
 
+    /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
+    pub(super) fn scan_operator_assign(&mut self, bin: &RBinaryExpression) {
+        let Some(binding) = self.resolve_operator_assign(bin) else {
+            return;
+        };
+        self.record_binding(binding.name.clone());
+        self.call_resolutions
+            .entry(bin.syntax().text_trimmed_range())
+            .or_default()
+            .assign
+            .push(binding);
+    }
+
+    /// Recognize a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`)
+    /// as an assign effect and build its binding, or `None` for any other binary
+    /// operator.
+    fn resolve_operator_assign(&mut self, bin: &RBinaryExpression) -> Option<AssignBinding> {
+        let op = bin.operator().ok()?;
+
+        // A binding operator is either a `%...%` (`SPECIAL`, e.g. `%<>%`, where
+        // the operator text distinguishes it from `%>%`) or the walrus `:=`
+        // (`WALRUS`). Gate on the token kind before consulting the registry so we
+        // skip the resolver for ordinary operators like `+`.
+        if !matches!(op.kind(), RSyntaxKind::SPECIAL | RSyntaxKind::WALRUS) {
+            return None;
+        }
+        let op_text = op.text_trimmed();
+
+        // Bail early if this operator is not known to have effects annotations
+        if !effects_registry::annotates(op_text) {
+            return None;
+        }
+
+        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+        let _assign = handlers.assign?;
+
+        let left = bin.left().ok()?;
+        let right = bin.right().ok()?;
+        let (name, _) = assignment_name(&left)?;
+
+        Some(AssignBinding {
+            name,
+            name_expr: RangedAstPtr::new(&left),
+            value_expr: Some(AstPtr::new(&right)),
+        })
+    }
+
     /// Copy the names a `Current + Lazy` body defines into the owner's
     /// bound names, without marking them bound in the scan's flow state.
     ///
@@ -261,7 +313,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Resolve a call's effects.
     fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
         let handlers = self.resolve_effects_handlers(call)?;
-
         let ctx = CallContext::new();
 
         let arguments = handlers
@@ -310,53 +361,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match &func {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
-
-                // First check for a local definition (which in the future may
-                // carry declared effects that we resolve here)
-                //
-                // Looked up from `flow_state` which already carries every
-                // eager binding visible here: the scope's own flow-precise
-                // bindings so far, plus the enclosing eager environment seeded
-                // at `begin_scan()`. Forward and deferred (lazy-routed)
-                // bindings are excluded. A forward one isn't in `flow_state`
-                // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-                if self.flow_state.is_bound(&name) {
-                    return self.resolve_local_effects(&name);
-                }
-
-                // Bail early if it is known that no package annotates this name
-                // with effects. This speeds up the common case of no known annotations.
-                if !effects_registry::annotates(&name) {
-                    return None;
-                }
-
-                // Now check imports since the symbol is locally unbound. The
-                // arena's `current_scope` is the scan unit's scope (the descent
-                // pushes no arena scopes), so its laziness is the "am I in a lazy
-                // context" test the resolver needs. `attached_flow` is the
-                // flow-precise attach prefix during the file scan and the
-                // complete end-of-file set during the walk.
-                let lazy = self.scopes[self.current_scope].kind.is_lazy();
-                let effects = self
-                    .resolver
-                    .resolve_effects(&name, &self.attached_flow, lazy)?;
-
-                // The callee is unbound by any eager binding, so its effect
-                // holds. If a lazy-crossed ancestor binds it whole-scope, that
-                // binding's timing relative to this deferred body is
-                // undetermined, so the decision is a guess. Flag it.
-                //
-                // TODO(diagnostics): a symmetric attach ambiguity is out of
-                // scope here. A callee resolved not-effectful could be flipped
-                // by an attach from a sibling lazy body (`g <- function()
-                // library(shiny); f <- function() reactive({...}`). Detecting it
-                // needs the complete set of lazy-context attaches, a post-pass
-                // rather than this local ancestor check, so it belongs in the
-                // future salsa diagnostics query where this lint should move too.
-                if self.is_lazily_shadowed(&name) {
-                    self.record_lazy_shadow_ambiguity(name, call.syntax().text_trimmed_range());
-                }
-                Some(effects)
+                self.resolve_symbol_effects(&name, call.syntax().text_trimmed_range())
             },
 
             AnyRExpression::RNamespaceExpression(ns_expr) => {
@@ -374,6 +379,60 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
             _ => None,
         }
+    }
+
+    /// Resolve a callee `sym` to its [`EffectsHandlers`].
+    ///
+    /// `range` is the invocation's range, used to anchor a lazy-shadow
+    /// diagnostic.
+    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
+        // First check for a local definition (which in the future may
+        // carry declared effects that we resolve here)
+        //
+        // Looked up from `flow_state` which already carries every
+        // eager binding visible here: the scope's own flow-precise
+        // bindings so far, plus the enclosing eager environment seeded
+        // at `begin_scan()`. Forward and deferred (lazy-routed)
+        // bindings are excluded. A forward one isn't in `flow_state`
+        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
+        if self.flow_state.is_bound(sym) {
+            return self.resolve_local_effects(sym);
+        }
+
+        // Bail early if it is known that no package annotates this name
+        // with effects. This speeds up the common case of no known annotations.
+        if !effects_registry::annotates(sym) {
+            return None;
+        }
+
+        // Now check imports since the symbol is locally unbound. The
+        // arena's `current_scope` is the scan unit's scope (the descent
+        // pushes no arena scopes), so its laziness is the "am I in a lazy
+        // context" test the resolver needs. `attached_flow` is the
+        // flow-precise attach prefix during the file scan and the
+        // complete end-of-file set during the walk.
+        let lazy = self.scopes[self.current_scope].kind.is_lazy();
+        let effects = self
+            .resolver
+            .resolve_effects(sym, &self.attached_flow, lazy)?;
+
+        // The callee is unbound by any eager binding, so its effect
+        // holds. If a lazy-crossed ancestor binds it whole-scope, that
+        // binding's timing relative to this deferred body is
+        // undetermined, so the decision is a guess. Flag it.
+        //
+        // TODO(diagnostics): a symmetric attach ambiguity is out of
+        // scope here. A callee resolved not-effectful could be flipped
+        // by an attach from a sibling lazy body (`g <- function()
+        // library(shiny); f <- function() reactive({...}`). Detecting it
+        // needs the complete set of lazy-context attaches, a post-pass
+        // rather than this local ancestor check, so it belongs in the
+        // future salsa diagnostics query where this lint should move too.
+        if self.is_lazily_shadowed(sym) {
+            self.record_lazy_shadow_ambiguity(sym.to_string(), range);
+        }
+
+        Some(effects)
     }
 
     /// Local resolver for declared effects, mirroring the imports resolver's

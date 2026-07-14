@@ -668,12 +668,13 @@ pub enum DefinitionKind {
         file: Url,
         name: String,
     },
-    /// A binding created by a call (e.g. `assign("x", value)`) rather than a
-    /// syntactic `<-`. `call` is the whole binding expression (for its range
-    /// and provenance), `name` the name argument (goto, rename), and `value`
-    /// the value argument a type checker infers from (`None` when absent).
+    /// A binding created by a call (e.g. `assign("x", value)`) or a binding
+    /// operator (`x %<>% f()`) rather than a syntactic `<-`. `node` is the whole
+    /// binding expression (for its range and provenance), `name` the name
+    /// argument or left operand (goto, rename), and `value` the value a type
+    /// checker infers from (`None` when absent).
     Assign {
-        call: AstPtr<RCall>,
+        node: AstPtr<AnyRExpression>,
         name: AstPtr<AnyRExpression>,
         value: Option<AstPtr<AnyRExpression>>,
     },

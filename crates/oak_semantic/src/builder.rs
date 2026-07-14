@@ -592,12 +592,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         }
                     }
                 } else {
+                    // A binding operator (`x %<>% f()`) binds its left operand.
+                    // Scan the operands as uses first, then record the binding,
+                    // so a later callee in this scope sees that name shadowed.
+                    // Mirrors the value-then-target order of the `is_assignment`
+                    // branch.
                     if let Ok(lhs) = bin.left() {
                         self.scan_expression(&lhs);
                     }
                     if let Ok(rhs) = bin.right() {
                         self.scan_expression(&rhs);
                     }
+                    self.scan_operator_assign(bin);
                 }
             },
 
@@ -812,12 +818,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 if is_assignment(bin) {
                     self.collect_assignment(bin);
                 } else {
+                    // Operands first, as uses: `x %<>% f` is `x <- f(x)`, so `x`
+                    // is both a read and the binding target, and `f` is a use.
                     if let Ok(lhs) = bin.left() {
                         self.collect_expression(&lhs);
                     }
                     if let Ok(rhs) = bin.right() {
                         self.collect_expression(&rhs);
                     }
+                    // A `%...%` operator the scan recognized as an assign effect
+                    // emits its binding here, after the operand uses.
+                    self.collect_assign_operator(bin);
                 }
             },
 
@@ -1296,7 +1307,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // carries no NSE, just like `f <- local`.
     fn collect_assign_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
-        let call_offset = range.start();
 
         // Read back the bindings the scan extracted (their presence is what the
         // caller checked before dispatching here).
@@ -1305,22 +1315,39 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             None => return,
         };
 
+        self.add_assign_definitions(&AnyRExpression::RCall(call.clone()), bindings);
+    }
+
+    fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {
         for binding in bindings {
-            // The precise name-token range is recovered from the stored `name`
-            // handle downstream, so the def's own range is the empty span at the
-            // call offset, mirroring `source()` imports.
-            let name_range = TextRange::empty(call_offset);
+            // The def's own range is the name token, captured at scan time, so a
+            // cursor on the name at the definition site hit-tests to it, the same
+            // as a syntactic `<-` binding.
+            let name_range = binding.name_expr.text_trimmed_range();
+            let name = binding.name_expr.as_ptr().clone();
             self.add_definition(
                 &binding.name,
                 SymbolFlags::IS_BOUND,
                 DefinitionKind::Assign {
-                    call: AstPtr::new(call),
-                    name: binding.name_expr,
+                    node: AstPtr::new(node),
+                    name,
                     value: binding.value_expr,
                 },
                 name_range,
             );
         }
+    }
+
+    /// Emit the `Assign` definition for a binding operator (`x %<>% f()`) the
+    /// scan recognized, after its operands were collected as uses.
+    fn collect_assign_operator(&mut self, bin: &RBinaryExpression) {
+        let range = bin.syntax().text_trimmed_range();
+        let bindings = match self.call_resolutions.get(&range) {
+            Some(resolution) if !resolution.assign.is_empty() => resolution.assign.clone(),
+            _ => return,
+        };
+
+        self.add_assign_definitions(&AnyRExpression::RBinaryExpression(bin.clone()), bindings);
     }
 
     fn finish(mut self) -> SemanticIndex {

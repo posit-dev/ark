@@ -252,6 +252,40 @@ fn test_rename_assign_call_keeps_quotes() {
 }
 
 #[test]
+fn test_rename_assign_call_from_definition_site() {
+    // Rename invoked with the cursor ON the `assign()` name literal (not a later
+    // use) works too. This is what the def's own range enables: `definition_at`
+    // hit-tests the name token at the definition site.
+    let code = "assign(\"foo\", 1)\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    // Cursor inside the `"foo"` literal.
+    let params = make_rename_params(uri.clone(), 0, 8, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    let expected: Vec<TextEdit> = vec![
+        TextEdit {
+            range: range((0, 7), (0, 12)),
+            new_text: "\"bar\"".to_string(),
+        },
+        TextEdit {
+            range: range((1, 0), (1, 3)),
+            new_text: "bar".to_string(),
+        },
+    ];
+    assert_eq!(edits, expected);
+
+    // TODO!(nse-resolver): rename of a `%<>%`/`%<~%` binding can't be tested here
+    // yet, from a use or from its definition site. `SalsaImportsResolver` only
+    // resolves `base`, so the operators aren't recognized as assign effects at
+    // this layer until the resolver walks the search path. Operator recognition
+    // and its name range are covered in `oak_semantic`'s builder tests meanwhile.
+}
+
+#[test]
 fn test_rename_assign_call_preserves_single_quote_delimiter() {
     let code = "assign('foo', 1)\nfoo\n";
     let uri = test_path("test.R");
