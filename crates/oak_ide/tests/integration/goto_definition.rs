@@ -1,10 +1,15 @@
 //! Goto-definition at the ide layer.
 //!
-//! These only check that `oak_ide::goto_definition` assembles a
-//! `NavigationTarget` from a resolved binding, for a local def and a
-//! cross-file `source()` jump. The resolution itself is covered exhaustively
-//! by `oak_db`'s `file_resolve_at` / `file_resolve` tests, and the use-def
-//! logic by `oak_semantic`; we don't re-test it here.
+//! These only check that `oak_ide::goto_definition()` assembles a
+//! `NavigationTarget` from a resolved binding, i.e.:
+//!
+//! - A local def
+//! - A cross-file `source()` jump
+//! - A `pkg::sym` / `pkg:::sym` namespace access
+//!
+//! The resolution itself is covered exhaustively by `oak_db`'s `file_resolve_at()` /
+//! `file_resolve()` / `package_resolve()` tests, and the use-def logic by `oak_semantic`,
+//! we don't re-test it here.
 
 use biome_rowan::TextSize;
 use oak_db::OakDatabase;
@@ -84,6 +89,85 @@ fn test_navigates_to_package_export_via_library_call() {
     assert_eq!(target.file, pkg_file);
     assert_eq!(target.name, "foo");
     assert_eq!(target.full_range, range(0, 3));
+}
+
+#[test]
+fn test_navigates_via_namespace_access_to_exported_binding() {
+    let mut db = OakDatabase::new();
+
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+
+    let script = upsert(&mut db, "script.R", "mypkg::foo\n");
+
+    // Cursor on `mypkg::f<@>oo`
+    let targets = goto_definition(&db, script, TextSize::from(8));
+    assert_eq!(targets.len(), 1);
+
+    let target = &targets[0];
+    assert_eq!(target.file, pkg_file);
+    assert_eq!(target.name, "foo");
+    assert_eq!(target.full_range, range(0, 3));
+}
+
+#[test]
+fn test_navigates_via_namespace_access_to_internal_binding() {
+    let mut db = OakDatabase::new();
+
+    let pkg_file = install_library_package(&mut db, "mypkg", &[], "a.R", "foo <- function() 42\n");
+
+    let script = upsert(&mut db, "script.R", "mypkg:::foo\n");
+
+    // Cursor on `mypkg:::f<@>oo`
+    let targets = goto_definition(&db, script, TextSize::from(9));
+    assert_eq!(targets.len(), 1);
+
+    let target = &targets[0];
+    assert_eq!(target.file, pkg_file);
+    assert_eq!(target.name, "foo");
+    assert_eq!(target.full_range, range(0, 3));
+}
+
+#[test]
+fn test_namespace_access_cant_jump_to_internal_binding_with_colon_colon() {
+    // i.e. can't jump to internal `foo()` with `mypkg::foo()`!
+    let mut db = OakDatabase::new();
+
+    install_library_package(&mut db, "mypkg", &[], "a.R", "foo <- function() 42\n");
+
+    let script = upsert(&mut db, "script.R", "mypkg::foo\n");
+
+    let targets = goto_definition(&db, script, TextSize::from(8));
+    assert!(targets.is_empty());
+}
+
+#[test]
+fn test_namespace_access_can_jump_to_exported_binding_with_colon_colon_colon() {
+    // i.e. can jump to exported `foo()` with `mypkg:::foo()`!
+    let mut db = OakDatabase::new();
+
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+
+    let script = upsert(&mut db, "script.R", "mypkg:::foo\n");
+
+    // Cursor on `mypkg:::f<@>oo`
+    let targets = goto_definition(&db, script, TextSize::from(9));
+    assert_eq!(targets.len(), 1);
+
+    let target = &targets[0];
+    assert_eq!(target.file, pkg_file);
+    assert_eq!(target.name, "foo");
+    assert_eq!(target.full_range, range(0, 3));
+}
+
+#[test]
+fn test_namespace_access_to_unknown_package() {
+    // No package named `mypkg` is installed, so the access resolves to nothing.
+    let mut db = OakDatabase::new();
+    let script = upsert(&mut db, "script.R", "mypkg::foo\n");
+    let targets = goto_definition(&db, script, TextSize::from(8));
+    assert!(targets.is_empty());
 }
 
 #[test]

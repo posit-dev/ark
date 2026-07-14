@@ -10,8 +10,8 @@ use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::Name;
+use crate::NamespaceVisibility;
 use crate::Package;
-use crate::PackageVisibility;
 
 /// Build a `pkg`-named workspace package with files at the given paths and
 /// contents. NAMESPACE exports are taken from `exports`. Returns the package
@@ -70,7 +70,7 @@ fn test_exported_visible_via_exported_lookup() {
         "foo <- function() 1\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), files[0]);
     assert_eq!(defs[0].name(&db).text(&db).as_str(), "foo");
@@ -86,7 +86,7 @@ fn test_exported_lookup_filters_unexported_name() {
         "foo <- function() 1\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert!(defs.is_empty());
 }
 
@@ -99,7 +99,7 @@ fn test_internal_lookup_finds_unexported_name() {
         "foo <- function() 1\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Internal);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Internal);
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), files[0]);
 }
@@ -113,7 +113,7 @@ fn test_internal_lookup_also_finds_exported_name() {
         "foo <- function() 1\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Internal);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Internal);
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), files[0]);
 }
@@ -127,10 +127,10 @@ fn test_unknown_name_returns_empty() {
     )]);
 
     assert!(pkg
-        .resolve(&db, name(&db, "nope"), PackageVisibility::Exported)
+        .resolve(&db, name(&db, "nope"), NamespaceVisibility::Exported)
         .is_empty());
     assert!(pkg
-        .resolve(&db, name(&db, "nope"), PackageVisibility::Internal)
+        .resolve(&db, name(&db, "nope"), NamespaceVisibility::Internal)
         .is_empty());
 }
 
@@ -144,11 +144,11 @@ fn test_resolves_binding_in_correct_file_for_multi_file_package() {
         ("workspace/pkg/R/b.R", "bar <- function() 2\n"),
     ]);
 
-    let foo_defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let foo_defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(foo_defs.len(), 1);
     assert_eq!(foo_defs[0].file(&db), files[0]);
 
-    let bar_defs = pkg.resolve(&db, name(&db, "bar"), PackageVisibility::Exported);
+    let bar_defs = pkg.resolve(&db, name(&db, "bar"), NamespaceVisibility::Exported);
     assert_eq!(bar_defs.len(), 1);
     assert_eq!(bar_defs[0].file(&db), files[1]);
 }
@@ -164,7 +164,7 @@ fn test_conditional_binding_fans_out() {
         "if (cond) foo <- 1 else foo <- 2\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 2);
 }
 
@@ -182,7 +182,7 @@ fn test_stub_and_onload_override_both_returned() {
         ),
     ]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 2);
     let target_files: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
     assert!(target_files.contains(&files[0]));
@@ -253,7 +253,7 @@ fn test_reexport_via_import_from_resolves_to_source() {
     root.set_packages(&mut db).to(vec![tibble, dplyr]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    let defs = dplyr.resolve(&db, name(&db, "tibble"), PackageVisibility::Exported);
+    let defs = dplyr.resolve(&db, name(&db, "tibble"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), tibble_file);
     assert_eq!(defs[0].name(&db).text(&db).as_str(), "tibble");
@@ -270,7 +270,7 @@ fn test_same_name_defined_in_multiple_files_returns_each() {
         ("workspace/pkg/R/b.R", "foo <- function() 2\n"),
     ]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 2);
     let target_files: Vec<File> = defs.iter().map(|d| d.file(&db)).collect();
     assert!(target_files.contains(&files[0]));
@@ -280,7 +280,7 @@ fn test_same_name_defined_in_multiple_files_returns_each() {
 #[test]
 fn test_base_exports_every_top_level_binding() {
     // `base` doesn't have a `NAMESPACE`, so there are no namespace exports for it.
-    // Instead, `PackageVisibility::Exported` lookups on `base` skip the export check and
+    // Instead, `NamespaceVisibility::Exported` lookups on `base` skip the export check and
     // fall straight through to looking for a top-level binding anywhere in the `base`
     // source files.
     //
@@ -291,7 +291,7 @@ fn test_base_exports_every_top_level_binding() {
         "foo <- function() 1\n",
     )]);
 
-    let defs = pkg.resolve(&db, name(&db, "foo"), PackageVisibility::Exported);
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), files[0]);
     assert_eq!(defs[0].name(&db).text(&db).as_str(), "foo");

@@ -363,3 +363,95 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         }
     );
 }
+
+/// Goto-def through both `pkg::foo()` (exported) and `pkg:::bar()` (internal,
+/// unexported). The triple colon reaches bindings the double colon couldn't.
+#[tokio::test]
+async fn test_goto_definition_resolves_namespace_accesses() {
+    let _aux = init_aux_for_test();
+
+    // `pkg` exports `foo` but not `bar`.
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("pkg"),
+        TestBehavior::Success(vec![(
+            "test.R",
+            "foo <- function() 1\nbar <- function() 1\n",
+        )]),
+    )])));
+
+    // Set up the library that our "installed" package lives in
+    let library = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&library.path().join("pkg"));
+    NamespaceWriter::new()
+        .export("foo")
+        .write(&library.path().join("pkg"));
+
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler)),
+        ),
+    );
+
+    // Workspace usage pkg functions
+    let workspace = tempfile::tempdir().unwrap();
+    let use_path = workspace.path().join("R").join("use.R");
+    let use_uri = Url::from_file_path(&use_path).unwrap();
+    write_sources(&workspace.path().join("R"), &[(
+        "use.R",
+        "pkg::foo()\npkg:::bar()\npkg:::foo()\npkg::bar()\n",
+    )]);
+
+    // Open the workspace folder, triggering a workspace scan
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    let world = state.world();
+    let file = world.db.package_by_name("pkg").unwrap().files(&world.db)[0];
+
+    // `pkg::f<@>oo()`, exported `foo` reached through `::`
+    assert_matches!(
+        goto_definition(make_params(use_uri.clone(), 0, 6), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
+        }
+    );
+
+    // `pkg:::b<@>ar()`, internal `bar` reached through `:::`
+    assert_matches!(
+        goto_definition(make_params(use_uri.clone(), 1, 7), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
+        }
+    );
+
+    // `pkg:::f<@>oo()`, `:::` also reaches an exported binding
+    assert_matches!(
+        goto_definition(make_params(use_uri.clone(), 2, 7), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
+        }
+    );
+
+    // `pkg::b<@>ar()`, `::` can't reach the unexported `bar`
+    assert_eq!(
+        goto_definition(make_params(use_uri, 3, 6), world).unwrap(),
+        None
+    );
+}

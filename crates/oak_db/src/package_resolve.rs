@@ -1,19 +1,8 @@
 use crate::Db;
 use crate::Definition;
 use crate::Name;
+use crate::NamespaceVisibility;
 use crate::Package;
-
-/// Visibility filter for [`Package::resolve`].
-///
-/// Mirrors R's `::` vs `:::` distinction. `Exported` requires `name` to
-/// appear in the package's NAMESPACE `export()` directives. `Internal`
-/// returns any top-level binding the package's files define, exported
-/// or not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PackageVisibility {
-    Exported,
-    Internal,
-}
 
 #[salsa::tracked]
 impl<'db> Package {
@@ -53,12 +42,12 @@ impl<'db> Package {
         self,
         db: &'db dyn Db,
         name: Name<'db>,
-        visibility: PackageVisibility,
+        visibility: NamespaceVisibility,
     ) -> Vec<Definition<'db>> {
         // When resolving an export, the `name` must be present in the `NAMESPACE`
         // exports. If the package is `base`, there is no `NAMESPACE`, but all top-level
         // bindings in `base` are visible by construction, so we skip this check entirely.
-        if visibility == PackageVisibility::Exported &&
+        if visibility == NamespaceVisibility::Exported &&
             self.name(db) != "base" &&
             !self
                 .namespace(db)
@@ -86,7 +75,7 @@ impl<'db> Package {
                 .find(|import| import.name == name_str)
             {
                 if let Some(source) = db.package_by_name(&import.package) {
-                    results = source.resolve(db, name, PackageVisibility::Exported);
+                    results = source.resolve(db, name, NamespaceVisibility::Exported);
                 }
             }
         }
