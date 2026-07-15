@@ -3,6 +3,7 @@ use crate::effects::ArgumentEffect;
 use crate::effects::ArgumentsAnnotation;
 use crate::effects::AssignAnnotation;
 use crate::effects::AttachAnnotation;
+use crate::effects::BindingOperatorHandler;
 use crate::effects::BquoteHandler;
 use crate::effects::EffectsHandlers;
 use crate::effects::SourceAnnotation;
@@ -121,7 +122,8 @@ macro_rules! source {
 }
 
 /// An assign entry: `(name-argument position)`. The function binds a name in the
-/// current scope.
+/// current scope, naming it in a positional argument it evaluates (`assign("x",
+/// v)`).
 macro_rules! assign {
     ($pkg:literal, $func:literal, $pos:literal) => {
         Entry {
@@ -132,6 +134,24 @@ macro_rules! assign {
                 attach: None,
                 source: None,
                 assign: Some(&AssignAnnotation { position: $pos }),
+            },
+        }
+    };
+}
+
+/// An assign-operator entry: a binding operator (`x %<>% f`, `x := v`) that binds
+/// a name in the current scope. It captures its LHS unevaluated, so the name
+/// comes from the LHS text rather than a positional argument, hence no position.
+macro_rules! assign_op {
+    ($pkg:literal, $func:literal) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: None,
+                assign: Some(&BindingOperatorHandler),
             },
         }
     };
@@ -168,9 +188,9 @@ static REGISTRY: &[Entry] = &[
     assign!("base", "assign", 0),
     assign!("base", "delayedAssign", 0),
     // magrittr / rlang / S7 binding operators
-    assign!("magrittr", "%<>%", 0),
-    assign!("rlang", "%<~%", 0),
-    assign!("S7", ":=", 0),
+    assign_op!("magrittr", "%<>%"),
+    assign_op!("rlang", "%<~%"),
+    assign_op!("S7", ":="),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny
