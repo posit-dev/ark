@@ -3,8 +3,10 @@ use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
 use aether_syntax::RArgument;
 use aether_syntax::RCall;
+use biome_rowan::AstNode;
 use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
+use biome_rowan::WalkEvent;
 // Re-exported so consumers building an `AssignBinding` (custom `EffectHandler`s)
 // can name the `name_expr` field's type without depending on oak_core directly.
 pub use oak_core::range::RangedAstPtr;
@@ -140,6 +142,16 @@ impl CallContext {
             _ => None,
         }
     }
+
+    /// Statically evaluate an argument's value expression to a bool.
+    pub fn resolve_static_bool(&self, value: &AnyRExpression) -> Option<bool> {
+        match value {
+            AnyRExpression::RTrueExpression(_) => Some(true),
+            AnyRExpression::RFalseExpression(_) => Some(false),
+            // Static resolution of expressions is not implemented yet
+            _ => None,
+        }
+    }
 }
 
 /// A formal a handler wants to locate in a call, by name and by its position in
@@ -155,9 +167,19 @@ pub struct Formal {
 }
 
 /// A call's resolved argument effects: for each argument in call order, the
-/// annotated argument it matched, or `None` for a plain (standard-eval)
-/// argument.
-pub type ResolvedArgumentEffects = Vec<Option<&'static Argument>>;
+/// effect it resolved to, or `None` for a plain (standard-eval) argument.
+pub type ResolvedArgumentEffects = Vec<Option<ResolvedArgumentEffect>>;
+
+/// The resolved, per-call effect of one argument. The builder consumes these.
+#[derive(Debug, Clone)]
+pub enum ResolvedArgumentEffect {
+    /// Quote plus Eval in a controlled scope, fused.
+    Nse { scope: NseScope, timing: NseTiming },
+    /// Captured unevaluated. `holes` are the sub-expressions that escape back to
+    /// evaluation (e.g. bquote's `.()` contents), walked normally; everything
+    /// else in the argument is inert. Empty for a plain `quote()`.
+    Quote { holes: Vec<AnyRExpression> },
+}
 
 /// Declares how a function evaluates its annotated arguments, and serves as the
 /// default [`EffectHandler`] for it by matching the declaration to a call.
@@ -175,16 +197,25 @@ pub struct Argument {
 }
 
 /// What static operation an argument's evaluation calls for, mirroring R's
-/// evaluation model. Absence (an argument not listed on an annotation) means
-/// standard evaluation of an unquoted expression, the common case.
+/// evaluation model.
 #[derive(Debug, Clone, Copy)]
 pub enum ArgumentEffect {
     /// Quote plus Eval in a controlled scope, fused
     Nse { scope: NseScope, timing: NseTiming },
     /// Captured unevaluated, so its symbols are not uses and nothing in it runs.
-    /// `quote`, `bquote`. TODO:`bquote(.(foo))` should unquote `foo`. This
-    /// requires implementing the `Eval` effect.
+    /// `quote`. A function that unquotes (`bquote()`, whose `.()` holes escape)
+    /// can't be expressed statically, and must use a custom handler instead of
+    /// this variant.
     Quote,
+}
+
+impl ArgumentEffect {
+    fn resolve(self) -> ResolvedArgumentEffect {
+        match self {
+            ArgumentEffect::Nse { scope, timing } => ResolvedArgumentEffect::Nse { scope, timing },
+            ArgumentEffect::Quote => ResolvedArgumentEffect::Quote { holes: Vec::new() },
+        }
+    }
 }
 
 impl EffectHandler for ArgumentsAnnotation {
@@ -205,10 +236,111 @@ impl EffectHandler for ArgumentsAnnotation {
         Some(
             matched
                 .into_iter()
-                .map(|formal| formal.map(|i| &arguments[i]))
+                .map(|formal| formal.map(|i| arguments[i].effect.resolve()))
                 .collect(),
         )
     }
+}
+
+/// Handler for `bquote()`. It quotes its `expr` argument like `quote()`, but a
+/// `.(X)` inside escapes back to evaluation, so `X` is a live sub-expression.
+/// Recognizing `.()` is specific to bquote, so it lives in this handler rather
+/// than in the shared [`ArgumentEffect`] vocabulary.
+#[derive(Debug, Clone, Copy)]
+pub struct BquoteHandler;
+
+impl EffectHandler for BquoteHandler {
+    type Output = ResolvedArgumentEffects;
+
+    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<ResolvedArgumentEffects> {
+        // `bquote(expr, where, splice)`: only `expr` (the first positional) is
+        // quoted. The other arguments are ordinary values.
+        let formals = [
+            Formal {
+                name: "expr",
+                position: 0,
+            },
+            Formal {
+                name: "splice",
+                position: 2,
+            },
+        ];
+        let matched = ctx.match_arguments(call, &formals);
+
+        let args = call.arguments().ok()?;
+        let values: Vec<Option<AnyRExpression>> = args
+            .items()
+            .iter()
+            .map(|item| item.ok().and_then(|arg| arg.value()))
+            .collect();
+
+        // `..()` only splices under `splice = TRUE`.
+        // TODO: resolve a dynamic `splice` argument.
+        let splice = matched
+            .iter()
+            .position(|formal| *formal == Some(1))
+            .and_then(|i| values.get(i))
+            .and_then(|value| value.as_ref())
+            .and_then(|value| ctx.resolve_static_bool(value))
+            .unwrap_or(false);
+
+        Some(
+            matched
+                .into_iter()
+                .enumerate()
+                .map(|(i, formal)| {
+                    // Only `expr` (formal 0) is quoted
+                    if formal != Some(0) {
+                        return None;
+                    }
+                    let holes = values
+                        .get(i)
+                        .and_then(|value| value.as_ref())
+                        .map(|expr| unquote_holes(expr, splice))
+                        .unwrap_or_default();
+                    Some(ResolvedArgumentEffect::Quote { holes })
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The unquote holes inside a bquote-quoted expression: the escaped argument of
+/// each `.(foo)` call, plus each `..(foo)` when `splice` is on.
+fn unquote_holes(expr: &AnyRExpression, splice: bool) -> Vec<AnyRExpression> {
+    let mut holes = Vec::new();
+    let mut preorder = expr.syntax().preorder();
+    while let Some(event) = preorder.next() {
+        let WalkEvent::Enter(node) = event else {
+            continue;
+        };
+        let Some(call) = RCall::cast(node) else {
+            continue;
+        };
+        if let Some(hole) = unquote_hole(&call, splice) {
+            holes.push(hole);
+            preorder.skip_subtree();
+        }
+    }
+    holes
+}
+
+/// The escaped expression of a `.(foo)` unquote call, or a `..(foo)` splice
+/// unquote when `splice` is on, or `None` when `call` isn't one. bquote's
+/// unquote operator is the function `.`, and its splice unquote is `..`.
+fn unquote_hole(call: &RCall, splice: bool) -> Option<AnyRExpression> {
+    let AnyRExpression::RIdentifier(func) = call.function().ok()? else {
+        return None;
+    };
+    let is_unquote = match func.name_text().as_str() {
+        "." => true,
+        ".." => splice,
+        _ => false,
+    };
+    if !is_unquote {
+        return None;
+    }
+    call.arguments().ok()?.items().iter().next()?.ok()?.value()
 }
 
 /// Declares how an attach function (`library()`, `require()`) names its package,
