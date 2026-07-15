@@ -54,12 +54,13 @@ use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
 
 use crate::effects::AssignBinding;
+use crate::effects::Declaration;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
+use crate::semantic_index::DeclId;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
@@ -132,6 +133,11 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // by the scope's range. Captured from `flow_state`, and read by
     // `begin_scan()` to seed the scope's own scan.
     enclosing_flow: FxHashMap<TextRange, FlowState>,
+    // Declarations carried by local bindings, indexed by the `DeclId` payloads
+    // in `flow_state` and `bound_names`. Owning the `Declaration`s (and their
+    // `Vec`s) in one arena keeps the flow-state snapshots cheap: `enclosing_flow`
+    // and the if/else save-restore clone only `Copy` ids.
+    declarations: IndexVec<DeclId, Declaration>,
     // Packages attached in eager flow order (file level and eager NSE descents),
     // appended only when `!is_lazy()`. Append-only, never restored across a
     // descent or branch: attaches hit the global search path, they aren't scoped
@@ -187,6 +193,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             call_resolutions: FxHashMap::default(),
             flow_state: FlowState::default(),
             enclosing_flow: FxHashMap::default(),
+            declarations: IndexVec::new(),
             attached_flow: Vec::new(),
             eager_descent: EagerNestedDescent::default(),
             diagnostics: Vec::new(),
@@ -513,9 +520,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             None => self.flow_state.clear(),
         }
 
+        // After the inherited entries, so an own binding's payload overwrites
+        // the inherited one.
         for (_id, symbol) in self.symbol_tables[self.current_scope].iter() {
             if symbol.flags().contains(SymbolFlags::IS_BOUND) {
-                self.flow_state.bind(symbol.name().to_string());
+                self.flow_state.bind(symbol.name().to_string(), None);
             }
         }
     }
@@ -583,7 +592,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                             // `<<-` binds in an ancestor, not here, so it doesn't
                             // shadow a callee in this scope (matching the walk).
                             Some((name, _)) if !is_super_assignment(bin) => {
-                                self.record_binding(name);
+                                self.record_binding(name, None);
                             },
                             Some(_) => {},
                             // Complex target (`x$foo <- v`): no binding, but the
@@ -618,7 +627,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // The for-variable is always bound (R sets it to NULL for empty
                 // sequences), so it binds before the body regardless of flow.
                 if let Ok(variable) = stmt.variable() {
-                    self.record_binding(variable.name_text());
+                    self.record_binding(variable.name_text(), None);
                 }
                 if let Ok(sequence) = stmt.sequence() {
                     self.scan_expression(&sequence);
@@ -694,7 +703,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.flow_state.bind(text);
+            self.flow_state.bind(text, None);
         }
 
         for param in params.items().iter() {
@@ -721,7 +730,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let resolution = self.resolver.resolve_source(path)?;
 
         for name in &resolution.names {
-            self.record_binding(name.clone());
+            self.record_binding(name.clone(), None);
         }
 
         // A `source()`-forwarded `library()` attaches at this call's flow
@@ -738,14 +747,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Record a binding in the scan's flow state.
     ///
+    /// `declaration` is the declaration carried by the binding, `None` for an
+    /// ordinary definition.
+    ///
     /// The flow-precise `flow_state` always learns the name, so a
     /// later callee in this scope sees it shadowed. The bound names only get it
     /// when the current scope owns it. A `Current + Lazy` scope routes its defs
     /// to the owner, so the name is added to the owner's bound names instead, the
     /// same routing `add_definition_to_owner` does during the walk.
-    fn record_binding(&mut self, name: String) {
-        self.record_owner_name(name.clone());
-        self.flow_state.bind(name);
+    fn record_binding(&mut self, name: String, declaration: Option<DeclId>) {
+        self.record_owner_name(name.clone(), declaration);
+        self.flow_state.bind(name, declaration);
     }
 
     /// Route a binding NAME into its owner scope's bound names, matching
@@ -757,9 +769,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
     /// bound in `flow_state` (see that helper for why).
-    fn record_owner_name(&mut self, name: String) {
+    fn record_owner_name(&mut self, name: String, declaration: Option<DeclId>) {
+        let binding = match declaration {
+            Some(id) => DeclaredBinding::Declared(id),
+            None => DeclaredBinding::Plain,
+        };
+
         if let Some(bound) = self.eager_descent.open.last_mut() {
-            bound.add(name);
+            bound.add(name, binding);
             return;
         }
 
@@ -767,8 +784,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             ScopeKind::Nse(NseScope::Current, NseTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
         } {
-            self.bound_names[target].add(name);
+            self.bound_names[target].add(name, binding);
         }
+    }
+
+    /// Intern a local binding's `Declaration` in the builder's arena. The
+    /// returned id is what the flow-state payloads carry.
+    #[allow(dead_code)]
+    fn add_declaration(&mut self, declaration: Declaration) -> DeclId {
+        self.declarations.push(declaration)
     }
 
     fn nse_effect(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
@@ -1444,9 +1468,13 @@ struct SourcedFile {
 /// whether a call is NSE. It tracks only eager bindings, and it is allowed to
 /// stay coarse: `merge()` unions the two sides of an `if`, so that a single
 /// branch marks a name as bound.
+///
+/// Each name maps to the declaration its binding carries, `None` for an
+/// ordinary definition. Payloads are `Copy` [`DeclId`]s into the builder's
+/// `declarations` arena, so snapshots stay cheap to clone.
 #[derive(Clone, Default)]
 struct FlowState {
-    bound: FxHashSet<String>,
+    bound: FxHashMap<String, Option<DeclId>>,
 }
 
 impl FlowState {
@@ -1466,14 +1494,15 @@ impl FlowState {
         self.bound.extend(snapshot.bound);
     }
 
-    /// Record `name` as bound from here on.
-    fn bind(&mut self, name: String) {
-        self.bound.insert(name);
+    /// Record `name` as bound from here on, carrying `declaration` (`None` for
+    /// an ordinary definition). Last write wins, so a rebind replaces the payload.
+    fn bind(&mut self, name: String, declaration: Option<DeclId>) {
+        self.bound.insert(name, declaration);
     }
 
     /// Whether `name` is bound at the current point.
     fn is_bound(&self, name: &str) -> bool {
-        self.bound.contains(name)
+        self.bound.contains_key(name)
     }
 
     /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).
@@ -1513,23 +1542,59 @@ struct EagerNestedDescent {
 
 /// All definitions in a scope, collected by the scan pass before the
 /// walk. Skips child-scope bodies (nested functions and `Nested` NSE bodies).
+/// Each name carries a [`DeclaredBinding`] joined over all of its bindings.
 struct BoundNames {
-    by_name: FxHashSet<String>,
+    by_name: FxHashMap<String, DeclaredBinding>,
 }
 
 impl BoundNames {
     fn new() -> Self {
         Self {
-            by_name: FxHashSet::default(),
+            by_name: FxHashMap::default(),
         }
     }
 
-    fn add(&mut self, name: String) {
-        self.by_name.insert(name);
+    /// Add one binding of `name`, joining its payload with the payloads
+    /// already recorded for that name.
+    fn add(&mut self, name: String, binding: DeclaredBinding) {
+        self.by_name
+            .entry(name)
+            .and_modify(|existing| *existing = existing.join(binding))
+            .or_insert(binding);
     }
 
     fn binds(&self, name: &str) -> bool {
-        self.by_name.contains(name)
+        self.by_name.contains_key(name)
+    }
+}
+
+/// The declaration payload of one name in a scope's [`BoundNames`], joined
+/// over every binding of that name.
+///
+/// The whole-scope view serves lazy bodies, which resolve a name against the
+/// enclosing scope without knowing which of its bindings runs before the body
+/// does. A single payload is only trustworthy when all bindings agree, so
+/// inserts join: any disagreement collapses to `Mixed`, the ambiguous state.
+/// `Plain` joined with `Plain` stays `Plain`, so ordinary rebinds (`x <- 1;
+/// x <- 2`) don't poison the name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeclaredBinding {
+    /// Every binding is an ordinary definition with no declaration.
+    Plain,
+    /// Every binding carries this same declaration.
+    Declared(DeclId),
+    /// The bindings disagree: declared and plain, or two different
+    /// declarations.
+    Mixed,
+}
+
+impl DeclaredBinding {
+    fn join(self, other: Self) -> Self {
+        if self == other {
+            self
+        } else {
+            DeclaredBinding::Mixed
+        }
     }
 }
 

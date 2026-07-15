@@ -84,7 +84,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         if let Some(bindings) = assign {
             let range = call.syntax().text_trimmed_range();
             for binding in bindings {
-                self.record_binding(binding.name.clone());
+                self.record_binding(binding.name.clone(), None);
                 self.call_resolutions
                     .entry(range)
                     .or_default()
@@ -183,7 +183,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
         let range = bin.syntax().text_trimmed_range();
         for binding in bindings {
-            self.record_binding(binding.name.clone());
+            self.record_binding(binding.name.clone(), None);
             self.call_resolutions
                 .entry(range)
                 .or_default()
@@ -274,7 +274,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 };
                 if let Ok(target) = target {
                     if let Some((name, _)) = assignment_name(&target) {
-                        self.record_owner_name(name);
+                        self.record_owner_name(name, None);
                     }
                 }
             },
@@ -292,7 +292,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
             AnyRExpression::RForStatement(stmt) => {
                 if let Ok(variable) = stmt.variable() {
-                    self.record_owner_name(variable.name_text());
+                    self.record_owner_name(variable.name_text(), None);
                 }
                 if let Ok(body) = stmt.body() {
                     self.scan_lazy_owner_bindings(&body);

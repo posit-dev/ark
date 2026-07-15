@@ -33,6 +33,10 @@ define_index!(UseId);
 // Scope-local enclosing snapshot identifier
 define_index!(EnclosingSnapshotId);
 
+// File-local declaration identifier, indexing the builder's arena of
+// `Declaration`s carried by local bindings
+define_index!(DeclId);
+
 // One `SemanticIndex` per R source file. This reflects the physical reality of
 // a single file. Cross-file resolution (e.g. package namespaces, sourced
 // scripts) is a separate concern handled by layers above this.
