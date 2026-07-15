@@ -138,6 +138,8 @@ impl ShellHandler for Shell {
             positron: Some(LanguageInfoPositron {
                 input_prompt: kernel_info.input_prompt.clone(),
                 continuation_prompt: kernel_info.continuation_prompt.clone(),
+                build_version: Some(String::from(crate::BUILD_VERSION)),
+                commit: Some(String::from(crate::BUILD_GIT_HASH)),
             }),
         };
         let mut supported_features = vec![String::from("debugger")];

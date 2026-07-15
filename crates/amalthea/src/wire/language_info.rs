@@ -45,4 +45,13 @@ pub struct LanguageInfoPositron {
 
     /// Initial continuation prompt
     pub continuation_prompt: Option<String>,
+
+    /// The kernel's full build version (e.g. `0.1.252+14.6618e9a`), if known.
+    /// Distinct from the Jupyter `implementation_version` (bare `X.Y.Z`); this
+    /// carries the extra build metadata Positron uses to detect a submodule
+    /// mismatch.
+    pub build_version: Option<String>,
+
+    /// The short git commit hash the kernel was built from, if known.
+    pub commit: Option<String>,
 }

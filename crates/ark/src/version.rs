@@ -76,7 +76,7 @@ pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
     info.insert(String::from("version"), String::from(crate::BUILD_VERSION));
 
     // Add the current commit hash and branch; these are set by the build script (build.rs)
-    info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
+    info.insert(String::from("commit"), String::from(crate::BUILD_GIT_HASH));
     info.insert(
         String::from("branch"),
         String::from(env!("BUILD_GIT_BRANCH")),

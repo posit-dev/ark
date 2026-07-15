@@ -56,3 +56,4 @@ pub mod viewer;
 pub(crate) use r_task::r_task;
 
 pub const BUILD_VERSION: &str = env!("BUILD_VERSION");
+pub const BUILD_GIT_HASH: &str = env!("BUILD_GIT_HASH");
