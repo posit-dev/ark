@@ -302,6 +302,30 @@ testthat::test_that(code = {
 }
 
 #[test]
+fn test_nse_block_first_with_trailing_named_arg() {
+    // `desc =` is consumed by name, so the leading block fills the remaining
+    // `code` formal and gets the Nested + Eager scope. Signature-aware matching
+    // (fill remaining, not raw call position) is what recognizes this shape.
+    let index = index(
+        r#"
+testthat::test_that({
+    x <- 1
+}, desc = "foo")
+"#,
+    );
+    let test_scope = ScopeId::from(1);
+
+    assert_eq!(
+        index.scope(test_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(test_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_nested_function_inside_local() {
     // A function defined inside `local()` creates a nested Function scope.
     let index = index(
