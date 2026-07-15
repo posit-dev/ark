@@ -1,14 +1,45 @@
-use crate::effects::contrib::nse;
+use crate::effects::contrib::declared;
 use crate::effects::contrib::Entry;
+use crate::effects::Declaration;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Lazy;
 
-pub(crate) static ENTRIES: &[Entry] = &[
-    nse!("shiny", "observe", ("x", 0, Nested, Lazy)),
-    nse!("shiny", "reactive", ("x", 0, Nested, Lazy)),
-    nse!("shiny", "renderPlot", ("expr", 0, Nested, Lazy)),
-    nse!("shiny", "renderPrint", ("expr", 0, Nested, Lazy)),
-    nse!("shiny", "renderTable", ("expr", 0, Nested, Lazy)),
-    nse!("shiny", "renderText", ("expr", 0, Nested, Lazy)),
-    nse!("shiny", "renderUI", ("expr", 0, Nested, Lazy)),
-];
+pub(crate) fn entries() -> Vec<Entry> {
+    vec![
+        declared(
+            "shiny",
+            "observe",
+            Declaration::new(&["x"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "reactive",
+            Declaration::new(&["x"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "renderPlot",
+            Declaration::new(&["expr"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "renderPrint",
+            Declaration::new(&["expr"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "renderTable",
+            Declaration::new(&["expr"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "renderText",
+            Declaration::new(&["expr"]).nse(0, Nested, Lazy),
+        ),
+        declared(
+            "shiny",
+            "renderUI",
+            Declaration::new(&["expr"]).nse(0, Nested, Lazy),
+        ),
+    ]
+}

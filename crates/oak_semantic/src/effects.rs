@@ -6,7 +6,7 @@ use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
-// Re-exported so consumers building an `AssignBinding` (custom `AssignHandler`s)
+// Re-exported so consumers building an `AssignBinding` (custom `Handler`s)
 // can name the `name_expr` field's type without depending on oak_core directly.
 pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
@@ -15,9 +15,21 @@ use oak_core::syntax_ext::RStringValueExt;
 use crate::semantic_index::NseScope;
 use crate::semantic_index::NseTiming;
 
+/// The owned declaration model and its arg-centric resolver.
+pub mod declaration;
+
 /// Per-package tables of which functions carry effects. Private data behind the
 /// `lookup`/`annotates` query API below.
 mod contrib;
+
+pub use declaration::ArgumentEffect;
+pub use declaration::ArgumentRef;
+pub use declaration::DeclExpr;
+pub use declaration::Declaration;
+pub use declaration::EnvironmentEffect;
+pub use declaration::EvalMode;
+pub use declaration::FormalDef;
+pub use declaration::RExpr;
 
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]
@@ -50,68 +62,65 @@ pub struct AssignBinding {
     pub value_expr: Option<AstPtr<AnyRExpression>>,
 }
 
-/// The handlers that compute a function's effects.
+/// Where a call's effects come from: data-only declarations or custom code.
+///
+/// The declarative bulk and the imperative escape hatches want different
+/// representations, so they get different variants. A [`Declaration`] is plain
+/// data ("`x` is `Quote`"), so it borrows straight from the `LazyLock`-parsed
+/// registry. A [`Handler`] is code for the shapes a declaration can't express
+/// (bquote's `.()` holes, binding operators, assign), and it's `&'static dyn` so
+/// a contrib file can add one by referencing its own struct, touching no central
+/// enum.
+///
+/// `Copy`, so [`lookup`] hands it back by value and no borrow into the registry
+/// escapes into the walk.
 #[derive(Debug, Clone, Copy)]
-pub struct EffectsHandlers {
-    pub arguments: Option<&'static dyn EffectHandler<Output = ResolvedArgumentEffects>>,
-    pub attach: Option<&'static dyn EffectHandler<Output = String>>,
-    pub source: Option<&'static dyn EffectHandler<Output = Vec<String>>>,
-    pub assign: Option<&'static dyn AssignHandler>,
+pub enum EffectSource {
+    Declared(&'static Declaration),
+    Custom(&'static dyn Handler),
 }
 
-/// Look up the effect handlers of a `(package, function)` pair.
-pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers> {
+/// Look up the effect source of a `(package, function)` pair.
+pub fn lookup(package: &str, function: &str) -> Option<EffectSource> {
     contrib::REGISTRY
         .iter()
-        .flat_map(|entries| entries.iter())
         .find(|entry| entry.package == package && entry.function == function)
-        .map(|entry| &entry.effects)
+        .map(contrib::Entry::source)
 }
 
 /// Whether any registry entry annotates `name`. This is the bare-callee front
 /// gate: an unannotated name can't resolve to an effect no matter which provider
 /// wins, so recognition skips resolution entirely.
 pub fn annotates(name: &str) -> bool {
-    contrib::REGISTRY
-        .iter()
-        .flat_map(|entries| entries.iter())
-        .any(|entry| entry.function == name)
-}
-
-/// Resolver for an effect of a call.
-///
-/// The single interface behind every effect kind (NSE, attach, source).
-///
-/// Handlers are contributed statically for now (a `&'static dyn` in the
-/// registry), so the trait is `Sync`, which every registry `static` needs.
-pub trait EffectHandler: std::fmt::Debug + Sync {
-    type Output;
-
-    /// Resolve this effect for `call`, or `None` when the call isn't in a shape
-    /// this handler recognizes.
-    ///
-    /// `ctx` provides semantic resolution, e.g. resolve an argument to a
-    /// statically known string or boolean.
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Self::Output>;
+    contrib::REGISTRY.iter().any(|entry| entry.function == name)
 }
 
 /// Where an effect is invoked. Most effects are only ever calls but an Assign
-/// effect can also be a binding operator (`x %<>% f`). [`AssignHandler`] takes
-/// this to disambiguate rather than a bare call.
+/// effect can also be a binding operator (`x %<>% f`). [`Handler`] takes this to
+/// disambiguate rather than a bare call.
 pub enum EffectSite<'a> {
     Call(&'a RCall),
     Operator(&'a RBinaryExpression),
 }
 
-/// Resolver for an assign-like effect.
+/// Resolver for shapes a [`Declaration`] can't express.
 ///
-/// Separate from [`EffectHandler`] because an assign has two invocation shapes,
-/// a call (`assign("x", v)`) and a binding operator (`x %<>% f`).
+/// One object-safe method, so every custom handler sits behind a single
+/// `&'static dyn Handler` in the registry alongside everyone else's. `Sync`
+/// because those registry entries are shared across threads.
 ///
-/// Contributed statically like [`EffectHandler`], so it's `Sync` for the
-/// registry `static`s.
-pub trait AssignHandler: std::fmt::Debug + Sync {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>>;
+/// A handler fills only its own axis of [`Effects`] (which is `Default`):
+/// bquote fills `arguments`, `library` fills `attach`, `source` fills `source`,
+/// assign fills `assign`. Call-shaped handlers destructure [`EffectSite::Call`]
+/// and return `None` for an operator site; the binding-operator handler does the
+/// reverse.
+pub trait Handler: std::fmt::Debug + Sync {
+    /// Resolve this handler's effect for `site`, or `None` when `site` isn't a
+    /// shape it recognizes.
+    ///
+    /// `ctx` provides semantic resolution, e.g. resolve an argument to a
+    /// statically known string or boolean.
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects>;
 }
 
 /// Context for effect handlers.
@@ -133,7 +142,7 @@ impl CallContext {
     ///
     /// A stopgap: without the callee's full formal list, a positional argument
     /// only binds a formal declared at that exact position.
-    pub fn match_arguments(&self, call: &RCall, formals: &[Formal]) -> Vec<Option<usize>> {
+    pub fn match_arguments(&self, call: &RCall, formals: &[Formal<'_>]) -> Vec<Option<usize>> {
         let Ok(args) = call.arguments() else {
             return Vec::new();
         };
@@ -211,8 +220,8 @@ impl CallContext {
 /// listing only its scoped formals. Once `match_arguments` is signature-aware
 /// it gets the callee's full ordered formals, and this collapses to a list of
 /// names where the index is the position.
-pub struct Formal {
-    pub name: &'static str,
+pub struct Formal<'a> {
+    pub name: &'a str,
     pub position: usize,
 }
 
@@ -231,70 +240,8 @@ pub enum ResolvedArgumentEffect {
     Quote { holes: Vec<AnyRExpression> },
 }
 
-/// Declares how a function evaluates its annotated arguments, and serves as the
-/// default [`EffectHandler`] for it by matching the declaration to a call.
-#[derive(Debug, Clone, Copy)]
-pub struct ArgumentsAnnotation {
-    pub arguments: &'static [Argument],
-}
-
-/// A single annotated argument: its effect, plus where to find it in a call.
-#[derive(Debug)]
-pub struct Argument {
-    pub name: &'static str,
-    pub position: usize,
-    pub effect: ArgumentEffect,
-}
-
-/// What static operation an argument's evaluation calls for, mirroring R's
-/// evaluation model.
-#[derive(Debug, Clone, Copy)]
-pub enum ArgumentEffect {
-    /// Quote plus Eval in a controlled scope, fused
-    Nse { scope: NseScope, timing: NseTiming },
-    /// Captured unevaluated, so its symbols are not uses and nothing in it runs.
-    /// `quote`. A function that unquotes (`bquote()`, whose `.()` holes escape)
-    /// can't be expressed statically, and must use a custom handler instead of
-    /// this variant.
-    Quote,
-}
-
-impl ArgumentEffect {
-    fn resolve(self) -> ResolvedArgumentEffect {
-        match self {
-            ArgumentEffect::Nse { scope, timing } => ResolvedArgumentEffect::Nse { scope, timing },
-            ArgumentEffect::Quote => ResolvedArgumentEffect::Quote { holes: Vec::new() },
-        }
-    }
-}
-
-impl EffectHandler for ArgumentsAnnotation {
-    type Output = ResolvedArgumentEffects;
-
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<ResolvedArgumentEffects> {
-        let arguments = self.arguments;
-        let formals: Vec<Formal> = arguments
-            .iter()
-            .map(|arg| Formal {
-                name: arg.name,
-                position: arg.position,
-            })
-            .collect();
-
-        // The match yields a formal index per call argument
-        let matched = ctx.match_arguments(call, &formals);
-        Some(
-            matched
-                .into_iter()
-                .map(|formal| formal.map(|i| arguments[i].effect.resolve()))
-                .collect(),
-        )
-    }
-}
-
 /// Declares how a source function (`source()`) names the file it reads, and
-/// serves as the default [`EffectHandler`] for it by pulling that path out of a
-/// call.
+/// serves as its [`Handler`] by pulling that path out of a call.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceAnnotation {
     /// Which positional argument holds the path, counting only unnamed
@@ -303,10 +250,11 @@ pub struct SourceAnnotation {
     pub position: usize,
 }
 
-impl EffectHandler for SourceAnnotation {
-    type Output = Vec<String>;
-
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Vec<String>> {
+impl Handler for SourceAnnotation {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects> {
+        let EffectSite::Call(call) = site else {
+            return None;
+        };
         let args = call.arguments().ok()?;
 
         // The path is matched positionally among unnamed arguments rather than
@@ -356,13 +304,17 @@ impl EffectHandler for SourceAnnotation {
             positional += 1;
         }
 
-        path.map(|resolved| vec![resolved])
+        let path = path?;
+        Some(Effects {
+            source: Some(vec![path]),
+            ..Effects::default()
+        })
     }
 }
 
 /// Declares how an assign function (`assign()`, `delayedAssign()`) names the
-/// variable it binds, and serves as the default [`EffectHandler`] for it by
-/// pulling that name out of a call.
+/// variable it binds, and serves as its [`Handler`] by pulling that name out of
+/// a call.
 #[derive(Debug, Clone, Copy)]
 pub struct AssignAnnotation {
     /// Which positional argument holds the bound name, counting only unnamed
@@ -370,8 +322,8 @@ pub struct AssignAnnotation {
     pub position: usize,
 }
 
-impl AssignHandler for AssignAnnotation {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+impl Handler for AssignAnnotation {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects> {
         let EffectSite::Call(call) = site else {
             return None;
         };
@@ -421,11 +373,14 @@ impl AssignHandler for AssignAnnotation {
         }
 
         let (name, name_expr) = name?;
-        Some(vec![AssignBinding {
-            name,
-            name_expr,
-            value_expr,
-        }])
+        Some(Effects {
+            assign: Some(vec![AssignBinding {
+                name,
+                name_expr,
+                value_expr,
+            }]),
+            ..Effects::default()
+        })
     }
 }
 
@@ -435,8 +390,8 @@ impl AssignHandler for AssignAnnotation {
 #[derive(Debug, Clone, Copy)]
 pub struct BindingOperatorHandler;
 
-impl AssignHandler for BindingOperatorHandler {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+impl Handler for BindingOperatorHandler {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects> {
         let EffectSite::Operator(bin) = site else {
             return None;
         };
@@ -445,11 +400,14 @@ impl AssignHandler for BindingOperatorHandler {
 
         let name = ctx.resolve_quoted_symbol_or_string(&left)?;
 
-        Some(vec![AssignBinding {
-            name,
-            name_expr: RangedAstPtr::new(&left),
-            value_expr: Some(AstPtr::new(&right)),
-        }])
+        Some(Effects {
+            assign: Some(vec![AssignBinding {
+                name,
+                name_expr: RangedAstPtr::new(&left),
+                value_expr: Some(AstPtr::new(&right)),
+            }]),
+            ..Effects::default()
+        })
     }
 }
 
@@ -457,7 +415,7 @@ impl AssignHandler for BindingOperatorHandler {
 /// formal.
 ///
 /// Should we do partial argument matching? Or rely on partial matching being linted?
-fn match_named(arg: &RArgument, formals: &[Formal], consumed: &[bool]) -> Option<usize> {
+fn match_named(arg: &RArgument, formals: &[Formal<'_>], consumed: &[bool]) -> Option<usize> {
     let clause = arg.name_clause()?;
     let name = clause.name().ok()?;
     let name_text = match &name {
@@ -482,7 +440,7 @@ fn match_named(arg: &RArgument, formals: &[Formal], consumed: &[bool]) -> Option
 /// "d")`, with the block at position 0 but the `code` formal at position 1,
 /// won't match. Good enough without the callee's formal list; revisit if it
 /// misses real cases.
-fn match_positional(formals: &[Formal], position: usize, consumed: &[bool]) -> Option<usize> {
+fn match_positional(formals: &[Formal<'_>], position: usize, consumed: &[bool]) -> Option<usize> {
     formals
         .iter()
         .enumerate()

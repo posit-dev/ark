@@ -20,8 +20,8 @@ use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::EffectSite;
+use crate::effects::EffectSource;
 use crate::effects::Effects;
-use crate::effects::EffectsHandlers;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
@@ -212,9 +212,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+        let source = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
         let ctx = CallContext::new();
-        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
+        match source {
+            EffectSource::Custom(handler) => handler
+                .resolve(EffectSite::Operator(bin), &ctx)
+                .and_then(|effects| effects.assign),
+            // A declared source is arg-centric only, so it has nothing to say
+            // about an operator site.
+            EffectSource::Declared(_) => None,
+        }
     }
 
     /// Copy the names a `Current + Lazy` body defines into the owner's
@@ -311,32 +318,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Resolve a call's effects.
+    ///
+    /// Lookup and interpretation stay in this one scope, returning owned
+    /// [`Effects`], so no `&Declaration` borrowed from the registry escapes into
+    /// the walk.
     fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
-        let handlers = self.resolve_effects_handlers(call)?;
+        let source = self.resolve_effects_source(call)?;
         let ctx = CallContext::new();
 
-        let arguments = handlers
-            .arguments
-            .and_then(|handler| handler.resolve(call, &ctx));
-        let attach = handlers
-            .attach
-            .and_then(|handler| handler.resolve(call, &ctx));
-        let source = handlers
-            .source
-            .and_then(|handler| handler.resolve(call, &ctx));
-        let assign = handlers
-            .assign
-            .and_then(|handler| handler.resolve(EffectSite::Call(call), &ctx));
-
-        Some(Effects {
-            arguments,
-            attach,
-            source,
-            assign,
-        })
+        match source {
+            EffectSource::Declared(declaration) => {
+                effects::declaration::resolve(declaration, call, &ctx)
+            },
+            EffectSource::Custom(handler) => handler.resolve(EffectSite::Call(call), &ctx),
+        }
     }
 
-    /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
+    /// Resolve a call's callee to its [`EffectSource`] (a declaration or a custom
+    /// handler).
     ///
     /// The shared core for both NSE recognition ([`scan_call`] reads `.arguments`) and
     /// attach recognition ([`scan_call`] reads `.attach`). Two cases resolve:
@@ -353,9 +352,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// The bound check reads the scan pass's flow-precise binding state
     /// for the current scope, so this must run during the scan, not the walk.
     ///
-    /// [`EffectsHandlers`]: crate::effects::EffectsHandlers
+    /// [`EffectSource`]: crate::effects::EffectSource
     /// [`scan_call`]: Self::scan_call
-    fn resolve_effects_handlers(&mut self, call: &RCall) -> Option<EffectsHandlers> {
+    fn resolve_effects_source(&mut self, call: &RCall) -> Option<EffectSource> {
         let func = call.function().ok()?;
 
         match &func {
@@ -381,11 +380,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Resolve a callee `sym` to its [`EffectsHandlers`].
+    /// Resolve a callee `sym` to its [`EffectSource`].
     ///
     /// `range` is the invocation's range, used to anchor a lazy-shadow
     /// diagnostic.
-    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
+    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectSource> {
         // First check for a local definition (which in the future may
         // carry declared effects that we resolve here)
         //
@@ -438,7 +437,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Local resolver for declared effects, mirroring the imports resolver's
     /// `resolve_effects()` method on the cross-file side.
     /// TODO(nse, annotations): always `None` until `declare()` parsing lands.
-    fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
+    fn resolve_local_effects(&self, _name: &str) -> Option<EffectSource> {
         None
     }
 

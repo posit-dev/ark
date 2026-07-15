@@ -5,7 +5,7 @@ use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::effects;
-use oak_semantic::EffectsHandlers;
+use oak_semantic::EffectSource;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -95,7 +95,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         name: &str,
         attached: &[String],
         _lazy: bool,
-    ) -> Option<EffectsHandlers> {
+    ) -> Option<EffectSource> {
         // Walk the same load-time layer chain as `File::resolve`, but map each
         // layer to an NSE effect instead of a definition.
         //
@@ -134,14 +134,14 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         // resolve by name here even when base isn't scanned into a root. A
         // definition or a higher package on the path shadows it, which the walk
         // above already handled before falling through.
-        effects::lookup("base", name).copied()
+        effects::lookup("base", name)
     }
 }
 
 /// What a package layer contributes for `name` as the walk reaches it.
 enum PackageBinding {
     /// Binds `name` and it carries an effect.
-    Effect(EffectsHandlers),
+    Effect(EffectSource),
     /// Binds `name` (exports it) but with no known effect, e.g. a plain
     /// exported function. It still shadows any same-named effect deeper on the
     /// search path, so the walk stops here with no effect.
@@ -162,11 +162,7 @@ impl<'db> SalsaImportsResolver<'db> {
     /// a plain package export, a namespace import), which shadows any deeper
     /// effect, so the bare call is not NSE. `Continue` means the layer doesn't
     /// bind `name`; keep walking.
-    fn layer_effect(
-        &self,
-        layer: &ImportLayer,
-        name: &str,
-    ) -> ControlFlow<Option<EffectsHandlers>> {
+    fn layer_effect(&self, layer: &ImportLayer, name: &str) -> ControlFlow<Option<EffectSource>> {
         match layer {
             // A definition shadows any deeper effect. Own-file definitions never
             // reach here, the builder handles them before calling us.
@@ -203,8 +199,8 @@ impl<'db> SalsaImportsResolver<'db> {
     /// original package, not the re-exporter.
     fn package_binding(&self, package: Package, name: &str) -> PackageBinding {
         let package_name = package.name(self.db).as_str();
-        if let Some(effects) = effects::lookup(package_name, name) {
-            return PackageBinding::Effect(*effects);
+        if let Some(effect) = effects::lookup(package_name, name) {
+            return PackageBinding::Effect(effect);
         }
         // base is the terminal layer, so it has nothing below to shadow, and we
         // don't carry its full builtin export list. Treat it as unbound here;
@@ -225,7 +221,7 @@ impl<'db> SalsaImportsResolver<'db> {
         // own definition (no matching `importFrom`) only shadows.
         match namespace.imports.iter().find(|import| import.name == name) {
             Some(import) => match effects::lookup(&import.package, name) {
-                Some(effects) => PackageBinding::Effect(*effects),
+                Some(effect) => PackageBinding::Effect(effect),
                 None => PackageBinding::Shadow,
             },
             None => PackageBinding::Shadow,

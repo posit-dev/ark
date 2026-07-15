@@ -1,4 +1,8 @@
-use crate::effects::EffectsHandlers;
+use std::sync::LazyLock;
+
+use crate::effects::Declaration;
+use crate::effects::EffectSource;
+use crate::effects::Handler;
 
 mod base;
 mod magrittr;
@@ -7,127 +11,74 @@ mod s7;
 mod shiny;
 mod testthat;
 
-// Fields are read by the query API (`lookup`, `annotates`) in the parent
-// `effects` module, hence `pub(super)`.
+/// One registry entry: a `(package, function)` pair and the effect source it
+/// contributes. Owns its payload, an inline [`Declaration`] (data) or a
+/// `&'static dyn Handler` (code), matching the [`EffectSource`] split.
 pub(crate) struct Entry {
     pub(super) package: &'static str,
     pub(super) function: &'static str,
-    pub(super) effects: EffectsHandlers,
+    payload: EntryPayload,
 }
 
-/// An NSE entry. Each `(name, position, scope, laziness)` tuple is a scoped
-/// argument; list more than one for a function that scopes several.
-macro_rules! nse {
-    ($pkg:literal, $func:literal, $(($name:literal, $pos:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: Some(&$crate::effects::ArgumentsAnnotation {
-                    arguments: &[$($crate::effects::Argument {
-                        name: $name,
-                        position: $pos,
-                        effect: $crate::effects::ArgumentEffect::Nse {
-                            scope: $scope,
-                            timing: $timing,
-                        },
-                    }),+],
-                }),
-                attach: None,
-                source: None,
-                assign: None,
-            },
+/// A registry entry is declarative xor custom, never per-axis mixable: in
+/// practice a function is all-declarative (`local`, `library`) or all-custom
+/// (bquote, binding operators, assign), never one axis of each.
+enum EntryPayload {
+    Declared(Declaration),
+    Custom(&'static dyn Handler),
+}
+
+impl Entry {
+    /// Project an entry into the `Copy` [`EffectSource`]. The `&'static`
+    /// borrows come from the `LazyLock`-owned registry.
+    pub(super) fn source(&'static self) -> EffectSource {
+        match &self.payload {
+            EntryPayload::Declared(declaration) => EffectSource::Declared(declaration),
+            EntryPayload::Custom(handler) => EffectSource::Custom(*handler),
         }
-    };
+    }
 }
-pub(crate) use nse;
 
-/// A quoted entry. Each `(name, position)` names an argument captured
-/// unevaluated: its symbols aren't uses and nothing in it runs. `quote`,
-/// `bquote`.
-macro_rules! quoted {
-    ($pkg:literal, $func:literal, $(($name:literal, $pos:literal)),+ $(,)?) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: Some(&$crate::effects::ArgumentsAnnotation {
-                    arguments: &[$($crate::effects::Argument {
-                        name: $name,
-                        position: $pos,
-                        effect: $crate::effects::ArgumentEffect::Quote,
-                    }),+],
-                }),
-                attach: None,
-                source: None,
-                assign: None,
-            },
-        }
-    };
+/// Build a declarative entry from an owned [`Declaration`].
+pub(super) fn declared(
+    package: &'static str,
+    function: &'static str,
+    declaration: Declaration,
+) -> Entry {
+    Entry {
+        package,
+        function,
+        payload: EntryPayload::Declared(declaration),
+    }
 }
-pub(crate) use quoted;
 
-/// A source entry: `(path-argument position)`. The function reads and evaluates
-/// another file, injecting its top-level names into the caller.
-macro_rules! source {
-    ($pkg:literal, $func:literal, $pos:literal) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: Some(&$crate::effects::SourceAnnotation { position: $pos }),
-                assign: None,
-            },
-        }
-    };
+/// Build a custom entry from a `&'static dyn Handler`.
+pub(super) fn custom(
+    package: &'static str,
+    function: &'static str,
+    handler: &'static dyn Handler,
+) -> Entry {
+    Entry {
+        package,
+        function,
+        payload: EntryPayload::Custom(handler),
+    }
 }
-pub(crate) use source;
 
-/// An assign entry: `(name-argument position)`. The function binds a name in the
-/// current scope, naming it in a positional argument it evaluates (`assign("x",
-/// v)`).
-macro_rules! assign {
-    ($pkg:literal, $func:literal, $pos:literal) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
-                assign: Some(&$crate::effects::AssignAnnotation { position: $pos }),
-            },
-        }
-    };
-}
-pub(crate) use assign;
-
-/// An assign-operator entry: a binding operator (`x %<>% f`, `x := v`) that binds
-/// a name in the current scope. It captures its LHS unevaluated, so the name
-/// comes from the LHS text rather than a positional argument, hence no position.
-macro_rules! assign_op {
-    ($pkg:literal, $func:literal) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
-                assign: Some(&$crate::effects::BindingOperatorHandler),
-            },
-        }
-    };
-}
-pub(crate) use assign_op;
-
-pub(super) static REGISTRY: &[&[Entry]] = &[
-    base::ENTRIES,
-    magrittr::ENTRIES,
-    rlang::ENTRIES,
-    s7::ENTRIES,
-    shiny::ENTRIES,
-    testthat::ENTRIES,
-];
+/// The effect registry, assembled once from each package's contributions.
+///
+/// A `LazyLock<Vec<Entry>>` rather than a `static` table because an owned
+/// [`Declaration`] holds `Vec`s and can't sit in a `static`.
+pub(super) static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
+    [
+        base::entries(),
+        magrittr::entries(),
+        rlang::entries(),
+        s7::entries(),
+        shiny::entries(),
+        testthat::entries(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+});

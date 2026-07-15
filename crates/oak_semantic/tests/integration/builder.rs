@@ -1,16 +1,15 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
-use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::AssignBinding;
-use oak_semantic::effects::AssignHandler;
 use oak_semantic::effects::CallContext;
-use oak_semantic::effects::EffectHandler;
 use oak_semantic::effects::EffectSite;
+use oak_semantic::effects::Effects;
+use oak_semantic::effects::Handler;
 use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::semantic_index::DefinitionId;
@@ -22,7 +21,7 @@ use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
-use oak_semantic::EffectsHandlers;
+use oak_semantic::EffectSource;
 use oak_semantic::ImportsResolver;
 use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
@@ -2269,10 +2268,10 @@ impl ImportsResolver for ConstResolver {
         Some(self.0.clone())
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
         // `source()` recognition runs on the resolve path, so a source-only
         // resolver still has to resolve base effects for `source` to be seen.
-        effects::lookup("base", name).copied()
+        effects::lookup("base", name)
     }
 }
 
@@ -2284,8 +2283,8 @@ impl ImportsResolver for MapResolver {
         self.0.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
-        effects::lookup("base", name).copied()
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
+        effects::lookup("base", name)
     }
 }
 
@@ -2297,11 +2296,12 @@ struct CollationHandler;
 
 static COLLATION_HANDLER: CollationHandler = CollationHandler;
 
-impl EffectHandler for CollationHandler {
-    type Output = Vec<String>;
-
-    fn resolve(&self, _call: &RCall, _ctx: &CallContext) -> Option<Vec<String>> {
-        Some(vec!["a.R".into(), "b.R".into()])
+impl Handler for CollationHandler {
+    fn resolve(&self, _site: EffectSite, _ctx: &CallContext) -> Option<Effects> {
+        Some(Effects {
+            source: Some(vec!["a.R".into(), "b.R".into()]),
+            ..Effects::default()
+        })
     }
 }
 
@@ -2316,16 +2316,11 @@ impl ImportsResolver for MultiFileResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
         if name == "source" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: Some(&COLLATION_HANDLER),
-                assign: None,
-            });
+            return Some(EffectSource::Custom(&COLLATION_HANDLER));
         }
-        effects::lookup("base", name).copied()
+        effects::lookup("base", name)
     }
 }
 
@@ -2340,14 +2335,9 @@ impl ImportsResolver for PositionResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
         if name == "source" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: Some(&SOURCE_AT_POSITION_1),
-                assign: None,
-            });
+            return Some(EffectSource::Custom(&SOURCE_AT_POSITION_1));
         }
         None
     }
@@ -2360,8 +2350,8 @@ struct MultiAssignHandler;
 
 static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
 
-impl AssignHandler for MultiAssignHandler {
-    fn resolve(&self, site: EffectSite, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+impl Handler for MultiAssignHandler {
+    fn resolve(&self, site: EffectSite, _ctx: &CallContext) -> Option<Effects> {
         let EffectSite::Call(call) = site else {
             return None;
         };
@@ -2376,18 +2366,21 @@ impl AssignHandler for MultiAssignHandler {
             .ok()?
             .value()?;
         let ptr = RangedAstPtr::new(&expr);
-        Some(vec![
-            AssignBinding {
-                name: "a".into(),
-                name_expr: ptr.clone(),
-                value_expr: None,
-            },
-            AssignBinding {
-                name: "b".into(),
-                name_expr: ptr,
-                value_expr: None,
-            },
-        ])
+        Some(Effects {
+            assign: Some(vec![
+                AssignBinding {
+                    name: "a".into(),
+                    name_expr: ptr.clone(),
+                    value_expr: None,
+                },
+                AssignBinding {
+                    name: "b".into(),
+                    name_expr: ptr,
+                    value_expr: None,
+                },
+            ]),
+            ..Effects::default()
+        })
     }
 }
 
@@ -2398,14 +2391,9 @@ impl ImportsResolver for MultiAssignResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
         if name == "assign" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
-                assign: Some(&MULTI_ASSIGN_HANDLER),
-            });
+            return Some(EffectSource::Custom(&MULTI_ASSIGN_HANDLER));
         }
         None
     }

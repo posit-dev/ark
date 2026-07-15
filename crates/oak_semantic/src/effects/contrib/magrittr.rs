@@ -1,4 +1,7 @@
-use crate::effects::contrib::assign_op;
+use crate::effects::contrib::custom;
 use crate::effects::contrib::Entry;
+use crate::effects::BindingOperatorHandler;
 
-pub(crate) static ENTRIES: &[Entry] = &[assign_op!("magrittr", "%<>%")];
+pub(crate) fn entries() -> Vec<Entry> {
+    vec![custom("magrittr", "%<>%", &BindingOperatorHandler)]
+}
