@@ -1,6 +1,5 @@
 pub mod builder;
 pub mod effects;
-pub mod effects_registry;
 pub mod resolver;
 pub mod semantic_index;
 pub mod use_def_map;

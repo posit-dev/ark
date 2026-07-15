@@ -934,7 +934,7 @@ base::local({
 #[test]
 fn test_nse_front_gate_skips_resolver_for_unannotated_name() {
     // A bare callee whose name no package annotates never reaches the resolver:
-    // the `is_annotated_name` gate short-circuits before consultation.
+    // the `annotates()` gate short-circuits before consultation.
     let resolver = TestImportsResolver::with_base();
     let consultations = resolver.consultations();
 

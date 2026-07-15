@@ -5,6 +5,7 @@ use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
+use oak_semantic::effects;
 use oak_semantic::effects::AssignBinding;
 use oak_semantic::effects::AssignHandler;
 use oak_semantic::effects::CallContext;
@@ -12,7 +13,6 @@ use oak_semantic::effects::EffectHandler;
 use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
-use oak_semantic::effects_registry;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::NamespaceAccessKind;
@@ -2243,7 +2243,7 @@ impl ImportsResolver for ConstResolver {
     fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
         // `source()` recognition runs on the resolve path, so a source-only
         // resolver still has to resolve base effects for `source` to be seen.
-        effects_registry::lookup("base", name).copied()
+        effects::lookup("base", name).copied()
     }
 }
 
@@ -2256,13 +2256,13 @@ impl ImportsResolver for MapResolver {
     }
 
     fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
-        effects_registry::lookup("base", name).copied()
+        effects::lookup("base", name).copied()
     }
 }
 
 /// A source handler that resolves one call to a fixed collation of files,
 /// standing in for a collation-style callee. Attached to the `source` name
-/// (which passes the `is_annotated` front gate) by [`MultiFileResolver`].
+/// (which passes the `annotates()` front gate) by [`MultiFileResolver`].
 #[derive(Debug)]
 struct CollationHandler;
 
@@ -2296,7 +2296,7 @@ impl ImportsResolver for MultiFileResolver {
                 assign: None,
             });
         }
-        effects_registry::lookup("base", name).copied()
+        effects::lookup("base", name).copied()
     }
 }
 
