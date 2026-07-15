@@ -18,12 +18,11 @@ use super::is_super_assignment;
 use super::BoundNames;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
-use crate::effects::Argument;
-use crate::effects::ArgumentEffect;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
+use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects_registry;
 use crate::resolver::ImportsResolver;
@@ -116,18 +115,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            match arg_effects[i] {
+            match &arg_effects[i] {
                 None => self.scan_expression(&value),
-                // Quoted argument: captured unevaluated. No effects to scan, no
-                // names to bind.
-                Some(Argument {
-                    effect: ArgumentEffect::Quote,
-                    ..
-                }) => {},
-                Some(Argument {
-                    effect: ArgumentEffect::Nse { scope, timing },
-                    ..
-                }) => match (scope, timing) {
+                // Quoted argument: only the unquoted holes are live. Scan these,
+                // suppress the rest.
+                Some(ResolvedArgumentEffect::Quote { holes }) => {
+                    for hole in holes {
+                        self.scan_expression(hole);
+                    }
+                },
+                Some(ResolvedArgumentEffect::Nse { scope, timing }) => match (scope, timing) {
                     // Calls like `evalq()`
                     (NseScope::Current, NseTiming::Eager) => self.scan_expression(&value),
 
@@ -496,16 +493,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            let Some(argument) = arg_effects[i] else {
+            let Some(argument) = &arg_effects[i] else {
                 self.collect_expression(&value);
                 continue;
             };
-            match argument.effect {
-                ArgumentEffect::Nse { scope, timing } => {
-                    self.collect_nse_argument(scope, timing, &value)
+            match argument {
+                ResolvedArgumentEffect::Nse { scope, timing } => {
+                    self.collect_nse_argument(*scope, *timing, &value)
                 },
-                // Quoted argument: No uses inside.
-                ArgumentEffect::Quote => {},
+                // Quoted argument: only the unquote holes are live.
+                ResolvedArgumentEffect::Quote { holes } => {
+                    for hole in holes {
+                        self.collect_expression(hole);
+                    }
+                },
             }
         }
     }

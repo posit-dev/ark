@@ -860,8 +860,9 @@ fn test_super_assignment_with_use_on_value_side() {
 // --- NSE / quoting constructs ---
 //
 // `quote()` and `bquote()` capture their argument unevaluated, so the symbols
-// inside are not uses (the tests below). Identifiers inside a formula `~` are
-// still recorded as uses, a known simplification left for future work.
+// inside are not uses (the tests below), except `bquote`'s `.()` holes, which
+// escape back to evaluation. Identifiers inside a formula `~` are still recorded
+// as uses, a known simplification left for future work.
 
 #[test]
 fn test_fixme_formula_records_uses() {
@@ -936,14 +937,86 @@ fn test_bquote_suppresses_uses() {
 }
 
 #[test]
-fn test_fixme_bquote_unquote_hole_suppressed() {
-    // TODO(eval): `bquote`'s `.()` holes are evaluated, so `y` here is really a
-    // use. We treat the whole argument as quoted until the `Eval` effect lands,
-    // so `y` is suppressed for now.
+fn test_bquote_unquotes_hole() {
+    // `bquote` quotes `x + .(y)`, but the `.()` hole escapes back to
+    // evaluation, so `y` is a use while `x` stays quoted. `.` itself is the
+    // unquote operator, not a call, so it's not a use either.
     let index = index_with_base("bquote(x + .(y))");
     let file = ScopeId::from(0);
 
+    assert!(index.symbols(file).get("x").is_none());
+    assert!(index.symbols(file).get(".").is_none());
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_bquote_hole_walks_nested_expression() {
+    // The `.()` content is evaluated normally, so identifiers inside it are uses
+    // however deeply nested; the surrounding `f(...)` stays quoted.
+    let index = index_with_base("bquote(f(.(g(z))))");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("f").is_none());
+    assert_eq!(
+        index.symbols(file).get("g").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("z").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_bquote_splice_true_unquotes() {
+    // `..()` is bquote's splice unquote, active under `splice = TRUE`: `y` is a
+    // use, `x` stays quoted.
+    let index = index_with_base("bquote(x + ..(y), splice = TRUE)");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_bquote_splice_off_by_default() {
+    // `splice` defaults to FALSE, so `..()` is an ordinary quoted call and `y`
+    // is not a use.
+    let index = index_with_base("bquote(x + ..(y))");
+    let file = ScopeId::from(0);
+
     assert!(index.symbols(file).get("y").is_none());
+}
+
+#[test]
+fn test_bquote_splice_false_leaves_quoted() {
+    // Explicit `splice = FALSE` keeps `..()` quoted.
+    let index = index_with_base("bquote(..(y), splice = FALSE)");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("y").is_none());
+}
+
+#[test]
+fn test_bquote_multiple_holes() {
+    // Every `.()` hole escapes, so both `a` and `b` are uses.
+    let index = index_with_base("bquote(.(a) + .(b))");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("a").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("b").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
 }
 
 #[test]

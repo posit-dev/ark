@@ -53,6 +53,19 @@ fn test_from_definition_site() {
 }
 
 #[test]
+fn test_includes_bquote_hole_use() {
+    // The `x` inside `bquote`'s `.()` hole is a live use, so find-references
+    // from the definition returns it alongside the def.
+    let source = "x <- 1\nbquote(.(x))\n";
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
+
+    let hole = source.rfind('x').unwrap() as u32;
+    let refs = find_references(&db, file, offset(0), true);
+    assert_eq!(ranges(&refs), vec![range(0, 1), range(hole, hole + 1)]);
+}
+
+#[test]
 fn test_shadowing_excludes_outer() {
     let source = "x <- 1\nf <- function() {\n  x <- 2\n  x\n}\n";
     let mut db = OakDatabase::new();
