@@ -4,10 +4,8 @@ use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
-use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::TextRange;
-use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
 
@@ -20,6 +18,7 @@ use super::SemanticIndexBuilder;
 use super::SourcedFile;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
+use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
 use crate::effects::ResolvedArgumentEffect;
@@ -179,21 +178,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
     pub(super) fn scan_operator_assign(&mut self, bin: &RBinaryExpression) {
-        let Some(binding) = self.resolve_operator_assign(bin) else {
+        let Some(bindings) = self.resolve_operator_assign(bin) else {
             return;
         };
-        self.record_binding(binding.name.clone(), bin.syntax().text_trimmed_range());
-        self.call_resolutions
-            .entry(bin.syntax().text_trimmed_range())
-            .or_default()
-            .assign
-            .push(binding);
+        let range = bin.syntax().text_trimmed_range();
+        for binding in bindings {
+            self.record_binding(binding.name.clone(), range);
+            self.call_resolutions
+                .entry(range)
+                .or_default()
+                .assign
+                .push(binding);
+        }
     }
 
     /// Recognize a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`)
-    /// as an assign effect and build its binding, or `None` for any other binary
+    /// as an assign effect and build its bindings, or `None` for any other binary
     /// operator.
-    fn resolve_operator_assign(&mut self, bin: &RBinaryExpression) -> Option<AssignBinding> {
+    fn resolve_operator_assign(&mut self, bin: &RBinaryExpression) -> Option<Vec<AssignBinding>> {
         let op = bin.operator().ok()?;
 
         // A binding operator is either a `%...%` (`SPECIAL`, e.g. `%<>%`, where
@@ -211,17 +213,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
-        let _assign = handlers.assign?;
-
-        let left = bin.left().ok()?;
-        let right = bin.right().ok()?;
-        let (name, _) = assignment_name(&left)?;
-
-        Some(AssignBinding {
-            name,
-            name_expr: RangedAstPtr::new(&left),
-            value_expr: Some(AstPtr::new(&right)),
-        })
+        let ctx = CallContext::new();
+        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
     }
 
     /// Copy the names a `Current + Lazy` body defines into the owner's
@@ -336,7 +329,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .and_then(|handler| handler.resolve(call, &ctx));
         let assign = handlers
             .assign
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(EffectSite::Call(call), &ctx));
 
         Some(Effects {
             arguments,
