@@ -8,16 +8,19 @@ use oak_core::syntax_ext::RIdentifierExt;
 use crate::effects::contrib::custom;
 use crate::effects::contrib::declared;
 use crate::effects::contrib::Entry;
+use crate::effects::ArgumentRef;
 use crate::effects::AssignAnnotation;
 use crate::effects::CallContext;
+use crate::effects::DeclExpr;
 use crate::effects::Declaration;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::Formal;
 use crate::effects::Handler;
+use crate::effects::RExpr;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::effects::SourceAnnotation;
+use crate::effects::StaticValue;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -60,15 +63,56 @@ pub(crate) fn entries() -> Vec<Entry> {
         // `bquote` quotes `expr` too, but its `.()` holes escape to evaluation,
         // so it needs a handler rather than a per-argument declaration.
         custom("base", "bquote", &BquoteHandler),
-        // base attach. `library`/`require` share `LibraryHandler`.
-        custom("base", "library", &LibraryHandler),
-        custom("base", "require", &LibraryHandler),
-        // base source
-        custom("base", "source", &SourceAnnotation { position: 0 }),
+        // base attach. `library` reads its `package` as quoted (the symbol or
+        // string as written, so `library(dplyr)` attaches `dplyr`), unless
+        // `character.only = TRUE` flips it to a string to evaluate. The `if`
+        // encodes that flip, mirroring library's own `character.only` branch.
+        declared(
+            "base",
+            "library",
+            library_declaration(&["package", "help", "pos", "lib.loc", "character.only"]),
+        ),
+        // `require` shares library's attach shape but its own signature:
+        // `character.only` happens to sit at index 4 in both.
+        declared(
+            "base",
+            "require",
+            library_declaration(&[
+                "package",
+                "lib.loc",
+                "quietly",
+                "warn.conflicts",
+                "character.only",
+            ]),
+        ),
+        // base source. The `local =` guard must be a static bool or the source
+        // drops: `source("x.R", local = e)` targets some other environment, so
+        // its names aren't ours to inject. `path` never consults `local`, hence
+        // the separate guard slot.
+        declared(
+            "base",
+            "source",
+            Declaration::new(&["file", "local"])
+                .formal_default(1, StaticValue::Bool(false))
+                .source(DeclExpr::eval(0), Some(RExpr::Eval(ArgumentRef(1)))),
+        ),
         // base assign
         custom("base", "assign", &AssignAnnotation { position: 0 }),
         custom("base", "delayedAssign", &AssignAnnotation { position: 0 }),
     ]
+}
+
+/// A `library`/`require` declaration over `formals`. Both attach the same way,
+/// so they differ only in their signature. `character.only` sits at index 4 in
+/// both, defaulting to `FALSE`.
+fn library_declaration(formals: &[&str]) -> Declaration {
+    Declaration::new(formals)
+        .formal_default(4, StaticValue::Bool(false))
+        .attach(DeclExpr::If {
+            cond: RExpr::Eval(ArgumentRef(4)),
+            then: Box::new(DeclExpr::eval(0)),
+            els: Box::new(DeclExpr::substitute(0)),
+        })
 }
 
 /// Handler for `bquote()`. It quotes its `expr` argument like `quote()`, but a
@@ -176,67 +220,4 @@ fn unquote_hole(call: &RCall, splice: bool) -> Option<AnyRExpression> {
         return None;
     }
     call.arguments().ok()?.items().iter().next()?.ok()?.value()
-}
-
-/// Handler for `library()` and `require()`. Names the attached package from the
-/// first argument, read as quoted (the symbol or string as written, so
-/// `library(dplyr)` attaches `dplyr`). `character.only = TRUE` flips that
-/// argument to standard eval (a value to resolve, `library(pkg, character.only =
-/// TRUE)`), matching R. That flag is specific to these callees, so it lives in
-/// this handler rather than the declarative attach vocabulary.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct LibraryHandler;
-
-impl Handler for LibraryHandler {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects> {
-        let EffectSite::Call(call) = site else {
-            return None;
-        };
-
-        // `character.only` sits at signature position 4 in both callees; in
-        // practice it's passed by name.
-        let formals = [
-            Formal {
-                name: "package",
-                position: 0,
-            },
-            Formal {
-                name: "character.only",
-                position: 4,
-            },
-        ];
-        let matched = ctx.match_arguments(call, &formals);
-
-        let args = call.arguments().ok()?;
-        let values: Vec<Option<AnyRExpression>> = args
-            .items()
-            .iter()
-            .map(|item| item.ok().and_then(|arg| arg.value()))
-            .collect();
-
-        let package = matched
-            .iter()
-            .position(|formal| *formal == Some(0))
-            .and_then(|i| values.get(i))
-            .and_then(|value| value.as_ref())?;
-
-        let character_only = matched
-            .iter()
-            .position(|formal| *formal == Some(1))
-            .and_then(|i| values.get(i))
-            .and_then(|value| value.as_ref())
-            .and_then(|value| ctx.resolve_static_bool(value))
-            .unwrap_or(false);
-
-        let package = if character_only {
-            ctx.resolve_static_string(package)
-        } else {
-            ctx.resolve_quoted_symbol_or_string(package)
-        }?;
-
-        Some(Effects {
-            attach: Some(package),
-            ..Effects::default()
-        })
-    }
 }

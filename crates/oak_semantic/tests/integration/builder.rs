@@ -7,11 +7,12 @@ use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::AssignBinding;
 use oak_semantic::effects::CallContext;
+use oak_semantic::effects::DeclExpr;
+use oak_semantic::effects::Declaration;
 use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::Effects;
 use oak_semantic::effects::Handler;
 use oak_semantic::effects::RangedAstPtr;
-use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::NamespaceAccessKind;
@@ -1566,6 +1567,37 @@ fn test_directive_character_only_false_is_quoted() {
 }
 
 #[test]
+fn test_directive_character_only_dynamic_drops_attach() {
+    // A non-static `character.only` leaves the branch condition unresolved, so
+    // the attach drops. We can't know whether the package argument is a quoted
+    // symbol or a string to evaluate, so guessing (the old `unwrap_or(false)`)
+    // would wrongly attach a package literally named `x`.
+    let index = index_with_base("library(x, character.only = flag)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    // Both arguments stay standard-eval, so they are ordinary variable uses.
+    assert_eq!(index.uses_of("x").len(), 1);
+    assert_eq!(index.uses_of("flag").len(), 1);
+}
+
+#[test]
+fn test_directive_package_symbol_is_not_a_use() {
+    // `library(dplyr)` resolves to the `Substitute` branch, which captures the
+    // package argument unevaluated. A captured symbol isn't a runtime use, so
+    // `dplyr` records no use.
+    let index = index_with_base("library(dplyr)");
+    assert_eq!(index.uses_of("dplyr").len(), 0);
+}
+
+#[test]
+fn test_directive_character_only_true_package_is_a_use() {
+    // With `character.only = TRUE` the package argument is evaluated, so it is a
+    // real variable use even though it can't be statically resolved to a name.
+    let index = index_with_base("library(x, character.only = TRUE)");
+    assert_eq!(index.uses_of("x").len(), 1);
+}
+
+#[test]
 fn test_directive_no_arguments_ignored() {
     let index = index_with_base("library()");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
@@ -1667,6 +1699,28 @@ fn test_source_call_non_static_local_ignored() {
 #[test]
 fn test_source_call_local_true_recorded() {
     let index = index_with_base("source(\"helpers.R\", local = TRUE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_local_false_recorded() {
+    // The guard resolves to a static bool either way, so `local = FALSE` keeps
+    // the source just like `local = TRUE`.
+    let index = index_with_base("source(\"helpers.R\", local = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_named_file_recognized() {
+    // A named `file =` binds the path formal, so the path is recognized. The
+    // old positional-only scan missed this.
+    let index = index_with_base("source(file = \"helpers.R\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,
@@ -2324,11 +2378,13 @@ impl ImportsResolver for MultiFileResolver {
     }
 }
 
-/// Resolves `source` to a [`SourceAnnotation`] whose path sits at the second
-/// positional slot, exercising the configurable `position`.
+/// Resolves `source` to a [`Declaration`] whose path operand sits at the second
+/// formal, exercising a path read from a non-leading slot.
 struct PositionResolver;
 
-static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation { position: 1 };
+static SOURCE_AT_POSITION_1: std::sync::LazyLock<Declaration> = std::sync::LazyLock::new(|| {
+    Declaration::new(&["ignored", "file"]).source(DeclExpr::eval(1), None)
+});
 
 impl ImportsResolver for PositionResolver {
     fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
@@ -2337,7 +2393,7 @@ impl ImportsResolver for PositionResolver {
 
     fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectSource> {
         if name == "source" {
-            return Some(EffectSource::Custom(&SOURCE_AT_POSITION_1));
+            return Some(EffectSource::Declared(&SOURCE_AT_POSITION_1));
         }
         None
     }
@@ -2669,8 +2725,8 @@ fn test_source_resolver_multiple_files_each_emitted_and_injected() {
 
 #[test]
 fn test_source_resolver_honors_configured_path_position() {
-    // A `SourceAnnotation` with `position: 1` takes the path from the second
-    // positional argument, not the first.
+    // A declaration whose path operand is the second formal takes the path from
+    // the second positional argument, not the first.
     let index = build_test_index("source(\"ignored\", \"real.R\")", PositionResolver);
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "real.R".into(),

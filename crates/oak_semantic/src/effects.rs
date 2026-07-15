@@ -30,6 +30,7 @@ pub use declaration::EnvironmentEffect;
 pub use declaration::EvalMode;
 pub use declaration::FormalDef;
 pub use declaration::RExpr;
+pub use declaration::StaticValue;
 
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]
@@ -240,78 +241,6 @@ pub enum ResolvedArgumentEffect {
     Quote { holes: Vec<AnyRExpression> },
 }
 
-/// Declares how a source function (`source()`) names the file it reads, and
-/// serves as its [`Handler`] by pulling that path out of a call.
-#[derive(Debug, Clone, Copy)]
-pub struct SourceAnnotation {
-    /// Which positional argument holds the path, counting only unnamed
-    /// arguments (0 for base `source`). Other source-like functions may put the
-    /// path elsewhere, so it's configured per entry rather than assumed.
-    pub position: usize,
-}
-
-impl Handler for SourceAnnotation {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Effects> {
-        let EffectSite::Call(call) = site else {
-            return None;
-        };
-        let args = call.arguments().ok()?;
-
-        // The path is matched positionally among unnamed arguments rather than
-        // through [`CallContext::match_arguments`], for two reasons. We need to
-        // inspect the `local =` value to bail on non-static calls, which
-        // argument matching doesn't do. And counting unnamed arguments is robust
-        // to a named argument coming first (e.g. `source(echo = TRUE, "x.R")`),
-        // which the call-position matching isn't yet. A named `file =` therefore
-        // isn't recognized today.
-        //
-        // TODO(nse): once `match_arguments` is signature-aware (see `Formal`),
-        // the leading-named-arg robustness comes for free and this scan could
-        // fold onto it, keeping only the `local =` bail on top.
-        let mut path: Option<String> = None;
-        let mut positional = 0;
-
-        for item in args.items().iter() {
-            let Ok(arg) = item else { continue };
-
-            if let Some(name_clause) = arg.name_clause() {
-                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
-                    continue;
-                };
-                if name_ident.name_text() == "local" {
-                    if let Some(value) = arg.value() {
-                        match value {
-                            // TRUE/FALSE are fine, we resolve uniformly. For
-                            // the FALSE in nested context case, we'll emit a
-                            // diagnostic.
-                            AnyRExpression::RTrueExpression(_) |
-                            AnyRExpression::RFalseExpression(_) => {},
-                            // Anything else (environment, non-statically
-                            // resolvable expression) means the call isn't
-                            // statically analyzable, so it's not recognized.
-                            _ => return None,
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if positional == self.position {
-                path = arg
-                    .value()
-                    .and_then(|value| ctx.resolve_static_string(&value));
-            }
-            positional += 1;
-        }
-
-        let path = path?;
-        Some(Effects {
-            source: Some(vec![path]),
-            ..Effects::default()
-        })
-    }
-}
-
 /// Declares how an assign function (`assign()`, `delayedAssign()`) names the
 /// variable it binds, and serves as its [`Handler`] by pulling that name out of
 /// a call.
@@ -329,15 +258,15 @@ impl Handler for AssignAnnotation {
         };
         let args = call.arguments().ok()?;
 
-        // Matched positionally among unnamed arguments, same as `source`, so a
-        // leading named argument doesn't shift the count and a named `x =` isn't
-        // recognized. The value is the positional right after the name (base
+        // Matched positionally among unnamed arguments, so a leading named
+        // argument doesn't shift the count and a named `x =` isn't recognized.
+        // The value is the positional right after the name (base
         // `assign(x, value, ...)`).
         //
         // FIXME: A named `value =` isn't captured yet.
         // TODO(nse): Fold onto `match_arguments()` once it's signature-aware,
-        // same as `source` (see `SourceAnnotation::resolve`), keeping only the
-        // `envir`/`pos` bail and the value-after-name read on top.
+        // keeping only the `envir`/`pos` bail and the value-after-name read on
+        // top.
         let mut name: Option<(String, RangedAstPtr<AnyRExpression>)> = None;
         let mut value_expr: Option<AstPtr<AnyRExpression>> = None;
         let mut positional = 0;

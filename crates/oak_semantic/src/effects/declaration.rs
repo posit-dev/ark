@@ -1,4 +1,5 @@
 use aether_syntax::AnyRArgumentName;
+use aether_syntax::AnyRExpression;
 use aether_syntax::RArgument;
 use aether_syntax::RCall;
 use biome_rowan::AstSeparatedList;
@@ -65,14 +66,42 @@ impl Declaration {
         });
         self
     }
+
+    /// Give the formal at `arg` a static default, used when a call omits it.
+    pub fn formal_default(mut self, arg: usize, default: StaticValue) -> Self {
+        if let Some(formal) = self.formals.get_mut(arg) {
+            formal.default = Some(default);
+        }
+        self
+    }
+
+    /// Add an `Attach` effect reading its package name from `package`.
+    pub fn attach(mut self, package: DeclExpr) -> Self {
+        self.env.push(EnvironmentEffect::Attach { package });
+        self
+    }
+
+    /// Add a `Source` effect reading its path from `path`. `guard` must resolve
+    /// to a static bool or the effect drops.
+    pub fn source(mut self, path: DeclExpr, guard: Option<RExpr>) -> Self {
+        self.env.push(EnvironmentEffect::Source { path, guard });
+        self
+    }
 }
 
 /// One formal in a [`Declaration`]'s signature.
 #[derive(Debug, Clone)]
 pub struct FormalDef {
     pub name: String,
-    /// The stub's default expression, consulted when the argument is absent.
-    pub default: Option<RExpr>,
+    /// The formal's static default, consulted when the argument is absent.
+    pub default: Option<StaticValue>,
+}
+
+/// A statically known literal an absent argument falls back to. One variant
+/// today; it grows as declarations need other literal types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaticValue {
+    Bool(bool),
 }
 
 /// An arg-centric effect: one argument and how it evaluates.
@@ -120,6 +149,18 @@ pub enum DeclExpr {
     },
 }
 
+impl DeclExpr {
+    /// A `.()` hole that forces the argument at `arg` to its value.
+    pub fn eval(arg: usize) -> Self {
+        DeclExpr::Hole(RExpr::Eval(ArgumentRef(arg)))
+    }
+
+    /// A `.()` hole that captures the argument at `arg` unevaluated.
+    pub fn substitute(arg: usize) -> Self {
+        DeclExpr::Hole(RExpr::Substitute(ArgumentRef(arg)))
+    }
+}
+
 /// The bounded R interpreted inside a `.()` hole.
 #[derive(Debug, Clone, Copy)]
 pub enum RExpr {
@@ -137,33 +178,234 @@ pub struct ArgumentRef(pub usize);
 /// Interpret a declaration against a call, producing the owned [`Effects`] the
 /// builder consumes.
 ///
-/// The arg-centric axis (`arguments`) matches the call against the declaration's
-/// `formals` with [`match_signature`], then maps each matched formal to its
-/// declared [`EvalMode`]. The effect-centric axis (`env`) does not contribute to
-/// the result here.
-pub fn resolve(declaration: &Declaration, call: &RCall, _ctx: &CallContext) -> Option<Effects> {
-    let arguments = resolve_arguments(declaration, call);
+/// The call is matched against the declaration's `formals` once with
+/// [`match_signature`]. The arg-centric axis (`arguments`) maps each matched
+/// formal to its declared [`EvalMode`]. The effect-centric axis (`env`)
+/// interprets each [`EnvironmentEffect`] against the same match to yield the
+/// attach package / source path, and folds the liveness of any `Substitute`
+/// operand it consulted back into `arguments` (a captured argument is inert, so
+/// its slot becomes `Quote` and the walk stops treating it as a use).
+pub fn resolve(declaration: &Declaration, call: &RCall, ctx: &CallContext) -> Option<Effects> {
+    let matched = match_signature(call, &declaration.formals);
+    let values = argument_values(call);
+
+    let mut arguments = resolve_arguments(declaration, &matched);
+    let mut attach = None;
+    let mut source = None;
+
+    let resolution = EnvResolution {
+        declaration,
+        matched: &matched,
+        values: &values,
+        ctx,
+    };
+    for effect in &declaration.env {
+        resolution.resolve_effect(effect, &mut arguments, &mut attach, &mut source);
+    }
 
     Some(Effects {
         arguments,
+        attach,
+        source,
         ..Effects::default()
     })
 }
 
-/// Match the call against the declaration's formals, yielding the resolved effect
-/// per call argument in order. `None` when the declaration names no arguments.
-fn resolve_arguments(declaration: &Declaration, call: &RCall) -> Option<ResolvedArgumentEffects> {
+/// Map each call argument to its declared [`EvalMode`], in call order. `None`
+/// when the declaration names no arguments.
+fn resolve_arguments(
+    declaration: &Declaration,
+    matched: &[Option<usize>],
+) -> Option<ResolvedArgumentEffects> {
     if declaration.arguments.is_empty() {
         return None;
     }
 
-    let matched = match_signature(call, &declaration.formals);
     Some(
         matched
-            .into_iter()
+            .iter()
             .map(|formal| formal.and_then(|idx| declared_mode(declaration, idx).map(resolve_mode)))
             .collect(),
     )
+}
+
+/// One call matched against one declaration, the shared context for interpreting
+/// every environment effect: the declaration (for formal defaults), the
+/// formal-to-argument match, the argument value expressions, and the resolution
+/// context.
+struct EnvResolution<'a> {
+    declaration: &'a Declaration,
+    matched: &'a [Option<usize>],
+    values: &'a [Option<AnyRExpression>],
+    ctx: &'a CallContext,
+}
+
+/// Which kind of string an environment slot expects, which decides how a
+/// `Substitute` capture is coerced.
+enum StringSlot {
+    /// A package name: an `Eval` result is a static string, a `Substitute`
+    /// capture is the symbol or string as written.
+    PackageName,
+    /// A file path: an `Eval` result is a static string, a `Substitute` capture
+    /// doesn't name a path and so is unresolved.
+    Path,
+}
+
+impl EnvResolution<'_> {
+    /// Interpret one environment effect, writing its result into `attach`/`source`
+    /// and folding consulted `Substitute` operands into `arguments`. An operand,
+    /// condition, or guard that fails to resolve drops this one effect (fold
+    /// nothing) and leaves the others untouched.
+    fn resolve_effect(
+        &self,
+        effect: &EnvironmentEffect,
+        arguments: &mut Option<ResolvedArgumentEffects>,
+        attach: &mut Option<String>,
+        source: &mut Option<Vec<String>>,
+    ) {
+        let mut folds = Vec::new();
+
+        match effect {
+            EnvironmentEffect::Source { path, guard } => {
+                // The guard must resolve to a static bool or the effect drops.
+                // Its value is deliberately ignored: `local = TRUE` and `local =
+                // FALSE` both keep the source. What it rejects is a non-static
+                // `local =` (e.g. an environment), which would otherwise wrongly
+                // inject the sourced names into the current scope.
+                if let Some(guard) = guard {
+                    if self.resolve_bool_operand(guard).is_none() {
+                        return;
+                    }
+                }
+                let Some(path) = self.resolve_string_expr(path, StringSlot::Path, &mut folds)
+                else {
+                    return;
+                };
+                source.get_or_insert_with(Vec::new).push(path);
+            },
+            EnvironmentEffect::Attach { package } => {
+                let Some(package) =
+                    self.resolve_string_expr(package, StringSlot::PackageName, &mut folds)
+                else {
+                    return;
+                };
+                *attach = Some(package);
+            },
+        }
+
+        apply_folds(arguments, &folds, self.matched.len());
+    }
+
+    /// Resolve a [`DeclExpr`] in a string slot, recording consulted `Substitute`
+    /// operands into `folds`. Only the chosen branch of an `If` contributes folds.
+    fn resolve_string_expr(
+        &self,
+        expr: &DeclExpr,
+        slot: StringSlot,
+        folds: &mut Vec<usize>,
+    ) -> Option<String> {
+        match expr {
+            DeclExpr::Hole(operand) => self.resolve_string_operand(operand, slot, folds),
+            DeclExpr::If { cond, then, els } => {
+                let cond = self.resolve_bool_operand(cond)?;
+                let branch = if cond { then } else { els };
+                self.resolve_string_expr(branch, slot, folds)
+            },
+        }
+    }
+
+    /// Resolve a single `.()` operand in a string slot. An `Eval` forces the
+    /// argument to a static string; a `Substitute` captures it, records its slot
+    /// for folding, and coerces the capture per `slot`.
+    fn resolve_string_operand(
+        &self,
+        operand: &RExpr,
+        slot: StringSlot,
+        folds: &mut Vec<usize>,
+    ) -> Option<String> {
+        match operand {
+            RExpr::Eval(ArgumentRef(arg)) => match self.formal_binding(*arg) {
+                Some((_, value)) => self.ctx.resolve_static_string(value),
+                // A string slot needs a string default, but `StaticValue` only
+                // models bools, so an absent argument has no default to fall back
+                // on.
+                None => None,
+            },
+            RExpr::Substitute(ArgumentRef(arg)) => {
+                let (pos, value) = self.formal_binding(*arg)?;
+                folds.push(pos);
+                match slot {
+                    StringSlot::PackageName => self.ctx.resolve_quoted_symbol_or_string(value),
+                    StringSlot::Path => None,
+                }
+            },
+        }
+    }
+
+    /// Resolve an operand expected to be a static bool (an `If` condition or a
+    /// `Source` guard). Only an `Eval` can be a bool; a `Substitute` captures an
+    /// expression, which is never one.
+    fn resolve_bool_operand(&self, operand: &RExpr) -> Option<bool> {
+        match operand {
+            RExpr::Eval(ArgumentRef(arg)) => match self.formal_binding(*arg) {
+                Some((_, value)) => self.ctx.resolve_static_bool(value),
+                None => static_bool(
+                    self.declaration
+                        .formals
+                        .get(*arg)
+                        .and_then(|formal| formal.default),
+                ),
+            },
+            RExpr::Substitute(_) => None,
+        }
+    }
+
+    /// Find where the formal at `formal` was bound in the call: its call-argument
+    /// position and value expression, or `None` when the argument is absent.
+    fn formal_binding(&self, formal: usize) -> Option<(usize, &AnyRExpression)> {
+        let pos = self
+            .matched
+            .iter()
+            .position(|bound| *bound == Some(formal))?;
+        let value = self.values.get(pos)?.as_ref()?;
+        Some((pos, value))
+    }
+}
+
+/// Mark each consulted `Substitute` operand's call slot as `Quote` (inert), so
+/// the walk skips it. Creates the arguments vector if an arg-centric pass didn't
+/// already, keeping it aligned 1:1 with the call. Never overwrites a slot an
+/// [`ArgumentEffect`] already set.
+fn apply_folds(arguments: &mut Option<ResolvedArgumentEffects>, folds: &[usize], arg_count: usize) {
+    if folds.is_empty() {
+        return;
+    }
+    let arguments = arguments.get_or_insert_with(|| vec![None; arg_count]);
+    for &pos in folds {
+        if arguments[pos].is_none() {
+            arguments[pos] = Some(ResolvedArgumentEffect::Quote { holes: Vec::new() });
+        }
+    }
+}
+
+/// Read a static default as a bool, or `None` when there is no default. The
+/// exhaustive match forces a decision here when `StaticValue` grows a variant.
+fn static_bool(value: Option<StaticValue>) -> Option<bool> {
+    match value? {
+        StaticValue::Bool(default) => Some(default),
+    }
+}
+
+/// The value expression of each call argument, in order, aligned with
+/// [`match_signature`]'s output.
+fn argument_values(call: &RCall) -> Vec<Option<AnyRExpression>> {
+    let Ok(args) = call.arguments() else {
+        return Vec::new();
+    };
+    args.items()
+        .iter()
+        .map(|item| item.ok().and_then(|arg| arg.value()))
+        .collect()
 }
 
 /// The [`EvalMode`] declared for the formal at `idx`, if any. A matched formal
@@ -418,5 +660,120 @@ mod tests {
             Some(2),
             None
         ]);
+    }
+
+    /// An attach declaration shaped like `library`: `if (.(character.only))
+    /// .(package) else .(substitute(package))`, with `character.only` at index 1.
+    fn attach_declaration() -> Declaration {
+        Declaration::new(&["package", "character.only"])
+            .formal_default(1, StaticValue::Bool(false))
+            .attach(DeclExpr::If {
+                cond: RExpr::Eval(ArgumentRef(1)),
+                then: Box::new(DeclExpr::eval(0)),
+                els: Box::new(DeclExpr::substitute(0)),
+            })
+    }
+
+    #[test]
+    fn if_true_takes_eval_branch() {
+        // `character.only = TRUE` picks the `then` branch, which forces the
+        // package argument to a static string.
+        let call = first_call("library(\"dplyr\", character.only = TRUE)");
+        let effects = resolve(&attach_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.attach.as_deref(), Some("dplyr"));
+    }
+
+    #[test]
+    fn if_false_takes_substitute_branch_and_folds_liveness() {
+        // `character.only = FALSE` picks the `els` branch, which captures the
+        // package symbol. The capture is inert, so its call slot folds to Quote.
+        let call = first_call("library(dplyr, character.only = FALSE)");
+        let effects = resolve(&attach_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.attach.as_deref(), Some("dplyr"));
+
+        let arguments = effects.arguments.unwrap();
+        assert_eq!(arguments.len(), 2);
+        assert!(matches!(
+            arguments[0],
+            Some(ResolvedArgumentEffect::Quote { .. })
+        ));
+        assert!(arguments[1].is_none());
+    }
+
+    #[test]
+    fn if_condition_falls_back_to_default_when_absent() {
+        // With `character.only` absent, the condition reads its `FALSE` default,
+        // so the `els` (substitute) branch names the captured symbol.
+        let call = first_call("library(dplyr)");
+        let effects = resolve(&attach_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.attach.as_deref(), Some("dplyr"));
+
+        let arguments = effects.arguments.unwrap();
+        assert!(matches!(
+            arguments[0],
+            Some(ResolvedArgumentEffect::Quote { .. })
+        ));
+    }
+
+    #[test]
+    fn if_condition_unresolved_drops_effect() {
+        // A non-static `character.only` leaves the condition unresolved, so the
+        // whole attach drops and nothing folds.
+        let call = first_call("library(x, character.only = flag)");
+        let effects = resolve(&attach_declaration(), &call, &CallContext::new()).unwrap();
+        assert!(effects.attach.is_none());
+        assert!(effects.arguments.is_none());
+    }
+
+    #[test]
+    fn eval_operand_stays_live() {
+        // The `then` branch reads the package via `Eval`, which leaves the slot
+        // standard-eval: no fold, so `arguments` stays `None`.
+        let call = first_call("library(x, character.only = TRUE)");
+        let effects = resolve(&attach_declaration(), &call, &CallContext::new()).unwrap();
+        // `x` isn't a static string, so no package resolves, but the point is
+        // that a resolved-or-not `Eval` never folds its slot.
+        assert!(effects.attach.is_none());
+        assert!(effects.arguments.is_none());
+    }
+
+    /// A source declaration: path on formal 0, `local` guard on formal 1
+    /// defaulting to `FALSE`.
+    fn source_declaration() -> Declaration {
+        Declaration::new(&["file", "local"])
+            .formal_default(1, StaticValue::Bool(false))
+            .source(DeclExpr::eval(0), Some(RExpr::Eval(ArgumentRef(1))))
+    }
+
+    #[test]
+    fn source_path_resolves_with_static_guard() {
+        let call = first_call("source(\"helpers.R\", local = TRUE)");
+        let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+        // The path is read via `Eval`, so nothing folds.
+        assert!(effects.arguments.is_none());
+    }
+
+    #[test]
+    fn source_path_resolves_when_guard_absent_via_default() {
+        let call = first_call("source(\"helpers.R\")");
+        let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+    }
+
+    #[test]
+    fn source_named_path_resolves() {
+        let call = first_call("source(file = \"helpers.R\")");
+        let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
+        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+    }
+
+    #[test]
+    fn source_guard_non_static_drops_effect() {
+        // A non-static `local =` fails the guard, so the source drops. What the
+        // guard rejects is a target environment we can't inject into.
+        let call = first_call("source(\"helpers.R\", local = some_env())");
+        let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
+        assert!(effects.source.is_none());
     }
 }
