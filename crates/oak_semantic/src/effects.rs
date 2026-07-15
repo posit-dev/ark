@@ -18,6 +18,9 @@ use crate::semantic_index::NseTiming;
 /// The owned declaration model and its arg-centric resolver.
 pub mod declaration;
 
+/// The `declare()` directive parser: source text -> `Declaration`.
+pub mod declare;
+
 /// Per-package tables of which functions carry effects. Private data behind the
 /// `lookup`/`annotates` query API below.
 mod contrib;
@@ -31,6 +34,10 @@ pub use declaration::EvalMode;
 pub use declaration::FormalDef;
 pub use declaration::RExpr;
 pub use declaration::StaticValue;
+pub use declare::parse_declaration;
+pub use declare::DeclareDiagnostic;
+pub use declare::DeclareDiagnosticKind;
+pub use declare::ParsedDeclaration;
 
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]

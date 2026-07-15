@@ -398,7 +398,7 @@ fn static_bool(value: Option<StaticValue>) -> Option<bool> {
 
 /// The value expression of each call argument, in order, aligned with
 /// [`match_signature`]'s output.
-fn argument_values(call: &RCall) -> Vec<Option<AnyRExpression>> {
+pub(crate) fn argument_values(call: &RCall) -> Vec<Option<AnyRExpression>> {
     let Ok(args) = call.arguments() else {
         return Vec::new();
     };
@@ -449,7 +449,7 @@ fn resolve_mode(mode: &EvalMode) -> ResolvedArgumentEffect {
 /// stops positional filling. It and every later unnamed argument bind to dots
 /// (`None`), and formals after `...` are reachable only by name, which the first
 /// pass already handled.
-fn match_signature(call: &RCall, formals: &[FormalDef]) -> Vec<Option<usize>> {
+pub(crate) fn match_signature(call: &RCall, formals: &[FormalDef]) -> Vec<Option<usize>> {
     let Ok(args) = call.arguments() else {
         return Vec::new();
     };
@@ -505,7 +505,7 @@ fn match_signature(call: &RCall, formals: &[FormalDef]) -> Vec<Option<usize>> {
 
 /// The name a call argument is bound by, or `None` when it's positional. Names
 /// may be identifiers or strings (`f("x" = 1)`), matching R.
-fn argument_name(arg: &RArgument) -> Option<String> {
+pub(crate) fn argument_name(arg: &RArgument) -> Option<String> {
     let clause = arg.name_clause()?;
     match clause.name().ok()? {
         AnyRArgumentName::RIdentifier(ident) => Some(ident.name_text()),
