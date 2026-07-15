@@ -48,6 +48,7 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
+use oak_core::declaration::as_declare_args;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
@@ -55,6 +56,7 @@ use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 
+use crate::effects::parse_declaration;
 use crate::effects::AssignBinding;
 use crate::effects::Declaration;
 use crate::effects::ResolvedArgumentEffects;
@@ -582,9 +584,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // Value side first, mirroring `collect_assignment`: it may
                     // hold NSE calls or nested defs that flow before the binding.
                     let value = if right { bin.left() } else { bin.right() };
-                    if let Ok(value) = value {
-                        self.scan_expression(&value);
-                    }
+                    // A function value may open with a `declare()` directive. Parse
+                    // it here so the binding carries the declaration and later calls
+                    // in this scope resolve against it.
+                    let declaration = match value {
+                        Ok(value) => {
+                            self.scan_expression(&value);
+                            self.scan_declaration(&value)
+                        },
+                        Err(_) => None,
+                    };
 
                     let target = if right { bin.right() } else { bin.left() };
                     if let Ok(target) = target {
@@ -592,7 +601,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                             // `<<-` binds in an ancestor, not here, so it doesn't
                             // shadow a callee in this scope (matching the walk).
                             Some((name, _)) if !is_super_assignment(bin) => {
-                                self.record_binding(name, None);
+                                self.record_binding(name, declaration);
                             },
                             Some(_) => {},
                             // Complex target (`x$foo <- v`): no binding, but the
@@ -619,6 +628,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             AnyRExpression::RCall(call) => {
                 if let Ok(func) = call.function() {
                     self.scan_expression(&func);
+                }
+                // A `declare()` reaching here isn't the directive position (that
+                // one is skipped before the body scan), so it's misplaced. Its
+                // arguments are inert, and the spot is flagged once here in the
+                // scan, which reaches every call the walk does.
+                if is_declare_callee(call) {
+                    self.record_misplaced_declare(call.syntax().text_trimmed_range());
+                    return;
                 }
                 self.scan_call(call);
             },
@@ -790,9 +807,32 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Intern a local binding's `Declaration` in the builder's arena. The
     /// returned id is what the flow-state payloads carry.
-    #[allow(dead_code)]
     fn add_declaration(&mut self, declaration: Declaration) -> DeclId {
         self.declarations.push(declaration)
+    }
+
+    /// If `value` is a function definition whose body opens with a `declare()`
+    /// directive, parse it, intern the declaration, and return its id for the
+    /// binding to carry. Parse diagnostics fold into the builder's own.
+    ///
+    /// Reads exactly the body's first statement (`parse_declaration` checks it
+    /// first thing), so an ordinary function value pays only a cheap directive
+    /// check.
+    fn scan_declaration(&mut self, value: &AnyRExpression) -> Option<DeclId> {
+        let AnyRExpression::RFunctionDefinition(func) = value else {
+            return None;
+        };
+        let parsed = parse_declaration(func)?;
+        for diagnostic in parsed.diagnostics {
+            self.diagnostics
+                .push(SemanticDiagnostic::MalformedDeclaration(diagnostic));
+        }
+        Some(self.add_declaration(parsed.declaration))
+    }
+
+    fn record_misplaced_declare(&mut self, range: TextRange) {
+        self.diagnostics
+            .push(SemanticDiagnostic::MisplacedDeclare { range });
     }
 
     fn nse_effect(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
@@ -877,6 +917,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // handling NSE.
                 if let Ok(func) = call.function() {
                     self.collect_expression(&func);
+                }
+
+                // A misplaced `declare()`: the callee stays a use like any
+                // other, but its arguments are inert (never runtime R), so
+                // suppress them. The directive-position `declare()` never
+                // reaches here. The diagnostic is recorded by the scan.
+                if is_declare_callee(call) {
+                    return;
                 }
 
                 if let Some(scoping) = self.nse_effect(call) {
@@ -1023,11 +1071,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // uses and bindings. Refining this requires special-casing these
             // forms, which we defer as future work.
             //
-            // Once quoting is handled, `declare()` and `~declare()` will need
-            // explicit treatment: its arguments are quoted (not evaluated) but
-            // should still be inspected for directives like `source()`.
-            // Currently this works by accident because the generic traversal is
-            // transparent to both `declare()` and `~`.
+            // A `~declare(...)` formula reaches its inner `declare(...)` call
+            // through this generic descent, where the `RCall` arm suppresses the
+            // arguments and flags the misplaced spot.
             _ => {
                 self.collect_descendants(expr.syntax());
             },
@@ -1074,11 +1120,50 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
         if let Ok(body) = fun.body() {
             self.begin_scan();
-            self.scan_expression(&body);
-            self.collect_expression(&body);
+            self.scan_function_body(&body);
+            self.collect_function_body(&body);
         }
 
         self.pop_scope(scope);
+    }
+
+    /// Scan a function body, skipping a leading `declare()` directive.
+    ///
+    /// The directive is inert: it never runs, so its callee and arguments
+    /// contribute nothing to the scan. `scan_declaration` already read it at the
+    /// binding site, so here we only keep its tokens out of the scan.
+    fn scan_function_body(&mut self, body: &AnyRExpression) {
+        match body {
+            AnyRExpression::RBracedExpressions(braced) => {
+                for (i, expr) in braced.expressions().iter().enumerate() {
+                    if i == 0 && as_declare_args(&expr).is_some() {
+                        continue;
+                    }
+                    self.scan_expression(&expr);
+                }
+            },
+            // An unbraced body that IS the directive has nothing else to scan.
+            _ if as_declare_args(body).is_some() => {},
+            _ => self.scan_expression(body),
+        }
+    }
+
+    /// Walk a function body, skipping a leading `declare()` directive, the walk
+    /// counterpart to `scan_function_body`. Keeps the directive's `x`, `Quote`,
+    /// etc. out of the recorded uses.
+    fn collect_function_body(&mut self, body: &AnyRExpression) {
+        match body {
+            AnyRExpression::RBracedExpressions(braced) => {
+                for (i, expr) in braced.expressions().iter().enumerate() {
+                    if i == 0 && as_declare_args(&expr).is_some() {
+                        continue;
+                    }
+                    self.collect_expression(&expr);
+                }
+            },
+            _ if as_declare_args(body).is_some() => {},
+            _ => self.collect_expression(body),
+        }
     }
 
     fn collect_parameters(&mut self, params: &RParameters) {
@@ -1397,6 +1482,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     "Lazy-shadow ambiguity: callee `{name}` at {range:?} is recognized \
                      as effectful, but a lazy-crossed ancestor binds it with undetermined timing"
                 ),
+                SemanticDiagnostic::MalformedDeclaration(diagnostic) => log::warn!(
+                    "Malformed `declare()` entry at {:?}: {:?}",
+                    diagnostic.range,
+                    diagnostic.kind
+                ),
+                SemanticDiagnostic::MisplacedDeclare { range } => log::warn!(
+                    "Misplaced `declare()` at {range:?}: not a function body's first \
+                     statement, so its annotation is ignored"
+                ),
+                SemanticDiagnostic::DeclaredMixedAmbiguity { name, range } => log::warn!(
+                    "Declared-mixed ambiguity: callee `{name}` at {range:?} resolves to a \
+                     local declaration, but its bindings disagree across a lazy boundary"
+                ),
             }
         }
 
@@ -1566,6 +1664,12 @@ impl BoundNames {
     fn binds(&self, name: &str) -> bool {
         self.by_name.contains_key(name)
     }
+
+    /// The joined declaration payload of `name`, or `None` when this scope
+    /// doesn't bind it.
+    fn get(&self, name: &str) -> Option<DeclaredBinding> {
+        self.by_name.get(name).copied()
+    }
 }
 
 /// The declaration payload of one name in a scope's [`BoundNames`], joined
@@ -1596,6 +1700,16 @@ impl DeclaredBinding {
             DeclaredBinding::Mixed
         }
     }
+}
+
+/// Whether `call`'s callee is the bare identifier `declare`. Recognizes the
+/// misplaced-directive spelling; the `~declare(...)` formula is reached through
+/// its inner call by the generic descent, so it lands here too.
+fn is_declare_callee(call: &RCall) -> bool {
+    matches!(
+        call.function(),
+        Ok(AnyRExpression::RIdentifier(ident)) if ident.name_text() == "declare"
+    )
 }
 
 fn is_assignment(bin: &RBinaryExpression) -> bool {

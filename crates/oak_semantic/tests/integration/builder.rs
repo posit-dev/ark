@@ -19,6 +19,7 @@ use oak_semantic::semantic_index::NamespaceAccessKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
@@ -2184,67 +2185,78 @@ fn test_source_call_no_arguments_ignored() {
 }
 
 // --- declare() directives ---
+//
+// A `declare()` is only a directive at a function body's first statement, where
+// it describes that function's calling convention and is inert (its arguments
+// never run). A `declare()` anywhere else, including file top level, is
+// misplaced: its arguments are still suppressed, but the spot is flagged. So the
+// inner `source()`/`library()` calls these tests write are never recorded as
+// effects, unlike the transparent traversal that once picked them up by
+// accident.
+
+fn misplaced_declare_count(index: &SemanticIndex) -> usize {
+    index
+        .diagnostics()
+        .iter()
+        .filter(|d| matches!(d, SemanticDiagnostic::MisplacedDeclare { .. }))
+        .count()
+}
 
 #[test]
-fn test_directive_declare_source_no_resolver() {
+fn test_directive_declare_source_suppressed_at_file_scope() {
+    // File top level is not a directive position, so the `declare()` is
+    // misplaced and its `source()` argument is suppressed, not recorded.
     let index = index_with_base("declare(source(\"helpers.R\"))");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 1);
 }
 
 #[test]
-fn test_directive_declare_source_single_quotes_no_resolver() {
+fn test_directive_declare_source_single_quotes_suppressed() {
     let index = index_with_base("declare(source('utils.R'))");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "utils.R".into(),
-        resolved: None,
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 1);
 }
 
 #[test]
-fn test_directive_tilde_declare_source_no_resolver() {
+fn test_directive_tilde_declare_source_suppressed() {
+    // The `~declare(...)` formula reaches its inner `declare()` call through the
+    // generic descent, where it's flagged and its arguments suppressed too.
     let index = index_with_base("~declare(source(\"helpers.R\"))");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 1);
 }
 
 #[test]
-fn test_fixme_directive_declare_library_transparent() {
-    // `declare()` is transparent: the inner `library(dplyr)` is still
-    // picked up as a directive.
-    // FIXME: We should declare `declare()` as a quoting function.
+fn test_directive_declare_library_suppressed() {
+    // The inner `library(dplyr)` is no longer picked up: `declare()` is inert.
     let index = index_with_base("declare(library(dplyr))");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 1);
 }
 
 #[test]
-fn test_directive_declare_not_at_file_scope() {
-    // declare()'s argument is walked into regardless of position, so a
-    // nested source() inside a function body is still recorded.
+fn test_directive_declare_in_function_body_is_directive() {
+    // The `declare()` IS the function body's first statement, so it's the
+    // directive: skipped entirely (not misplaced), and its lowercase `source()`
+    // isn't the declared-effect grammar's `Source(...)`, so no effect is
+    // recorded.
     let index = index_with_base("f <- function() { declare(source(\"helpers.R\")) }");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 0);
 }
 
 #[test]
-fn test_directive_tilde_declare_not_at_file_scope() {
+fn test_directive_tilde_declare_in_function_body_is_directive() {
     let index = index_with_base("f <- function() { ~declare(source(\"helpers.R\")) }");
-    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    }]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert_eq!(misplaced_declare_count(&index), 0);
 }
 
 #[test]
 fn test_directive_declare_mixed_with_bare() {
+    // The bare `library()` and `source()` are recorded as before; only the
+    // misplaced `declare()`'s inner `source("helpers.R")` is suppressed.
     let index =
         index_with_base("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
     assert_eq!(semantic_call_kinds(&index), [
@@ -2252,36 +2264,11 @@ fn test_directive_declare_mixed_with_bare() {
             package: "dplyr".into()
         },
         &SemanticCallKind::Source {
-            path: "helpers.R".into(),
-            resolved: None,
-        },
-        &SemanticCallKind::Source {
             path: "utils.R".into(),
             resolved: None,
         },
     ]);
-}
-
-#[test]
-fn test_directive_declare_source_no_resolver_records_call() {
-    let index = index_with_base("x <- 1\ndeclare(source(\"helpers.R\"))");
-    let semantic_calls = index.semantic_calls();
-    assert_eq!(semantic_calls.len(), 1);
-    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    });
-}
-
-#[test]
-fn test_directive_tilde_declare_source_no_resolver_records_call() {
-    let index = index_with_base("x <- 1\n~declare(source(\"helpers.R\"))");
-    let semantic_calls = index.semantic_calls();
-    assert_eq!(semantic_calls.len(), 1);
-    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into(),
-        resolved: None,
-    });
+    assert_eq!(misplaced_declare_count(&index), 1);
 }
 
 #[test]

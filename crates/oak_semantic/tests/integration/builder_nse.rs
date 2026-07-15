@@ -1287,6 +1287,7 @@ local <- identity
             let end = u32::from(range.end()) as usize;
             assert_eq!(&source[start..end], "local({ x <- 1 })");
         },
+        other => panic!("unexpected diagnostic: {other:?}"),
     }
 }
 
@@ -1305,6 +1306,7 @@ rlang::on_load({ local <- identity })
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
         SemanticDiagnostic::LazyShadowAmbiguity { name, .. } => assert_eq!(name, "local"),
+        other => panic!("unexpected diagnostic: {other:?}"),
     }
 }
 

@@ -15,6 +15,7 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use url::Url;
 
+use crate::effects::DeclareDiagnostic;
 use crate::use_def_map::Bindings;
 use crate::use_def_map::UseDefMap;
 
@@ -871,6 +872,26 @@ pub enum SemanticDiagnostic {
     /// whose callee is bound elsewhere with undetermined timing (later parent
     /// code, or another lazy context).
     LazyShadowAmbiguity { name: String, range: TextRange },
+    /// A `declare()` directive entry that didn't parse. Wraps the parser's own
+    /// diagnostic, whose kind names the specific problem (unknown formal,
+    /// invalid eval mode, ...) and whose range points at the offending node.
+    MalformedDeclaration(DeclareDiagnostic),
+    /// A `declare()` call outside directive position (not a function body's
+    /// first statement). Its arguments are inert and its annotation is ignored;
+    /// flagged so a silently-ignored `declare()` isn't the outcome for a user
+    /// wondering why their annotation does nothing.
+    MisplacedDeclare { range: TextRange },
+    /// A local `declare()` declaration resolved (or a whole-scope `Mixed`
+    /// answer was reached) for a name whose bindings disagree across a lazy
+    /// boundary.
+    ///
+    /// The sibling of [`LazyShadowAmbiguity`], reached from the other side.
+    /// `LazyShadowAmbiguity` fires when a *registry* effect might be shadowed by
+    /// a local binding of undetermined timing. This one fires when a *local
+    /// declaration* is the answer but the binding set that carries it disagrees
+    /// (declared then rebound plain, or two different declarations), so the lazy
+    /// body's timing relative to the disagreement is unknowable.
+    DeclaredMixedAmbiguity { name: String, range: TextRange },
 }
 
 // --- Iterators ---

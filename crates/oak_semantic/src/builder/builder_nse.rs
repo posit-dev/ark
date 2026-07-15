@@ -14,6 +14,7 @@ use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
 use super::BoundNames;
+use super::DeclaredBinding;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
 use crate::effects;
@@ -25,6 +26,7 @@ use crate::effects::Effects;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::DeclId;
 use crate::semantic_index::NseScope;
 use crate::semantic_index::NseTiming;
 use crate::semantic_index::ScopeKind;
@@ -212,15 +214,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        let source = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+        let resolved = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
         let ctx = CallContext::new();
-        match source {
-            EffectSource::Custom(handler) => handler
+        match resolved {
+            ResolvedEffect::Import(EffectSource::Custom(handler)) => handler
                 .resolve(EffectSite::Operator(bin), &ctx)
                 .and_then(|effects| effects.assign),
-            // A declared source is arg-centric only, so it has nothing to say
-            // about an operator site.
-            EffectSource::Declared(_) => None,
+            // A declaration is arg-centric only (call-shaped), so it has nothing
+            // to say about an operator site, whether it came from the registry or
+            // a local `declare()`.
+            ResolvedEffect::Import(EffectSource::Declared(_)) | ResolvedEffect::Local(_) => None,
         }
     }
 
@@ -320,41 +323,45 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Resolve a call's effects.
     ///
     /// Lookup and interpretation stay in this one scope, returning owned
-    /// [`Effects`], so no `&Declaration` borrowed from the registry escapes into
-    /// the walk.
+    /// [`Effects`], so no `&Declaration` (whether borrowed from the registry or
+    /// from the builder's local arena) escapes into the walk.
     fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
-        let source = self.resolve_effects_source(call)?;
+        let resolved = self.resolve_effects_source(call)?;
         let ctx = CallContext::new();
 
-        match source {
-            EffectSource::Declared(declaration) => {
+        match resolved {
+            ResolvedEffect::Local(id) => {
+                effects::declaration::resolve(&self.declarations[id], call, &ctx)
+            },
+            ResolvedEffect::Import(EffectSource::Declared(declaration)) => {
                 effects::declaration::resolve(declaration, call, &ctx)
             },
-            EffectSource::Custom(handler) => handler.resolve(EffectSite::Call(call), &ctx),
+            ResolvedEffect::Import(EffectSource::Custom(handler)) => {
+                handler.resolve(EffectSite::Call(call), &ctx)
+            },
         }
     }
 
-    /// Resolve a call's callee to its [`EffectSource`] (a declaration or a custom
-    /// handler).
+    /// Resolve a call's callee to its [`ResolvedEffect`] (a local declaration or
+    /// a registry provider).
     ///
     /// The shared core for both NSE recognition ([`scan_call`] reads `.arguments`) and
     /// attach recognition ([`scan_call`] reads `.attach`). Two cases resolve:
-    /// - A bare identifier. If bound locally it goes through the local
-    ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
-    ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path, against the attach set in `attached_flow`.
+    /// - A bare identifier, resolved through [`resolve_symbol_effects`], which
+    ///   consults local bindings (and their `declare()` declarations) before the
+    ///   cross-file registry.
     /// - A `pkg::fn` namespace expression, resolved through
     ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
     ///   so there's no search-path disambiguation; the resolver answers from
     ///   per-package knowledge (the static registry, plus cross-file knowledge
     ///   like the re-export chase once that lands).
     ///
-    /// The bound check reads the scan pass's flow-precise binding state
-    /// for the current scope, so this must run during the scan, not the walk.
+    /// The local check reads the scan pass's flow-precise binding state for the
+    /// current scope, so this must run during the scan, not the walk.
     ///
-    /// [`EffectSource`]: crate::effects::EffectSource
+    /// [`resolve_symbol_effects`]: Self::resolve_symbol_effects
     /// [`scan_call`]: Self::scan_call
-    fn resolve_effects_source(&mut self, call: &RCall) -> Option<EffectSource> {
+    fn resolve_effects_source(&mut self, call: &RCall) -> Option<ResolvedEffect> {
         let func = call.function().ok()?;
 
         match &func {
@@ -373,15 +380,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     return None;
                 }
 
-                self.resolver.resolve_qualified_effects(&pkg, &func_name)
+                self.resolver
+                    .resolve_qualified_effects(&pkg, &func_name)
+                    .map(ResolvedEffect::Import)
             },
 
             _ => None,
         }
     }
 
-    /// Resolve a callee `sym` to its [`EffectSource`].
+    /// Resolve a callee `sym` to its [`ResolvedEffect`].
     ///
+<<<<<<< HEAD
     /// `range` is the invocation's range, used to anchor a lazy-shadow
     /// diagnostic.
     fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectSource> {
@@ -406,39 +416,118 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Now check imports since the symbol is locally unbound. The
         // arena's `current_scope` is the scan unit's scope (the descent
+||||||| parent of d73e4d169 (Resolve local `declare()` annotations)
+    /// `range` is the invocation's range, used to anchor a lazy-shadow
+    /// diagnostic.
+    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectSource> {
+        // Bail early if it is known that no package annotates this name
+        // with effects. This speeds up the common case of no known annotations.
+        if !effects::annotates(sym) {
+            return None;
+        }
+
+        // First check for a local definition (which in the future may
+        // carry declared effects that we resolve here)
+        //
+        // Looked up from `bound_so_far` which already carries every
+        // eager binding visible here: the scope's own flow-precise
+        // bindings so far, plus the enclosing eager environment seeded
+        // at `begin_scan()`. Forward and deferred (lazy-routed)
+        // bindings are excluded. A forward one isn't in `bound_so_far`
+        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
+        if self.bound_so_far.contains_key(sym) {
+            return self.resolve_local_effects(sym);
+        }
+
+        // Now check imports since the symbol is locally unbound. The
+        // arena's `current_scope` is the scan unit's scope (the descent
+=======
+    /// `range` is the invocation's range, used to anchor a lazy-shadow or
+    /// declared-mixed diagnostic.
+    ///
+    /// Three tiers, in order. A locally bound name always shadows the registry,
+    /// so the local checks run first and a bound name never falls through.
+    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<ResolvedEffect> {
+        // 1. Flow-precise local binding. `bound_so_far` carries every eager
+        //    binding visible here: this scope's flow-precise prefix plus the
+        //    enclosing eager environment seeded at `begin_scan()`. Forward and
+        //    deferred (lazy-routed) bindings are excluded, so a name found here
+        //    is bound before this point. It shadows every registry provider,
+        //    which is today's behavior kept: `Some(id)` resolves the local
+        //    declaration, a plain binding (`None`) resolves to nothing.
+        if let Some(binding) = self.bound_so_far.get(sym).copied() {
+            let id = binding?;
+            // A declaration inherited across a lazy boundary can be contradicted
+            // by a later rebind in the binding scope (whole-scope `Mixed`), and
+            // the lazy body's timing relative to that rebind is unknowable. Lint
+            // it; resolution still uses the flow-precise `id` (the linear pass
+            // wins, matching the shadow lint). A binding from this scan unit's
+            // own flow has no lazy crossing, so `lazy_crossed_binding` never sees
+            // it and it never lints.
+            if matches!(self.lazy_crossed_binding(sym), Some(DeclaredBinding::Mixed)) {
+                self.record_declared_mixed_ambiguity(sym.to_string(), range);
+            }
+            return Some(ResolvedEffect::Local(id));
+        }
+
+        // 2. Whole-scope declaration reachable across a lazy boundary: a lazy
+        //    body legitimately forward-referencing a declaring function defined
+        //    later in the file. Skip entirely when no `declare()` was seen:
+        //    files without one (the overwhelming majority) pay nothing here.
+        if !self.declarations.is_empty() {
+            match self.lazy_crossed_binding(sym) {
+                // Unanimous: every binding of the name carries this declaration,
+                // so the forward reference resolves regardless of definition
+                // order.
+                Some(DeclaredBinding::Declared(id)) => return Some(ResolvedEffect::Local(id)),
+                // The bindings disagree and the body's timing relative to them is
+                // unknowable, so answer conservatively (no effect) and lint. Not
+                // falling through to the registry matches the shadowing rule: the
+                // name IS locally bound whole-scope.
+                Some(DeclaredBinding::Mixed) => {
+                    self.record_declared_mixed_ambiguity(sym.to_string(), range);
+                    return None;
+                },
+                // Plain, or no lazy-crossed ancestor binds it: today's registry
+                // path (including the `is_lazily_shadowed` lint below).
+                Some(DeclaredBinding::Plain) | None => {},
+            }
+        }
+
+        // 3. Registry/imports. Bail early if no package annotates this name,
+        //    which speeds up the common case of no known annotations.
+        if !effects::annotates(sym) {
+            return None;
+        }
+
+        // The arena's `current_scope` is the scan unit's scope (the descent
+>>>>>>> d73e4d169 (Resolve local `declare()` annotations)
         // pushes no arena scopes), so its laziness is the "am I in a lazy
-        // context" test the resolver needs. `attached_flow` is the
-        // flow-precise attach prefix during the file scan and the
-        // complete end-of-file set during the walk.
+        // context" test the resolver needs. `attached_flow` is the flow-precise
+        // attach prefix during the file scan and the complete end-of-file set
+        // during the walk.
         let lazy = self.scopes[self.current_scope].kind.is_lazy();
         let effects = self
             .resolver
             .resolve_effects(sym, &self.attached_flow, lazy)?;
 
-        // The callee is unbound by any eager binding, so its effect
-        // holds. If a lazy-crossed ancestor binds it whole-scope, that
-        // binding's timing relative to this deferred body is
-        // undetermined, so the decision is a guess. Flag it.
+        // The callee is unbound by any eager binding, so its effect holds. If a
+        // lazy-crossed ancestor binds it whole-scope, that binding's timing
+        // relative to this deferred body is undetermined, so the decision is a
+        // guess. Flag it.
         //
-        // TODO(diagnostics): a symmetric attach ambiguity is out of
-        // scope here. A callee resolved not-effectful could be flipped
-        // by an attach from a sibling lazy body (`g <- function()
-        // library(shiny); f <- function() reactive({...}`). Detecting it
-        // needs the complete set of lazy-context attaches, a post-pass
-        // rather than this local ancestor check, so it belongs in the
-        // future salsa diagnostics query where this lint should move too.
+        // TODO(diagnostics): a symmetric attach ambiguity is out of scope here. A
+        // callee resolved not-effectful could be flipped by an attach from a
+        // sibling lazy body (`g <- function() library(shiny); f <- function()
+        // reactive({...}`). Detecting it needs the complete set of lazy-context
+        // attaches, a post-pass rather than this local ancestor check, so it
+        // belongs in the future salsa diagnostics query where this lint should
+        // move too.
         if self.is_lazily_shadowed(sym) {
             self.record_lazy_shadow_ambiguity(sym.to_string(), range);
         }
 
-        Some(effects)
-    }
-
-    /// Local resolver for declared effects, mirroring the imports resolver's
-    /// `resolve_effects()` method on the cross-file side.
-    /// TODO(nse, annotations): always `None` until `declare()` parsing lands.
-    fn resolve_local_effects(&self, _name: &str) -> Option<EffectSource> {
-        None
+        Some(ResolvedEffect::Import(effects))
     }
 
     /// Detect ambiguities caused by laziness.
@@ -470,6 +559,42 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn record_lazy_shadow_ambiguity(&mut self, name: String, range: TextRange) {
         self.diagnostics
             .push(SemanticDiagnostic::LazyShadowAmbiguity { name, range });
+    }
+
+    /// The joined declaration payload of the nearest ancestor that binds `name`
+    /// across a lazy boundary, or `None` when none does.
+    ///
+    /// The same walk as [`is_lazily_shadowed`](Self::is_lazily_shadowed): only
+    /// scopes reached after crossing a lazy boundary count, because within an
+    /// eager stretch `bound_so_far` is already exact and a later sibling isn't
+    /// visible at run time. Reads the whole-scope [`BoundNames`] payload,
+    /// defaulting to `Plain` for a binding that carries none (e.g. a parameter,
+    /// which the scan doesn't route through `record_owner_name`).
+    fn lazy_crossed_binding(&self, name: &str) -> Option<DeclaredBinding> {
+        let mut scope = self.current_scope;
+        let mut crossed_lazy = self.scopes[scope].kind.is_lazy();
+
+        while let Some(parent) = self.scopes[scope].parent {
+            if crossed_lazy && self.scope_binds_anywhere(parent, name) {
+                return Some(
+                    self.bound_names[parent]
+                        .get(name)
+                        .unwrap_or(DeclaredBinding::Plain),
+                );
+            }
+
+            if self.scopes[parent].kind.is_lazy() {
+                crossed_lazy = true;
+            }
+            scope = parent;
+        }
+
+        None
+    }
+
+    fn record_declared_mixed_ambiguity(&mut self, name: String, range: TextRange) {
+        self.diagnostics
+            .push(SemanticDiagnostic::DeclaredMixedAmbiguity { name, range });
     }
 
     /// Process a call the scan pass decided is NSE, using the resolved argument
@@ -562,4 +687,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             },
         }
     }
+}
+
+/// The provider a callee's effects resolve to. Internal to the builder so a
+/// local declaration (borrowed from the builder's `declarations` arena) and a
+/// registry [`EffectSource`] can share one return type, with the arena borrow
+/// staying inside `resolve_effects` rather than escaping into the walk.
+enum ResolvedEffect {
+    /// A local `declare()` declaration, indexed in the builder's arena.
+    Local(DeclId),
+    /// A registry provider: a `'static` declaration or a custom handler.
+    Import(EffectSource),
 }
