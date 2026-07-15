@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use oak_semantic::effects_registry;
+use oak_semantic::effects;
 use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
@@ -94,6 +94,6 @@ impl ImportsResolver for TestImportsResolver {
             .iter()
             .rev()
             .chain(self.always_attached.iter())
-            .find_map(|pkg| effects_registry::lookup(pkg, name).copied())
+            .find_map(|pkg| effects::lookup(pkg, name).copied())
     }
 }
