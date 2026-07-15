@@ -90,8 +90,8 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
     /// Resolve this effect for `call`, or `None` when the call isn't in a shape
     /// this handler recognizes.
     ///
-    /// `ctx` resolves information the call's own syntax doesn't carry, e.g. what
-    /// a `character.only = TRUE` variable is bound to. Unused until that lands.
+    /// `ctx` provides semantic resolution, e.g. resolve an argument to a
+    /// statically known string or boolean.
     fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Self::Output>;
 }
 
@@ -289,39 +289,6 @@ impl EffectHandler for ArgumentsAnnotation {
                 .map(|formal| formal.map(|i| arguments[i].effect.resolve()))
                 .collect(),
         )
-    }
-}
-
-/// Declares how an attach function (`library()`, `require()`) names its package,
-/// and serves as the default [`EffectHandler`] for it by extracting that package
-/// from a call.
-#[derive(Debug, Clone, Copy)]
-pub struct AttachAnnotation {
-    /// Whether the callee has a `character.only`-style flag. Unread today.
-    pub character_only: bool,
-}
-
-impl EffectHandler for AttachAnnotation {
-    type Output = String;
-
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<String> {
-        // `library()`/`require()` name their package in the `package` formal,
-        // the first positional argument.
-        let formals = [Formal {
-            name: "package",
-            position: 0,
-        }];
-        let matched = ctx.match_arguments(call, &formals);
-
-        let arg_index = matched.iter().position(|formal| *formal == Some(0))?;
-        let arg = call.arguments().ok()?.items().iter().nth(arg_index)?.ok()?;
-        let value = arg.value()?;
-
-        match &value {
-            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
-            _ => None,
-        }
     }
 }
 
