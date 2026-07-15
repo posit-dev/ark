@@ -67,25 +67,6 @@ macro_rules! quoted {
 }
 pub(crate) use quoted;
 
-/// An attach entry: `(package-argument position, has-`character.only`-flag)`.
-macro_rules! attach {
-    ($pkg:literal, $func:literal, $pos:literal, $character_only:literal) => {
-        $crate::effects::contrib::Entry {
-            package: $pkg,
-            function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: Some(&$crate::effects::AttachAnnotation {
-                    character_only: $character_only,
-                }),
-                source: None,
-                assign: None,
-            },
-        }
-    };
-}
-pub(crate) use attach;
-
 /// A source entry: `(path-argument position)`. The function reads and evaluates
 /// another file, injecting its top-level names into the caller.
 macro_rules! source {
