@@ -4,7 +4,7 @@ use aether_path::FilePath;
 use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
-use oak_semantic::effects_registry;
+use oak_semantic::effects;
 use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
@@ -134,7 +134,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         // resolve by name here even when base isn't scanned into a root. A
         // definition or a higher package on the path shadows it, which the walk
         // above already handled before falling through.
-        effects_registry::lookup("base", name).copied()
+        effects::lookup("base", name).copied()
     }
 }
 
@@ -203,7 +203,7 @@ impl<'db> SalsaImportsResolver<'db> {
     /// original package, not the re-exporter.
     fn package_binding(&self, package: Package, name: &str) -> PackageBinding {
         let package_name = package.name(self.db).as_str();
-        if let Some(effects) = effects_registry::lookup(package_name, name) {
+        if let Some(effects) = effects::lookup(package_name, name) {
             return PackageBinding::Effect(*effects);
         }
         // base is the terminal layer, so it has nothing below to shadow, and we
@@ -224,7 +224,7 @@ impl<'db> SalsaImportsResolver<'db> {
         // Exports `name`, so it binds. Chase a re-export for the effect; a plain
         // own definition (no matching `importFrom`) only shadows.
         match namespace.imports.iter().find(|import| import.name == name) {
-            Some(import) => match effects_registry::lookup(&import.package, name) {
+            Some(import) => match effects::lookup(&import.package, name) {
                 Some(effects) => PackageBinding::Effect(*effects),
                 None => PackageBinding::Shadow,
             },
