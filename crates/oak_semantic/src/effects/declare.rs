@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn library_stub_round_trips_through_resolve() {
-        // The design doc's `library.Rty` stub, parsed and then resolved
+        // The design doc's `library.ty.R` stub, parsed and then resolved
         // against calls the same way `EffectSource::Declared` would, to
         // check it reproduces the handcrafted `attach_declaration()` in
         // `declaration.rs`'s own tests.

@@ -1598,9 +1598,11 @@ impl FlowState {
         self.bound.insert(name, declaration);
     }
 
-    /// Whether `name` is bound at the current point.
-    fn is_bound(&self, name: &str) -> bool {
-        self.bound.contains_key(name)
+    /// The binding of `name` at the current point, if bound. The outer `Option`
+    /// is whether it's bound; the inner is the declaration it carries (`None`
+    /// for a plain definition).
+    fn get(&self, name: &str) -> Option<Option<DeclId>> {
+        self.bound.get(name).copied()
     }
 
     /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).

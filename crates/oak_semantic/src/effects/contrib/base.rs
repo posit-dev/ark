@@ -6,113 +6,40 @@ use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 
 use crate::effects::contrib::custom;
-use crate::effects::contrib::declared;
 use crate::effects::contrib::Entry;
-use crate::effects::ArgumentRef;
+use crate::effects::declaration::argument_values;
+use crate::effects::declaration::match_signature;
 use crate::effects::AssignAnnotation;
 use crate::effects::CallContext;
-use crate::effects::DeclExpr;
-use crate::effects::Declaration;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
-use crate::effects::Formal;
+use crate::effects::FormalDef;
 use crate::effects::Handler;
-use crate::effects::RExpr;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::effects::StaticValue;
-use crate::semantic_index::NseScope::Current;
-use crate::semantic_index::NseScope::Nested;
-use crate::semantic_index::NseTiming::Eager;
 
+/// base R's custom contributions: the shapes a [`Declaration`] can't express.
+/// `bquote` quotes with `.()` escape holes, and the assign family selects its
+/// target environment in ways the grammar doesn't model yet. base R's plain NSE,
+/// attach, and source effects live in `base.ty.R`.
+///
+/// [`Declaration`]: crate::effects::Declaration
 pub(crate) fn entries() -> Vec<Entry> {
     vec![
-        // base NSE
-        declared(
-            "base",
-            "evalq",
-            Declaration::new(&["expr"]).nse(0, Current, Eager),
-        ),
-        declared(
-            "base",
-            "local",
-            Declaration::new(&["expr"]).nse(0, Nested, Eager),
-        ),
-        declared(
-            "base",
-            "with",
-            Declaration::new(&["data", "expr"]).nse(1, Nested, Eager),
-        ),
-        declared(
-            "base",
-            "with.default",
-            Declaration::new(&["data", "expr"]).nse(1, Nested, Eager),
-        ),
-        declared(
-            "base",
-            "within",
-            Declaration::new(&["data", "expr"]).nse(1, Nested, Eager),
-        ),
-        declared(
-            "base",
-            "within.data.frame",
-            Declaration::new(&["data", "expr"]).nse(1, Nested, Eager),
-        ),
-        // base quote
-        declared("base", "quote", Declaration::new(&["expr"]).quote(0)),
-        // `bquote` quotes `expr` too, but its `.()` holes escape to evaluation,
-        // so it needs a handler rather than a per-argument declaration.
+        // `bquote` quotes `expr` like `quote()`, but its `.()` holes escape to
+        // evaluation, so it needs a handler rather than a per-argument
+        // declaration.
         custom("base", "bquote", &BquoteHandler),
-        // base attach. `library` reads its `package` as quoted (the symbol or
-        // string as written, so `library(dplyr)` attaches `dplyr`), unless
-        // `character.only = TRUE` flips it to a string to evaluate. The `if`
-        // encodes that flip, mirroring library's own `character.only` branch.
-        declared(
-            "base",
-            "library",
-            library_declaration(&["package", "help", "pos", "lib.loc", "character.only"]),
-        ),
-        // `require` shares library's attach shape but its own signature:
-        // `character.only` happens to sit at index 4 in both.
-        declared(
-            "base",
-            "require",
-            library_declaration(&[
-                "package",
-                "lib.loc",
-                "quietly",
-                "warn.conflicts",
-                "character.only",
-            ]),
-        ),
-        // base source. The `local =` guard must be a static bool or the source
-        // drops: `source("x.R", local = e)` targets some other environment, so
-        // its names aren't ours to inject. `path` never consults `local`, hence
-        // the separate guard slot.
-        declared(
-            "base",
-            "source",
-            Declaration::new(&["file", "local"])
-                .formal_default(1, StaticValue::Bool(false))
-                .source(DeclExpr::eval(0), Some(RExpr::Eval(ArgumentRef(1)))),
-        ),
-        // base assign
-        custom("base", "assign", &AssignAnnotation { position: 0 }),
-        custom("base", "delayedAssign", &AssignAnnotation { position: 0 }),
+        // `assign` and `delayedAssign` bind the name their `x` argument names.
+        // The formals let `match_signature` recognize a named `x =` or `value =`
+        // regardless of call position.
+        custom("base", "assign", &AssignAnnotation {
+            formals: &["x", "value", "pos", "envir", "inherits", "immediate"],
+        }),
+        custom("base", "delayedAssign", &AssignAnnotation {
+            formals: &["x", "value", "eval.env", "assign.env"],
+        }),
     ]
-}
-
-/// A `library`/`require` declaration over `formals`. Both attach the same way,
-/// so they differ only in their signature. `character.only` sits at index 4 in
-/// both, defaulting to `FALSE`.
-fn library_declaration(formals: &[&str]) -> Declaration {
-    Declaration::new(formals)
-        .formal_default(4, StaticValue::Bool(false))
-        .attach(DeclExpr::If {
-            cond: RExpr::Eval(ArgumentRef(4)),
-            then: Box::new(DeclExpr::eval(0)),
-            els: Box::new(DeclExpr::substitute(0)),
-        })
 }
 
 /// Handler for `bquote()`. It quotes its `expr` argument like `quote()`, but a
@@ -130,42 +57,27 @@ impl Handler for BquoteHandler {
             return None;
         };
 
-        // `bquote(expr, where, splice)`: only `expr` (the first positional) is
-        // quoted. The other arguments are ordinary values.
-        let formals = [
-            Formal {
-                name: "expr",
-                position: 0,
-            },
-            Formal {
-                name: "splice",
-                position: 2,
-            },
-        ];
-        let matched = ctx.match_arguments(call, &formals);
+        // `bquote(expr, where, splice)`: only `expr` (formal 0) is quoted, and
+        // `..()` splices only under `splice = TRUE` (formal 2). Matching the full
+        // signature lets a named argument free the positional slots, so
+        // `bquote(splice = TRUE, ..(x))` still binds `..(x)` to `expr`.
+        let formals = bquote_formals();
+        let matched = match_signature(call, &formals);
+        let values = argument_values(call);
 
-        let args = call.arguments().ok()?;
-        let values: Vec<Option<AnyRExpression>> = args
-            .items()
-            .iter()
-            .map(|item| item.ok().and_then(|arg| arg.value()))
-            .collect();
-
-        // `..()` only splices under `splice = TRUE`.
         let splice = matched
             .iter()
-            .position(|formal| *formal == Some(1))
+            .position(|formal| *formal == Some(2))
             .and_then(|i| values.get(i))
             .and_then(|value| value.as_ref())
             .and_then(|value| ctx.resolve_static_bool(value))
             .unwrap_or(false);
 
         let arguments: ResolvedArgumentEffects = matched
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(i, formal)| {
-                // Only `expr` (formal 0) is quoted
-                if formal != Some(0) {
+                if *formal != Some(0) {
                     return None;
                 }
                 let holes = values
@@ -182,6 +94,16 @@ impl Handler for BquoteHandler {
             ..Effects::default()
         })
     }
+}
+
+fn bquote_formals() -> Vec<FormalDef> {
+    ["expr", "where", "splice"]
+        .into_iter()
+        .map(|name| FormalDef {
+            name: name.to_string(),
+            default: None,
+        })
+        .collect()
 }
 
 /// The unquote holes inside a bquote-quoted expression: the escaped argument of
@@ -220,4 +142,48 @@ fn unquote_hole(call: &RCall, splice: bool) -> Option<AnyRExpression> {
         return None;
     }
     call.arguments().ok()?.items().iter().next()?.ok()?.value()
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_parser::parse;
+    use aether_parser::RParserOptions;
+    use biome_rowan::WalkEvent;
+
+    use super::*;
+
+    fn first_call(source: &str) -> RCall {
+        let parsed = parse(source, RParserOptions::default());
+        assert!(!parsed.has_error());
+        parsed
+            .tree()
+            .syntax()
+            .preorder()
+            .find_map(|event| match event {
+                WalkEvent::Enter(node) => RCall::cast(node),
+                WalkEvent::Leave(_) => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn splice_before_positional_expr_recognizes_hole() {
+        // `splice = TRUE` is named, so the positional `..(x)` fills `expr` under
+        // fill-remaining matching. Position-only matching missed it because the
+        // named `splice` shifted the positional count off `expr`'s slot.
+        let call = first_call("bquote(splice = TRUE, ..(x))");
+        let effects = BquoteHandler
+            .resolve(EffectSite::Call(&call), &CallContext::new())
+            .unwrap();
+
+        let arguments = effects.arguments.unwrap();
+        let holes = arguments
+            .iter()
+            .find_map(|argument| match argument {
+                Some(ResolvedArgumentEffect::Quote { holes }) => Some(holes),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(holes.len(), 1);
+    }
 }

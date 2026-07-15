@@ -1,7 +1,5 @@
-use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
-use aether_syntax::RArgument;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use biome_rowan::AstPtr;
@@ -25,6 +23,9 @@ pub mod declare;
 /// `lookup`/`annotates` query API below.
 mod contrib;
 
+use declaration::argument_name;
+use declaration::argument_values;
+use declaration::match_signature;
 pub use declaration::ArgumentEffect;
 pub use declaration::ArgumentRef;
 pub use declaration::DeclExpr;
@@ -90,17 +91,14 @@ pub enum EffectSource {
 
 /// Look up the effect source of a `(package, function)` pair.
 pub fn lookup(package: &str, function: &str) -> Option<EffectSource> {
-    contrib::REGISTRY
-        .iter()
-        .find(|entry| entry.package == package && entry.function == function)
-        .map(contrib::Entry::source)
+    contrib::lookup(package, function)
 }
 
 /// Whether any registry entry annotates `name`. This is the bare-callee front
 /// gate: an unannotated name can't resolve to an effect no matter which provider
 /// wins, so recognition skips resolution entirely.
 pub fn annotates(name: &str) -> bool {
-    contrib::REGISTRY.iter().any(|entry| entry.function == name)
+    contrib::annotates(name)
 }
 
 /// Where an effect is invoked. Most effects are only ever calls but an Assign
@@ -144,53 +142,6 @@ impl CallContext {
         Self
     }
 
-    /// Match `call`'s arguments to `formals`, returning for each call argument
-    /// in order the index into `formals` it bound to. Named arguments match
-    /// first, then the rest fill by position.
-    ///
-    /// A stopgap: without the callee's full formal list, a positional argument
-    /// only binds a formal declared at that exact position.
-    pub fn match_arguments(&self, call: &RCall, formals: &[Formal<'_>]) -> Vec<Option<usize>> {
-        let Ok(args) = call.arguments() else {
-            return Vec::new();
-        };
-        let items = args.items();
-
-        let arg_count = items.iter().count();
-        let mut matched: Vec<Option<usize>> = vec![None; arg_count];
-        let mut consumed = vec![false; formals.len()];
-
-        // Named pass
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            if let Some(formal_idx) = match_named(&arg, formals, &consumed) {
-                consumed[formal_idx] = true;
-                matched[i] = Some(formal_idx);
-            }
-        }
-
-        // Positional pass. Only unnamed args reach the match, and none of them
-        // were set by the named pass, so no need to re-check `matched[i]`.
-        let mut position = 0usize;
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else {
-                position += 1;
-                continue;
-            };
-            if arg.name_clause().is_some() {
-                position += 1;
-                continue;
-            }
-            if let Some(formal_idx) = match_positional(formals, position, &consumed) {
-                consumed[formal_idx] = true;
-                matched[i] = Some(formal_idx);
-            }
-            position += 1;
-        }
-
-        matched
-    }
-
     /// Statically evaluate an argument's value expression to a string. `None`
     /// when it's dynamic.
     pub fn resolve_static_string(&self, value: &AnyRExpression) -> Option<String> {
@@ -221,18 +172,6 @@ impl CallContext {
     }
 }
 
-/// A formal a handler wants to locate in a call, by name and by its position in
-/// the callee's signature.
-///
-/// TODO(nse): `position` is a stopgap that stems from our annotation registry
-/// listing only its scoped formals. Once `match_arguments` is signature-aware
-/// it gets the callee's full ordered formals, and this collapses to a list of
-/// names where the index is the position.
-pub struct Formal<'a> {
-    pub name: &'a str,
-    pub position: usize,
-}
-
 /// A call's resolved argument effects: for each argument in call order, the
 /// effect it resolved to, or `None` for a plain (standard-eval) argument.
 pub type ResolvedArgumentEffects = Vec<Option<ResolvedArgumentEffect>>;
@@ -251,11 +190,20 @@ pub enum ResolvedArgumentEffect {
 /// Declares how an assign function (`assign()`, `delayedAssign()`) names the
 /// variable it binds, and serves as its [`Handler`] by pulling that name out of
 /// a call.
+///
+/// Assign stays custom because it selects its target environment two ways
+/// (`envir` and `pos`, the search-path index), which the declaration grammar
+/// doesn't model. The name and value reads themselves go through
+/// [`match_signature`], so a named `x =` or `value =` binds by name like any
+/// other argument.
+///
+/// [`match_signature`]: crate::effects::declaration::match_signature
 #[derive(Debug, Clone, Copy)]
 pub struct AssignAnnotation {
-    /// Which positional argument holds the bound name, counting only unnamed
-    /// arguments (0 for base `assign`/`delayedAssign`).
-    pub position: usize,
+    /// The callee's formals, in signature order. Formal 0 (`x`) holds the bound
+    /// name and formal 1 (`value`) its value expression; the rest position the
+    /// remaining arguments so `match_signature` reads the first two correctly.
+    pub formals: &'static [&'static str],
 }
 
 impl Handler for AssignAnnotation {
@@ -265,50 +213,41 @@ impl Handler for AssignAnnotation {
         };
         let args = call.arguments().ok()?;
 
-        // Matched positionally among unnamed arguments, so a leading named
-        // argument doesn't shift the count and a named `x =` isn't recognized.
-        // The value is the positional right after the name (base
-        // `assign(x, value, ...)`).
-        //
-        // FIXME: A named `value =` isn't captured yet.
-        // TODO(nse): Fold onto `match_arguments()` once it's signature-aware,
-        // keeping only the `envir`/`pos` bail and the value-after-name read on
-        // top.
-        let mut name: Option<(String, RangedAstPtr<AnyRExpression>)> = None;
-        let mut value_expr: Option<AstPtr<AnyRExpression>> = None;
-        let mut positional = 0;
-
+        // An explicit target environment means the binding lands somewhere other
+        // than the current scope, so it isn't a fact we can record here. In the
+        // future, we could statically recognise some environment selectors like
+        // `parent.frame()`. Keyed on the argument name so it fires before
+        // matching, and only for `envir`/`pos` (not `delayedAssign`'s
+        // `assign.env`, which stays out of scope).
         for item in args.items().iter() {
             let Ok(arg) = item else { continue };
-
-            if let Some(name_clause) = arg.name_clause() {
-                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
-                    continue;
-                };
-
-                // An explicit target environment means the binding lands
-                // somewhere other than the current scope, so it isn't a fact we
-                // can record here. In the future, we could statically recognise
-                // some environment selectors like `parent.frame()`.
-                if matches!(name_ident.name_text().as_str(), "envir" | "pos") {
+            if let Some(name) = argument_name(&arg) {
+                if matches!(name.as_str(), "envir" | "pos") {
                     return None;
                 }
-                continue;
             }
-
-            if positional == self.position {
-                if let Some(value) = arg.value() {
-                    if let Some(resolved) = ctx.resolve_static_string(&value) {
-                        name = Some((resolved, RangedAstPtr::new(&value)));
-                    }
-                }
-            } else if positional == self.position + 1 {
-                value_expr = arg.value().map(|value| AstPtr::new(&value));
-            }
-            positional += 1;
         }
 
-        let (name, name_expr) = name?;
+        let formals: Vec<FormalDef> = self
+            .formals
+            .iter()
+            .map(|name| FormalDef {
+                name: name.to_string(),
+                default: None,
+            })
+            .collect();
+        let matched = match_signature(call, &formals);
+        let values = argument_values(call);
+
+        // The bound name is formal 0 (`x`). It must resolve to a static string,
+        // so a dynamic target (`assign(nm, ...)`) records nothing.
+        let name_value = bound_value(&matched, &values, 0)?;
+        let name = ctx.resolve_static_string(name_value)?;
+        let name_expr = RangedAstPtr::new(name_value);
+
+        // The value is formal 1 (`value`), captured wherever it lands.
+        let value_expr = bound_value(&matched, &values, 1).map(AstPtr::new);
+
         Some(Effects {
             assign: Some(vec![AssignBinding {
                 name,
@@ -318,6 +257,19 @@ impl Handler for AssignAnnotation {
             ..Effects::default()
         })
     }
+}
+
+/// The value bound to the formal at `idx`, per `matched` (from
+/// [`match_signature`]) and the call's argument values in the same order.
+///
+/// [`match_signature`]: crate::effects::declaration::match_signature
+fn bound_value<'a>(
+    matched: &[Option<usize>],
+    values: &'a [Option<AnyRExpression>],
+    idx: usize,
+) -> Option<&'a AnyRExpression> {
+    let pos = matched.iter().position(|bound| *bound == Some(idx))?;
+    values.get(pos)?.as_ref()
 }
 
 /// Handler for a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`).
@@ -347,39 +299,111 @@ impl Handler for BindingOperatorHandler {
     }
 }
 
-/// Match a named argument against `formals`. Returns the index of the matched
-/// formal.
-///
-/// Should we do partial argument matching? Or rely on partial matching being linted?
-fn match_named(arg: &RArgument, formals: &[Formal<'_>], consumed: &[bool]) -> Option<usize> {
-    let clause = arg.name_clause()?;
-    let name = clause.name().ok()?;
-    let name_text = match &name {
-        AnyRArgumentName::RIdentifier(ident) => ident.name_text(),
-        AnyRArgumentName::RStringValue(s) => s.string_text()?,
-        _ => return None,
-    };
-    formals
-        .iter()
-        .enumerate()
-        .find(|(i, formal)| !consumed[*i] && formal.name == name_text.as_str())
-        .map(|(i, _)| i)
-}
+#[cfg(test)]
+mod tests {
+    use aether_parser::parse;
+    use aether_parser::RParserOptions;
+    use biome_rowan::AstNode;
+    use biome_rowan::WalkEvent;
 
-/// Match an unnamed argument at `position` against `formals`. Returns the index
-/// of the matched formal.
-///
-/// FIXME: This matches positionally on call-site position only: an unnamed
-/// argument at position N matches a formal declared at position N. It doesn't
-/// replicate R's full matching, where named arguments are pulled out first and
-/// the rest fill the remaining formals in order. So `test_that({ ... }, desc =
-/// "d")`, with the block at position 0 but the `code` formal at position 1,
-/// won't match. Good enough without the callee's formal list; revisit if it
-/// misses real cases.
-fn match_positional(formals: &[Formal<'_>], position: usize, consumed: &[bool]) -> Option<usize> {
-    formals
-        .iter()
-        .enumerate()
-        .find(|(i, formal)| !consumed[*i] && formal.position == position)
-        .map(|(i, _)| i)
+    use super::*;
+    use crate::semantic_index::NseScope;
+    use crate::semantic_index::NseTiming;
+
+    /// Parse `source` and return its first call.
+    fn first_call(source: &str) -> RCall {
+        let parsed = parse(source, RParserOptions::default());
+        assert!(!parsed.has_error());
+        parsed
+            .tree()
+            .syntax()
+            .preorder()
+            .find_map(|event| match event {
+                WalkEvent::Enter(node) => RCall::cast(node),
+                WalkEvent::Leave(_) => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn lookup_local_is_declared_nested_eager() {
+        let Some(EffectSource::Declared(declaration)) = lookup("base", "local") else {
+            panic!("expected a declared effect for base::local");
+        };
+        assert_eq!(declaration.arguments.len(), 1);
+        let effect = &declaration.arguments[0];
+        assert_eq!(declaration.formals[effect.arg.0].name, "expr");
+        assert!(matches!(effect.mode, EvalMode::Nse {
+            scope: NseScope::Nested,
+            timing: NseTiming::Eager,
+        }));
+    }
+
+    #[test]
+    fn lookup_bquote_is_custom() {
+        assert!(matches!(
+            lookup("base", "bquote"),
+            Some(EffectSource::Custom(_))
+        ));
+    }
+
+    #[test]
+    fn lookup_reactive_is_declared_nested_lazy() {
+        let Some(EffectSource::Declared(declaration)) = lookup("shiny", "reactive") else {
+            panic!("expected a declared effect for shiny::reactive");
+        };
+        assert!(matches!(declaration.arguments[0].mode, EvalMode::Nse {
+            scope: NseScope::Nested,
+            timing: NseTiming::Lazy,
+        }));
+    }
+
+    /// The bound name for base `assign`, resolved through the handler.
+    fn assign_bindings(source: &str) -> Option<Vec<AssignBinding>> {
+        let call = first_call(source);
+        let handler = AssignAnnotation {
+            formals: &["x", "value", "pos", "envir", "inherits", "immediate"],
+        };
+        handler
+            .resolve(EffectSite::Call(&call), &CallContext::new())
+            .and_then(|effects| effects.assign)
+    }
+
+    #[test]
+    fn assign_named_value_then_positional_name_binds_name() {
+        // `value =` frees the first positional slot, so `"x"` fills `x`. The old
+        // positional-only scan counted `value =` and misread the target.
+        let bindings = assign_bindings("assign(value = 1, \"x\")").unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].name, "x");
+        assert!(bindings[0].value_expr.is_some());
+    }
+
+    #[test]
+    fn assign_named_name_binds_name() {
+        // A named `x =` is now recognized as the bound name; the positional `1`
+        // fills `value`.
+        let bindings = assign_bindings("assign(x = \"x\", 1)").unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].name, "x");
+        assert!(bindings[0].value_expr.is_some());
+    }
+
+    #[test]
+    fn assign_named_value_is_captured() {
+        // The closed FIXME: a named `value =` is captured wherever it lands.
+        let bindings = assign_bindings("assign(\"x\", value = 1)").unwrap();
+        assert_eq!(bindings[0].name, "x");
+        assert!(bindings[0].value_expr.is_some());
+    }
+
+    #[test]
+    fn assign_named_envir_bails() {
+        assert!(assign_bindings("assign(\"x\", 1, envir = e)").is_none());
+    }
+
+    #[test]
+    fn assign_named_pos_bails() {
+        assert!(assign_bindings("assign(\"x\", 1, pos = 2)").is_none());
+    }
 }

@@ -391,71 +391,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Resolve a callee `sym` to its [`ResolvedEffect`].
     ///
-<<<<<<< HEAD
-    /// `range` is the invocation's range, used to anchor a lazy-shadow
-    /// diagnostic.
-    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectSource> {
-        // First check for a local definition (which in the future may
-        // carry declared effects that we resolve here)
-        //
-        // Looked up from `flow_state` which already carries every
-        // eager binding visible here: the scope's own flow-precise
-        // bindings so far, plus the enclosing eager environment seeded
-        // at `begin_scan()`. Forward and deferred (lazy-routed)
-        // bindings are excluded. A forward one isn't in `flow_state`
-        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-        if self.flow_state.is_bound(sym) {
-            return self.resolve_local_effects(sym);
-        }
-
-        // Bail early if it is known that no package annotates this name
-        // with effects. This speeds up the common case of no known annotations.
-        if !effects::annotates(sym) {
-            return None;
-        }
-
-        // Now check imports since the symbol is locally unbound. The
-        // arena's `current_scope` is the scan unit's scope (the descent
-||||||| parent of d73e4d169 (Resolve local `declare()` annotations)
-    /// `range` is the invocation's range, used to anchor a lazy-shadow
-    /// diagnostic.
-    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectSource> {
-        // Bail early if it is known that no package annotates this name
-        // with effects. This speeds up the common case of no known annotations.
-        if !effects::annotates(sym) {
-            return None;
-        }
-
-        // First check for a local definition (which in the future may
-        // carry declared effects that we resolve here)
-        //
-        // Looked up from `bound_so_far` which already carries every
-        // eager binding visible here: the scope's own flow-precise
-        // bindings so far, plus the enclosing eager environment seeded
-        // at `begin_scan()`. Forward and deferred (lazy-routed)
-        // bindings are excluded. A forward one isn't in `bound_so_far`
-        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-        if self.bound_so_far.contains_key(sym) {
-            return self.resolve_local_effects(sym);
-        }
-
-        // Now check imports since the symbol is locally unbound. The
-        // arena's `current_scope` is the scan unit's scope (the descent
-=======
     /// `range` is the invocation's range, used to anchor a lazy-shadow or
     /// declared-mixed diagnostic.
     ///
     /// Three tiers, in order. A locally bound name always shadows the registry,
     /// so the local checks run first and a bound name never falls through.
     fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<ResolvedEffect> {
-        // 1. Flow-precise local binding. `bound_so_far` carries every eager
+        // 1. Flow-precise local binding. `flow_state` carries every eager
         //    binding visible here: this scope's flow-precise prefix plus the
         //    enclosing eager environment seeded at `begin_scan()`. Forward and
         //    deferred (lazy-routed) bindings are excluded, so a name found here
         //    is bound before this point. It shadows every registry provider,
         //    which is today's behavior kept: `Some(id)` resolves the local
         //    declaration, a plain binding (`None`) resolves to nothing.
-        if let Some(binding) = self.bound_so_far.get(sym).copied() {
+        if let Some(binding) = self.flow_state.get(sym) {
             let id = binding?;
             // A declaration inherited across a lazy boundary can be contradicted
             // by a later rebind in the binding scope (whole-scope `Mixed`), and
@@ -501,7 +450,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         // The arena's `current_scope` is the scan unit's scope (the descent
->>>>>>> d73e4d169 (Resolve local `declare()` annotations)
         // pushes no arena scopes), so its laziness is the "am I in a lazy
         // context" test the resolver needs. `attached_flow` is the flow-precise
         // attach prefix during the file scan and the complete end-of-file set
@@ -566,7 +514,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// The same walk as [`is_lazily_shadowed`](Self::is_lazily_shadowed): only
     /// scopes reached after crossing a lazy boundary count, because within an
-    /// eager stretch `bound_so_far` is already exact and a later sibling isn't
+    /// eager stretch `flow_state` is already exact and a later sibling isn't
     /// visible at run time. Reads the whole-scope [`BoundNames`] payload,
     /// defaulting to `Plain` for a binding that carries none (e.g. a parameter,
     /// which the scan doesn't route through `record_owner_name`).
