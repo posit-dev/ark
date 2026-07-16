@@ -50,7 +50,8 @@ impl Declaration {
     }
 
     /// Add an `Nse` effect on the formal at `arg` (an index into `formals`).
-    pub fn nse(mut self, arg: usize, scope: NseScope, timing: NseTiming) -> Self {
+    /// `scope` is an env operand resolved against the call.
+    pub fn nse(mut self, arg: usize, scope: DeclExpr, timing: NseTiming) -> Self {
         self.arguments.push(ArgumentEffect {
             arg: ArgumentRef(arg),
             mode: EvalMode::Nse { scope, timing },
@@ -97,11 +98,14 @@ pub struct FormalDef {
     pub default: Option<StaticValue>,
 }
 
-/// A statically known literal an absent argument falls back to. One variant
-/// today; it grows as declarations need other literal types.
+/// A statically known literal an absent argument falls back to. It grows as
+/// declarations need other literal types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StaticValue {
     Bool(bool),
+    /// An env-capture op default (`envir = parent.frame()`), so an absent env
+    /// argument resolves from it.
+    Env(EnvOp),
 }
 
 /// An arg-centric effect: one argument and how it evaluates.
@@ -113,12 +117,14 @@ pub struct ArgumentEffect {
 }
 
 /// How an argument's own sub-expressions are treated.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum EvalMode {
     /// Captured unevaluated. bquote-style unquote holes stay a custom handler.
     Quote,
-    /// Quote plus eval in a controlled scope, fused.
-    Nse { scope: NseScope, timing: NseTiming },
+    /// Quote plus eval in a controlled scope, fused. `scope` is an env operand
+    /// resolved against the call, the same `.()`-hole grammar `Source.envir`
+    /// uses, so a function's scope can be read from an argument.
+    Nse { scope: DeclExpr, timing: NseTiming },
 }
 
 /// An effect-centric effect: what a call does to the surrounding environment.
@@ -172,15 +178,34 @@ pub enum RExpr {
 }
 
 /// An environment-capture op as written in a stub. Deliberately not an
-/// `NseScope`: the same op denotes different scopes in different frames (PR B
-/// adds explicit-argument frames). In a stub it's callee-relative, which
-/// `resolve_env_op` maps to a scope. Gains `Environment` / `NewEnv` in PR B.
-#[derive(Debug, Clone, Copy)]
+/// `NseScope`: the same op denotes different scopes in different frames. An op
+/// written in the stub is callee-relative, so `parent.frame()` there is the
+/// call site; an op read from an explicit argument names a frame we can't
+/// interpret. `resolve_env_op` maps a stub-position op to a scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvOp {
-    /// `parent.frame()` (and future rlang `caller_env()`): the caller's scope.
+    /// `parent.frame()`, rlang `caller_env()`: the caller's scope.
     ParentFrame,
-    /// `globalenv()` (and future `global_env()`): the global scope.
+    /// `globalenv()`, rlang `global_env()`: the global scope.
     GlobalEnv,
+    /// `environment()`, rlang `current_env()`: the callee's own frame, not a
+    /// scope user code resolves against.
+    Environment,
+    /// `new.env(parent = ...)`: a fresh scope.
+    NewEnv { parent: EnvParent },
+}
+
+/// `new.env`'s parent, one level. Bare `new.env()` is `new.env(parent =
+/// environment())` at the point it's written, so it parses to `Environment`
+/// ("here"). `Unknown` covers out-of-set parents (`baseenv()`, a variable). The
+/// first cut resolves every fresh env to `Nested` regardless of parent, keeping
+/// the op for a future detached-scope refinement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvParent {
+    ParentFrame,
+    Environment,
+    GlobalEnv,
+    Unknown,
 }
 
 /// An index into the enclosing [`Declaration::formals`]. Name and position both
@@ -211,16 +236,17 @@ pub fn resolve(declaration: &Declaration, call: &RCall, ctx: &CallContext) -> Op
     let matched = match_signature(call, &declaration.formals);
     let values = argument_values(call);
 
-    let mut arguments = resolve_arguments(declaration, &matched);
-    let mut attach = None;
-    let mut source = None;
-
     let resolution = EnvResolution {
         declaration,
         matched: &matched,
         values: &values,
         ctx,
     };
+
+    let mut arguments = resolution.resolve_arguments();
+    let mut attach = None;
+    let mut source = None;
+
     for effect in &declaration.env {
         resolution.resolve_effect(effect, &mut arguments, &mut attach, &mut source);
     }
@@ -231,24 +257,6 @@ pub fn resolve(declaration: &Declaration, call: &RCall, ctx: &CallContext) -> Op
         source,
         ..Effects::default()
     })
-}
-
-/// Map each call argument to its declared [`EvalMode`], in call order. `None`
-/// when the declaration names no arguments.
-fn resolve_arguments(
-    declaration: &Declaration,
-    matched: &[Option<usize>],
-) -> Option<ResolvedArgumentEffects> {
-    if declaration.arguments.is_empty() {
-        return None;
-    }
-
-    Some(
-        matched
-            .iter()
-            .map(|formal| formal.and_then(|idx| declared_mode(declaration, idx).map(resolve_mode)))
-            .collect(),
-    )
 }
 
 /// One call matched against one declaration, the shared context for interpreting
@@ -274,6 +282,45 @@ enum StringSlot {
 }
 
 impl EnvResolution<'_> {
+    /// Map each call argument to its declared [`EvalMode`], in call order. `None`
+    /// when the declaration names no arguments.
+    fn resolve_arguments(&self) -> Option<ResolvedArgumentEffects> {
+        if self.declaration.arguments.is_empty() {
+            return None;
+        }
+
+        Some(
+            self.matched
+                .iter()
+                .map(|formal| {
+                    formal.and_then(|idx| {
+                        declared_mode(self.declaration, idx).map(|mode| self.resolve_mode(mode))
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// Interpret one declared [`EvalMode`] against the call. `Nse` resolves its
+    /// scope operand the same way an environment effect resolves `envir`.
+    fn resolve_mode(&self, mode: &EvalMode) -> ResolvedArgumentEffect {
+        match mode {
+            EvalMode::Nse { scope, timing } => match self.resolve_env_expr(scope) {
+                Some(scope) => ResolvedArgumentEffect::Nse {
+                    scope,
+                    timing: *timing,
+                },
+                // An `Nse` argument is always captured. When we can't resolve
+                // its scope (an explicit env argument), we still know it's
+                // quoted, we just don't know where it evaluates. Suppressing it
+                // as `Quote` is safer than treating it as a plain use in the
+                // wrong scope.
+                None => ResolvedArgumentEffect::Quote { holes: Vec::new() },
+            },
+            EvalMode::Quote => ResolvedArgumentEffect::Quote { holes: Vec::new() },
+        }
+    }
+
     /// Interpret one environment effect, writing its result into `attach`/`source`
     /// and folding consulted `Substitute` operands into `arguments`. An operand,
     /// condition, or guard that fails to resolve drops this one effect (fold
@@ -389,10 +436,28 @@ impl EnvResolution<'_> {
     /// source.
     fn resolve_env_expr(&self, expr: &DeclExpr) -> Option<NseScope> {
         match expr {
-            DeclExpr::Hole(RExpr::Env(op)) => Some(resolve_env_op(*op)),
-            // An env read from an argument (`.(x)`, `.(substitute(x))`) isn't
-            // interpreted in PR A. Source never uses this shape.
-            DeclExpr::Hole(RExpr::Eval(_) | RExpr::Substitute(_)) => None,
+            DeclExpr::Hole(RExpr::Env(op)) => resolve_env_op(*op),
+            DeclExpr::Hole(RExpr::Eval(ArgumentRef(arg))) => {
+                // Reading an env from a `.()` hole. An explicit argument isn't
+                // interpreted in this first cut, so it drops. Only an absent
+                // argument reads the formal's env-op default. This is the
+                // asymmetry with `resolve_bool_operand`, which does read an
+                // explicit bool value: bools aren't frame-relative, so the
+                // written value means the same thing everywhere; environments
+                // are frame-relative, so a user-supplied env can't be mapped to
+                // a scope here.
+                if self.formal_binding(*arg).is_some() {
+                    return None;
+                }
+                let default = self
+                    .declaration
+                    .formals
+                    .get(*arg)
+                    .and_then(|formal| formal.default);
+                static_env(default).and_then(resolve_env_op)
+            },
+            // A captured expression (`.(substitute(x))`) never denotes a scope.
+            DeclExpr::Hole(RExpr::Substitute(_)) => None,
             DeclExpr::If { cond, then, els } => {
                 let cond = self.resolve_bool_operand(cond)?;
                 let branch = if cond { then } else { els };
@@ -429,21 +494,38 @@ fn apply_folds(arguments: &mut Option<ResolvedArgumentEffects>, folds: &[usize],
     }
 }
 
-/// Read a static default as a bool, or `None` when there is no default. The
-/// exhaustive match forces a decision here when `StaticValue` grows a variant.
+/// Read a static default as a bool, or `None` when there is no default or it
+/// isn't a bool. The exhaustive match forces a decision here when `StaticValue`
+/// grows a variant.
 fn static_bool(value: Option<StaticValue>) -> Option<bool> {
     match value? {
         StaticValue::Bool(default) => Some(default),
+        StaticValue::Env(_) => None,
     }
 }
 
-/// Map an env-capture op to the scope it denotes in the callee's frame, the
-/// only frame in PR A. PR B generalizes this to `(op, frame) -> Option<NseScope>`
-/// so an op read from an explicit argument can name a different frame.
-fn resolve_env_op(op: EnvOp) -> NseScope {
+/// Read a static default as an env-capture op, or `None` when there is no
+/// default or it isn't an env op. Mirrors [`static_bool`]; the exhaustive match
+/// forces a decision here when `StaticValue` grows a variant.
+fn static_env(value: Option<StaticValue>) -> Option<EnvOp> {
+    match value? {
+        StaticValue::Env(op) => Some(op),
+        StaticValue::Bool(_) => None,
+    }
+}
+
+/// Map a stub-position env-capture op to the scope it denotes in the callee's
+/// frame. `parent.frame()` is the call site (`Current`), `globalenv()` is
+/// `Global`, a fresh `new.env()` is a `Nested` scope. `environment()` is the
+/// callee's own frame, not a scope user code resolves against, so it drops.
+fn resolve_env_op(op: EnvOp) -> Option<NseScope> {
     match op {
-        EnvOp::ParentFrame => NseScope::Current,
-        EnvOp::GlobalEnv => NseScope::Global,
+        EnvOp::ParentFrame => Some(NseScope::Current),
+        EnvOp::GlobalEnv => Some(NseScope::Global),
+        // Callee's own frame: not a scope user code resolves against. Drops.
+        EnvOp::Environment => None,
+        // A fresh scope, regardless of parent in the first cut.
+        EnvOp::NewEnv { .. } => Some(NseScope::Nested),
     }
 }
 
@@ -467,16 +549,6 @@ fn declared_mode(declaration: &Declaration, idx: usize) -> Option<&EvalMode> {
         .iter()
         .find(|effect| effect.arg.0 == idx)
         .map(|effect| &effect.mode)
-}
-
-fn resolve_mode(mode: &EvalMode) -> ResolvedArgumentEffect {
-    match mode {
-        EvalMode::Nse { scope, timing } => ResolvedArgumentEffect::Nse {
-            scope: *scope,
-            timing: *timing,
-        },
-        EvalMode::Quote => ResolvedArgumentEffect::Quote { holes: Vec::new() },
-    }
 }
 
 /// Match a call's arguments against a callee's `formals`, applying R's matching
@@ -589,13 +661,26 @@ mod tests {
             .unwrap()
     }
 
+    /// A bare `Nse()` scope: `new.env(parent = parent.frame())`, which resolves
+    /// to `Nested`.
+    fn nested_scope() -> DeclExpr {
+        DeclExpr::Hole(RExpr::Env(EnvOp::NewEnv {
+            parent: EnvParent::ParentFrame,
+        }))
+    }
+
+    /// A call-site scope: `parent.frame()`, which resolves to `Current`.
+    fn current_scope() -> DeclExpr {
+        DeclExpr::Hole(RExpr::Env(EnvOp::ParentFrame))
+    }
+
     #[test]
     fn resolves_positional_nse_argument() {
         // `code` sits at positional index 1, so the block resolves to its Nse
         // effect and the leading `desc` stays plain.
         let call = first_call("test_that(\"d\", { x })");
         let declaration =
-            Declaration::new(&["desc", "code"]).nse(1, NseScope::Nested, NseTiming::Eager);
+            Declaration::new(&["desc", "code"]).nse(1, nested_scope(), NseTiming::Eager);
         let effects = resolve(&declaration, &call, &CallContext::new()).unwrap();
 
         let arguments = effects.arguments.unwrap();
@@ -607,6 +692,62 @@ mod tests {
                 scope: NseScope::Nested,
                 timing: NseTiming::Eager,
             })
+        ));
+    }
+
+    #[test]
+    fn nse_scope_operand_resolves_current() {
+        // A scope operand written directly as `parent.frame()` resolves to the
+        // call-site scope, `Current`.
+        let call = first_call("f(foo)");
+        let declaration = Declaration::new(&["expr"]).nse(0, current_scope(), NseTiming::Eager);
+        let effects = resolve(&declaration, &call, &CallContext::new()).unwrap();
+
+        assert!(matches!(
+            effects.arguments.unwrap()[0],
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Current,
+                timing: NseTiming::Eager,
+            })
+        ));
+    }
+
+    #[test]
+    fn nse_scope_reads_formal_env_default() {
+        // `expr = Nse(.(envir))` with `envir` defaulting to `parent.frame()`.
+        // With `envir` absent, the scope reads that default and resolves to
+        // `Current`.
+        let call = first_call("f(foo)");
+        let declaration = Declaration::new(&["expr", "envir"])
+            .nse(0, DeclExpr::eval(1), NseTiming::Eager)
+            .formal_default(1, StaticValue::Env(EnvOp::ParentFrame));
+        let effects = resolve(&declaration, &call, &CallContext::new()).unwrap();
+
+        let arguments = effects.arguments.unwrap();
+        assert!(matches!(
+            arguments[0],
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Current,
+                timing: NseTiming::Eager,
+            })
+        ));
+    }
+
+    #[test]
+    fn nse_explicit_env_argument_degrades_to_quote() {
+        // The same declaration, but `envir` is supplied explicitly. An explicit
+        // env argument isn't interpreted, so the scope drops and the `Nse`
+        // degrades to a `Quote` (still captured, no scope pushed).
+        let call = first_call("f(foo, e)");
+        let declaration = Declaration::new(&["expr", "envir"])
+            .nse(0, DeclExpr::eval(1), NseTiming::Eager)
+            .formal_default(1, StaticValue::Env(EnvOp::ParentFrame));
+        let effects = resolve(&declaration, &call, &CallContext::new()).unwrap();
+
+        let arguments = effects.arguments.unwrap();
+        assert!(matches!(
+            arguments[0],
+            Some(ResolvedArgumentEffect::Quote { .. })
         ));
     }
 
@@ -630,7 +771,7 @@ mod tests {
         // effect lands on the first call argument here.
         let call = first_call("test_that(code = { x }, desc = \"d\")");
         let declaration =
-            Declaration::new(&["desc", "code"]).nse(1, NseScope::Nested, NseTiming::Eager);
+            Declaration::new(&["desc", "code"]).nse(1, nested_scope(), NseTiming::Eager);
         let effects = resolve(&declaration, &call, &CallContext::new()).unwrap();
 
         let arguments = effects.arguments.unwrap();

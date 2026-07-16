@@ -1,12 +1,20 @@
 # Effect stubs for base R. An `.ty.R` file is R source, a signature plus its
 # `declare()` directive and no body logic, R's answer to a `.d.ts` / `.pyi`.
 
-evalq <- function(expr, envir, enclos) {
-  declare(expr = Nse("current"))
+# `evalq` evaluates its captured `expr` in `envir`, which defaults to the
+# caller's frame. The `.(envir)` operand reads that scope: with `envir` absent
+# it falls back to the `parent.frame()` default (the call site, `Current`); an
+# explicit `envir` isn't interpreted and drops the effect.
+evalq <- function(expr, envir = parent.frame(), enclos) {
+  declare(expr = Nse(.(envir)))
 }
 
-local <- function(expr, envir) {
-  declare(expr = Nse())
+# `local` evaluates its captured `expr` in `envir`, a fresh environment by
+# default. The `.(envir)` operand reads that scope: with `envir` absent the
+# `new.env()` default gives a nested scope; an explicit `envir` drops the
+# effect.
+local <- function(expr, envir = new.env()) {
+  declare(expr = Nse(.(envir)))
 }
 
 with <- function(data, expr, ...) {

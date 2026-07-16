@@ -71,7 +71,7 @@ fn test_local_nse_nested_eager_pushes_scope() {
     // it (visible where the call sits, like `local()`).
     let index = index(
         "\
-my_local <- function(x) declare(x = Nse(\"nested\"))
+my_local <- function(x) declare(x = Nse())
 my_local({
     y <- 1
 })
@@ -97,7 +97,7 @@ fn test_local_nse_current_eager_no_scope() {
     // (file) scope.
     let index = index(
         "\
-my_evalq <- function(x) declare(x = Nse(\"current\"))
+my_evalq <- function(x) declare(x = Nse(.(parent.frame())))
 my_evalq({
     y <- 1
 })
@@ -118,7 +118,7 @@ fn test_local_nse_nested_lazy_own_scope() {
     // `reactive`-like: Nested + Lazy gets its own deferred scope.
     let index = index(
         "\
-my_reactive <- function(x) declare(x = Nse(\"nested\", eager = FALSE))
+my_reactive <- function(x) declare(x = Nse(eager = FALSE))
 my_reactive({
     y <- 1
 })
@@ -144,7 +144,7 @@ fn test_local_nse_current_lazy_routes_to_owner() {
     // routes its definitions to the owner (file) scope.
     let index = index(
         "\
-my_on_load <- function(x) declare(x = Nse(\"current\", eager = FALSE))
+my_on_load <- function(x) declare(x = Nse(.(parent.frame()), eager = FALSE))
 my_on_load({
     y <- 1
 })
@@ -173,7 +173,7 @@ fn test_local_declaration_shadows_base() {
     // scope rather than being captured.
     let index = index(
         "\
-quote <- function(x) declare(x = Nse(\"current\"))
+quote <- function(x) declare(x = Nse(.(parent.frame())))
 quote(x <- 1)
 ",
     );

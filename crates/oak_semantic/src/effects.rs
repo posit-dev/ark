@@ -31,6 +31,7 @@ pub use declaration::ArgumentRef;
 pub use declaration::DeclExpr;
 pub use declaration::Declaration;
 pub use declaration::EnvOp;
+pub use declaration::EnvParent;
 pub use declaration::EnvironmentEffect;
 pub use declaration::EvalMode;
 pub use declaration::FormalDef;
@@ -336,10 +337,19 @@ mod tests {
         assert_eq!(declaration.arguments.len(), 1);
         let effect = &declaration.arguments[0];
         assert_eq!(declaration.formals[effect.arg.0].name, "expr");
-        assert!(matches!(effect.mode, EvalMode::Nse {
-            scope: NseScope::Nested,
-            timing: NseTiming::Eager,
-        }));
+
+        // The scope is now an env operand on the declaration; the concrete
+        // `NseScope` only appears once resolved against a call. `local(x)` reads
+        // the `new.env()` default -> Nested, eager.
+        let call = first_call("local(x)");
+        let effects = declaration::resolve(declaration, &call, &CallContext::new()).unwrap();
+        assert!(matches!(
+            effects.arguments.unwrap()[0],
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Nested,
+                timing: NseTiming::Eager,
+            })
+        ));
     }
 
     #[test]
@@ -355,10 +365,17 @@ mod tests {
         let Some(EffectSource::Declared(declaration)) = lookup("shiny", "reactive") else {
             panic!("expected a declared effect for shiny::reactive");
         };
-        assert!(matches!(declaration.arguments[0].mode, EvalMode::Nse {
-            scope: NseScope::Nested,
-            timing: NseTiming::Lazy,
-        }));
+        // `reactive(x)`: bare `Nse(eager = FALSE)` scope defaults to a fresh
+        // nested env, lazily.
+        let call = first_call("reactive(x)");
+        let effects = declaration::resolve(declaration, &call, &CallContext::new()).unwrap();
+        assert!(matches!(
+            effects.arguments.unwrap()[0],
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Nested,
+                timing: NseTiming::Lazy,
+            })
+        ));
     }
 
     /// The bound name for base `assign`, resolved through the handler.

@@ -36,12 +36,12 @@ use crate::effects::CallContext;
 use crate::effects::DeclExpr;
 use crate::effects::Declaration;
 use crate::effects::EnvOp;
+use crate::effects::EnvParent;
 use crate::effects::EnvironmentEffect;
 use crate::effects::EvalMode;
 use crate::effects::FormalDef;
 use crate::effects::RExpr;
 use crate::effects::StaticValue;
-use crate::semantic_index::NseScope;
 use crate::semantic_index::NseTiming;
 
 /// A [`Declaration`] parsed from a `declare()` directive, plus the
@@ -80,8 +80,8 @@ pub enum DeclareDiagnosticKind {
     /// `Nse(...)`, or a constructor call has the wrong argument shape (e.g.
     /// `Quote(x)`).
     InvalidEvalMode,
-    /// `Nse`'s `scope` or `eager` argument isn't one of its allowed
-    /// literals (`scope` takes no partial matching, `eager` a bare bool).
+    /// `Nse`'s `eager` argument isn't a bare bool. A malformed `scope` operand
+    /// surfaces as `InvalidOperand` from `parse_decl_expr` instead.
     InvalidNseArgument { name: String },
     /// A positional entry's call head isn't a recognized effect
     /// (`Attach`/`Source`), or the entry isn't a call at all.
@@ -157,8 +157,9 @@ fn directive_args(function: &RFunctionDefinition) -> Option<RCallArguments> {
 }
 
 /// One [`FormalDef`] per parameter in signature order, `...` and `..i`
-/// included. A `TRUE`/`FALSE` default becomes a [`StaticValue`]; anything
-/// else (a call like `getOption(...)`, or no default) leaves it `None`.
+/// included. A `TRUE`/`FALSE` default becomes a [`StaticValue::Bool`] and an
+/// env-capture op (`parent.frame()`, `new.env()`) a [`StaticValue::Env`];
+/// anything else (a call like `getOption(...)`, or no default) leaves it `None`.
 fn build_formals(params: &RParameters) -> Vec<FormalDef> {
     params
         .items()
@@ -169,11 +170,20 @@ fn build_formals(params: &RParameters) -> Vec<FormalDef> {
             let default = param
                 .default()
                 .and_then(|default| default.value().ok())
-                .and_then(|value| CallContext::new().resolve_static_bool(&value))
-                .map(StaticValue::Bool);
+                .and_then(|value| static_default(&value));
             FormalDef { name, default }
         })
         .collect()
+}
+
+/// Read a formal's default as a [`StaticValue`]. A `TRUE`/`FALSE` is a
+/// [`StaticValue::Bool`]; otherwise a recognized env-capture op is a
+/// [`StaticValue::Env`]. Anything else stays `None`.
+fn static_default(value: &AnyRExpression) -> Option<StaticValue> {
+    if let Some(bool) = CallContext::new().resolve_static_bool(value) {
+        return Some(StaticValue::Bool(bool));
+    }
+    recognize_env_op(value).map(StaticValue::Env)
 }
 
 /// A parameter's name, matching the naming `scan_parameter_defaults` in
@@ -220,7 +230,7 @@ fn parse_arg_centric_entry(
     let Some(value) = arg.value() else {
         return;
     };
-    let Some(mode) = parse_eval_mode(&value, diagnostics) else {
+    let Some(mode) = parse_eval_mode(&value, formals, diagnostics) else {
         return;
     };
     arguments.push(ArgumentEffect {
@@ -349,9 +359,12 @@ fn formal_index(formals: &[FormalDef], name: &str) -> Option<usize> {
     formals.iter().position(|formal| formal.name == name)
 }
 
-/// Parse an arg-centric RHS: `Quote`, `Quote()`, `Nse`, or `Nse(...)`.
+/// Parse an arg-centric RHS: `Quote`, `Quote()`, `Nse`, or `Nse(...)`. `formals`
+/// is the enclosing function's signature, so an `Nse` scope operand (`.(envir)`)
+/// can resolve to a formal index.
 fn parse_eval_mode(
     value: &AnyRExpression,
+    formals: &[FormalDef],
     diagnostics: &mut Vec<DeclareDiagnostic>,
 ) -> Option<EvalMode> {
     let range = value.syntax().text_trimmed_range();
@@ -361,7 +374,7 @@ fn parse_eval_mode(
         AnyRExpression::RIdentifier(ident) => match ident.name_text().as_str() {
             "Quote" => Some(EvalMode::Quote),
             "Nse" => Some(EvalMode::Nse {
-                scope: NseScope::Nested,
+                scope: default_nse_scope(),
                 timing: NseTiming::Eager,
             }),
             _ => {
@@ -382,7 +395,7 @@ fn parse_eval_mode(
             };
             match func.name_text().as_str() {
                 "Quote" => parse_quote_call(call, range, diagnostics),
-                "Nse" => parse_nse_call(call, range, diagnostics),
+                "Nse" => parse_nse_call(call, formals, range, diagnostics),
                 _ => {
                     diagnostics.push(DeclareDiagnostic::new(
                         DeclareDiagnosticKind::InvalidEvalMode,
@@ -425,13 +438,18 @@ fn parse_quote_call(
     Some(EvalMode::Quote)
 }
 
-/// `Nse(scope = c("nested", "current"), eager = TRUE)`, matched with
-/// [`match_signature`] against that synthetic signature. That's the reuse
-/// this vocabulary is designed for: parsing `Nse("current", eager = FALSE)`
-/// is the same positional/named resolution as any other call, not a
-/// special case.
+/// `Nse(scope = new.env(parent = parent.frame()), eager = TRUE)`, matched with
+/// [`match_signature`] against that synthetic signature. That's the reuse this
+/// vocabulary is designed for: parsing `Nse(.(envir), eager = FALSE)` is the
+/// same positional/named resolution as any other call, not a special case.
+///
+/// `scope` is a full [`DeclExpr`] operand, the same `.()`-hole grammar
+/// `Source.envir` uses, so a function's scope can be read from an argument. A
+/// bare `Nse()` synthesizes the constructor default `new.env(parent =
+/// parent.frame())`, which resolves to a fresh nested scope.
 fn parse_nse_call(
     call: &RCall,
+    formals: &[FormalDef],
     range: TextRange,
     diagnostics: &mut Vec<DeclareDiagnostic>,
 ) -> Option<EvalMode> {
@@ -449,19 +467,10 @@ fn parse_nse_call(
     let values = argument_values(call);
 
     let scope = match bound_value(&matched, &values, 0) {
-        None => NseScope::Nested,
-        Some(expr) => {
-            let Some(scope) = resolve_scope_literal(expr) else {
-                diagnostics.push(DeclareDiagnostic::new(
-                    DeclareDiagnosticKind::InvalidNseArgument {
-                        name: "scope".to_string(),
-                    },
-                    range,
-                ));
-                return None;
-            };
-            scope
-        },
+        // A malformed operand surfaces as `InvalidOperand` from
+        // `parse_decl_expr`, which already pushed the diagnostic.
+        Some(operand) => parse_decl_expr(operand, formals, diagnostics)?,
+        None => default_nse_scope(),
     };
 
     let timing = match bound_value(&matched, &values, 1) {
@@ -484,14 +493,13 @@ fn parse_nse_call(
     Some(EvalMode::Nse { scope, timing })
 }
 
-/// `scope`'s value, exactly `"nested"` or `"current"`. No partial matching:
-/// `"n"` isn't `"nested"`.
-fn resolve_scope_literal(expr: &AnyRExpression) -> Option<NseScope> {
-    match CallContext::new().resolve_static_string(expr)?.as_str() {
-        "nested" => Some(NseScope::Nested),
-        "current" => Some(NseScope::Current),
-        _ => None,
-    }
+/// The `Nse` constructor's default scope, `new.env(parent = parent.frame())`,
+/// which resolves to a fresh nested scope. Synthesized in Rust rather than
+/// parsed, so a bare `Nse()` needs no string surface.
+fn default_nse_scope() -> DeclExpr {
+    DeclExpr::Hole(RExpr::Env(EnvOp::NewEnv {
+        parent: EnvParent::ParentFrame,
+    }))
 }
 
 /// Parse an effect operand position: either a bare `.()` hole, or an
@@ -613,18 +621,18 @@ fn parse_hole_rexpr(
                 diagnostics.push(invalid_operand(range));
                 return None;
             };
-            match func.name_text().as_str() {
-                "substitute" => parse_substitute_hole(call, formals, diagnostics, range),
-                // Env-capture ops are zero-argument calls. `parent.frame(2)` and
-                // the like carry a frame selector we don't interpret, so they
-                // fall outside the set.
-                "parent.frame" => parse_env_op_hole(call, EnvOp::ParentFrame, diagnostics, range),
-                "globalenv" => parse_env_op_hole(call, EnvOp::GlobalEnv, diagnostics, range),
-                _ => {
-                    diagnostics.push(invalid_operand(range));
-                    None
-                },
+            if func.name_text() == "substitute" {
+                return parse_substitute_hole(call, formals, diagnostics, range);
             }
+            // An env-capture op (`parent.frame()`, `new.env(...)`). The
+            // zero-arg rule for `parent.frame`/`globalenv`/`environment` lives
+            // in `recognize_env_op`, so `parent.frame(2)` isn't recognized and
+            // falls outside the set.
+            let Some(op) = recognize_env_op(expr) else {
+                diagnostics.push(invalid_operand(range));
+                return None;
+            };
+            Some(RExpr::Env(op))
         },
         _ => {
             diagnostics.push(invalid_operand(range));
@@ -655,23 +663,74 @@ fn parse_substitute_hole(
     Some(RExpr::Substitute(ArgumentRef(idx)))
 }
 
-/// An env-capture op inside a hole (`parent.frame()`, `globalenv()`). It takes
-/// no arguments, so any argument makes it fall outside the interpreted set.
-fn parse_env_op_hole(
-    call: &RCall,
-    op: EnvOp,
-    diagnostics: &mut Vec<DeclareDiagnostic>,
-    range: TextRange,
-) -> Option<RExpr> {
+/// Recognize an env-capture op written as an R expression, or `None` when the
+/// expression isn't one. Shared by `.()` holes (via [`parse_hole_rexpr`]) and
+/// formal defaults (via [`static_default`]), so both read the same set.
+///
+/// The zero-argument ops (`parent.frame`, `globalenv`, `environment` and their
+/// rlang aliases) must be called with no arguments. `parent.frame(2)` carries a
+/// frame selector we don't interpret, so it falls outside the set. `new.env`
+/// reads its `parent =` argument; a bare `new.env()` is `parent =
+/// environment()`.
+fn recognize_env_op(expr: &AnyRExpression) -> Option<EnvOp> {
+    let AnyRExpression::RCall(call) = expr else {
+        return None;
+    };
+    let Ok(AnyRExpression::RIdentifier(func)) = call.function() else {
+        return None;
+    };
+    match func.name_text().as_str() {
+        "parent.frame" | "caller_env" => zero_arg_env_op(call, EnvOp::ParentFrame),
+        "globalenv" | "global_env" => zero_arg_env_op(call, EnvOp::GlobalEnv),
+        "environment" | "current_env" => zero_arg_env_op(call, EnvOp::Environment),
+        "new.env" => Some(EnvOp::NewEnv {
+            parent: new_env_parent(call),
+        }),
+        _ => None,
+    }
+}
+
+/// A zero-argument env op. Any argument (`parent.frame(2)`) means a frame
+/// selector we don't interpret, so it isn't recognized.
+fn zero_arg_env_op(call: &RCall, op: EnvOp) -> Option<EnvOp> {
     let has_arguments = call
         .arguments()
         .ok()
         .is_some_and(|args| args.items().iter().count() > 0);
     if has_arguments {
-        diagnostics.push(invalid_operand(range));
         return None;
     }
-    Some(RExpr::Env(op))
+    Some(op)
+}
+
+/// Read `new.env`'s `parent =` argument as an [`EnvParent`], defaulting to
+/// `Environment` for a bare `new.env()`. Lenient by design: an out-of-set
+/// parent is `Unknown`, not a diagnostic, since the first cut collapses every
+/// fresh env to `Nested` and the parent is only informational. `new.env`'s
+/// other arguments (`hash`, `size`) are ignored.
+fn new_env_parent(call: &RCall) -> EnvParent {
+    let Some(parent) = named_argument(call, "parent") else {
+        return EnvParent::Environment;
+    };
+    match recognize_env_op(&parent) {
+        Some(EnvOp::ParentFrame) => EnvParent::ParentFrame,
+        Some(EnvOp::Environment) => EnvParent::Environment,
+        Some(EnvOp::GlobalEnv) => EnvParent::GlobalEnv,
+        // A nested `new.env()` parent, or anything else, is out of the flat set.
+        _ => EnvParent::Unknown,
+    }
+}
+
+/// The value of `call`'s argument named `name`, or `None` when it has none.
+fn named_argument(call: &RCall, name: &str) -> Option<AnyRExpression> {
+    let args = call.arguments().ok()?;
+    for item in args.items().iter() {
+        let Ok(arg) = item else { continue };
+        if argument_name(&arg).as_deref() == Some(name) {
+            return arg.value();
+        }
+    }
+    None
 }
 
 /// An `Eval` operand on a formal that an arg-centric entry declares
@@ -739,6 +798,20 @@ mod tests {
     use super::*;
     use crate::effects::declaration::resolve;
     use crate::effects::ResolvedArgumentEffect;
+    use crate::semantic_index::NseScope;
+
+    /// Parse `declare_source`, resolve it against `call_source`, and return the
+    /// resolved effect at the first call argument.
+    fn resolve_first_arg(
+        declare_source: &str,
+        call_source: &str,
+    ) -> Option<ResolvedArgumentEffect> {
+        let parsed = parse_declare(declare_source);
+        assert!(parsed.diagnostics.is_empty());
+        let call = first_call(call_source);
+        let effects = resolve(&parsed.declaration, &call, &CallContext::new()).unwrap();
+        effects.arguments.unwrap()[0].clone()
+    }
 
     /// Parse `source` and return its first function definition.
     fn first_function(source: &str) -> RFunctionDefinition {
@@ -810,21 +883,33 @@ mod tests {
 
     #[test]
     fn multiple_entries_resolve_exact_modes() {
-        let parsed =
-            parse_declare("function(x, y) declare(x = Quote, y = Nse(\"current\", eager = FALSE))");
+        // `x = Quote` and `y = Nse(.(parent.frame()), eager = FALSE)`. Both
+        // entries parse; resolving against a call reads `y`'s scope operand as
+        // the call-site scope, lazily.
+        let parsed = parse_declare(
+            "function(x, y) declare(x = Quote, y = Nse(.(parent.frame()), eager = FALSE))",
+        );
         assert_eq!(parsed.declaration.arguments.len(), 2);
         assert!(matches!(
             parsed.declaration.arguments[0].mode,
             EvalMode::Quote
         ));
-        assert!(matches!(
-            parsed.declaration.arguments[1].mode,
-            EvalMode::Nse {
-                scope: NseScope::Current,
-                timing: NseTiming::Lazy
-            }
-        ));
         assert!(parsed.diagnostics.is_empty());
+
+        let call = first_call("f(a, b)");
+        let effects = resolve(&parsed.declaration, &call, &CallContext::new()).unwrap();
+        let arguments = effects.arguments.unwrap();
+        assert!(matches!(
+            arguments[0],
+            Some(ResolvedArgumentEffect::Quote { .. })
+        ));
+        assert!(matches!(
+            arguments[1],
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Current,
+                timing: NseTiming::Lazy,
+            })
+        ));
     }
 
     #[test]
@@ -843,62 +928,145 @@ mod tests {
 
     #[test]
     fn bare_nse_defaults_to_nested_eager() {
-        let parsed = parse_declare("function(x) declare(x = Nse)");
+        // Bare `Nse` synthesizes `new.env(parent = parent.frame())`, resolving
+        // to a fresh nested scope, eagerly.
         assert!(matches!(
-            parsed.declaration.arguments[0].mode,
-            EvalMode::Nse {
+            resolve_first_arg("function(x) declare(x = Nse)", "f(y)"),
+            Some(ResolvedArgumentEffect::Nse {
                 scope: NseScope::Nested,
-                timing: NseTiming::Eager
-            }
+                timing: NseTiming::Eager,
+            })
         ));
     }
 
     #[test]
-    fn nse_positional_scope() {
-        let parsed = parse_declare("function(x) declare(x = Nse(\"current\"))");
+    fn nse_scope_operand_parent_frame() {
+        // `Nse(.(parent.frame()))` names the call-site scope: `Current`, eager.
         assert!(matches!(
-            parsed.declaration.arguments[0].mode,
-            EvalMode::Nse {
+            resolve_first_arg("function(x) declare(x = Nse(.(parent.frame())))", "f(y)"),
+            Some(ResolvedArgumentEffect::Nse {
                 scope: NseScope::Current,
-                timing: NseTiming::Eager
-            }
+                timing: NseTiming::Eager,
+            })
+        ));
+    }
+
+    #[test]
+    fn nse_scope_operand_reads_formal() {
+        // `Nse(.(envir))` reads `envir`'s env-op default. Absent in the call, it
+        // falls back to `parent.frame()` -> `Current`.
+        assert!(matches!(
+            resolve_first_arg(
+                "function(x, envir = parent.frame()) declare(x = Nse(.(envir)))",
+                "f(y)"
+            ),
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Current,
+                timing: NseTiming::Eager,
+            })
         ));
     }
 
     #[test]
     fn nse_named_eager_only() {
-        let parsed = parse_declare("function(x) declare(x = Nse(eager = FALSE))");
+        // A bare scope (absent, so the `new.env()` default -> Nested) with
+        // `eager = FALSE`: nested, lazy.
         assert!(matches!(
-            parsed.declaration.arguments[0].mode,
-            EvalMode::Nse {
+            resolve_first_arg("function(x) declare(x = Nse(eager = FALSE))", "f(y)"),
+            Some(ResolvedArgumentEffect::Nse {
                 scope: NseScope::Nested,
-                timing: NseTiming::Lazy
-            }
+                timing: NseTiming::Lazy,
+            })
         ));
     }
 
     #[test]
-    fn nse_scope_no_partial_matching() {
-        // `"n"` isn't `"nested"`: no partial matching, so the `x` entry
-        // drops but `y`'s plain `Quote` survives.
-        let parsed = parse_declare("function(x, y) declare(x = Nse(\"n\"), y = Quote)");
-        assert_eq!(parsed.declaration.arguments.len(), 1);
-        assert_eq!(parsed.declaration.arguments[0].arg, ArgumentRef(1));
-        assert_eq!(parsed.diagnostics.len(), 1);
-        assert!(matches!(
-            parsed.diagnostics[0].kind,
-            DeclareDiagnosticKind::InvalidNseArgument { ref name } if name == "scope"
-        ));
-    }
-
-    #[test]
-    fn nse_invalid_scope_value() {
+    fn nse_invalid_scope_operand_drops_entry() {
+        // A scope operand that isn't a `.()` hole (a bare string) falls outside
+        // the interpreted set, so the entry drops with `InvalidOperand`.
         let parsed = parse_declare("function(x) declare(x = Nse(\"foo\"))");
         assert!(parsed.declaration.arguments.is_empty());
         assert_eq!(parsed.diagnostics.len(), 1);
         assert!(matches!(
             parsed.diagnostics[0].kind,
-            DeclareDiagnosticKind::InvalidNseArgument { ref name } if name == "scope"
+            DeclareDiagnosticKind::InvalidOperand
+        ));
+    }
+
+    #[test]
+    fn nse_invalid_scope_operand_partial_entry_survives() {
+        // `Nse(bar)`'s scope isn't a `.()` hole, so the `x` entry drops; `y`'s
+        // plain `Quote` still parses.
+        let parsed = parse_declare("function(x, y) declare(x = Nse(bar), y = Quote)");
+        assert_eq!(parsed.declaration.arguments.len(), 1);
+        assert_eq!(parsed.declaration.arguments[0].arg, ArgumentRef(1));
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert!(matches!(
+            parsed.diagnostics[0].kind,
+            DeclareDiagnosticKind::InvalidOperand
+        ));
+    }
+
+    #[test]
+    fn evalq_stub_round_trips_through_resolve() {
+        // `evalq(foo)`: `envir` absent, reads its `parent.frame()` default ->
+        // Current, eager. `evalq(foo, e)`: explicit `envir` isn't interpreted,
+        // so the scope drops and the Nse degrades to a suppressed Quote.
+        let declare =
+            "function(expr, envir = parent.frame(), enclos) declare(expr = Nse(.(envir)))";
+        assert!(matches!(
+            resolve_first_arg(declare, "evalq(foo)"),
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Current,
+                timing: NseTiming::Eager,
+            })
+        ));
+        assert!(matches!(
+            resolve_first_arg(declare, "evalq(foo, e)"),
+            Some(ResolvedArgumentEffect::Quote { .. })
+        ));
+    }
+
+    #[test]
+    fn local_stub_round_trips_through_resolve() {
+        // `local(x)`: `envir` absent, reads its `new.env()` default -> Nested,
+        // eager. `local(x, e)`: explicit `envir` drops the scope -> Quote.
+        let declare = "function(expr, envir = new.env()) declare(expr = Nse(.(envir)))";
+        assert!(matches!(
+            resolve_first_arg(declare, "local(x)"),
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Nested,
+                timing: NseTiming::Eager,
+            })
+        ));
+        assert!(matches!(
+            resolve_first_arg(declare, "local(x, e)"),
+            Some(ResolvedArgumentEffect::Quote { .. })
+        ));
+    }
+
+    #[test]
+    fn nse_scope_reading_formal_is_not_contradiction() {
+        // `.(envir)` in an `Nse` scope is a live read of `envir`, not a capture,
+        // so it doesn't raise `ContradictoryLiveness`.
+        let parsed =
+            parse_declare("function(expr, envir = parent.frame()) declare(expr = Nse(.(envir)))");
+        assert!(parsed.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn nse_scope_operand_new_env_captures_parent() {
+        // `Nse(.(new.env(parent = globalenv())))` parses its parent, but the
+        // first cut resolves any fresh env to `Nested`.
+        assert!(matches!(
+            resolve_first_arg(
+                "function(x) declare(x = Nse(.(new.env(parent = globalenv()))))",
+                "f(y)"
+            ),
+            Some(ResolvedArgumentEffect::Nse {
+                scope: NseScope::Nested,
+                timing: NseTiming::Eager,
+            })
         ));
     }
 

@@ -103,6 +103,43 @@ evalq({
 }
 
 #[test]
+fn test_nse_evalq_explicit_envir_suppresses_body() {
+    // `evalq(<expr>, e)` supplies an explicit `envir`, which we don't interpret.
+    // The captured expression degrades to a suppressed Quote, so `foo` inside it
+    // is NOT recorded as a use. The explicit `e` argument stays a normal use.
+    let index = index(
+        "\
+evalq({
+    foo
+}, e)
+",
+    );
+
+    assert!(index.uses_of("foo").is_empty());
+    assert!(!index.uses_of("e").is_empty());
+}
+
+#[test]
+fn test_nse_local_explicit_envir_suppresses_body() {
+    // `local(<expr>, e)` supplies an explicit `envir`, so the body degrades to a
+    // suppressed Quote: no NSE scope is pushed and `foo` is not a use.
+    let index = index(
+        "\
+local({
+    foo
+}, e)
+",
+    );
+    let file = ScopeId::from(0);
+
+    // No NSE scope: only the file scope exists.
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(index.scope(file).kind(), ScopeKind::File);
+    assert!(index.uses_of("foo").is_empty());
+    assert!(!index.uses_of("e").is_empty());
+}
+
+#[test]
 fn test_nse_namespace_qualified_call() {
     // `testthat::test_that` should be recognized via namespace resolution.
     let index = index(
