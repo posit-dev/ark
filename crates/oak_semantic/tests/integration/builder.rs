@@ -1672,8 +1672,11 @@ fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIndex {
 
 #[test]
 fn test_magrittr_compound_assignment_binds_lhs() {
-    // `x %<>% f()` is sugar for `x <- f(x)`, so it binds `x`, and both `x` and
-    // `f` are reads.
+    // `x %<>% f()` binds `x`. The left operand is a definition target, not a
+    // read, the same as `<-`, so only `f` (the right operand) is a use.
+    //
+    // `%<>%` is compound (`x <- f(x)`), so `x` is conceptually read too, but we
+    // don't record that read yet. See the `TODO(nse)` in the walk's binary arm.
     let index = index_with_attached("x %<>% f()", &["magrittr"]);
     let file = ScopeId::from(0);
 
@@ -1682,18 +1685,12 @@ fn test_magrittr_compound_assignment_binds_lhs() {
         Some(DefinitionKind::Assign { .. })
     ));
 
-    // Operand uses, in collection order: `x` (left), then `f` (right).
-    assert_eq!(index.uses(file).len(), 2);
+    // Only the right operand `f` is a use; the target `x` is not recorded.
+    assert_eq!(index.uses(file).len(), 1);
     let symbols = index.symbols(file);
     assert_eq!(
         symbols
             .symbol(index.uses(file)[UseId::from(0)].symbol())
-            .name(),
-        "x"
-    );
-    assert_eq!(
-        symbols
-            .symbol(index.uses(file)[UseId::from(1)].symbol())
             .name(),
         "f"
     );
@@ -1749,6 +1746,24 @@ fn test_s7_walrus_assignment_binds_lhs() {
 }
 
 #[test]
+fn test_binding_operator_left_operand_is_not_a_use() {
+    // A pure-binding operator (`:=` is `x <- expr`, not compound) reads only its
+    // right operand. The left operand `x` is the binding target, not a use, so
+    // exactly one use is recorded and it's the value operand.
+    let index = index_with_attached("x := f()", &["S7"]);
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.uses(file).len(), 1);
+    assert_eq!(
+        index
+            .symbols(file)
+            .symbol(index.uses(file)[UseId::from(0)].symbol())
+            .name(),
+        "f"
+    );
+}
+
+#[test]
 fn test_plain_operators_do_not_bind() {
     // A pipe and a plain infix operator are not assign effects, even with
     // magrittr attached: the match is on the exact operator text.
@@ -1784,9 +1799,10 @@ fn test_compound_assignment_use_resolves_to_binding() {
     let index = index_with_attached("y %<>% f()\ny", &["magrittr"]);
     let file = ScopeId::from(0);
 
-    // Uses in order: `y` (left), `f` (right), then the trailing `y`.
+    // Uses in order: `f` (right operand), then the trailing `y`. The left
+    // operand `y` is the binding target, not a use.
     let map = index.use_def_map(file);
-    let bindings = map.bindings_at_use(UseId::from(2));
+    let bindings = map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(file)[bindings.definitions()[0]];
     assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
