@@ -13,17 +13,22 @@ use ark::r_task::r_task;
 // resulting entries formatted as `name@latestVersion`.
 fn pkg_outdated(rows: &str) -> Vec<String> {
     r_task(|| {
+        // Evaluate inside `local()` so the helper bindings land in a fresh
+        // child environment: the positron namespace itself is locked, so
+        // assigning into it directly would error.
         let code = format!(
             r#"
-            row <- function(pkg, installed, repos) {{
-                c(pkg, "lib", installed, "4.4.0", repos, "CRAN")
-            }}
-            m <- rbind({rows})
-            colnames(m) <- c(
-                "Package", "LibPath", "Installed", "Built", "ReposVer", "Repository"
-            )
-            res <- pkg_outdated_result(m)
-            vapply(res, function(x) paste0(x$name, "@", x$latestVersion), character(1))
+            local({{
+                row <- function(pkg, installed, repos) {{
+                    c(pkg, "lib", installed, "4.4.0", repos, "CRAN")
+                }}
+                m <- rbind({rows})
+                colnames(m) <- c(
+                    "Package", "LibPath", "Installed", "Built", "ReposVer", "Repository"
+                )
+                res <- pkg_outdated_result(m)
+                vapply(res, function(x) paste0(x$name, "@", x$latestVersion), character(1))
+            }})
             "#
         );
         harp::parse_eval0(&code, ARK_ENVS.positron_ns)
@@ -87,8 +92,10 @@ fn test_pkg_outdated_handles_null() {
     let outdated: Vec<String> = r_task(|| {
         harp::parse_eval0(
             r#"
-            res <- pkg_outdated_result(NULL)
-            vapply(res, function(x) x$name, character(1))
+            local({
+                res <- pkg_outdated_result(NULL)
+                vapply(res, function(x) x$name, character(1))
+            })
             "#,
             ARK_ENVS.positron_ns,
         )
