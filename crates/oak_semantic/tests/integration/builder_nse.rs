@@ -1455,3 +1455,34 @@ f <- function() {
         .collect();
     assert_eq!(local_lazy, vec![false, true]);
 }
+
+#[test]
+fn test_nse_descent_eager_in_eager_in_function_stays_lazy() {
+    // An eager `local` nested inside another eager `local` inside a function
+    // still consults with `lazy = true`. Laziness is a property of the enclosing
+    // scan unit (the function), which the descent preserves by keeping
+    // `current_scope` on the function while it scans both eager bodies inline. If
+    // the inner `local` were resolved against its immediate eager scope instead,
+    // `is_lazy()` would read `false` and the flag would regress.
+    let resolver = TestImportsResolver::with_base();
+    let log = resolver.consultation_log();
+
+    build_with(
+        "\
+f <- function() {
+    local({
+        local({ x <- 1 })
+    })
+}
+",
+        resolver,
+    );
+
+    let records = log.borrow();
+    let local_lazy: Vec<bool> = records
+        .iter()
+        .filter(|(name, _lazy)| name == "local")
+        .map(|(_name, lazy)| *lazy)
+        .collect();
+    assert_eq!(local_lazy, vec![true, true]);
+}
