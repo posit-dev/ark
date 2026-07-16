@@ -818,10 +818,23 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 if is_assignment(bin) {
                     self.collect_assignment(bin);
                 } else {
-                    // Operands first, as uses: `x %<>% f` is `x <- f(x)`, so `x`
-                    // is both a read and the binding target, and `f` is a use.
-                    if let Ok(lhs) = bin.left() {
-                        self.collect_expression(&lhs);
+                    let range = bin.syntax().text_trimmed_range();
+                    let is_binding_op = self
+                        .call_resolutions
+                        .get(&range)
+                        .is_some_and(|resolution| !resolution.assign.is_empty());
+
+                    // A binding operator (`x := expr`) treats its left operand
+                    // as a definition target, not a read, the same as `<-`. An
+                    // ordinary operator (`a + b`) reads both operands.
+                    //
+                    // TODO(nse): `%<>%` is compound (`x <- f(x)`), so it also
+                    // reads its target. Record that read once the registry
+                    // carries a per-operator "reads target" flag.
+                    if !is_binding_op {
+                        if let Ok(lhs) = bin.left() {
+                            self.collect_expression(&lhs);
+                        }
                     }
                     if let Ok(rhs) = bin.right() {
                         self.collect_expression(&rhs);
