@@ -81,10 +81,10 @@ impl Declaration {
         self
     }
 
-    /// Add a `Source` effect reading its path from `path`. `guard` must resolve
-    /// to a static bool or the effect drops.
-    pub fn source(mut self, path: DeclExpr, guard: Option<RExpr>) -> Self {
-        self.env.push(EnvironmentEffect::Source { path, guard });
+    /// Add a `Source` effect reading its path from `path`. `envir` resolves to
+    /// the target scope for the sourced names, or drops the effect when it can't.
+    pub fn source(mut self, path: DeclExpr, envir: DeclExpr) -> Self {
+        self.env.push(EnvironmentEffect::Source { path, envir });
         self
     }
 }
@@ -124,15 +124,13 @@ pub enum EvalMode {
 /// An effect-centric effect: what a call does to the surrounding environment.
 #[derive(Debug, Clone)]
 pub enum EnvironmentEffect {
-    /// Read and evaluate another file, injecting its top-level names. `guard`
-    /// must resolve to a static bool or the effect drops. `local` isn't an
-    /// operand of `path`, so it needs its own slot: resolving `path` never
-    /// consults it, and `source("x.R", local = e)` would otherwise wrongly
-    /// inject into the current scope.
-    Source {
-        path: DeclExpr,
-        guard: Option<RExpr>,
-    },
+    /// Read and evaluate another file, injecting its top-level names. `envir`
+    /// resolves to an `NseScope` saying where those names land, and
+    /// `source(local=)` maps onto it through the stub's if/else (`TRUE` ->
+    /// `Current`, `FALSE` -> `Global`). An `envir` that fails to resolve (a
+    /// non-static `local`, an explicit environment) drops the effect, which
+    /// reproduces the old guard bail without a bespoke slot.
+    Source { path: DeclExpr, envir: DeclExpr },
     /// Attach a package.
     Attach { package: DeclExpr },
 }
@@ -168,12 +166,36 @@ pub enum RExpr {
     Eval(ArgumentRef),
     /// `.(substitute(x))`: capture its expression. Inert, implies `x` is quoted.
     Substitute(ArgumentRef),
+    /// `.(parent.frame())`, `.(globalenv())`: an env-capture op. Denotes a
+    /// scope, forces no argument, so it's never a live use.
+    Env(EnvOp),
+}
+
+/// An environment-capture op as written in a stub. Deliberately not an
+/// `NseScope`: the same op denotes different scopes in different frames (PR B
+/// adds explicit-argument frames). In a stub it's callee-relative, which
+/// `resolve_env_op` maps to a scope. Gains `Environment` / `NewEnv` in PR B.
+#[derive(Debug, Clone, Copy)]
+pub enum EnvOp {
+    /// `parent.frame()` (and future rlang `caller_env()`): the caller's scope.
+    ParentFrame,
+    /// `globalenv()` (and future `global_env()`): the global scope.
+    GlobalEnv,
 }
 
 /// An index into the enclosing [`Declaration::formals`]. Name and position both
 /// live in [`FormalDef`], so this is just the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArgumentRef(pub usize);
+
+/// One file a `source()` call reads, plus where its top-level names land.
+#[derive(Debug, Clone)]
+pub struct SourcedPath {
+    pub path: String,
+    /// The target scope from env capture. `Current` (call-site scope) or
+    /// `Global`. `Nested` never arises for source.
+    pub scope: NseScope,
+}
 
 /// Interpret a declaration against a call, producing the owned [`Effects`] the
 /// builder consumes.
@@ -261,27 +283,26 @@ impl EnvResolution<'_> {
         effect: &EnvironmentEffect,
         arguments: &mut Option<ResolvedArgumentEffects>,
         attach: &mut Option<String>,
-        source: &mut Option<Vec<String>>,
+        source: &mut Option<Vec<SourcedPath>>,
     ) {
         let mut folds = Vec::new();
 
         match effect {
-            EnvironmentEffect::Source { path, guard } => {
-                // The guard must resolve to a static bool or the effect drops.
-                // Its value is deliberately ignored: `local = TRUE` and `local =
-                // FALSE` both keep the source. What it rejects is a non-static
-                // `local =` (e.g. an environment), which would otherwise wrongly
-                // inject the sourced names into the current scope.
-                if let Some(guard) = guard {
-                    if self.resolve_bool_operand(guard).is_none() {
-                        return;
-                    }
-                }
+            EnvironmentEffect::Source { path, envir } => {
+                // `envir` resolves to the target scope for the sourced names. A
+                // non-static `local` (or any env we can't map to a scope) leaves
+                // it unresolved and drops the effect, the same bail the old guard
+                // gave a non-static `local =`.
+                let Some(scope) = self.resolve_env_expr(envir) else {
+                    return;
+                };
                 let Some(path) = self.resolve_string_expr(path, StringSlot::Path, &mut folds)
                 else {
                     return;
                 };
-                source.get_or_insert_with(Vec::new).push(path);
+                source
+                    .get_or_insert_with(Vec::new)
+                    .push(SourcedPath { path, scope });
             },
             EnvironmentEffect::Attach { package } => {
                 let Some(package) =
@@ -339,12 +360,14 @@ impl EnvResolution<'_> {
                     StringSlot::Path => None,
                 }
             },
+            // An env-capture op denotes a scope, not a string.
+            RExpr::Env(_) => None,
         }
     }
 
-    /// Resolve an operand expected to be a static bool (an `If` condition or a
-    /// `Source` guard). Only an `Eval` can be a bool; a `Substitute` captures an
-    /// expression, which is never one.
+    /// Resolve an operand expected to be a static bool (an `If` condition). Only
+    /// an `Eval` can be a bool; a `Substitute` captures an expression and an
+    /// `Env` op denotes a scope, neither of which is ever a bool.
     fn resolve_bool_operand(&self, operand: &RExpr) -> Option<bool> {
         match operand {
             RExpr::Eval(ArgumentRef(arg)) => match self.formal_binding(*arg) {
@@ -356,7 +379,25 @@ impl EnvResolution<'_> {
                         .and_then(|formal| formal.default),
                 ),
             },
-            RExpr::Substitute(_) => None,
+            RExpr::Substitute(_) | RExpr::Env(_) => None,
+        }
+    }
+
+    /// Resolve an env-expr to the target scope its capture denotes. An `If`
+    /// selects a branch on a static bool, exactly how the old guard bail falls
+    /// out. A non-static condition leaves it unresolved (`None`), which drops the
+    /// source.
+    fn resolve_env_expr(&self, expr: &DeclExpr) -> Option<NseScope> {
+        match expr {
+            DeclExpr::Hole(RExpr::Env(op)) => Some(resolve_env_op(*op)),
+            // An env read from an argument (`.(x)`, `.(substitute(x))`) isn't
+            // interpreted in PR A. Source never uses this shape.
+            DeclExpr::Hole(RExpr::Eval(_) | RExpr::Substitute(_)) => None,
+            DeclExpr::If { cond, then, els } => {
+                let cond = self.resolve_bool_operand(cond)?;
+                let branch = if cond { then } else { els };
+                self.resolve_env_expr(branch)
+            },
         }
     }
 
@@ -393,6 +434,16 @@ fn apply_folds(arguments: &mut Option<ResolvedArgumentEffects>, folds: &[usize],
 fn static_bool(value: Option<StaticValue>) -> Option<bool> {
     match value? {
         StaticValue::Bool(default) => Some(default),
+    }
+}
+
+/// Map an env-capture op to the scope it denotes in the callee's frame, the
+/// only frame in PR A. PR B generalizes this to `(op, frame) -> Option<NseScope>`
+/// so an op read from an explicit argument can name a different frame.
+fn resolve_env_op(op: EnvOp) -> NseScope {
+    match op {
+        EnvOp::ParentFrame => NseScope::Current,
+        EnvOp::GlobalEnv => NseScope::Global,
     }
 }
 
@@ -737,41 +788,69 @@ mod tests {
         assert!(effects.arguments.is_none());
     }
 
-    /// A source declaration: path on formal 0, `local` guard on formal 1
-    /// defaulting to `FALSE`.
+    /// A source declaration shaped like base `source`: path on formal 0, and an
+    /// `envir` that maps `local` (formal 1, defaulting to `FALSE`) onto a target
+    /// scope (`TRUE` -> caller's frame, `FALSE` -> global env).
     fn source_declaration() -> Declaration {
         Declaration::new(&["file", "local"])
             .formal_default(1, StaticValue::Bool(false))
-            .source(DeclExpr::eval(0), Some(RExpr::Eval(ArgumentRef(1))))
+            .source(DeclExpr::eval(0), DeclExpr::If {
+                cond: RExpr::Eval(ArgumentRef(1)),
+                then: Box::new(DeclExpr::Hole(RExpr::Env(EnvOp::ParentFrame))),
+                els: Box::new(DeclExpr::Hole(RExpr::Env(EnvOp::GlobalEnv))),
+            })
+    }
+
+    /// The single [`SourcedPath`] a source declaration resolves to.
+    fn only_sourced(effects: &Effects) -> &SourcedPath {
+        let sources = effects.source.as_ref().unwrap();
+        assert_eq!(sources.len(), 1);
+        &sources[0]
     }
 
     #[test]
-    fn source_path_resolves_with_static_guard() {
+    fn source_local_true_targets_current_scope() {
         let call = first_call("source(\"helpers.R\", local = TRUE)");
         let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
-        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+        let sourced = only_sourced(&effects);
+        assert_eq!(sourced.path, "helpers.R");
+        assert_eq!(sourced.scope, NseScope::Current);
         // The path is read via `Eval`, so nothing folds.
         assert!(effects.arguments.is_none());
     }
 
     #[test]
-    fn source_path_resolves_when_guard_absent_via_default() {
+    fn source_local_false_targets_global_scope() {
+        let call = first_call("source(\"helpers.R\", local = FALSE)");
+        let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
+        let sourced = only_sourced(&effects);
+        assert_eq!(sourced.path, "helpers.R");
+        assert_eq!(sourced.scope, NseScope::Global);
+    }
+
+    #[test]
+    fn source_local_absent_defaults_to_global_scope() {
+        // With `local` absent, the condition reads its `FALSE` default, so the
+        // `els` branch (`globalenv()`) picks `Global`.
         let call = first_call("source(\"helpers.R\")");
         let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
-        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+        let sourced = only_sourced(&effects);
+        assert_eq!(sourced.path, "helpers.R");
+        assert_eq!(sourced.scope, NseScope::Global);
     }
 
     #[test]
     fn source_named_path_resolves() {
         let call = first_call("source(file = \"helpers.R\")");
         let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
-        assert_eq!(effects.source, Some(vec!["helpers.R".to_string()]));
+        assert_eq!(only_sourced(&effects).path, "helpers.R");
     }
 
     #[test]
-    fn source_guard_non_static_drops_effect() {
-        // A non-static `local =` fails the guard, so the source drops. What the
-        // guard rejects is a target environment we can't inject into.
+    fn source_non_static_local_drops_effect() {
+        // A non-static `local =` leaves the `envir` condition unresolved, so the
+        // source drops. What it rejects is a target environment we can't map to a
+        // scope.
         let call = first_call("source(\"helpers.R\", local = some_env())");
         let effects = resolve(&source_declaration(), &call, &CallContext::new()).unwrap();
         assert!(effects.source.is_none());

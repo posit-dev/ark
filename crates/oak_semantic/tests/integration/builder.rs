@@ -11,11 +11,15 @@ use oak_semantic::effects::DeclExpr;
 use oak_semantic::effects::Declaration;
 use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::Effects;
+use oak_semantic::effects::EnvOp;
 use oak_semantic::effects::Handler;
+use oak_semantic::effects::RExpr;
 use oak_semantic::effects::RangedAstPtr;
+use oak_semantic::effects::SourcedPath;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::NamespaceAccessKind;
+use oak_semantic::semantic_index::NseScope;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
@@ -1673,7 +1677,11 @@ fn test_source_call_records_file_scope() {
 
 #[test]
 fn test_source_call_in_function_body_records_inner_scope() {
-    let index = index_with_base("f <- function() { source(\"helpers.R\") }");
+    // `local = TRUE` targets the current (function) scope, so the source is
+    // recorded there. The default `local = FALSE` would target the global env
+    // instead and record nothing here (see
+    // `test_source_call_in_function_body_default_targets_global`).
+    let index = index_with_base("f <- function() { source(\"helpers.R\", local = TRUE) }");
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
@@ -1681,6 +1689,18 @@ fn test_source_call_in_function_body_records_inner_scope() {
         resolved: None,
     });
     assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
+}
+
+#[test]
+fn test_source_call_in_function_body_default_targets_global() {
+    // The default `local = FALSE` sends the sourced names to the global env, not
+    // the function scope, so nothing is recorded here and a diagnostic flags it.
+    let index = index_with_base("f <- function() { source(\"helpers.R\") }");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+    assert!(index.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        SemanticDiagnostic::SourceIntoGlobalFromNonGlobal { .. }
+    )));
 }
 
 #[test]
@@ -1708,8 +1728,9 @@ fn test_source_call_local_true_recorded() {
 
 #[test]
 fn test_source_call_local_false_recorded() {
-    // The guard resolves to a static bool either way, so `local = FALSE` keeps
-    // the source just like `local = TRUE`.
+    // At file scope the current scope IS the global environment, so `local =
+    // FALSE` (target `Global`) still lands here and the source is recorded, just
+    // like `local = TRUE` (target `Current`).
     let index = index_with_base("source(\"helpers.R\", local = FALSE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
@@ -2340,7 +2361,16 @@ static COLLATION_HANDLER: CollationHandler = CollationHandler;
 impl Handler for CollationHandler {
     fn resolve(&self, _site: EffectSite, _ctx: &CallContext) -> Option<Effects> {
         Some(Effects {
-            source: Some(vec!["a.R".into(), "b.R".into()]),
+            source: Some(vec![
+                SourcedPath {
+                    path: "a.R".into(),
+                    scope: NseScope::Current,
+                },
+                SourcedPath {
+                    path: "b.R".into(),
+                    scope: NseScope::Current,
+                },
+            ]),
             ..Effects::default()
         })
     }
@@ -2370,7 +2400,10 @@ impl ImportsResolver for MultiFileResolver {
 struct PositionResolver;
 
 static SOURCE_AT_POSITION_1: std::sync::LazyLock<Declaration> = std::sync::LazyLock::new(|| {
-    Declaration::new(&["ignored", "file"]).source(DeclExpr::eval(1), None)
+    Declaration::new(&["ignored", "file"]).source(
+        DeclExpr::eval(1),
+        DeclExpr::Hole(RExpr::Env(EnvOp::ParentFrame)),
+    )
 });
 
 impl ImportsResolver for PositionResolver {
@@ -2492,25 +2525,23 @@ fn test_source_resolver_offset_visibility() {
 
 #[test]
 fn test_source_resolver_in_function_scope() {
-    // source() in a function scope injects Import-kind defs into
-    // the function scope's use-def map.
+    // The default `local = FALSE` sends the sourced names to the global env, not
+    // the function scope, so nothing is injected inside `f` and a diagnostic
+    // flags it. Contrast `test_source_resolver_local_true_in_function_scope`.
     let code = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
     let index = build_test_index(code, ConstResolver(helper_resolution()));
     let fun = ScopeId::from(1);
-    let file = ScopeId::from(0);
 
-    // Function scope: source(0), helper(1)
+    // Function scope: source(0), helper(1). `helper` stays unbound.
     let fun_map = index.use_def_map(fun);
     let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
-    assert_eq!(inner_bindings.definitions().len(), 1);
-    let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    assert!(inner_bindings.definitions().is_empty());
+    assert!(inner_bindings.may_be_unbound());
 
-    // File scope: `helper` does not resolve
-    let file_map = index.use_def_map(file);
-    let outer_bindings = file_map.bindings_at_use(UseId::from(0));
-    assert!(outer_bindings.definitions().is_empty());
-    assert!(outer_bindings.may_be_unbound());
+    assert!(index.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        SemanticDiagnostic::SourceIntoGlobalFromNonGlobal { .. }
+    )));
 }
 
 #[test]
@@ -2626,8 +2657,8 @@ fn test_source_resolver_local_true_shadows_local_def() {
 
 #[test]
 fn test_source_resolver_local_false_does_not_shadow_local_def() {
-    // source() without `local = TRUE` in a function scope now also
-    // injects Import definitions, shadowing the local binding.
+    // source() without `local = TRUE` in a function scope targets the global
+    // env, so it injects nothing and the local `foo <- 1` still reaches the use.
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
     let index = build_test_index(
         code,
@@ -2640,11 +2671,17 @@ fn test_source_resolver_local_false_does_not_shadow_local_def() {
     let fun = ScopeId::from(1);
 
     let fun_map = index.use_def_map(fun);
-    // Function scope uses: source(0), foo(1)
+    // Function scope uses: source(0), foo(1). The use binds to the local
+    // assignment, not a sourced Import.
     let bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    assert!(matches!(def.kind(), DefinitionKind::Assignment(_)));
+
+    assert!(index.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        SemanticDiagnostic::SourceIntoGlobalFromNonGlobal { .. }
+    )));
 }
 
 #[test]

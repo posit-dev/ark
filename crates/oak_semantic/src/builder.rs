@@ -1349,14 +1349,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // definitions (shadowing, ordering), but goto-definition chases
     // through them via `resolve_definition` to reach the actual origin.
     //
-    // The `local` argument is inspected only to bail: if it's set to
-    // something other than TRUE/FALSE (e.g., an environment), the call
-    // isn't statically analyzable and we skip it.
-    //
-    // TODO: In nested scopes, `local = FALSE` technically targets the
-    // global environment. We currently inject into the calling scope
-    // regardless to keep the sourcing mechanism simple. A future diagnostic
-    // should suggest `local = TRUE` in nested contexts.
+    // The scan already decided where the sourced names land (via the stub's
+    // `envir` operand) and only cached a `SourcedFile` when that target is this
+    // scope. So a `source(local = FALSE)` inside a function, which targets the
+    // global env, cached nothing and doesn't reach here. A non-static `local`
+    // dropped the effect entirely at resolution.
     fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
@@ -1494,6 +1491,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 SemanticDiagnostic::DeclaredMixedAmbiguity { name, range } => log::warn!(
                     "Declared-mixed ambiguity: callee `{name}` at {range:?} resolves to a \
                      local declaration, but its bindings disagree across a lazy boundary"
+                ),
+                SemanticDiagnostic::SourceIntoGlobalFromNonGlobal { range } => log::warn!(
+                    "`source()` at {range:?} sends its names to the global environment \
+                     (`local = FALSE`) from a non-global scope, so nothing is injected here"
                 ),
             }
         }

@@ -335,10 +335,11 @@ my_lib(dplyr)
 #[test]
 fn test_local_source_effect() {
     // A local `Source` declaration records a source semantic call for the given
-    // path, the same as the registry `source` does.
+    // path, the same as the registry `source` does. `envir = .(parent.frame())`
+    // targets the call site, which at file scope is where the names land.
     let index = index(
         "\
-my_source <- function(file) declare(Source(.(file)))
+my_source <- function(file) declare(Source(.(file), envir = .(parent.frame())))
 my_source(\"helpers.R\")
 ",
     );

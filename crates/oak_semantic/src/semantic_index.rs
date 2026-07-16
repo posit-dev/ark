@@ -473,6 +473,9 @@ pub enum NseScope {
     /// Definitions go to a nested environment.
     /// e.g. `local()`, `test_that()`, `with()`
     Nested,
+    /// Definitions go to the global environment.
+    /// e.g. `source(local = FALSE)`
+    Global,
 }
 
 /// Whether an NSE scope evaluates eagerly (at the call site) or lazily
@@ -892,6 +895,12 @@ pub enum SemanticDiagnostic {
     /// (declared then rebound plain, or two different declarations), so the lazy
     /// body's timing relative to the disagreement is unknowable.
     DeclaredMixedAmbiguity { name: String, range: TextRange },
+    /// A `source()` whose sourced names target the global environment from a
+    /// non-global scope (`local = FALSE`, or the default, inside a function). R
+    /// sends those names to the global environment, not the current scope, so
+    /// nothing is injected here. Flagged so "why aren't these names visible" isn't
+    /// a silent surprise.
+    SourceIntoGlobalFromNonGlobal { range: TextRange },
 }
 
 // --- Iterators ---

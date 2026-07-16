@@ -35,6 +35,7 @@ use crate::effects::ArgumentRef;
 use crate::effects::CallContext;
 use crate::effects::DeclExpr;
 use crate::effects::Declaration;
+use crate::effects::EnvOp;
 use crate::effects::EnvironmentEffect;
 use crate::effects::EvalMode;
 use crate::effects::FormalDef;
@@ -290,9 +291,10 @@ fn parse_attach_call(
     env.push((EnvironmentEffect::Attach { package }, range));
 }
 
-/// `Source(<declexpr>)` or `Source(<declexpr>, guard = <hole>)`. `guard`
-/// must be a plain `.()` hole (an [`RExpr`]), not a full [`DeclExpr`]: it's
-/// consulted only as a bool bail, never as an operand `path` folds through.
+/// `Source(<declexpr>, envir = <declexpr>)`. `envir` is a full [`DeclExpr`], so
+/// it accepts the if/else that maps `local` onto a target scope. It is required
+/// (the base stub always writes it); an absent `envir` is an `InvalidOperand`,
+/// the same as a missing required operand elsewhere.
 fn parse_source_call(
     call: &RCall,
     formals: &[FormalDef],
@@ -306,7 +308,7 @@ fn parse_source_call(
             default: None,
         },
         FormalDef {
-            name: "guard".to_string(),
+            name: "envir".to_string(),
             default: None,
         },
     ];
@@ -321,22 +323,15 @@ fn parse_source_call(
         return;
     };
 
-    let guard = match bound_value(&matched, &values, 1) {
-        None => None,
-        Some(guard_operand) => {
-            let guard_range = guard_operand.syntax().text_trimmed_range();
-            let Some(hole) = hole_call_argument(guard_operand) else {
-                diagnostics.push(invalid_operand(guard_range));
-                return;
-            };
-            let Some(rexpr) = parse_hole_rexpr(&hole, formals, diagnostics, guard_range) else {
-                return;
-            };
-            Some(rexpr)
-        },
+    let Some(envir_operand) = bound_value(&matched, &values, 1) else {
+        diagnostics.push(invalid_operand(range));
+        return;
+    };
+    let Some(envir) = parse_decl_expr(envir_operand, formals, diagnostics) else {
+        return;
     };
 
-    env.push((EnvironmentEffect::Source { path, guard }, range));
+    env.push((EnvironmentEffect::Source { path, envir }, range));
 }
 
 /// The value bound to the formal at `idx`, per `matched` (from
@@ -618,29 +613,65 @@ fn parse_hole_rexpr(
                 diagnostics.push(invalid_operand(range));
                 return None;
             };
-            if func.name_text() != "substitute" {
-                diagnostics.push(invalid_operand(range));
-                return None;
+            match func.name_text().as_str() {
+                "substitute" => parse_substitute_hole(call, formals, diagnostics, range),
+                // Env-capture ops are zero-argument calls. `parent.frame(2)` and
+                // the like carry a frame selector we don't interpret, so they
+                // fall outside the set.
+                "parent.frame" => parse_env_op_hole(call, EnvOp::ParentFrame, diagnostics, range),
+                "globalenv" => parse_env_op_hole(call, EnvOp::GlobalEnv, diagnostics, range),
+                _ => {
+                    diagnostics.push(invalid_operand(range));
+                    None
+                },
             }
-            let Some(AnyRExpression::RIdentifier(arg_ident)) = only_argument(call) else {
-                diagnostics.push(invalid_operand(range));
-                return None;
-            };
-            let name = arg_ident.name_text();
-            let Some(idx) = formal_index(formals, &name) else {
-                diagnostics.push(DeclareDiagnostic::new(
-                    DeclareDiagnosticKind::UnknownFormal { name },
-                    range,
-                ));
-                return None;
-            };
-            Some(RExpr::Substitute(ArgumentRef(idx)))
         },
         _ => {
             diagnostics.push(invalid_operand(range));
             None
         },
     }
+}
+
+/// `substitute(formal)` inside a hole: captures the formal unevaluated.
+fn parse_substitute_hole(
+    call: &RCall,
+    formals: &[FormalDef],
+    diagnostics: &mut Vec<DeclareDiagnostic>,
+    range: TextRange,
+) -> Option<RExpr> {
+    let Some(AnyRExpression::RIdentifier(arg_ident)) = only_argument(call) else {
+        diagnostics.push(invalid_operand(range));
+        return None;
+    };
+    let name = arg_ident.name_text();
+    let Some(idx) = formal_index(formals, &name) else {
+        diagnostics.push(DeclareDiagnostic::new(
+            DeclareDiagnosticKind::UnknownFormal { name },
+            range,
+        ));
+        return None;
+    };
+    Some(RExpr::Substitute(ArgumentRef(idx)))
+}
+
+/// An env-capture op inside a hole (`parent.frame()`, `globalenv()`). It takes
+/// no arguments, so any argument makes it fall outside the interpreted set.
+fn parse_env_op_hole(
+    call: &RCall,
+    op: EnvOp,
+    diagnostics: &mut Vec<DeclareDiagnostic>,
+    range: TextRange,
+) -> Option<RExpr> {
+    let has_arguments = call
+        .arguments()
+        .ok()
+        .is_some_and(|args| args.items().iter().count() > 0);
+    if has_arguments {
+        diagnostics.push(invalid_operand(range));
+        return None;
+    }
+    Some(RExpr::Env(op))
 }
 
 /// An `Eval` operand on a formal that an arg-centric entry declares
@@ -657,11 +688,9 @@ fn check_contradictions(
         let mut refs = Vec::new();
         match effect {
             EnvironmentEffect::Attach { package } => collect_eval_refs(package, &mut refs),
-            EnvironmentEffect::Source { path, guard } => {
+            EnvironmentEffect::Source { path, envir } => {
                 collect_eval_refs(path, &mut refs);
-                if let Some(guard) = guard {
-                    collect_eval_ref(guard, &mut refs);
-                }
+                collect_eval_refs(envir, &mut refs);
             },
         }
 
@@ -932,15 +961,52 @@ mod tests {
     }
 
     #[test]
-    fn source_with_guard() {
-        let parsed =
-            parse_declare("function(file, local) declare(Source(.(file), guard = .(local)))");
-        let EnvironmentEffect::Source { path, guard } = &parsed.declaration.env[0] else {
+    fn source_envir_if_else_shape() {
+        let parsed = parse_declare(
+            "function(file, local) declare(Source(.(file), envir = if (.(local)) .(parent.frame()) else .(globalenv())))",
+        );
+        let EnvironmentEffect::Source { path, envir } = &parsed.declaration.env[0] else {
             panic!("expected Source");
         };
         assert!(matches!(path, DeclExpr::Hole(RExpr::Eval(ArgumentRef(0)))));
-        assert!(matches!(guard, Some(RExpr::Eval(ArgumentRef(1)))));
+        let DeclExpr::If { cond, then, els } = envir else {
+            panic!("expected If");
+        };
+        assert!(matches!(cond, RExpr::Eval(ArgumentRef(1))));
+        assert!(matches!(
+            **then,
+            DeclExpr::Hole(RExpr::Env(EnvOp::ParentFrame))
+        ));
+        assert!(matches!(
+            **els,
+            DeclExpr::Hole(RExpr::Env(EnvOp::GlobalEnv))
+        ));
         assert!(parsed.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn source_missing_envir_is_invalid() {
+        let parsed = parse_declare("function(file) declare(Source(.(file)))");
+        assert!(parsed.declaration.env.is_empty());
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert!(matches!(
+            parsed.diagnostics[0].kind,
+            DeclareDiagnosticKind::InvalidOperand
+        ));
+    }
+
+    #[test]
+    fn env_op_with_argument_is_invalid() {
+        // `parent.frame(2)` carries a frame selector we don't interpret, so the
+        // hole falls outside the interpreted set.
+        let parsed =
+            parse_declare("function(file) declare(Source(.(file), envir = .(parent.frame(2))))");
+        assert!(parsed.declaration.env.is_empty());
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert!(matches!(
+            parsed.diagnostics[0].kind,
+            DeclareDiagnosticKind::InvalidOperand
+        ));
     }
 
     #[test]

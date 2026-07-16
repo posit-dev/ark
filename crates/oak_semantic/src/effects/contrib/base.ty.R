@@ -47,10 +47,11 @@ require <- function(package, lib.loc = NULL, quietly = FALSE, warn.conflicts,
   declare(Attach(if (.(character.only)) .(package) else .(substitute(package))))
 }
 
-# The `local =` guard must be a static bool or the source drops:
-# `source("x.R", local = e)` targets some other environment, so its names
-# aren't ours to inject. `path` never consults `local`, hence the separate
-# `guard`.
+# The `envir` operand resolves to the scope the sourced names land in. `local`
+# picks it: `local = TRUE` sends them to the caller's scope (the call site),
+# `local = FALSE` (the default) sends them to the global environment. A
+# non-static `local` (e.g. an environment) leaves `envir` unresolved and drops
+# the source, since its names then aren't ours to inject.
 source <- function(file, local = FALSE, echo = verbose, print.eval = echo,
                    exprs, spaced = use_srcref, verbose = getOption("verbose"),
                    prompt.echo = getOption("prompt"), max.deparse.length = 150,
@@ -58,5 +59,5 @@ source <- function(file, local = FALSE, echo = verbose, print.eval = echo,
                    chdir = FALSE, encoding = getOption("encoding"),
                    continue.echo = getOption("continue"), skip.echo = 0,
                    keep.source = getOption("keep.source")) {
-  declare(Source(.(file), guard = .(local)))
+  declare(Source(.(file), envir = if (.(local)) .(parent.frame()) else .(globalenv())))
 }

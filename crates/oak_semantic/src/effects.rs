@@ -30,10 +30,12 @@ pub use declaration::ArgumentEffect;
 pub use declaration::ArgumentRef;
 pub use declaration::DeclExpr;
 pub use declaration::Declaration;
+pub use declaration::EnvOp;
 pub use declaration::EnvironmentEffect;
 pub use declaration::EvalMode;
 pub use declaration::FormalDef;
 pub use declaration::RExpr;
+pub use declaration::SourcedPath;
 pub use declaration::StaticValue;
 pub use declare::parse_declaration;
 pub use declare::DeclareDiagnostic;
@@ -49,9 +51,10 @@ pub struct Effects {
     pub arguments: Option<ResolvedArgumentEffects>,
     /// Attach a package
     pub attach: Option<String>,
-    /// Source one or more files. A vector so a collation-style callee can name
-    /// several; base `source` resolves to one.
-    pub source: Option<Vec<String>>,
+    /// Source one or more files, each with the scope its top-level names land
+    /// in. A vector so a collation-style callee can name several; base `source`
+    /// resolves to one.
+    pub source: Option<Vec<SourcedPath>>,
     /// Bind one or more names in the current scope (`assign("x", value)`). A
     /// vector so a multi-binding callee stays expressible; base `assign` and
     /// `delayedAssign` resolve to one.

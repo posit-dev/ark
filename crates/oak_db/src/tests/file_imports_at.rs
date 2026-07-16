@@ -300,12 +300,14 @@ fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     // A `library()` inside a file that's `source()`d from a function body is
     // forwarded by the builder as an `Attach` scoped to that `source()` call,
     // so its attach layer is visible inside the function (the lazy / EOF view)
-    // but not at file scope before or after it.
+    // but not at file scope before or after it. `local = TRUE` targets the
+    // function scope, so the source is analyzed there; the default `local =
+    // FALSE` would target the global env and forward nothing here.
     let mut db = TestDb::new();
     install_packages(&mut db, &["dplyr"]);
 
     let helpers = make_file(&mut db, "w/helpers.R", "library(dplyr)\n");
-    let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n}\nafter\n";
+    let script_src = "before\nf <- function() {\n  source(\"helpers.R\", local = TRUE)\n}\nafter\n";
     let script = make_file(&mut db, "w/script.R", script_src);
 
     let root = workspace_root(&db, "w");

@@ -25,6 +25,7 @@ use crate::effects::EffectSource;
 use crate::effects::Effects;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
+use crate::effects::SourcedPath;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::DeclId;
 use crate::semantic_index::NseScope;
@@ -64,13 +65,23 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             }
         }
 
-        // Cache each recognized path with its resolution. The walk reads them
-        // back to emit one `Source` semantic call per file. `scan_source_call()`
-        // binds the sourced names as it goes so a later callee in this scope
-        // can see them.
+        // Cache each recognized path with its resolution, but only when its
+        // names land in the current scope. The walk reads these back to emit one
+        // `Source` semantic call per injected file. `scan_source_call()` binds
+        // the sourced names as it goes so a later callee in this scope can see
+        // them.
+        //
+        // A `Global` target from a non-global scope (`source(local = FALSE)`
+        // inside a function) sends its names to the global environment, not here,
+        // so we bind nothing and flag it instead.
         if let Some(paths) = source {
             let range = call.syntax().text_trimmed_range();
-            for path in paths {
+            for SourcedPath { path, scope } in paths {
+                if !self.source_targets_current_scope(scope) {
+                    self.diagnostics
+                        .push(SemanticDiagnostic::SourceIntoGlobalFromNonGlobal { range });
+                    continue;
+                }
                 let resolution = self.scan_source_call(&path);
                 self.call_resolutions
                     .entry(range)
@@ -167,6 +178,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     (NseScope::Nested, NseTiming::Lazy) => {
                         self.record_enclosing_flow(value.syntax().text_trimmed_range());
                     },
+
+                    // No stub produces an `Nse` argument scoped to the global
+                    // env yet (only `source`'s `envir` yields `Global`, through
+                    // the source axis, not here). This arm is a conservative
+                    // fallback until PR B introduces such a stub. Scan the value
+                    // in place, like `Current + Eager`.
+                    (NseScope::Global, _) => self.scan_expression(&value),
                 },
             }
         }
@@ -176,6 +194,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .entry(call.syntax().text_trimmed_range())
             .or_default()
             .arguments = Some(arg_effects);
+    }
+
+    /// Whether a `source()`'s target `scope` is the scope we're scanning, so its
+    /// names should be bound here.
+    ///
+    /// `Current` is the call site, always here. `Global` (the `local = FALSE`
+    /// default) lands here only when this scope IS the global environment, i.e.
+    /// the file scope. `Nested` never arises for source.
+    fn source_targets_current_scope(&self, scope: NseScope) -> bool {
+        match scope {
+            NseScope::Current => true,
+            NseScope::Global => matches!(self.scopes[self.current_scope].kind, ScopeKind::File),
+            NseScope::Nested => false,
+        }
     }
 
     /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
@@ -586,6 +618,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match (scope, timing) {
             // Calls like `evalq()`
             (NseScope::Current, NseTiming::Eager) => {
+                self.collect_expression(value);
+            },
+
+            // No stub produces an `Nse` argument scoped to the global env yet
+            // (only `source`'s `envir` yields `Global`, through the source axis,
+            // not here). This arm is a conservative fallback until PR B
+            // introduces such a stub. Collect the value in place, like `Current +
+            // Eager`, rather than pushing a scope.
+            (NseScope::Global, _) => {
                 self.collect_expression(value);
             },
 
