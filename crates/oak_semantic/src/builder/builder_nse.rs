@@ -81,29 +81,29 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // scope. But we do grab the names it defines now, so the
                     // owner's bound names are complete before the walk reaches a sibling.
                     (NseScope::Current, NseTiming::Lazy) => {
-                        self.record_inherited_at_entry(value.syntax().text_trimmed_range());
+                        self.record_enclosing_flow(value.syntax().text_trimmed_range());
                         self.scan_lazy_owner_bindings(&value);
                     },
 
                     // Calls like `local()`. Its body runs eagerly at the call
-                    // site, so its environment IS the current `bound_so_far`.
+                    // site, so its environment IS the current `flow_state`.
                     // Descend now, holding the names bound in this scope as
-                    // pending so the walk has access to them. No `bound_so_far`
+                    // pending so the walk has access to them. No `flow_state`
                     // reset: the child sees exactly what `begin_scan()` would
                     // have seeded.
-                    // No `record_inherited_at_entry()`: eager `Nested` bodies are
+                    // No `record_enclosing_flow()`: eager `Nested` bodies are
                     // never scanned at walk time, so nothing would read it.
                     (NseScope::Nested, NseTiming::Eager) => {
-                        let old = self.bound_so_far.clone();
+                        let old = self.flow_state.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
-                        self.descent.open.push(BoundNames::new());
+                        self.eager_descent.open.push(BoundNames::new());
                         self.scan_expression(&value);
-                        if let Some(bound) = self.descent.open.pop() {
-                            self.descent.pending.insert(range, bound);
+                        if let Some(bound) = self.eager_descent.open.pop() {
+                            self.eager_descent.pending.insert(range, bound);
                         }
 
-                        self.bound_so_far = old;
+                        self.flow_state.restore(old);
                     },
 
                     // Calls like `reactive()`. Its body runs at an unknown
@@ -111,7 +111,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // enters it. Record the names it inherits for its callee
                     // resolution, same as a function body.
                     (NseScope::Nested, NseTiming::Lazy) => {
-                        self.record_inherited_at_entry(value.syntax().text_trimmed_range());
+                        self.record_enclosing_flow(value.syntax().text_trimmed_range());
                     },
                 },
             }
@@ -143,7 +143,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// variable can't resolve to it. TODO(nse): We could potentially walk
     /// transparent (Current) nested calls to collect those too.
     ///
-    /// The names go to `bound_names` only, never to `bound_so_far`. The body
+    /// The names go to `bound_names` only, never to `flow_state`. The body
     /// runs at some later time, so at an eager position after the call these
     /// names aren't bound yet, and an eager callee there must still treat them
     /// as unbound.
@@ -236,13 +236,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // First check for a local definition (which in the future may
                 // contain NSE annotations that we resolve here)
                 //
-                // Looked up from `bound_so_far` which already carries every
+                // Looked up from `flow_state` which already carries every
                 // eager binding visible here: the scope's own flow-precise
                 // bindings so far, plus the enclosing eager environment seeded
                 // at `begin_scan()`. Forward and deferred (lazy-routed)
-                // bindings are excluded. A forward one isn't in `bound_so_far`
+                // bindings are excluded. A forward one isn't in `flow_state`
                 // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-                if self.bound_so_far.contains(&name) {
+                if self.flow_state.is_bound(&name) {
                     return self
                         .resolve_local_effects(&name)
                         .and_then(|effects| effects.nse);
@@ -421,7 +421,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // Install the pending names the descent recorded for this body,
                 // before collecting so lazy children inside can see them via
                 // `scope_binds_anywhere()`.
-                match self.descent.pending.remove(&range) {
+                match self.eager_descent.pending.remove(&range) {
                     Some(bound) => self.bound_names[scope] = bound,
                     None => {
                         // An eager NSE scope is reachable only through the scan
