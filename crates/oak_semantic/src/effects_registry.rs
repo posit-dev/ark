@@ -22,7 +22,10 @@ pub fn lookup(package: &str, function: &str) -> Option<&'static NseAnnotation> {
 /// Whether any registry entry annotates `name`. This is the bare-callee front
 /// gate: an unannotated name can't resolve to an effect no matter which provider
 /// wins, so recognition skips resolution entirely.
-pub fn is_annotated(name: &str) -> bool {
+///
+/// TODO: Should be a workspace-wide Salsa-cached query (similar to: does this
+/// function dispatches).
+pub fn annotates(name: &str) -> bool {
     REGISTRY.iter().any(|e| e.function == name)
 }
 
