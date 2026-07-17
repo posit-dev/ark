@@ -1183,12 +1183,12 @@ fn test_notebook_evaluate_error() {
 }
 
 /// A runaway expression in the watch pane must not freeze the kernel. The
-/// evaluation runs on the R main thread, so `try_idle_task` interrupts it after
-/// a timeout and reports an error rather than blocking forever. The follow-up
-/// evaluate checks the interrupt left no stray pending interrupt behind.
+/// evaluation runs on the R main thread, so a `with_timeout()` deadline
+/// interrupts it and reports an error rather than blocking forever. The
+/// follow-up evaluate checks the interrupt left no stray pending interrupt
+/// behind.
 /// https://github.com/posit-dev/positron/issues/14481
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
 fn test_notebook_evaluate_timeout() {
     let frontend = DummyArkFrontendNotebook::lock();
 
@@ -1210,7 +1210,6 @@ fn test_notebook_evaluate_timeout() {
 /// usable and execution can still be continued.
 /// https://github.com/posit-dev/positron/issues/14481
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
 fn test_notebook_watch_pane_infloop_times_out() {
     let frontend = DummyArkFrontendNotebook::lock();
 

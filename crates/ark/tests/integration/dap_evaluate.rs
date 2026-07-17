@@ -434,7 +434,6 @@ fn test_dap_evaluate_erroring_print_does_not_deadlock() {
 /// notebook path is checked in `test_notebook_watch_pane_infloop_times_out`.
 /// https://github.com/posit-dev/positron/issues/14481
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
 fn test_dap_evaluate_infloop_times_out() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
