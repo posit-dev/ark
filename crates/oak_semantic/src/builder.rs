@@ -1,3 +1,30 @@
+//! Builds the [`SemanticIndex`] for one R file.
+//!
+//! The builder splits work by "scan unit": the file or a lazy body (a function,
+//! a lazy NSE body like `reactive()`). A unit is coarser than a scope. An eager
+//! scope nested inside it, like `local({ ... })`, is part of the same scan unit,
+//! while a lazy body starts a new one.
+//!
+//! Each scan unit is built in two passes: a scan, then a walk. The walk is the
+//! pass that writes the arenas (scopes, symbols, definitions, uses, use-def
+//! maps). It can only write them correctly if it already knows two things about
+//! the scope it's in, and neither is knowable at its own cursor:
+//!
+//! - Which calls are NSE, so it can push the scope for `local({ ... })` inline
+//!   as it reaches the call. That turns on whether the callee is shadowed at
+//!   that point in the flow.
+//!
+//! - The complete set of names the scope binds, so it can resolve a nested
+//!   scope's free variable to an ancestor binding. A lazy body (a function, a
+//!   `reactive()`) can reference a definition the ancestor's own walk hasn't
+//!   reached yet. That ancestor lookup is what the walk records as an enclosing
+//!   snapshot.
+//!
+//! So there are two flow states, on purpose. The scan's flow state tracks only
+//! eager bindings and is allowed to stay coarse (across `if` branches it
+//! over-approximates to "bound on some path"). The walk builds the precise
+//! structures, such as the use-def map.
+
 use std::sync::Arc;
 
 use aether_syntax::AnyRArgumentName;
@@ -61,12 +88,9 @@ mod builder_nse;
 /// information supplied by `resolver`. See [`ImportsResolver`] for the
 /// available impls.
 ///
-/// Each scope is built in two local phases. First a scan pass over the
-/// scope's direct level decides which calls are NSE, in flow order, and
-/// collects the scope's bound names (see [`scan_expression`]). Then the walk
-/// reuses those decisions and pushes NSE scopes inline as it reaches them
-/// ([`collect_expression`]). Walking `local({...})` inline means a later call
-/// sees the scope-push in the same pass, so there is no whole-file re-walk.
+/// See the module docs for the scan/walk split. The scan
+/// ([`scan_expression`]) runs first over each scope, then the walk
+/// ([`collect_expression`]) reuses its decisions and pushes NSE scopes inline.
 ///
 /// [`scan_expression`]: SemanticIndexBuilder::scan_expression
 /// [`collect_expression`]: SemanticIndexBuilder::collect_expression
