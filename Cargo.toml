@@ -134,3 +134,4 @@ xdg = "3.0.0"
 yaml-rust2 = "0.11"
 # We need ZMQ 4.3.5 to fix polling issues on Windows arm64
 zmq = { git = "https://github.com/erickt/rust-zmq", rev = "5d78967" }
+zstd = "0.13"

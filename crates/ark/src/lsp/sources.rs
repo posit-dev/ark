@@ -25,7 +25,7 @@ pub(crate) trait SourceHandler: Send + Sync {
 /// The production [`SourceHandler`]
 ///
 /// Recovers a package's R sources in the following order:
-/// - Base packages come from a downloaded CRAN's R source tarball
+/// - Base packages come from a downloaded base R source archive
 /// - CRAN packages come from:
 ///   - A local `srcref`, if available
 ///   - A downloaded CRAN package tarball
@@ -35,7 +35,7 @@ pub(crate) struct OakSourceHandler {
 }
 
 impl OakSourceHandler {
-    /// Build the handler, opening both caches against the shared on disk cache
+    /// Build the handler, opening every cache against the shared on disk cache
     pub(crate) fn new(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             srcref: SrcrefCache::open(r)?,
@@ -43,7 +43,7 @@ impl OakSourceHandler {
         })
     }
 
-    /// Build the handler with both caches rooted under `root`, so tests don't touch the
+    /// Build the handler with every cache rooted under `root`, so tests don't touch the
     /// real on disk cache
     #[cfg(test)]
     pub(crate) fn new_in(root: &Path, r: PathBuf) -> anyhow::Result<Self> {
@@ -59,8 +59,8 @@ impl SourceHandler for OakSourceHandler {
         let name = request.name();
         let version = request.version();
 
-        // Base packages only exist in the R version source tarball, served from one
-        // download shared across all of them
+        // Base packages are served from a downloaded base R source archive, keyed by R
+        // version
         if matches!(request.priority(), Some(Priority::Base)) {
             return self
                 .source
@@ -99,9 +99,9 @@ fn r_dir_for_cran(root: &Path) -> PathBuf {
     root.join("R")
 }
 
-/// Find `R/` from a R source tarball for a base package
+/// Find `R/` from a base package tree, laid out as `{name}/R`
 fn r_dir_for_base(root: &Path, name: &str) -> PathBuf {
-    root.join("src").join("library").join(name).join("R")
+    root.join(name).join("R")
 }
 
 #[derive(Debug, Clone)]

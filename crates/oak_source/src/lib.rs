@@ -1,14 +1,13 @@
-//! Download and cache whole R package and R version source trees
+//! Download and cache whole CRAN R package and base R package source trees
 //!
-//! [`SourceCache`] is a thin wrapper over two [`oak_cache::Cache`] instances pointing
-//! into:
+//! [`SourceCache`] is a thin wrapper over [`oak_cache::Cache`] instances pointing into:
 //!
 //! - `source/v1/cran/{name}_{version}/`, a full unpacked CRAN package tarball
-//! - `source/v1/r/{version}/`, a full unpacked R version source tarball
+//! - `source/v1/r/{version}/`, the unpacked base R package sources for an R version
 //!
-//! Both keep the entire downloaded tree, unpacked eagerly with files marked read only.
-//! Each method returns the cached folder. Navigation is left to the caller, who knows the
-//! layout.
+//! The CRAN and base R caches keep the entire downloaded tree, unpacked eagerly with
+//! files marked read only. Each method returns the cached folder. Navigation is left to
+//! the caller, who knows the layout.
 
 mod cran;
 mod download;
@@ -19,24 +18,26 @@ use std::path::PathBuf;
 
 use oak_cache::Cache;
 
+use crate::r::RCache;
+
 /// Cache version
 const CACHE_VERSION: &str = "v1";
 
-/// Downloads and caches whole package / R version source trees
+/// Downloads and caches whole package source trees
 ///
 /// Each cache holds its shared root lock for the life of this `SourceCache`, so any path
 /// handed out stays valid as long as the `SourceCache` lives.
 #[derive(Debug)]
 pub struct SourceCache {
     cran: Cache,
-    r: Cache,
+    r: RCache,
 }
 
 impl SourceCache {
     pub fn open() -> anyhow::Result<Self> {
         Ok(Self {
             cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"))?,
-            r: Cache::open(&format!("source/{CACHE_VERSION}/r"))?,
+            r: RCache::open(&format!("source/{CACHE_VERSION}/r"))?,
         })
     }
 
@@ -45,7 +46,7 @@ impl SourceCache {
     pub fn open_in(root: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             cran: Cache::open_in(root.join("cran"))?,
-            r: Cache::open_in(root.join("r"))?,
+            r: RCache::open_in(root.join("r"))?,
         })
     }
 
@@ -68,21 +69,16 @@ impl SourceCache {
             })
     }
 
-    /// Get cached R source tree if already present
+    /// Get cached base R source tree if already present
     pub fn get_r(&self, version: &str) -> Option<PathBuf> {
         self.r.get(version)
     }
 
-    /// Download and cache R source tree
+    /// Download and cache base R source tree
     ///
-    /// Returns `None` if the tarball isn't on CRAN or the download fails.
+    /// Returns `None` if the archive is unavailable or holds no sources for `version`.
     pub fn insert_r(&self, version: &str) -> Option<PathBuf> {
-        self.r
-            .insert(version, |dir| r::populate(version, dir))
-            .unwrap_or_else(|err| {
-                log::error!("Failed to download R {version} source: {err:?}");
-                None
-            })
+        self.r.insert(version)
     }
 }
 
@@ -128,26 +124,31 @@ mod tests {
         );
     }
 
-    /// Requires internet access and downloads a large tarball of the R sources
-    #[ignore = "Downloads a large R source tarball"]
+    /// Downloads the release archive, so requires internet access
     #[test]
+    #[ignore]
     fn test_r_round_trip() {
         let dir = TempDir::new().unwrap();
         let source = SourceCache::open_in(dir.path().to_path_buf()).unwrap();
 
+        // Miss before insert
+        assert_eq!(source.get_r("4.5.0"), None);
+
         let root = source.insert_r("4.5.0").unwrap();
 
-        // The top-level `R-4.5.0/` is stripped. Spot check: `utils` has a well-known
-        // `help.R` file inside the unpacked tree.
-        let help = root.join("src/library/utils/R/help.R");
+        // The `{version}/` prefix is stripped, so content lands under `{package}/R/`
+        let help = root.join("utils").join("R").join("help.R");
         assert!(help.is_file());
         assert!(help.metadata().unwrap().permissions().readonly());
 
+        // A second lookup is a cache hit returning the same dir
         assert_eq!(source.get_r("4.5.0"), Some(root));
     }
 
-    /// Requires internet access
+    /// Downloads the release archive to discover the version is missing, so requires
+    /// internet access
     #[test]
+    #[ignore]
     fn test_r_unknown_version() {
         let dir = TempDir::new().unwrap();
         let source = SourceCache::open_in(dir.path().to_path_buf()).unwrap();

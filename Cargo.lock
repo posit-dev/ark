@@ -2735,6 +2735,7 @@ dependencies = [
  "tar",
  "tempfile",
  "ureq",
+ "zstd",
 ]
 
 [[package]]
