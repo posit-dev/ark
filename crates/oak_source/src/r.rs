@@ -3,23 +3,28 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::ARCHIVE;
+use oak_cache::Cache;
 
-/// This MUST match `ZSTD_WINDOW_LOG` that we compress with in `vendor.rs`
+use crate::compressed;
+
+/// This MUST match `ZSTD_WINDOW_LOG` that the archive is compressed with in
+/// `posit-dev/oak-r-sources`
 const ZSTD_WINDOW_LOG: u32 = 23;
 
-/// Extract the `{version}/` subtree of the embedded archive into `dir`
+/// Extract the `{version}/` subtree of the downloaded archive into `dir`
 ///
-/// Stream-decompresses the embedded solid `tar.zst`, keeping only entries under
-/// `{version}/` and stripping that prefix, so `dir` ends up holding
-/// `{package}/R/...`. We stream entries straight to disk rather than holding the
-/// decompressed tree in memory, so peak heap is the ~8 MB zstd window plus small
-/// buffers. Files are marked read only to discourage accidental edits.
+/// Files are marked read only to discourage accidental edits.
 ///
-/// Always returns `Ok(true)` since the caller only reaches here for a resolved known
-/// version.
-pub(crate) fn populate(version: &str, dir: &Path) -> anyhow::Result<bool> {
-    let mut archive = zstd::stream::read::Decoder::new(ARCHIVE)?;
+/// Returns `Ok(false)` if the archive is unavailable, or if it holds no entries for
+/// `version` (an R version below the archive's floor, or a gap), which we treat as
+/// "source unavailable" rather than an error.
+pub(crate) fn populate(version: &str, dir: &Path, compressed: &Cache) -> anyhow::Result<bool> {
+    let Some(archive) = compressed::get_or_insert(compressed)? else {
+        return Ok(false);
+    };
+
+    let archive = std::fs::File::open(&archive)?;
+    let mut archive = zstd::stream::read::Decoder::new(archive)?;
     archive.window_log_max(ZSTD_WINDOW_LOG)?;
     let mut archive = tar::Archive::new(archive);
 
@@ -27,6 +32,9 @@ pub(crate) fn populate(version: &str, dir: &Path) -> anyhow::Result<bool> {
 
     // Parent directories we've already created
     let mut created: HashSet<PathBuf> = HashSet::new();
+
+    // Have we ever seen an entry for the requested `version`?
+    let mut seen_version = false;
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -38,6 +46,7 @@ pub(crate) fn populate(version: &str, dir: &Path) -> anyhow::Result<bool> {
             continue;
         };
 
+        seen_version = true;
         let destination = dir.join(path);
 
         // We must create parent directories before unpacking into them. We remember ones
@@ -56,7 +65,7 @@ pub(crate) fn populate(version: &str, dir: &Path) -> anyhow::Result<bool> {
         }
     }
 
-    Ok(true)
+    Ok(seen_version)
 }
 
 /// Detect archive entries with a `{version}/` prefix

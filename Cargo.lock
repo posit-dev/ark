@@ -442,7 +442,6 @@ dependencies = [
  "oak_semantic",
  "oak_source",
  "oak_srcref",
- "oak_vendored",
  "once_cell",
  "regex",
  "reqwest",
@@ -2736,6 +2735,7 @@ dependencies = [
  "tar",
  "tempfile",
  "ureq",
+ "zstd",
 ]
 
 [[package]]
@@ -2749,20 +2749,6 @@ dependencies = [
  "oak_r_process",
  "sha2 0.11.0",
  "tempfile",
-]
-
-[[package]]
-name = "oak_vendored"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "log",
- "oak_cache",
- "tar",
- "tempfile",
- "ureq",
- "zstd",
 ]
 
 [[package]]

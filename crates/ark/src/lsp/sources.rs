@@ -9,7 +9,6 @@ use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
-use oak_vendored::VendoredCache;
 use stdext::result::ResultExt;
 
 use crate::lsp::main_loop::Event;
@@ -26,14 +25,13 @@ pub(crate) trait SourceHandler: Send + Sync {
 /// The production [`SourceHandler`]
 ///
 /// Recovers a package's R sources in the following order:
-/// - Base packages come from sources vendored inside the ark binary
+/// - Base packages come from a downloaded base R source archive
 /// - CRAN packages come from:
 ///   - A local `srcref`, if available
 ///   - A downloaded CRAN package tarball
 pub(crate) struct OakSourceHandler {
     srcref: SrcrefCache,
     source: SourceCache,
-    vendored: VendoredCache,
 }
 
 impl OakSourceHandler {
@@ -42,7 +40,6 @@ impl OakSourceHandler {
         Ok(Self {
             srcref: SrcrefCache::open(r)?,
             source: SourceCache::open()?,
-            vendored: VendoredCache::open()?,
         })
     }
 
@@ -53,7 +50,6 @@ impl OakSourceHandler {
         Ok(Self {
             srcref: SrcrefCache::open_in(root.join("srcref"), r)?,
             source: SourceCache::open_in(root.join("source"))?,
-            vendored: VendoredCache::open_in(root.join("vendored"))?,
         })
     }
 }
@@ -63,13 +59,13 @@ impl SourceHandler for OakSourceHandler {
         let name = request.name();
         let version = request.version();
 
-        // Base packages have no CRAN download and no `srcref`, so they are served from
-        // sources vendored inside the ark binary, keyed by R version
+        // Base packages are served from a downloaded base R source archive, keyed by R
+        // version
         if matches!(request.priority(), Some(Priority::Base)) {
             return self
-                .vendored
-                .get(version)
-                .or_else(|| self.vendored.insert(version))
+                .source
+                .get_r(version)
+                .or_else(|| self.source.insert_r(version))
                 .map(|root| SourceResponse::Success(r_dir_for_base(&root, name)))
                 .unwrap_or(SourceResponse::Failure);
         }
@@ -103,7 +99,7 @@ fn r_dir_for_cran(root: &Path) -> PathBuf {
     root.join("R")
 }
 
-/// Find `R/` from a vendored base package tree, laid out as `{name}/R`
+/// Find `R/` from a base package tree, laid out as `{name}/R`
 fn r_dir_for_base(root: &Path, name: &str) -> PathBuf {
     root.join(name).join("R")
 }
