@@ -145,6 +145,8 @@ where
     }
 
     if done_rx.recv().is_err() {
+        // Likely from a main thread panic, log as best effort
+        log::error!("`try_idle_task`: task disconnected without completing");
         return None;
     }
 
