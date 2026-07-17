@@ -30,7 +30,7 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
-use crate::effects::NseAnnotation;
+use crate::effects::ArgumentsAnnotation;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::Definition;
@@ -747,7 +747,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    fn nse_effect(&self, call: &RCall) -> Option<NseAnnotation> {
+    fn nse_effect(&self, call: &RCall) -> Option<ArgumentsAnnotation> {
         self.call_resolutions
             .get(&call.syntax().text_trimmed_range())
             .and_then(|resolution| resolution.nse)
@@ -1376,7 +1376,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 ///   queried exactly once per `source()` call site.
 #[derive(Default)]
 struct CallResolution {
-    nse: Option<NseAnnotation>,
+    nse: Option<ArgumentsAnnotation>,
     source: Option<SourceResolution>,
 }
 
