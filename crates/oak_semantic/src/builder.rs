@@ -122,21 +122,19 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
-    // Names bound so far in the scope currently being scanned, tracked
-    // flow-precisely (if/else restore, loop union). This is the scan
-    // pass's own flow state, standing in for the walk's use-def state which
-    // isn't built yet. Reset at each scope's `begin_scan()`.
-    bound_so_far: FxHashSet<String>,
-    // Names inherited from enclosing scopes at this scope's entry point, keyed
-    // by the scope's range. Captured from `bound_so_far`, and read by
-    // `begin_scan()` to seed the scope's own scan.
-    inherited_at_entry: FxHashMap<TextRange, FxHashSet<String>>,
-    // Bound names of Eager + Nested bodies like `local()` are discovered inline
-    // by the scanner. See `EagerNestedDescent`.
-    descent: EagerNestedDescent,
     // Diagnostics collected during the build and logged on `finish()`. A minimal
     // channel for now, no user-facing surface.
     diagnostics: Vec<SemanticDiagnostic>,
+    // The scan's flow-precise binding state for the scope being scanned, reset
+    // at each scope's `begin_scan()`. See [`FlowState`].
+    flow_state: FlowState,
+    // Names inherited from enclosing scopes at this scope's entry point, keyed
+    // by the scope's range. Captured from `flow_state`, and read by
+    // `begin_scan()` to seed the scope's own scan.
+    enclosing_flow: FxHashMap<TextRange, FlowState>,
+    // Bound names of Eager + Nested bodies like `local()` are discovered inline
+    // by the scanner. See `EagerNestedDescent`.
+    eager_descent: EagerNestedDescent,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -179,9 +177,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             semantic_calls: Vec::new(),
             namespace_accesses: Vec::new(),
             call_resolutions: FxHashMap::default(),
-            bound_so_far: FxHashSet::default(),
-            inherited_at_entry: FxHashMap::default(),
-            descent: EagerNestedDescent::default(),
+            flow_state: FlowState::default(),
+            enclosing_flow: FxHashMap::default(),
+            eager_descent: EagerNestedDescent::default(),
             diagnostics: Vec::new(),
             resolver,
         }
@@ -472,13 +470,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Record the names a child scope (function body, NSE argument) about to be
     /// created at `range` inherits from its ancestors, to seed the child's scan
-    /// in `begin_scan`. Called during the scan, where `bound_so_far` is the
+    /// in `begin_scan`. Called during the scan, where `flow_state` is the
     /// parent's flow-precise state at the child's definition point (already
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
-    pub(super) fn record_inherited_at_entry(&mut self, range: TextRange) {
-        self.inherited_at_entry
-            .insert(range, self.bound_so_far.clone());
+    pub(super) fn record_enclosing_flow(&mut self, range: TextRange) {
+        self.enclosing_flow
+            .insert(range, self.flow_state.snapshot());
     }
 
     // --- Scan pass ---
@@ -488,7 +486,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Seeds it with two things:
     ///
     /// - The names inherited from enclosing scopes, captured when this scope was
-    ///   entered (`inherited_at_entry`). The parent's own scan was seeded the same
+    ///   entered (`enclosing_flow`). The parent's own scan was seeded the same
     ///   way, so this is transitively complete: it holds every eager binding
     ///   visible from an ancestor at this scope's definition point.
     /// - The scope's own already-bound names. For a function scope that's the
@@ -499,16 +497,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// are recorded, so `collect_function` seeds the full formal set by hand
     /// (all formals bind at once in R, so a default sees every parameter name).
     pub(super) fn begin_scan(&mut self) {
-        self.bound_so_far.clear();
-
         let range = self.scopes[self.current_scope].range;
-        if let Some(entry) = self.inherited_at_entry.get(&range) {
-            self.bound_so_far.extend(entry.iter().cloned());
+
+        match self.enclosing_flow.get(&range).cloned() {
+            Some(entry) => self.flow_state.restore(entry),
+            None => self.flow_state.clear(),
         }
 
         for (_id, symbol) in self.symbol_tables[self.current_scope].iter() {
             if symbol.flags().contains(SymbolFlags::IS_BOUND) {
-                self.bound_so_far.insert(symbol.name().to_string());
+                self.flow_state.bind(symbol.name().to_string());
             }
         }
     }
@@ -536,7 +534,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// - A `Current + Eager` body pushes no scope, so it stays part of this
     ///   scope's direct level and is scanned through transparently.
     /// - A `Nested + Eager` body is descended into with a save/restore of
-    ///   `bound_so_far`, and the names it binds are left pending for the walk to
+    ///   `flow_state`, and the names it binds are left pending for the walk to
     ///   install without re-scanning.
     /// - Function and lazy bodies (`Nested + Lazy`, `Current + Lazy`) are their
     ///   own scan units, scanned separately when the walk enters them, because
@@ -551,8 +549,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // A function body is a child scope, scanned when it's entered.
                 // Record the names it inherits now so that when we later resolve
                 // an NSE callee inside the body, we can check whether one of them
-                // shadows it (see `inherited_at_entry`).
-                self.record_inherited_at_entry(func.syntax().text_trimmed_range());
+                // shadows it (see `enclosing_flow`).
+                self.record_enclosing_flow(func.syntax().text_trimmed_range());
             },
 
             AnyRExpression::RBracedExpressions(braced) => {
@@ -624,13 +622,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                let pre_if = self.bound_so_far.clone();
+                let pre_if = self.flow_state.snapshot();
 
                 if let Ok(consequence) = stmt.consequence() {
                     self.scan_expression(&consequence);
                 }
 
-                let post_if = std::mem::replace(&mut self.bound_so_far, pre_if);
+                let post_if = self.flow_state.snapshot();
+                self.flow_state.restore(pre_if);
 
                 if let Some(else_clause) = stmt.else_clause() {
                     if let Ok(alternative) = else_clause.alternative() {
@@ -639,7 +638,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // Both branches' bindings are live afterwards.
-                self.bound_so_far.extend(post_if);
+                self.flow_state.merge(post_if);
             },
 
             // `while`/`repeat` loops, subsets, extractions, parentheses, unary
@@ -671,7 +670,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn scan_parameter_defaults(&mut self, params: &RParameters) {
-        // Seed `bound_so_far` with every parameter names so a callee inside a
+        // Seed `flow_state` with every parameter names so a callee inside a
         // default value sees the full formal set
         for param in params.items().iter() {
             let Ok(param) = param else { continue };
@@ -681,7 +680,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.bound_so_far.insert(text);
+            self.flow_state.bind(text);
         }
 
         for param in params.items().iter() {
@@ -738,14 +737,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Record a binding in the scan's flow state.
     ///
-    /// The flow-precise `bound_so_far` set always learns the name, so a
+    /// The flow-precise `flow_state` always learns the name, so a
     /// later callee in this scope sees it shadowed. The bound names only get it
     /// when the current scope owns it. A `Current + Lazy` scope routes its defs
     /// to the owner, so the name is added to the owner's bound names instead, the
     /// same routing `add_definition_to_owner` does during the walk.
     fn record_binding(&mut self, name: String) {
         self.record_owner_name(name.clone());
-        self.bound_so_far.insert(name);
+        self.flow_state.bind(name);
     }
 
     /// Route a binding NAME into its owner scope's bound names, matching
@@ -756,9 +755,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
-    /// bound in `bound_so_far` (see that helper for why).
+    /// bound in `flow_state` (see that helper for why).
     fn record_owner_name(&mut self, name: String) {
-        if let Some(bound) = self.descent.open.last_mut() {
+        if let Some(bound) = self.eager_descent.open.last_mut() {
             bound.add(name);
             return;
         }
@@ -1020,7 +1019,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // Scan the default values before collecting them. R binds all
             // formals into the frame at once, so a default sees every parameter
             // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `bound_so_far`
+            // not NSE. So we seed the whole formal set into `flow_state`
             // up front rather than flow-ordered, then scan each default.
             self.begin_scan();
             self.scan_parameter_defaults(&params);
@@ -1402,6 +1401,53 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 struct CallResolution {
     nse: Option<ArgumentsAnnotation>,
     source: Option<SourceResolution>,
+}
+
+/// The scan's flow-precise binding state: which names are bound at the current
+/// point of the current scan unit, in flow order.
+///
+/// It's the scan's own flow state, a coarse variant of the walk's use-def map,
+/// which isn't built yet. It answers one question, "is this name bound here?",
+/// so the scan can tell whether a callee is shadowed at each call and decide
+/// whether a call is NSE. It tracks only eager bindings, and it is allowed to
+/// stay coarse: `merge()` unions the two sides of an `if`, so that a single
+/// branch marks a name as bound.
+#[derive(Clone, Default)]
+struct FlowState {
+    bound: FxHashSet<String>,
+}
+
+impl FlowState {
+    /// Save the current state, to rewind to or to seed a child scan unit from.
+    fn snapshot(&self) -> FlowState {
+        self.clone()
+    }
+
+    /// Rewind to `snapshot`, dropping any bindings recorded since it was taken.
+    fn restore(&mut self, snapshot: FlowState) {
+        *self = snapshot;
+    }
+
+    /// Union `snapshot` in, so a name reads as bound here if it was bound on
+    /// either path. This is the `if`/`else` join.
+    fn merge(&mut self, snapshot: FlowState) {
+        self.bound.extend(snapshot.bound);
+    }
+
+    /// Record `name` as bound from here on.
+    fn bind(&mut self, name: String) {
+        self.bound.insert(name);
+    }
+
+    /// Whether `name` is bound at the current point.
+    fn is_bound(&self, name: &str) -> bool {
+        self.bound.contains(name)
+    }
+
+    /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).
+    fn clear(&mut self) {
+        self.bound.clear();
+    }
 }
 
 /// Tracks eager `Nested` NSE bodies scanned inline during the scan.
