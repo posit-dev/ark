@@ -310,21 +310,37 @@ pub(super) unsafe fn completion_item_from_dataset(name: &str) -> anyhow::Result<
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_data_variable(
+#[derive(Copy, Clone)]
+pub(super) enum QuoteStyle {
+    // Double quote with `"`
+    Double,
+
+    // Backtick with `\`` if the symbol isn't syntactic
+    BacktickIfNotSyntactic,
+
+    // No quoting. Useful if you know you're already inserting into an existing string.
+    None,
+}
+
+pub(super) fn completion_item_from_data_variable(
     name: &str,
     owner: &str,
-    enquote: bool,
+    quote_style: QuoteStyle,
 ) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(name, CompletionData::DataVariable {
         name: name.to_string(),
         owner: owner.to_string(),
     })?;
 
-    if enquote {
-        item.insert_text = Some(format!("\"{}\"", name));
-    } else if !is_valid_symbol(name) {
-        item.insert_text = Some(sym_quote(name));
-    }
+    match quote_style {
+        QuoteStyle::Double => item.insert_text = Some(format!("\"{name}\"")),
+        QuoteStyle::BacktickIfNotSyntactic => {
+            if !is_valid_symbol(name) {
+                item.insert_text = Some(sym_quote(name));
+            }
+        },
+        QuoteStyle::None => (),
+    };
 
     item.detail = Some(owner.to_string());
     item.kind = Some(CompletionItemKind::VARIABLE);

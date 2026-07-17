@@ -8,6 +8,7 @@
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
@@ -33,9 +34,6 @@ pub(super) fn completions_from_string_subset(
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_string_subset()");
 
-    // Already inside a string
-    const ENQUOTE: bool = false;
-
     // i.e. find `x` in `x[""]` or `x[c("foo", "")]`
     let Some(node) = node_find_object_for_string_subset(node, context) else {
         return Ok(None);
@@ -49,7 +47,7 @@ pub(super) fn completions_from_string_subset(
     let text = node.node_as_str(context.contents)?;
 
     if let Some(mut candidates) =
-        completions_from_evaluated_object_names(text, ENQUOTE, node.node_type())?
+        completions_from_evaluated_object_names(text, QuoteStyle::None, node.node_type())?
     {
         completions.append(&mut candidates);
     }
@@ -242,6 +240,28 @@ mod tests {
 
             // Clean up
             parse_eval_global("remove(foo)").unwrap();
+        })
+    }
+
+    #[test]
+    fn test_string_subset_completions_with_non_syntactic_names() {
+        r_task(|| {
+            // Set up a list with non syntactic name
+            parse_eval_global("x <- list(`_a` = 1)").unwrap();
+
+            let (text, point) = point_from_cursor(r#"x["@"]"#);
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
+            let node = node_find_string(&context.node).unwrap();
+
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
+            assert_eq!(completions.len(), 1);
+
+            // Note how `_a` isn't backticked! We know we are inserting it directly
+            // into existing double quotes (posit-dev/positron#14909).
+            assert_eq!(completions.first().unwrap().label, "_a".to_string());
         })
     }
 }
