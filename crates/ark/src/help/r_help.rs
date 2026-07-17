@@ -243,7 +243,7 @@ impl CommHandler for RHelp {
         };
 
         self.proxy = Some(proxy);
-        Console::get_mut().set_help_ports(r_port, proxy_port);
+        Console::get().set_help_ports(r_port, proxy_port);
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {

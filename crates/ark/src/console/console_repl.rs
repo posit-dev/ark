@@ -678,7 +678,7 @@ impl Console {
             ui_comm_id: DebugRefCell::new(None),
             help_comm_id: DebugRefCell::new(None),
             last_error: None,
-            help_ports: None,
+            help_ports: Cell::new(None),
             lsp_events_tx: None,
             lsp_virtual_documents: HashMap::new(),
             debug_dap: dap,
