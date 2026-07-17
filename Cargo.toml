@@ -129,7 +129,7 @@ url = "2.5.8"
 uuid = { version = "1.23.1", features = ["v4"] }
 walkdir = "2"
 windows-sys ="0.61.2"
-winsafe = { version = "0.0.27", features = ["kernel"] }
+winsafe = { version = "0.0.28", features = ["kernel"] }
 xdg = "3.0.0"
 yaml-rust2 = "0.11"
 # We need ZMQ 4.3.5 to fix polling issues on Windows arm64
