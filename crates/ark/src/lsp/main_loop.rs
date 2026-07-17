@@ -608,15 +608,9 @@ impl GlobalState {
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
-    if !cfg!(debug_assertions) {
-        // TODO!: Remove this to activate in release builds as well.
-        // Currently only active in debug builds (including unit and integration tests).
-        return None;
-    }
-
     let Some(r) = harp::command::r_executable(r_home) else {
         log::warn!(
-            "Can't locate an R executable under '{}', package source fetching is disabled",
+            "Can't locate an R executable under '{}', source fetching is disabled",
             r_home.display()
         );
         return None;
