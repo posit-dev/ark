@@ -154,9 +154,13 @@ impl DapJupyterHandler {
 
         let outcome = match outcome {
             Ok(outcome) => outcome,
-            // A longjump that escaped `DapHandler::evaluate()`'s own `try_catch`
-            // (e.g. while building the response), caught by the try-idle sandbox.
-            Err(err) => return Ok(self.error_response(seq, "evaluate", &err.to_string())),
+            Err(err) => {
+                // `DapHandler::evaluate()` doesn't touch R outside of `with_timeout()`,
+                // which already converts any escaping error into `EvaluateOutcome::Error`
+                // (see `DapHandler::evaluate()`). So this shouldn't be reachable.
+                log::error!("Jupyter DAP: Unexpected error from `try_idle_task`: {err:?}");
+                return Ok(self.error_response(seq, "evaluate", &err.to_string()));
+            },
         };
 
         match outcome {
