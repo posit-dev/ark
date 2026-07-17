@@ -45,19 +45,12 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
 /// Context for effect handlers.
 ///
 /// Allows querying the properties or static values of arguments.
-pub struct CallContext<'a> {
-    /// Resolve an identifier to a statically known string value, e.g. a
-    /// `character.only` package name for `library()`.
-    ///
-    /// TODO: This method is currently illustrative. It shows why the methods
-    /// are type-erased (so they give access to `self` which can do static
-    /// resolution).
-    resolve_string: &'a dyn Fn(&str) -> Option<String>,
-}
+#[derive(Default)]
+pub struct CallContext;
 
-impl<'a> CallContext<'a> {
-    pub fn new(resolve_string: &'a dyn Fn(&str) -> Option<String>) -> Self {
-        Self { resolve_string }
+impl CallContext {
+    pub fn new() -> Self {
+        Self
     }
 
     /// Match `call`'s arguments to `formals`, returning for each call argument
@@ -105,12 +98,6 @@ impl<'a> CallContext<'a> {
         }
 
         matched
-    }
-
-    /// Resolve an argument `name` to a statically known string value, or `None`.
-    /// E.g. could be used to implement `character.only` in the `library()` handler.
-    pub fn resolve_string(&self, name: &str) -> Option<String> {
-        (self.resolve_string)(name)
     }
 }
 

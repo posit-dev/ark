@@ -224,10 +224,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
         let handlers = self.resolve_effects_handlers(call)?;
 
-        // The closure carries `&self` access into the handlers without exposing
-        // the builder's resolver generic. Bound to a local so it outlives `ctx`.
-        let resolve_string = |name: &str| self.resolve_string(name);
-        let ctx = CallContext::new(&resolve_string);
+        let ctx = CallContext::new();
 
         let arguments = handlers
             .arguments
@@ -237,13 +234,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .and_then(|handler| handler.resolve(call, &ctx));
 
         Some(Effects { arguments, attach })
-    }
-
-    /// Resolve an identifier to a statically known string value, for a handler's
-    /// `character.only`-style needs. Always `None` until variable resolution lands.
-    fn resolve_string(&self, name: &str) -> Option<String> {
-        let _ = name;
-        None
     }
 
     /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
