@@ -4,14 +4,11 @@
 //!
 //! - `source/v1/cran/{name}_{version}/`, a full unpacked CRAN package tarball
 //! - `source/v1/r/{version}/`, the unpacked base R package sources for an R version
-//! - `source/v1/compressed/{release}/`, the downloaded `r-source.tar.zst`, keyed by the
-//!   `oak-r-sources` release and reused to populate any requested version's `r` entry
 //!
 //! The CRAN and base R caches keep the entire downloaded tree, unpacked eagerly with
 //! files marked read only. Each method returns the cached folder. Navigation is left to
 //! the caller, who knows the layout.
 
-mod compressed;
 mod cran;
 mod download;
 mod extract;
@@ -20,6 +17,8 @@ mod r;
 use std::path::PathBuf;
 
 use oak_cache::Cache;
+
+use crate::r::RCache;
 
 /// Cache version
 const CACHE_VERSION: &str = "v1";
@@ -31,16 +30,14 @@ const CACHE_VERSION: &str = "v1";
 #[derive(Debug)]
 pub struct SourceCache {
     cran: Cache,
-    r: Cache,
-    compressed: Cache,
+    r: RCache,
 }
 
 impl SourceCache {
     pub fn open() -> anyhow::Result<Self> {
         Ok(Self {
             cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"))?,
-            r: Cache::open(&format!("source/{CACHE_VERSION}/r"))?,
-            compressed: Cache::open(&format!("source/{CACHE_VERSION}/compressed"))?,
+            r: RCache::open(&format!("source/{CACHE_VERSION}/r"))?,
         })
     }
 
@@ -49,8 +46,7 @@ impl SourceCache {
     pub fn open_in(root: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             cran: Cache::open_in(root.join("cran"))?,
-            r: Cache::open_in(root.join("r"))?,
-            compressed: Cache::open_in(root.join("compressed"))?,
+            r: RCache::open_in(root.join("r"))?,
         })
     }
 
@@ -75,7 +71,6 @@ impl SourceCache {
 
     /// Get cached base R source tree if already present
     pub fn get_r(&self, version: &str) -> Option<PathBuf> {
-        let version = compressed::clamp(version);
         self.r.get(version)
     }
 
@@ -83,13 +78,7 @@ impl SourceCache {
     ///
     /// Returns `None` if the archive is unavailable or holds no sources for `version`.
     pub fn insert_r(&self, version: &str) -> Option<PathBuf> {
-        let version = compressed::clamp(version);
-        self.r
-            .insert(version, |dir| r::populate(version, dir, &self.compressed))
-            .unwrap_or_else(|err| {
-                log::error!("Failed to download R {version} source: {err:?}");
-                None
-            })
+        self.r.insert(version)
     }
 }
 
