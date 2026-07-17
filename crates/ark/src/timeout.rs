@@ -24,13 +24,32 @@
 //! `R_ProcessEvents` callback), so the timeout works everywhere.
 
 use std::cell::Cell;
+use std::sync::LazyLock;
 use std::time::Duration;
 use std::time::Instant;
 
 use harp::raii::RLocalInterruptsSuspended;
 
 /// How long an evaluation in `with_timeout()` may run before we interrupt it.
-pub(crate) const EVAL_TIMEOUT: Duration = Duration::from_secs(1);
+///
+/// Kept short in production: a Watch Pane can have several expressions queued
+/// up, and each one runs this timeout before the console frees up again, so a
+/// generous value compounds into a long freeze. Bumped on CI, where slower or
+/// more heavily loaded runners (Windows in particular) risk flaking under the
+/// tighter deadline for unrelated reasons.
+///
+/// The CI value must stay under the DAP test client's socket read timeout
+/// (`DEFAULT_TIMEOUT`, 5s in `ark_test::dap_client`).
+pub(crate) fn eval_timeout() -> Duration {
+    static EVAL_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
+        if std::env::var("CI").is_ok() {
+            Duration::from_secs(3)
+        } else {
+            Duration::from_secs(1)
+        }
+    });
+    *EVAL_TIMEOUT
+}
 
 // These variables are thread-local to provide safe lock-free interior
 // mutability on the R thread
