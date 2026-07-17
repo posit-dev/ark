@@ -1,5 +1,5 @@
-use crate::effects::NseAnnotation;
-use crate::effects::NseArgument;
+use crate::effects::Argument;
+use crate::effects::ArgumentsAnnotation;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -8,11 +8,11 @@ use crate::semantic_index::NseTiming::Lazy;
 struct Entry {
     package: &'static str,
     function: &'static str,
-    annotation: NseAnnotation,
+    annotation: ArgumentsAnnotation,
 }
 
 /// Look up the NSE annotation for a `(package, function)` pair.
-pub fn lookup(package: &str, function: &str) -> Option<&'static NseAnnotation> {
+pub fn lookup(package: &str, function: &str) -> Option<&'static ArgumentsAnnotation> {
     REGISTRY
         .iter()
         .find(|e| e.package == package && e.function == function)
@@ -36,8 +36,8 @@ macro_rules! entry {
         Entry {
             package: $pkg,
             function: $func,
-            annotation: NseAnnotation {
-                arguments: &[$(NseArgument {
+            annotation: ArgumentsAnnotation {
+                arguments: &[$(Argument {
                     name: $name,
                     position: $pos,
                     scope: $scope,

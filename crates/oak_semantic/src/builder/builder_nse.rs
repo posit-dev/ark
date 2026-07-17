@@ -16,9 +16,9 @@ use super::is_right_assignment;
 use super::is_super_assignment;
 use super::BoundNames;
 use super::SemanticIndexBuilder;
+use crate::effects::Argument;
+use crate::effects::ArgumentsAnnotation;
 use crate::effects::Effects;
-use crate::effects::NseAnnotation;
-use crate::effects::NseArgument;
 use crate::effects_registry;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::NseScope;
@@ -226,7 +226,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// The bound check reads the scan pass's flow-precise binding state
     /// for the current scope, so this must run during the scan, not the walk.
-    fn resolve_nse(&mut self, call: &RCall) -> Option<NseAnnotation> {
+    fn resolve_nse(&mut self, call: &RCall) -> Option<ArgumentsAnnotation> {
         let func = call.function().ok()?;
 
         match &func {
@@ -334,7 +334,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Process a call the scan pass decided is NSE. Match its arguments
     /// against the annotation, then handle each scoped argument, pushing NSE
     /// scopes inline.
-    pub(super) fn collect_nse_call(&mut self, call: &RCall, annotation: NseAnnotation) {
+    pub(super) fn collect_nse_call(&mut self, call: &RCall, annotation: ArgumentsAnnotation) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -362,10 +362,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn match_nse_arguments(
         &self,
         items: &RArgumentList,
-        annotation: NseAnnotation,
-    ) -> Vec<Option<&'static NseArgument>> {
+        annotation: ArgumentsAnnotation,
+    ) -> Vec<Option<&'static Argument>> {
         let arg_count = items.iter().count();
-        let mut nse_args: Vec<Option<&'static NseArgument>> = vec![None; arg_count];
+        let mut nse_args: Vec<Option<&'static Argument>> = vec![None; arg_count];
         let mut consumed = vec![false; annotation.arguments.len()];
 
         // Named pass
@@ -405,7 +405,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already scanned by the descent, so we install its pending names and only
     /// walk. The remaining lazy bodies are their own scan units that we scan
     /// here on entry.
-    fn collect_nse_argument(&mut self, nse_arg: &NseArgument, value: &AnyRExpression) {
+    fn collect_nse_argument(&mut self, nse_arg: &Argument, value: &AnyRExpression) {
         match (nse_arg.scope, nse_arg.timing) {
             // Calls like `evalq()`
             (NseScope::Current, NseTiming::Eager) => {
@@ -466,7 +466,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 /// Should we do partial argument matching? Or rely on partial matching being linted?
 fn match_named_arg(
     arg: &aether_syntax::RArgument,
-    annotation: &NseAnnotation,
+    annotation: &ArgumentsAnnotation,
     consumed: &[bool],
 ) -> Option<usize> {
     let clause = arg.name_clause()?;
@@ -495,7 +495,7 @@ fn match_named_arg(
 /// position 1, won't match. Good enough without the callee's formal list;
 /// revisit if it misses real cases.
 fn match_positional_arg(
-    annotation: &NseAnnotation,
+    annotation: &ArgumentsAnnotation,
     position: usize,
     consumed: &[bool],
 ) -> Option<usize> {

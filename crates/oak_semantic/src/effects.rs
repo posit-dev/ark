@@ -8,24 +8,24 @@ use crate::semantic_index::NseTiming;
 /// eponymous function).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Effects {
-    pub nse: Option<NseAnnotation>,
+    pub nse: Option<ArgumentsAnnotation>,
 }
 
 impl Effects {
-    pub fn nse(nse: NseAnnotation) -> Self {
+    pub fn nse(nse: ArgumentsAnnotation) -> Self {
         Self { nse: Some(nse) }
     }
 }
 
 /// Annotation describing how an NSE function's arguments create scopes.
 #[derive(Debug, Clone, Copy)]
-pub struct NseAnnotation {
-    pub arguments: &'static [NseArgument],
+pub struct ArgumentsAnnotation {
+    pub arguments: &'static [Argument],
 }
 
 /// A single argument that creates an NSE scope.
 #[derive(Debug)]
-pub struct NseArgument {
+pub struct Argument {
     pub name: &'static str,
     pub position: usize,
     pub scope: NseScope,
