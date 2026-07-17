@@ -228,7 +228,7 @@ pub struct Console {
     comm_msg_originator: Option<Originator>,
 
     /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
-    execution_count: u32,
+    execution_count: Cell<u32>,
 
     /// Accumulated top-level output for the current execution.
     /// This is the output emitted by R's autoprint and propagated as
