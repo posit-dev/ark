@@ -233,12 +233,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
 
-                // Bail early if it is known that no package annotates this name
-                // with effects. This speeds up the common case of no known annotations.
-                if !effects_registry::is_annotated(&name) {
-                    return None;
-                }
-
                 // First check for a local definition (which in the future may
                 // contain NSE annotations that we resolve here)
                 //
@@ -252,6 +246,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     return self
                         .resolve_local_effects(&name)
                         .and_then(|effects| effects.nse);
+                }
+
+                // Bail early if it is known that no package annotates this name
+                // with effects. This speeds up the common case of no known annotations.
+                if !effects_registry::annotates(&name) {
+                    return None;
                 }
 
                 // Now check imports since the symbol is locally unbound. The
@@ -280,7 +280,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let pkg = left.identifier_text()?;
                 let func_name = right.identifier_text()?;
 
-                if !effects_registry::is_annotated(&func_name) {
+                if !effects_registry::annotates(&func_name) {
                     return None;
                 }
 
