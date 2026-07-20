@@ -459,12 +459,12 @@ pub enum ScopeKind {
     // cross-file resolution (package namespace, session, etc.) takes over.
     File,
     Function,
-    Nse(NseScope, NseTiming),
+    Nse(EvalEnv, EvalTiming),
 }
 
 /// Where definitions in an NSE scope land.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NseScope {
+pub enum EvalEnv {
     /// Definitions go to the current (parent) environment.
     /// e.g. `rlang::on_load()`
     Current,
@@ -476,7 +476,7 @@ pub enum NseScope {
 /// Whether an NSE scope evaluates eagerly (at the call site) or lazily
 /// (at an unknown later time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NseTiming {
+pub enum EvalTiming {
     /// Expression that runs at the call site. Free variables resolve against
     /// the linear state right there. E.g. `local()`, `evalq()`, `test_that()`.
     Eager,
@@ -495,7 +495,7 @@ impl ScopeKind {
         match self {
             ScopeKind::File => false,
             ScopeKind::Function => true,
-            ScopeKind::Nse(_, timing) => timing == NseTiming::Lazy,
+            ScopeKind::Nse(_, timing) => timing == EvalTiming::Lazy,
         }
     }
 }

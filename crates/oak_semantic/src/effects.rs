@@ -12,8 +12,8 @@ pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 
-use crate::semantic_index::NseScope;
-use crate::semantic_index::NseTiming;
+use crate::semantic_index::EvalEnv;
+use crate::semantic_index::EvalTiming;
 
 /// Per-package tables of which functions carry effects. Private data behind the
 /// `lookup`/`annotates` query API below.
@@ -223,8 +223,10 @@ pub type ResolvedArgumentEffects = Vec<Option<ResolvedArgumentEffect>>;
 /// The resolved, per-call effect of one argument. The builder consumes these.
 #[derive(Debug, Clone)]
 pub enum ResolvedArgumentEffect {
-    /// Quote plus Eval in a controlled scope, fused.
-    Nse { scope: NseScope, timing: NseTiming },
+    /// Quote the argument, then evaluate it in `env`. `timing` says whether
+    /// that happens eagerly at the call site (`evalq()`, `local()`) or later
+    /// at an unknown time (`on_load()`, `reactive()`).
+    EvalQ { env: EvalEnv, timing: EvalTiming },
     /// Captured unevaluated. `holes` are the sub-expressions that escape back to
     /// evaluation (e.g. bquote's `.()` contents), walked normally; everything
     /// else in the argument is inert. Empty for a plain `quote()`.
@@ -250,8 +252,10 @@ pub struct Argument {
 /// evaluation model.
 #[derive(Debug, Clone, Copy)]
 pub enum ArgumentEffect {
-    /// Quote plus Eval in a controlled scope, fused
-    Nse { scope: NseScope, timing: NseTiming },
+    /// Quote the argument, then evaluate it in `env`. `timing` says whether
+    /// that happens eagerly at the call site (`evalq()`, `local()`) or later
+    /// at an unknown time (`on_load()`, `reactive()`).
+    EvalQ { env: EvalEnv, timing: EvalTiming },
     /// Captured unevaluated, so its symbols are not uses and nothing in it runs.
     /// `quote`. A function that unquotes (`bquote()`, whose `.()` holes escape)
     /// can't be expressed statically, and must use a custom handler instead of
@@ -262,7 +266,7 @@ pub enum ArgumentEffect {
 impl ArgumentEffect {
     fn resolve(self) -> ResolvedArgumentEffect {
         match self {
-            ArgumentEffect::Nse { scope, timing } => ResolvedArgumentEffect::Nse { scope, timing },
+            ArgumentEffect::EvalQ { env, timing } => ResolvedArgumentEffect::EvalQ { env, timing },
             ArgumentEffect::Quote => ResolvedArgumentEffect::Quote { holes: Vec::new() },
         }
     }

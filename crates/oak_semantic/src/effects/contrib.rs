@@ -27,8 +27,8 @@ macro_rules! nse {
                     arguments: &[$($crate::effects::Argument {
                         name: $name,
                         position: $pos,
-                        effect: $crate::effects::ArgumentEffect::Nse {
-                            scope: $scope,
+                        effect: $crate::effects::ArgumentEffect::EvalQ {
+                            env: $scope,
                             timing: $timing,
                         },
                     }),+],

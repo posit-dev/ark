@@ -65,10 +65,10 @@ use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
+use crate::semantic_index::EvalEnv;
+use crate::semantic_index::EvalTiming;
 use crate::semantic_index::NamespaceAccess;
 use crate::semantic_index::NamespaceAccessKind;
-use crate::semantic_index::NseScope;
-use crate::semantic_index::NseTiming;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
@@ -246,7 +246,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // Eager` never reaches here because it doesn't push a scope.
         if matches!(
             self.scopes[self.current_scope].kind,
-            ScopeKind::Nse(NseScope::Current, NseTiming::Lazy)
+            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
         ) {
             self.add_definition_to_owner(name, flags, kind, range);
             return;
@@ -308,7 +308,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let mut scope = self.scopes[self.current_scope].parent?;
         while matches!(
             self.scopes[scope].kind,
-            ScopeKind::Nse(NseScope::Current, NseTiming::Lazy)
+            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
         ) {
             scope = self.scopes[scope].parent?;
         }
@@ -818,7 +818,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         if let Some(target) = match self.scopes[self.current_scope].kind {
-            ScopeKind::Nse(NseScope::Current, NseTiming::Lazy) => self.definition_owner(),
+            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
         } {
             self.bound_names[target].add(name, range);

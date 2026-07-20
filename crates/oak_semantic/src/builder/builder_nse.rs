@@ -25,8 +25,8 @@ use crate::effects::EffectsHandlers;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
-use crate::semantic_index::NseScope;
-use crate::semantic_index::NseTiming;
+use crate::semantic_index::EvalEnv;
+use crate::semantic_index::EvalTiming;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticDiagnostic;
 
@@ -123,16 +123,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         self.scan_expression(hole);
                     }
                 },
-                Some(ResolvedArgumentEffect::Nse { scope, timing }) => match (scope, timing) {
+                Some(ResolvedArgumentEffect::EvalQ { env, timing }) => match (env, timing) {
                     // Calls like `evalq()`
-                    (NseScope::Current, NseTiming::Eager) => self.scan_expression(&value),
+                    (EvalEnv::Current, EvalTiming::Eager) => self.scan_expression(&value),
 
                     // Calls like `on_load()`. Its body runs later, so its defs
                     // land in the enclosing scope. We don't resolve the body's
                     // calls here. The walk does that once it enters the child
                     // scope. But we do grab the names it defines now, so the
                     // owner's bound names are complete before the walk reaches a sibling.
-                    (NseScope::Current, NseTiming::Lazy) => {
+                    (EvalEnv::Current, EvalTiming::Lazy) => {
                         self.record_enclosing_flow(value.syntax().text_trimmed_range());
                         self.scan_lazy_owner_bindings(&value);
                     },
@@ -145,7 +145,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // have seeded.
                     // No `record_enclosing_flow()`: eager `Nested` bodies are
                     // never scanned at walk time, so nothing would read it.
-                    (NseScope::Nested, NseTiming::Eager) => {
+                    (EvalEnv::Nested, EvalTiming::Eager) => {
                         let old = self.flow_state.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
@@ -162,7 +162,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // later time, so it's a child scope scanned when the walk
                     // enters it. Record the names it inherits for its callee
                     // resolution, same as a function body.
-                    (NseScope::Nested, NseTiming::Lazy) => {
+                    (EvalEnv::Nested, EvalTiming::Lazy) => {
                         self.record_enclosing_flow(value.syntax().text_trimmed_range());
                     },
                 },
@@ -507,8 +507,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 continue;
             };
             match argument {
-                ResolvedArgumentEffect::Nse { scope, timing } => {
-                    self.collect_nse_argument(*scope, *timing, &value)
+                ResolvedArgumentEffect::EvalQ { env, timing } => {
+                    self.collect_nse_argument(*env, *timing, &value)
                 },
                 // Quoted argument: only the unquote holes are live.
                 ResolvedArgumentEffect::Quote { holes } => {
@@ -526,17 +526,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already scanned by the descent, so we install its pending names and only
     /// walk. The remaining lazy bodies are their own scan units that we scan
     /// here on entry.
-    fn collect_nse_argument(&mut self, scope: NseScope, timing: NseTiming, value: &AnyRExpression) {
-        match (scope, timing) {
+    fn collect_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
+        match (env, timing) {
             // Calls like `evalq()`
-            (NseScope::Current, NseTiming::Eager) => {
+            (EvalEnv::Current, EvalTiming::Eager) => {
                 self.collect_expression(value);
             },
 
             // Calls like `local()`
-            (NseScope::Nested, NseTiming::Eager) => {
+            (EvalEnv::Nested, EvalTiming::Eager) => {
                 let range = value.syntax().text_trimmed_range();
-                let kind = ScopeKind::Nse(NseScope::Nested, NseTiming::Eager);
+                let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager);
                 let scope = self.push_scope(kind, range);
 
                 // Install the pending names the descent recorded for this body,
@@ -564,8 +564,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.pop_scope(scope);
             },
 
-            (nse_scope, nse_timing) => {
-                let kind = ScopeKind::Nse(nse_scope, nse_timing);
+            (env, timing) => {
+                let kind = ScopeKind::Nse(env, timing);
                 let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
 
                 // Scan the child body before walking it. A `Current + Lazy`

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::DefinitionKind;
-use oak_semantic::semantic_index::NseScope;
-use oak_semantic::semantic_index::NseTiming;
+use oak_semantic::semantic_index::EvalEnv;
+use oak_semantic::semantic_index::EvalTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
@@ -154,7 +154,7 @@ fn test_testthat_test_that_is_nse_without_library() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(test_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
 }
 
@@ -178,7 +178,7 @@ fn test_testthat_helper_attach_enables_nse() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -223,7 +223,7 @@ fn test_namespace_import_from_enables_nse() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -257,7 +257,7 @@ fn test_namespace_bulk_import_enables_nse() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -299,7 +299,7 @@ fn test_namespace_reexport_chases_to_source_package() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -384,7 +384,7 @@ fn test_testthat_namespace_import_enables_nse() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -488,7 +488,7 @@ fn test_later_sibling_does_not_shadow() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -510,7 +510,7 @@ fn test_predecessor_sibling_attach_enables_nse() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -724,7 +724,7 @@ fn test_attached_package_enables_nse_scope() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -742,7 +742,7 @@ fn test_base_nse_resolves_with_no_attaches() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
 }
 

@@ -1,7 +1,7 @@
 use crate::effects::contrib::nse;
 use crate::effects::contrib::Entry;
-use crate::semantic_index::NseScope::Nested;
-use crate::semantic_index::NseTiming::Lazy;
+use crate::semantic_index::EvalEnv::Nested;
+use crate::semantic_index::EvalTiming::Lazy;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     nse!("shiny", "observe", ("x", 0, Nested, Lazy)),

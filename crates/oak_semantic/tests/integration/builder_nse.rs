@@ -2,8 +2,8 @@ use aether_parser::parse;
 use aether_parser::RParserOptions;
 use oak_semantic::build_index;
 use oak_semantic::semantic_index::DefinitionId;
-use oak_semantic::semantic_index::NseScope;
-use oak_semantic::semantic_index::NseTiming;
+use oak_semantic::semantic_index::EvalEnv;
+use oak_semantic::semantic_index::EvalTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticDiagnostic;
@@ -52,7 +52,7 @@ local({
     // `x` is defined inside the NSE scope, not at file level
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(file));
     assert_eq!(index.symbols(local_scope).len(), 1);
@@ -121,7 +121,7 @@ testthat::test_that("description", {
     // Test scope contains `x`
     assert_eq!(
         index.scope(test_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(
         index.symbols(test_scope).get("x").unwrap().flags(),
@@ -212,7 +212,7 @@ local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
 
@@ -292,7 +292,7 @@ testthat::test_that(code = {
 
     assert_eq!(
         index.scope(test_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(
         index.symbols(test_scope).get("x").unwrap().flags(),
@@ -315,7 +315,7 @@ local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(fun_scope).kind(), ScopeKind::Function);
     assert_eq!(index.scope(fun_scope).parent(), Some(local_scope));
@@ -417,7 +417,7 @@ rlang::on_load({
     // The NSE scope exists with `Current + Lazy` kind
     assert_eq!(
         index.scope(nse_scope).kind(),
-        ScopeKind::Nse(NseScope::Current, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
     );
     assert_eq!(index.scope(nse_scope).parent(), Some(file));
 
@@ -474,11 +474,11 @@ local({
     // Both calls create Nested + Eager scopes
     assert_eq!(
         index.scope(first_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(
         index.scope(second_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
 
     // `local <- identity` is in the first scope, not at file level
@@ -534,7 +534,7 @@ f <- function() {
     assert_eq!(index.scope_ids().count(), 5);
     assert_eq!(
         index.scope(outer_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(outer_local).parent(), Some(file));
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
@@ -542,7 +542,7 @@ f <- function() {
     assert_eq!(index.scope(g_scope).parent(), Some(f_scope));
     assert_eq!(
         index.scope(inner_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(inner_local).parent(), Some(f_scope));
 
@@ -580,7 +580,7 @@ if (c) local <- identity else local({
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(nse_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(nse_scope).parent(), Some(file));
 
@@ -637,7 +637,7 @@ local <- identity
     // moves into its own scope.
     assert_eq!(
         index.scope(f_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(f_local).parent(), Some(f_scope));
     assert!(index.symbols(f_scope).get("x").is_none());
@@ -650,7 +650,7 @@ local <- identity
     // lands in its own scope.
     assert_eq!(
         index.scope(eager_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(eager_local).parent(), Some(file));
     assert!(index.symbols(f_scope).get("y").is_none());
@@ -683,7 +683,7 @@ x <- 2
     assert_eq!(index.scope(fun_scope).kind(), ScopeKind::Function);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(fun_scope));
 
@@ -719,12 +719,12 @@ local({
 
     assert_eq!(
         index.scope(outer_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(outer_local).parent(), Some(file));
     assert_eq!(
         index.scope(inner_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(inner_local).parent(), Some(outer_local));
 
@@ -907,7 +907,7 @@ base::local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(
         index.symbols(local_scope).get("x").unwrap().flags(),
@@ -984,7 +984,7 @@ local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(file));
     assert!(index.symbols(file).get("x").is_none());
@@ -1066,7 +1066,7 @@ rlang::on_load({ local <- identity })
     assert_eq!(first.scope(f_first).kind(), ScopeKind::Function);
     assert_eq!(
         first.scope(f_local_first).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(first.scope(f_local_first).parent(), Some(f_first));
     assert!(first.symbols(f_first).get("x").is_none());
@@ -1088,7 +1088,7 @@ f <- function() local({ x <- 1 })
     assert_eq!(second.scope(f_second).kind(), ScopeKind::Function);
     assert_eq!(
         second.scope(f_local_second).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(second.scope(f_local_second).parent(), Some(f_second));
     assert!(second.symbols(f_second).get("x").is_none());
@@ -1122,7 +1122,7 @@ rlang::on_load({ evalq(local <- identity) })
     assert_eq!(first.scope(f).kind(), ScopeKind::Function);
     assert_eq!(
         first.scope(nested).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(first.scope(nested).parent(), Some(f));
     assert!(first.symbols(f).get("x").is_none());
@@ -1144,7 +1144,7 @@ f <- function() local({ x <- 1 })
     assert_eq!(second.scope(f_second).kind(), ScopeKind::Function);
     assert_eq!(
         second.scope(nested_second).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(second.scope(nested_second).parent(), Some(f_second));
     assert!(second.symbols(f_second).get("x").is_none());
@@ -1173,11 +1173,11 @@ local({ x <- 1 })
     assert_eq!(index.scope_ids().count(), 3);
     assert_eq!(
         index.scope(on_load_scope).kind(),
-        ScopeKind::Nse(NseScope::Current, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
     );
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(file));
     assert!(index.symbols(file).get("x").is_none());
@@ -1199,7 +1199,7 @@ fn test_nse_parameter_default_pushes_scope() {
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(f_scope));
 
@@ -1356,7 +1356,7 @@ local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
 
@@ -1383,7 +1383,7 @@ local({
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(file));
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
@@ -1422,7 +1422,7 @@ f <- function() {
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(local_scope).parent(), Some(f_scope));
 
@@ -1453,12 +1453,12 @@ local({
     assert_eq!(index.scope_ids().count(), 3);
     assert_eq!(
         index.scope(outer_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(outer_local).parent(), Some(file));
     assert_eq!(
         index.scope(inner_local).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(index.scope(inner_local).parent(), Some(outer_local));
 
@@ -1547,7 +1547,7 @@ reactive({
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
     assert_eq!(index.scope(reactive_scope).parent(), Some(file));
     assert!(index.symbols(file).get("x").is_none());
@@ -1622,7 +1622,7 @@ library(shiny)
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
     assert_eq!(index.scope(reactive_scope).parent(), Some(f_scope));
 }
@@ -1648,11 +1648,11 @@ reactive({
     assert_eq!(index.attached_packages(), vec!["shiny"]);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
@@ -1681,7 +1681,7 @@ f <- function() {
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
 }
 
@@ -1755,7 +1755,7 @@ reactive({
     assert_eq!(index.attached_packages(), vec!["shiny"]);
     assert_eq!(
         index.scope(reactive_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Lazy)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
 }
 
