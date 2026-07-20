@@ -145,8 +145,8 @@ fn test_semantic_index_recognizes_bare_base_nse() {
     // Base NSE resolves through the real `SalsaImportsResolver` (base-only
     // `resolve_effects`): a bare `local()` still pushes a nested NSE scope, so
     // `x` lands there rather than at file scope.
-    use oak_semantic::semantic_index::NseScope;
-    use oak_semantic::semantic_index::NseTiming;
+    use oak_semantic::semantic_index::EvalEnv;
+    use oak_semantic::semantic_index::EvalTiming;
     use oak_semantic::semantic_index::ScopeId;
     use oak_semantic::semantic_index::ScopeKind;
 
@@ -159,7 +159,7 @@ fn test_semantic_index_recognizes_bare_base_nse() {
 
     assert_eq!(
         index.scope(local_scope).kind(),
-        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert!(index.symbols(file_scope).get("x").is_none());
     assert!(index.symbols(local_scope).get("x").is_some());

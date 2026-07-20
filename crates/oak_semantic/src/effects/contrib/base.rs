@@ -16,9 +16,9 @@ use crate::effects::EffectsHandlers;
 use crate::effects::Formal;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::semantic_index::NseScope::Current;
-use crate::semantic_index::NseScope::Nested;
-use crate::semantic_index::NseTiming::Eager;
+use crate::semantic_index::EvalEnv::Current;
+use crate::semantic_index::EvalEnv::Nested;
+use crate::semantic_index::EvalTiming::Eager;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     // base NSE

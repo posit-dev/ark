@@ -2,8 +2,8 @@ use crate::effects::contrib::assign_op;
 use crate::effects::contrib::nse;
 use crate::effects::contrib::Entry;
 use crate::effects::TargetAccess::Write;
-use crate::semantic_index::NseScope::Current;
-use crate::semantic_index::NseTiming::Lazy;
+use crate::semantic_index::EvalEnv::Current;
+use crate::semantic_index::EvalTiming::Lazy;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     assign_op!("rlang", "%<~%", Write),
