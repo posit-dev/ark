@@ -673,7 +673,7 @@ impl Console {
             kernel_request_rx,
             active_request: None,
             comm_msg_originator: None,
-            execution_count: 0,
+            execution_count: Cell::new(0),
             autoprint_output: String::new(),
             ui_comm_id: DebugRefCell::new(None),
             help_comm_id: DebugRefCell::new(None),
@@ -912,20 +912,20 @@ impl Console {
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
-            self.execution_count += 1;
+            self.execution_count.update(|count| count + 1);
         }
+
+        let execution_count = self.execution_count.get();
 
         // If the code is not to be executed silently, re-broadcast the
         // execution to all frontends
         if !req.silent {
             if let Err(err) = self.iopub_tx.send(IOPubMessage::ExecuteInput(ExecuteInput {
                 code: req.code.clone(),
-                execution_count: self.execution_count,
+                execution_count,
             })) {
                 log::warn!(
-                    "Could not broadcast execution input {} to all frontends: {}",
-                    self.execution_count,
-                    err
+                    "Could not broadcast execution input {execution_count} to all frontends: {err}",
                 );
             }
         }
@@ -933,10 +933,7 @@ impl Console {
         let loc = req.code_location().log_err().flatten();
 
         // Return the code to the R console to be evaluated and the corresponding exec count
-        (
-            ConsoleInput::Input(req.code.clone(), loc),
-            self.execution_count,
-        )
+        (ConsoleInput::Input(req.code.clone(), loc), execution_count)
     }
 
     /// Invoked by R to read console input from the user.
