@@ -253,7 +253,7 @@ pub struct Console {
 
     /// Ports for the R help server and our proxy, set once both are running.
     /// `None` until then.
-    help_ports: Option<HelpPorts>,
+    help_ports: Cell<Option<HelpPorts>>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
