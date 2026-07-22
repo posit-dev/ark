@@ -219,8 +219,7 @@ local({
     // `x` inside `f` resolves to the `local` scope (not the file scope), and
     // its lazy snapshot picks up `x <- 1` (DefinitionId 1 in the local scope:
     // `f` is DefinitionId 0, `x` is DefinitionId 1).
-    let x_sym = index.uses(f_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, bindings) = index.enclosing_bindings(f_scope, x_sym).unwrap();
+    let (enclosing_scope, bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, local_scope);
     assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
 }
@@ -343,10 +342,7 @@ f <- function() x
 
     // In `f`, `x` is free and unbound -- no enclosing snapshot should find it
     // in the file scope.
-    assert_eq!(
-        index.enclosing_bindings(fun_scope, index.uses(fun_scope)[UseId::from(0)].symbol()),
-        None
-    );
+    assert_eq!(index.enclosing_bindings(fun_scope, UseId::from(0)), None);
 }
 
 #[test]
@@ -368,10 +364,7 @@ x <- 2
     // (point-in-time). At the call site, only `x <- 1` (DefinitionId 0) is
     // live. `x <- 2` (DefinitionId 2) comes after and should NOT be included.
     let (enclosing_scope, bindings) = index
-        .enclosing_bindings(
-            local_scope,
-            index.uses(local_scope)[UseId::from(0)].symbol(),
-        )
+        .enclosing_bindings(local_scope, UseId::from(0))
         .unwrap();
     assert_eq!(enclosing_scope, ScopeId::from(0));
     assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
@@ -394,9 +387,7 @@ x <- 2
     let fun_scope = ScopeId::from(1);
 
     // Function is lazy: snapshot includes both x <- 1 and x <- 2.
-    let (_, bindings) = index
-        .enclosing_bindings(fun_scope, index.uses(fun_scope)[UseId::from(0)].symbol())
-        .unwrap();
+    let (_, bindings) = index.enclosing_bindings(fun_scope, UseId::from(0)).unwrap();
     assert_eq!(bindings.definitions(), &[
         DefinitionId::from(0),
         DefinitionId::from(2)
@@ -452,9 +443,7 @@ f <- function() x
     // `f` is lazy, so its snapshot for `x` should include BOTH defs:
     // `x <- 1` (file-level) and `x <- 2` (from on_load, deferred).
     // If on_load's definition shadowed, we'd only see `x <- 2`.
-    let (enclosing_scope, bindings) = index
-        .enclosing_bindings(fun_scope, index.uses(fun_scope)[UseId::from(0)].symbol())
-        .unwrap();
+    let (enclosing_scope, bindings) = index.enclosing_bindings(fun_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, ScopeId::from(0));
     assert_eq!(bindings.definitions(), &[
         DefinitionId::from(0),
@@ -567,8 +556,7 @@ f <- function() {
     // `g`'s free `x` resolves to nothing: the sibling `local()` binds `x` in
     // its own scope, not in `f`. Flow-insensitive bound names would wrongly
     // point it at a stray `x` in `f`.
-    let g_x = index.uses(g_scope)[UseId::from(0)].symbol();
-    assert_eq!(index.enclosing_bindings(g_scope, g_x), None);
+    assert_eq!(index.enclosing_bindings(g_scope, UseId::from(0)), None);
 }
 
 #[test]
@@ -703,10 +691,7 @@ x <- 2
     // then to the file scope. The function scope is lazy, so both defs are
     // visible despite `local` being eager.
     let (enclosing_scope, bindings) = index
-        .enclosing_bindings(
-            local_scope,
-            index.uses(local_scope)[UseId::from(0)].symbol(),
-        )
+        .enclosing_bindings(local_scope, UseId::from(0))
         .unwrap();
     assert_eq!(enclosing_scope, ScopeId::from(0));
     assert_eq!(bindings.definitions(), &[
@@ -791,10 +776,9 @@ local({
 
 #[test]
 fn test_nse_eager_super_assignment_visible_to_later_use() {
-    // A `<<-` inside an eager NSE body mutates the enclosing binding mid-run,
-    // so uses after it must see the `<<-` definition. The eager snapshot is
-    // shared across all uses of the free variable, so it accumulates the `<<-`
-    // (a safe over-approximation for the earlier use, correct for the later).
+    // A `<<-` inside an eager NSE body mutates the enclosing binding mid-run.
+    // Each use captures its own point-in-time snapshot, so the use before the
+    // `<<-` sees only `x <- 1` while the use after it also sees the `<<-`.
     let index = index(
         "\
 x <- 1
@@ -808,24 +792,29 @@ local({
     let file = ScopeId::from(0);
     let local_scope = ScopeId::from(1);
 
-    // The enclosing snapshot for `x` (in the file scope) carries both the
-    // initial `x <- 1` (DefinitionId 0) and the `<<-` target (DefinitionId 1).
-    let x_sym = index.uses(local_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, bindings) = index.enclosing_bindings(local_scope, x_sym).unwrap();
-    assert_eq!(enclosing_scope, file);
-    assert_eq!(bindings.definitions(), &[
+    // Use 0 is before the `<<-`: only `x <- 1` (DefinitionId 0).
+    let (before_scope, before) = index
+        .enclosing_bindings(local_scope, UseId::from(0))
+        .unwrap();
+    assert_eq!(before_scope, file);
+    assert_eq!(before.definitions(), &[DefinitionId::from(0)]);
+
+    // Use 1 is after the `<<-`: `x <- 1` (0) and the `<<-` target (1).
+    let (after_scope, after) = index
+        .enclosing_bindings(local_scope, UseId::from(1))
+        .unwrap();
+    assert_eq!(after_scope, file);
+    assert_eq!(after.definitions(), &[
         DefinitionId::from(0),
         DefinitionId::from(1)
     ]);
 }
 
 #[test]
-fn test_nse_eager_snapshot_absorbs_unrelated_super_assignment() {
-    // The eager snapshot keys on the symbol in the enclosing scope, so it
-    // can't tell a `<<-` inside the body from one in a function defined after
-    // the call. `f`'s `<<-` is recorded on the file scope while its body is
-    // walked, firing the eager watcher, so `local()`'s snapshot over-includes
-    // it even though it can't reach the already-run body.
+fn test_nse_eager_snapshot_excludes_unrelated_super_assignment() {
+    // The eager snapshot is point-in-time with no watcher, so a `<<-` in a
+    // function defined after the `local()` call can't fold into it. `f`'s body
+    // runs at an unknown later time and can't reach the already-run eager body.
     let index = index(
         "\
 x <- 1
@@ -840,24 +829,21 @@ f <- function() {
     let file = ScopeId::from(0);
     let local_scope = ScopeId::from(1);
 
-    // File-scope defs in allocation order: `x <- 1` (0), then f's `<<-`
-    // target (1, recorded before f's own def since `collect_assignment` walks
-    // the value side first), then `f` (2). The snapshot absorbs the `<<-`.
-    let x_sym = index.uses(local_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, bindings) = index.enclosing_bindings(local_scope, x_sym).unwrap();
+    // Only `x <- 1` (DefinitionId 0). The `<<-` target recorded later while f's
+    // body is walked is excluded, since the eager snapshot took no watcher.
+    let (enclosing_scope, bindings) = index
+        .enclosing_bindings(local_scope, UseId::from(0))
+        .unwrap();
     assert_eq!(enclosing_scope, file);
-    assert_eq!(bindings.definitions(), &[
-        DefinitionId::from(0),
-        DefinitionId::from(1)
-    ]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
 }
 
 #[test]
-fn test_nse_eager_snapshot_absorbs_unrelated_routed_definition() {
+fn test_nse_eager_snapshot_excludes_unrelated_routed_definition() {
     // `on_load` is `Current + Lazy`, so its `x <- 2` routes to the file scope
-    // as a deferred def. That fires the eager watcher, so `local()`'s snapshot
-    // over-includes it, even though the routed def can't reach the already-run
-    // body.
+    // as a deferred def recorded after `local()`. The eager snapshot takes no
+    // watcher, so the routed def is excluded, correct since it can't reach the
+    // already-run body.
     let index = index(
         "\
 x <- 1
@@ -872,14 +858,12 @@ rlang::on_load({
     let file = ScopeId::from(0);
     let local_scope = ScopeId::from(1);
 
-    // File-scope defs: `x <- 1` (0) and the `on_load`-routed `x <- 2` (1).
-    let x_sym = index.uses(local_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, bindings) = index.enclosing_bindings(local_scope, x_sym).unwrap();
+    // Only `x <- 1` (DefinitionId 0). The routed `x <- 2` is excluded.
+    let (enclosing_scope, bindings) = index
+        .enclosing_bindings(local_scope, UseId::from(0))
+        .unwrap();
     assert_eq!(enclosing_scope, file);
-    assert_eq!(bindings.definitions(), &[
-        DefinitionId::from(0),
-        DefinitionId::from(1)
-    ]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
 }
 
 // --- Resolver-driven recognition ---
@@ -1328,8 +1312,7 @@ local({
     );
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
 
-    let x_sym = index.uses(f_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, x_sym).unwrap();
+    let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, local_scope);
 }
 
@@ -1366,8 +1349,7 @@ local({
 
     // `f`'s use of `y` resolves to local's snapshot. In local, `y` is
     // DefinitionId 0 (`f` is DefinitionId 1).
-    let y_sym = index.uses(f_scope)[UseId::from(0)].symbol();
-    let (enclosing_scope, bindings) = index.enclosing_bindings(f_scope, y_sym).unwrap();
+    let (enclosing_scope, bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, local_scope);
     assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
 }

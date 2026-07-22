@@ -189,9 +189,10 @@ use crate::semantic_index::UseId;
 // For eager NSE scopes (e.g. `local()`), the snapshot is more precise: since
 // the body executes at the call site, it's a point-in-time capture reflecting
 // exactly the linear state, with no union over definitions that come later in
-// the enclosing scope. The one exception is a `<<-` inside the eager body: it
-// mutates the enclosing binding mid-run, so its watcher fires for deferred
-// definitions only (see `register_eager_snapshot()`).
+// the enclosing scope. Each use in the body captures its own snapshot, so a use
+// after a `<<-` in the body sees the mutated binding while an earlier use does
+// not. Eager snapshots take no watcher: they never fold in a later definition
+// (see `register_eager_snapshot()`).
 
 /// The immutable use-def map for a single scope. For each use site, stores the
 /// set of definitions that can reach it through control flow.
@@ -307,12 +308,9 @@ pub(crate) struct UseDefMapBuilder {
     deferred_defs: Vec<(SymbolId, DefinitionId)>,
     enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
     // Lazy snapshots (e.g. `reactive()`), notified of every definition of a
-    // symbol so they fold in the whole union.
+    // symbol so they fold in the whole union. Eager snapshots (e.g. `local()`)
+    // are point-in-time and subscribe to nothing.
     lazy_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
-    // Eager snapshots (e.g. `local()`), notified only of deferred (`<<-`)
-    // definitions. A point-in-time capture ignores later plain defs, but a
-    // `<<-` mutates the binding while the eager body runs, so it must fold in.
-    eager_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
 }
 
 impl UseDefMapBuilder {
@@ -323,7 +321,6 @@ impl UseDefMapBuilder {
             deferred_defs: Vec::new(),
             enclosing_snapshots: IndexVec::new(),
             lazy_watchers: FxHashMap::default(),
-            eager_watchers: FxHashMap::default(),
         }
     }
 
@@ -412,17 +409,12 @@ impl UseDefMapBuilder {
     pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
         self.deferred_defs.push((symbol_id, def_id));
-        // A deferred def reaches both watcher sets: lazy snapshots (like any
-        // def) and eager snapshots (which take deferred defs only).
+        // A deferred def reaches lazy snapshots like any other def. Eager
+        // snapshots take no watcher, so a `<<-` inside an eager body reaches
+        // them only through the point-in-time clone of a use that follows it.
         Self::notify_watchers(
             &mut self.enclosing_snapshots,
             &self.lazy_watchers,
-            symbol_id,
-            def_id,
-        );
-        Self::notify_watchers(
-            &mut self.enclosing_snapshots,
-            &self.eager_watchers,
             symbol_id,
             def_id,
         );
@@ -500,41 +492,34 @@ impl UseDefMapBuilder {
     /// definitions that come later in the enclosing scope.
     ///
     /// Unlike [`register_lazy_snapshot`](Self::register_lazy_snapshot), this
-    /// watcher fires only on deferred (`<<-`) definitions. A `<<-` inside the
-    /// eager body changes the binding while the body runs, and uses later in
-    /// the body must see that change. A plain `<-` after the eager call on the
-    /// other hand runs once the body has finished, so it stays out of the
-    /// snapshot. One snapshot is shared by every use of the symbol in the body,
-    /// so a use before the `<<-` picks it up too. That is a known over-approximation.
+    /// takes no watcher. The clone is the whole answer. Each use in the eager
+    /// body registers its own snapshot, so it captures the enclosing state at
+    /// that exact point in the flow. A `<<-` inside the body is already live in
+    /// `symbol_states` by the time a later use clones, so that use sees it while
+    /// an earlier one does not:
     ///
     /// ```r
     /// x <- 1
     /// local({
-    ///     x        # {1, 2}: Should be {1} but shares one snapshot with the use below
-    ///     x <<- 2  # deferred def, folded into the snapshot
-    ///     x        # {1, 2}
+    ///     x        # {1}: cloned before the `<<-`
+    ///     x <<- 2  # deferred def, now live in the enclosing state
+    ///     x        # {1, 2}: cloned after the `<<-`
     /// })
-    /// x <- 3       # plain `<-` after the call, stays out of the snapshot
     /// ```
     ///
-    /// The watcher keys on the symbol, not on where the def came from. It also
-    /// picks up deferred defs from outside this body. One is a `<<-` in a
-    /// function defined after the eager call. Another is a `Current + Lazy`
-    /// routing like `rlang::on_load`. Neither can reach the body, which already
-    /// ran. Both are safe over-approximations, the same kind as the pre-`<<-`
-    /// use above.
+    /// And since nothing fires later, a definition recorded after the body has
+    /// run never folds in, which is correct: the eager body is already done.
     ///
     /// ```r
     /// x <- 1
     /// local({ x })                 # {1}
-    /// f <- function() { x <<- 2 }  # {1, 2}: f's `<<-` can't reach the finished body
-    /// rlang::on_load({ x <- 3 })   # {1, 2, 3}: routed def can't reach it either
+    /// f <- function() { x <<- 2 }  # f's `<<-` can't reach the finished body
+    /// rlang::on_load({ x <- 3 })   # routed def can't reach it either
+    /// x <- 4                       # plain `<-` after the call, out of the snapshot
     /// ```
     pub(crate) fn register_eager_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
         let bindings = self.symbol_states[symbol_id].clone();
-        let id = self.enclosing_snapshots.push(bindings);
-        self.eager_watchers.entry(symbol_id).or_default().push(id);
-        id
+        self.enclosing_snapshots.push(bindings)
     }
 
     fn notify_watchers(
