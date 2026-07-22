@@ -335,8 +335,7 @@ impl SemanticIndex {
         let local = bindings.definitions().iter().map(move |&d| (scope_id, d));
 
         let enclosing = if bindings.may_be_unbound() {
-            let symbol_id = self.uses(scope_id)[use_id].symbol();
-            self.enclosing_bindings(scope_id, symbol_id)
+            self.enclosing_bindings(scope_id, use_id)
         } else {
             None
         };
@@ -349,10 +348,10 @@ impl SemanticIndex {
 
     /// Resolve a free variable's bindings from the enclosing scope.
     ///
-    /// When a use in `scope` may be unbound (`may_be_unbound: true`), some
-    /// control-flow paths fall through to an enclosing scope. This looks up
-    /// the enclosing snapshot that was registered during the build and
-    /// returns the ancestor scope and its bindings. This covers both purely
+    /// When the use `use_id` in `scope` may be unbound (`may_be_unbound: true`),
+    /// some control-flow paths fall through to an enclosing scope. This looks up
+    /// the enclosing snapshot that was registered for that use during the build
+    /// and returns the ancestor scope and its bindings. This covers both purely
     /// free variables (no local definitions) and conditionally defined
     /// variables (local definitions exist but don't cover all paths).
     ///
@@ -362,11 +361,11 @@ impl SemanticIndex {
     pub fn enclosing_bindings(
         &self,
         scope: ScopeId,
-        symbol: SymbolId,
+        use_id: UseId,
     ) -> Option<(ScopeId, &Bindings)> {
         let key = EnclosingSnapshotKey {
             nested_scope: scope,
-            nested_symbol: symbol,
+            nested_use: use_id,
         };
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
@@ -375,13 +374,17 @@ impl SemanticIndex {
 }
 
 /// Key for looking up an enclosing snapshot. Keyed by the nested scope and the
-/// symbol's `SymbolId` in the nested scope's symbol table (not the enclosing
-/// scope's), so consumers can do an O(1) lookup directly from a `UseId` without
-/// re-walking the ancestor chain.
+/// `UseId` of the free variable in that scope, so consumers do an O(1) lookup
+/// straight from a use without re-walking the ancestor chain.
+///
+/// Keyed per use, not per symbol, because eager snapshots (e.g. `local()`) are
+/// point-in-time: two uses of the same free variable at different points in an
+/// eager body can see different enclosing states, so each gets its own
+/// snapshot. Lazy uses of one symbol still share a single snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnclosingSnapshotKey {
     pub nested_scope: ScopeId,
-    pub nested_symbol: SymbolId,
+    pub nested_use: UseId,
 }
 
 // --- Scope ---

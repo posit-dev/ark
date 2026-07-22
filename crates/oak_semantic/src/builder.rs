@@ -118,6 +118,9 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     current_scope: ScopeId,
     bound_names: IndexVec<ScopeId, BoundNames>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+    // Snapshots shared across every use of a free variable in lazy contexts,
+    // keyed by (nested scope, nested symbol).
+    lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
@@ -175,6 +178,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             current_scope: file_scope,
             bound_names,
             enclosing_snapshots: FxHashMap::default(),
+            lazy_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
             namespace_accesses: Vec::new(),
             call_resolutions: FxHashMap::default(),
@@ -386,15 +390,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // Associate free variables with the enclosing snapshot where the
         // variable is defined
         if self.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
-            let use_key = EnclosingSnapshotKey {
-                nested_scope: self.current_scope,
-                nested_symbol: symbol_id,
-            };
-            self.register_enclosing_snapshot(name, use_key);
+            self.register_enclosing_snapshot(name, symbol_id, use_id);
         }
     }
 
-    fn register_enclosing_snapshot(&mut self, name: &str, use_key: EnclosingSnapshotKey) {
+    fn register_enclosing_snapshot(&mut self, name: &str, nested_symbol: SymbolId, use_id: UseId) {
         // We're looking for a parent definition for this scope's free variable
         // so start from parent
         let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
@@ -427,20 +427,38 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // `add_definition()` call during the full walk will set `IS_BOUND`.
                 let enclosing_symbol_id =
                     self.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
-
-                if self.enclosing_snapshots.contains_key(&use_key) {
-                    return;
-                }
-
                 self.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
 
-                let snapshot_id = if all_eager {
-                    self.use_def_maps[current_scope].register_eager_snapshot(enclosing_symbol_id)
+                let entry = if all_eager {
+                    // Eager: a fresh point-in-time snapshot per use, no dedup and
+                    // no watcher. Two uses at different points in the body can
+                    // capture different enclosing states (e.g. either side of a
+                    // `<<-`), so they can't share.
+                    let snapshot_id = self.use_def_maps[current_scope]
+                        .register_eager_snapshot(enclosing_symbol_id);
+                    (current_scope, snapshot_id)
                 } else {
-                    self.use_def_maps[current_scope].register_lazy_snapshot(enclosing_symbol_id)
+                    // Lazy: every use of this symbol resolves to the same
+                    // growing snapshot, so dedup on (nested scope, nested symbol)
+                    // and reuse it across uses.
+                    let dedup_key = (self.current_scope, nested_symbol);
+
+                    if let Some(&entry) = self.lazy_snapshots.get(&dedup_key) {
+                        entry
+                    } else {
+                        let snapshot_id = self.use_def_maps[current_scope]
+                            .register_lazy_snapshot(enclosing_symbol_id);
+                        let entry = (current_scope, snapshot_id);
+                        self.lazy_snapshots.insert(dedup_key, entry);
+                        entry
+                    }
                 };
-                self.enclosing_snapshots
-                    .insert(use_key, (current_scope, snapshot_id));
+
+                let use_key = EnclosingSnapshotKey {
+                    nested_scope: self.current_scope,
+                    nested_use: use_id,
+                };
+                self.enclosing_snapshots.insert(use_key, entry);
 
                 return;
             }

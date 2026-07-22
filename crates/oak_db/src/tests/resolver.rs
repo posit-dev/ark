@@ -198,9 +198,8 @@ fn test_closure_capture_with_source_before_function() {
     let bindings = fn_map.bindings_at_use(use_id);
     assert!(bindings.may_be_unbound());
 
-    let symbol = index.uses(fn_scope)[use_id].symbol();
     let (enclosing_scope, enclosing_bindings) = index
-        .enclosing_bindings(fn_scope, symbol)
+        .enclosing_bindings(fn_scope, use_id)
         .expect("`helper` should have an enclosing snapshot at the file scope");
     assert_eq!(enclosing_scope, file_scope);
     assert!(!enclosing_bindings.definitions().is_empty());
@@ -321,8 +320,7 @@ fn test_closure_capture_with_source_after_function() {
     let fn_scope = ScopeId::from(1);
 
     let use_id = oak_semantic::UseId::from(0);
-    let symbol = index.uses(fn_scope)[use_id].symbol();
-    assert!(index.enclosing_bindings(fn_scope, symbol).is_some());
+    assert!(index.enclosing_bindings(fn_scope, use_id).is_some());
 }
 
 #[test]
