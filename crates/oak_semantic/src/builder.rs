@@ -77,6 +77,7 @@ use crate::semantic_index::SemanticCallKind;
 use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
+use crate::semantic_index::SymbolId;
 use crate::semantic_index::SymbolTableBuilder;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
@@ -459,13 +460,39 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
-        let found_by_flag = self.symbol_tables[scope].id(name).is_some_and(|sym_id| {
-            self.symbol_tables[scope]
-                .symbol(sym_id)
-                .flags()
-                .contains(SymbolFlags::IS_BOUND)
-        });
-        found_by_flag || self.bound_names[scope].binds(name)
+        self.walked_binding(scope, name).is_some() || self.bound_names[scope].binds(name)
+    }
+
+    /// The site where `scope` binds `name`, matching what
+    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere) counts as a binding
+    /// (so it returns `Some` on exactly the same names). Prefers the
+    /// scan-collected site in `bound_names`, falling back to the range of an
+    /// already-walked `IS_BOUND` definition (e.g. a parameter, which the scan
+    /// seeds straight into `flow_state` without a `bound_names` entry). Used to
+    /// point the lazy-shadow diagnostic at the overwrite.
+    fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
+        if let Some(range) = self.bound_names[scope].binding_range(name) {
+            return Some(range);
+        }
+
+        // `IS_BOUND` always has a matching `Definition` row (see the invariant
+        // in `resolve_symbol()`), so the find never misses when the flag is set.
+        let sym_id = self.walked_binding(scope, name)?;
+        self.definitions[scope]
+            .iter()
+            .find(|(_id, def)| def.symbol == sym_id)
+            .map(|(_id, def)| def.range)
+    }
+
+    /// The symbol `name` interns to in `scope`, if the walk has already recorded
+    /// an `IS_BOUND` definition for it.
+    fn walked_binding(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+        let sym_id = self.symbol_tables[scope].id(name)?;
+        self.symbol_tables[scope]
+            .symbol(sym_id)
+            .flags()
+            .contains(SymbolFlags::IS_BOUND)
+            .then_some(sym_id)
     }
 
     /// Record the names a child scope (function body, NSE argument) about to be
@@ -573,8 +600,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         match assignment_name(&target) {
                             // `<<-` binds in an ancestor, not here, so it doesn't
                             // shadow a callee in this scope (matching the walk).
-                            Some((name, _)) if !is_super_assignment(bin) => {
-                                self.record_binding(name);
+                            Some((name, range)) if !is_super_assignment(bin) => {
+                                self.record_binding(name, range);
                             },
                             Some(_) => {},
                             // Complex target (`x$foo <- v`): no binding, but the
@@ -604,7 +631,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // The for-variable is always bound (R sets it to NULL for empty
                 // sequences), so it binds before the body regardless of flow.
                 if let Ok(variable) = stmt.variable() {
-                    self.record_binding(variable.name_text());
+                    self.record_binding(
+                        variable.name_text(),
+                        variable.syntax().text_trimmed_range(),
+                    );
                 }
                 if let Ok(sequence) = stmt.sequence() {
                     self.scan_expression(&sequence);
@@ -725,14 +755,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
+        // Sourced names originate in another file, so they have no binding site
+        // here. Anchor the overwrite range at the `source()` call instead.
+        let range = call.syntax().text_trimmed_range();
         for name in &resolution.names {
-            self.record_binding(name.clone());
+            self.record_binding(name.clone(), range);
         }
 
-        self.call_resolutions
-            .entry(call.syntax().text_trimmed_range())
-            .or_default()
-            .source = Some(resolution);
+        self.call_resolutions.entry(range).or_default().source = Some(resolution);
     }
 
     /// Record a binding in the scan's flow state.
@@ -742,8 +772,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// when the current scope owns it. A `Current + Lazy` scope routes its defs
     /// to the owner, so the name is added to the owner's bound names instead, the
     /// same routing `add_definition_to_owner` does during the walk.
-    fn record_binding(&mut self, name: String) {
-        self.record_owner_name(name.clone());
+    fn record_binding(&mut self, name: String, range: TextRange) {
+        self.record_owner_name(name.clone(), range);
         self.flow_state.bind(name);
     }
 
@@ -756,9 +786,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
     /// bound in `flow_state` (see that helper for why).
-    fn record_owner_name(&mut self, name: String) {
+    fn record_owner_name(&mut self, name: String, range: TextRange) {
         if let Some(bound) = self.eager_descent.open.last_mut() {
-            bound.add(name);
+            bound.add(name, range);
             return;
         }
 
@@ -766,7 +796,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             ScopeKind::Nse(NseScope::Current, NseTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
         } {
-            self.bound_names[target].add(name);
+            self.bound_names[target].add(name, range);
         }
     }
 
@@ -1350,9 +1380,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now
         for diagnostic in &self.diagnostics {
             match diagnostic {
-                SemanticDiagnostic::LazyShadowAmbiguity { name, range } => log::warn!(
-                    "NSE lazy-shadow ambiguity: callee `{name}` at {range:?} is recognized \
-                     as NSE, but a lazy-crossed ancestor binds it with undetermined timing"
+                SemanticDiagnostic::LazyShadowAmbiguity {
+                    name,
+                    call_range,
+                    overwrite_range,
+                } => log::warn!(
+                    "NSE lazy-shadow ambiguity: callee `{name}` at {call_range:?} is recognized \
+                     as NSE, but a lazy-crossed ancestor binds it at {overwrite_range:?} with \
+                     undetermined timing"
                 ),
             }
         }
@@ -1481,23 +1516,32 @@ struct EagerNestedDescent {
 
 /// All definitions in a scope, collected by the scan pass before the
 /// walk. Skips child-scope bodies (nested functions and `Nested` NSE bodies).
+///
+/// Keeps each name's earliest binding site in scan order, which is source
+/// order within the scope. A name bound several times reads as bound
+/// throughout, and this earliest site is what the lazy-shadow diagnostic points
+/// at, once `is_lazily_shadowed` has picked the nearest binding ancestor.
 struct BoundNames {
-    by_name: FxHashSet<String>,
+    by_name: FxHashMap<String, TextRange>,
 }
 
 impl BoundNames {
     fn new() -> Self {
         Self {
-            by_name: FxHashSet::default(),
+            by_name: FxHashMap::default(),
         }
     }
 
-    fn add(&mut self, name: String) {
-        self.by_name.insert(name);
+    fn add(&mut self, name: String, range: TextRange) {
+        self.by_name.entry(name).or_insert(range);
     }
 
     fn binds(&self, name: &str) -> bool {
-        self.by_name.contains(name)
+        self.by_name.contains_key(name)
+    }
+
+    fn binding_range(&self, name: &str) -> Option<TextRange> {
+        self.by_name.get(name).copied()
     }
 }
 
