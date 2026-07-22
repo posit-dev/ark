@@ -16,6 +16,7 @@ use super::is_super_assignment;
 use super::BoundNames;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
+use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::EffectSite;
@@ -23,7 +24,6 @@ use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::effects_registry;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::NseScope;
 use crate::semantic_index::NseTiming;
@@ -208,7 +208,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let op_text = op.text_trimmed();
 
         // Bail early if this operator is not known to have effects annotations
-        if !effects_registry::annotates(op_text) {
+        if !effects::annotates(op_text) {
             return None;
         }
 
@@ -373,7 +373,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let pkg = left.identifier_text()?;
                 let func_name = right.identifier_text()?;
 
-                if !effects_registry::annotates(&func_name) {
+                if !effects::annotates(&func_name) {
                     return None;
                 }
 
@@ -404,7 +404,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Bail early if it is known that no package annotates this name
         // with effects. This speeds up the common case of no known annotations.
-        if !effects_registry::annotates(sym) {
+        if !effects::annotates(sym) {
             return None;
         }
 
