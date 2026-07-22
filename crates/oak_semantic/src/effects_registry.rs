@@ -60,6 +60,30 @@ macro_rules! nse {
     };
 }
 
+/// A quoted entry. Each `(name, position)` names an argument captured
+/// unevaluated: its symbols aren't uses and nothing in it runs. `quote`,
+/// `bquote`.
+macro_rules! quoted {
+    ($pkg:literal, $func:literal, $(($name:literal, $pos:literal)),+ $(,)?) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: Some(&ArgumentsAnnotation {
+                    arguments: &[$(Argument {
+                        name: $name,
+                        position: $pos,
+                        effect: ArgumentEffect::Quote,
+                    }),+],
+                }),
+                attach: None,
+                source: None,
+                assign: None,
+            },
+        }
+    };
+}
+
 /// An attach entry: `(package-argument position, has-`character.only`-flag)`.
 macro_rules! attach {
     ($pkg:literal, $func:literal, $pos:literal, $character_only:literal) => {
@@ -120,6 +144,9 @@ static REGISTRY: &[Entry] = &[
     nse!("base", "with.default", ("expr", 1, Nested, Eager)),
     nse!("base", "within", ("expr", 1, Nested, Eager)),
     nse!("base", "within.data.frame", ("expr", 1, Nested, Eager)),
+    // base quote
+    quoted!("base", "quote", ("expr", 0)),
+    quoted!("base", "bquote", ("expr", 0)),
     // base attach
     attach!("base", "library", 0, true),
     attach!("base", "require", 0, true),
