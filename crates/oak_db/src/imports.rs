@@ -21,9 +21,9 @@ use crate::RootKind;
 /// - `target.exports(db)` for the names `source()` injects into the
 ///   calling scope.
 ///
-/// - `target.attached_packages(db)` for the target's file-scope `library()`
-///   calls. `source()` runs the target's top-level statements at load time,
-///   so any attach calls take effect in the caller's search path.
+/// - `target.attached_packages(db)` for the target's top-level `library()`
+///   calls, the ones `source()` actually runs. A `library()` buried in a
+///   function body has not run at source time, so it is excluded.
 ///
 /// Both return PartialEq-stable values (a `FileExports` map and a
 /// `Vec<String>` respectively), so body-only edits to the target backdate
@@ -73,6 +73,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .iter()
             .map(|(name, _)| name.to_string())
             .collect();
+
         let packages: Vec<String> = file
             .attached_packages(self.db)
             .iter()
