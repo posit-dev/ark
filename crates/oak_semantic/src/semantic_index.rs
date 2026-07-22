@@ -430,7 +430,12 @@ pub enum NseScope {
 /// (at an unknown later time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NseTiming {
+    /// Expression that runs at the call site. Free variables resolve against
+    /// the linear state right there. E.g. `local()`, `evalq()`, `test_that()`.
     Eager,
+    /// Expression that runs at an unknown later time, so free variables resolve
+    /// against the accumulated union of enclosing definitions. E.g.
+    /// `shiny::reactive()`, `rlang::on_load()`.
     Lazy,
 }
 
@@ -443,7 +448,7 @@ impl ScopeKind {
         match self {
             ScopeKind::File => false,
             ScopeKind::Function => true,
-            ScopeKind::Nse(_, laziness) => laziness == NseTiming::Lazy,
+            ScopeKind::Nse(_, timing) => timing == NseTiming::Lazy,
         }
     }
 }
