@@ -36,6 +36,23 @@ fn test_local_definition_navigates_to_binding() {
 }
 
 #[test]
+fn test_navigates_from_bquote_hole_use() {
+    let mut db = OakDatabase::new();
+    let source = "x <- 1\nbquote(.(x))\n";
+    let file = upsert(&mut db, "a.R", source);
+
+    // Cursor on the `x` inside `bquote`'s `.()` hole, which is a live use.
+    let hole = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(&db, file, TextSize::from(hole));
+    assert_eq!(targets.len(), 1);
+
+    let target = &targets[0];
+    assert_eq!(target.file, file);
+    assert_eq!(target.name, "x");
+    assert_eq!(target.full_range, range(0, 1));
+}
+
+#[test]
 fn test_navigates_from_trailing_edge_of_identifier() {
     let mut db = OakDatabase::new();
     let file = upsert(&mut db, "a.R", "x <- 1\nx\n");

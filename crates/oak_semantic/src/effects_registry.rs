@@ -3,6 +3,7 @@ use crate::effects::ArgumentEffect;
 use crate::effects::ArgumentsAnnotation;
 use crate::effects::AssignAnnotation;
 use crate::effects::AttachAnnotation;
+use crate::effects::BquoteHandler;
 use crate::effects::EffectsHandlers;
 use crate::effects::SourceAnnotation;
 use crate::semantic_index::NseScope::Current;
@@ -146,7 +147,18 @@ static REGISTRY: &[Entry] = &[
     nse!("base", "within.data.frame", ("expr", 1, Nested, Eager)),
     // base quote
     quoted!("base", "quote", ("expr", 0)),
-    quoted!("base", "bquote", ("expr", 0)),
+    // `bquote` quotes `expr` too, but its `.()` holes escape to evaluation, so
+    // it needs a handler rather than a static per-argument effect.
+    Entry {
+        package: "base",
+        function: "bquote",
+        effects: EffectsHandlers {
+            arguments: Some(&BquoteHandler),
+            attach: None,
+            source: None,
+            assign: None,
+        },
+    },
     // base attach
     attach!("base", "library", 0, true),
     attach!("base", "require", 0, true),
