@@ -306,11 +306,13 @@ pub(crate) struct UseDefMapBuilder {
     // Currently used for `<<-` extra definitions in ancestor scopes.
     deferred_defs: Vec<(SymbolId, DefinitionId)>,
     enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
-    // Snapshots subscribed to every definition of a symbol (lazy snapshots).
-    def_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
-    // Snapshots subscribed only to deferred (`<<-`) definitions of a symbol
-    // (eager snapshots).
-    deferred_def_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
+    // Lazy snapshots (e.g. `reactive()`), notified of every definition of a
+    // symbol so they fold in the whole union.
+    lazy_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
+    // Eager snapshots (e.g. `local()`), notified only of deferred (`<<-`)
+    // definitions. A point-in-time capture ignores later plain defs, but a
+    // `<<-` mutates the binding while the eager body runs, so it must fold in.
+    eager_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
 }
 
 impl UseDefMapBuilder {
@@ -320,8 +322,8 @@ impl UseDefMapBuilder {
             bindings_by_use: IndexVec::new(),
             deferred_defs: Vec::new(),
             enclosing_snapshots: IndexVec::new(),
-            def_watchers: FxHashMap::default(),
-            deferred_def_watchers: FxHashMap::default(),
+            lazy_watchers: FxHashMap::default(),
+            eager_watchers: FxHashMap::default(),
         }
     }
 
@@ -340,9 +342,11 @@ impl UseDefMapBuilder {
     /// live definitions for that symbol.
     pub(crate) fn record_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].record_definition(def_id);
+        // A plain def reaches lazy snapshots only. Eager snapshots are
+        // point-in-time and ignore defs that land after the call.
         Self::notify_watchers(
             &mut self.enclosing_snapshots,
-            &self.def_watchers,
+            &self.lazy_watchers,
             symbol_id,
             def_id,
         );
@@ -408,17 +412,17 @@ impl UseDefMapBuilder {
     pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
         self.deferred_defs.push((symbol_id, def_id));
-        // A deferred def reaches both channels: lazy snapshots (like any def)
-        // and eager snapshots (they subscribe to deferred defs only).
+        // A deferred def reaches both watcher sets: lazy snapshots (like any
+        // def) and eager snapshots (which take deferred defs only).
         Self::notify_watchers(
             &mut self.enclosing_snapshots,
-            &self.def_watchers,
+            &self.lazy_watchers,
             symbol_id,
             def_id,
         );
         Self::notify_watchers(
             &mut self.enclosing_snapshots,
-            &self.deferred_def_watchers,
+            &self.eager_watchers,
             symbol_id,
             def_id,
         );
@@ -486,7 +490,7 @@ impl UseDefMapBuilder {
     pub(crate) fn register_lazy_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
         let bindings = self.symbol_states[symbol_id].clone();
         let id = self.enclosing_snapshots.push(bindings);
-        self.def_watchers.entry(symbol_id).or_default().push(id);
+        self.lazy_watchers.entry(symbol_id).or_default().push(id);
         id
     }
 
@@ -529,10 +533,7 @@ impl UseDefMapBuilder {
     pub(crate) fn register_eager_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
         let bindings = self.symbol_states[symbol_id].clone();
         let id = self.enclosing_snapshots.push(bindings);
-        self.deferred_def_watchers
-            .entry(symbol_id)
-            .or_default()
-            .push(id);
+        self.eager_watchers.entry(symbol_id).or_default().push(id);
         id
     }
 
