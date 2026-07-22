@@ -1142,10 +1142,21 @@ impl RDataExplorer {
         selection: ArraySelection,
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
+        let indices = self.get_row_selection_indices(selection);
+
+        // An empty selection has no labels to resolve. Positron sends an empty
+        // selection during its first cache update before the viewport rows are
+        // laid out. We must short-circuit here: subsetting a matrix to zero rows
+        // drops its rownames to `NULL`, which the strict match below would
+        // otherwise reject.
+        if indices.is_empty() {
+            return Ok(vec![]);
+        }
+
         let tbl = tbl_subset_with_view_indices(
             self.table.get().sexp,
             &self.view_indices,
-            Some(self.get_row_selection_indices(selection)),
+            Some(indices),
             Some(vec![]), // Use empty vec, because we only need the row names.
         )?;
 
@@ -1158,6 +1169,9 @@ impl RDataExplorer {
                 let labels = format_string(row_names.sexp, format_options);
                 Ok(labels)
             },
+            // Defense in depth: `row.names()` returns `NULL` for a table with no
+            // row names, so treat that as "no labels" rather than an error.
+            NILSXP => Ok(vec![]),
             _ => Err(anyhow!(
                 "`row.names` should be strings, got {:?}",
                 row_names.kind()
