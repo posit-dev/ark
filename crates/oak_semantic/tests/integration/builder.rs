@@ -6,8 +6,10 @@ use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
 use oak_semantic::effects::AssignBinding;
+use oak_semantic::effects::AssignHandler;
 use oak_semantic::effects::CallContext;
 use oak_semantic::effects::EffectHandler;
+use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects_registry;
@@ -2329,10 +2331,11 @@ struct MultiAssignHandler;
 
 static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
 
-impl EffectHandler for MultiAssignHandler {
-    type Output = Vec<AssignBinding>;
-
-    fn resolve(&self, call: &RCall, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+impl AssignHandler for MultiAssignHandler {
+    fn resolve(&self, site: EffectSite, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        let EffectSite::Call(call) = site else {
+            return None;
+        };
         // Point every binding's handles at the first argument. This test only
         // checks that multiple defs are created and resolve, not their ranges.
         let expr = call
