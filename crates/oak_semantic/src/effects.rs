@@ -3,7 +3,11 @@ use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
 use aether_syntax::RArgument;
 use aether_syntax::RCall;
+use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
+// Re-exported so consumers building an `AssignBinding` (custom `EffectHandler`s)
+// can name the `name_expr` field's type without depending on oak_core directly.
+pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 
@@ -20,6 +24,23 @@ pub struct Effects {
     /// Source one or more files. A vector so a collation-style callee can name
     /// several; base `source` resolves to one.
     pub source: Option<Vec<String>>,
+    /// Bind one or more names in the current scope (`assign("x", value)`). A
+    /// vector so a multi-binding callee stays expressible; base `assign` and
+    /// `delayedAssign` resolve to one.
+    pub assign: Option<Vec<AssignBinding>>,
+}
+
+/// One name an assign call binds, with the syntax handles its consumers need.
+/// - The bound name feeds the symbol table.
+/// - `name_expr` anchors the goto target and carries a trimmed range that can
+///   be matched against a cursor (e.g. for goto/rename).
+/// - `value_expr` is what a type checker infers the binding's type from (`None`
+///   with no value argument).
+#[derive(Debug, Clone)]
+pub struct AssignBinding {
+    pub name: String,
+    pub name_expr: RangedAstPtr<AnyRExpression>,
+    pub value_expr: Option<AstPtr<AnyRExpression>>,
 }
 
 /// The handlers that compute a function's effects.
@@ -28,6 +49,7 @@ pub struct EffectsHandlers {
     pub arguments: Option<&'static dyn EffectHandler<Output = ResolvedArgumentEffects>>,
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
     pub source: Option<&'static dyn EffectHandler<Output = Vec<String>>>,
+    pub assign: Option<&'static dyn EffectHandler<Output = Vec<AssignBinding>>>,
 }
 
 /// Resolver for an effect of a call.
@@ -49,7 +71,9 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
 
 /// Context for effect handlers.
 ///
-/// Allows querying the properties or static values of arguments.
+/// Allows querying the properties or static values of arguments. Stateless
+/// today, an extension point for information a call's syntax doesn't carry (e.g.
+/// resolving a `character.only` variable to its string value) once that lands.
 #[derive(Default)]
 pub struct CallContext;
 
@@ -229,6 +253,10 @@ impl EffectHandler for SourceAnnotation {
         // to a named argument coming first (e.g. `source(echo = TRUE, "x.R")`),
         // which the call-position matching isn't yet. A named `file =` therefore
         // isn't recognized today.
+        //
+        // TODO(nse): once `match_arguments` is signature-aware (see `Formal`),
+        // the leading-named-arg robustness comes for free and this scan could
+        // fold onto it, keeping only the `local =` bail on top.
         let mut path: Option<String> = None;
         let mut positional = 0;
 
@@ -266,6 +294,74 @@ impl EffectHandler for SourceAnnotation {
         }
 
         path.map(|resolved| vec![resolved])
+    }
+}
+
+/// Declares how an assign function (`assign()`, `delayedAssign()`) names the
+/// variable it binds, and serves as the default [`EffectHandler`] for it by
+/// pulling that name out of a call.
+#[derive(Debug, Clone, Copy)]
+pub struct AssignAnnotation {
+    /// Which positional argument holds the bound name, counting only unnamed
+    /// arguments (0 for base `assign`/`delayedAssign`).
+    pub position: usize,
+}
+
+impl EffectHandler for AssignAnnotation {
+    type Output = Vec<AssignBinding>;
+
+    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        let args = call.arguments().ok()?;
+
+        // Matched positionally among unnamed arguments, same as `source`, so a
+        // leading named argument doesn't shift the count and a named `x =` isn't
+        // recognized. The value is the positional right after the name (base
+        // `assign(x, value, ...)`).
+        //
+        // FIXME: A named `value =` isn't captured yet.
+        // TODO(nse): Fold onto `match_arguments()` once it's signature-aware,
+        // same as `source` (see `SourceAnnotation::resolve`), keeping only the
+        // `envir`/`pos` bail and the value-after-name read on top.
+        let mut name: Option<(String, RangedAstPtr<AnyRExpression>)> = None;
+        let mut value_expr: Option<AstPtr<AnyRExpression>> = None;
+        let mut positional = 0;
+
+        for item in args.items().iter() {
+            let Ok(arg) = item else { continue };
+
+            if let Some(name_clause) = arg.name_clause() {
+                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
+                    continue;
+                };
+
+                // An explicit target environment means the binding lands
+                // somewhere other than the current scope, so it isn't a fact we
+                // can record here. In the future, we could statically recognise
+                // some environment selectors like `parent.frame()`.
+                if matches!(name_ident.name_text().as_str(), "envir" | "pos") {
+                    return None;
+                }
+                continue;
+            }
+
+            if positional == self.position {
+                if let Some(value) = arg.value() {
+                    if let Some(resolved) = ctx.resolve_static_string(&value) {
+                        name = Some((resolved, RangedAstPtr::new(&value)));
+                    }
+                }
+            } else if positional == self.position + 1 {
+                value_expr = arg.value().map(|value| AstPtr::new(&value));
+            }
+            positional += 1;
+        }
+
+        let (name, name_expr) = name?;
+        Some(vec![AssignBinding {
+            name,
+            name_expr,
+            value_expr,
+        }])
     }
 }
 

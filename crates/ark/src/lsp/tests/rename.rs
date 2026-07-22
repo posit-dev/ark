@@ -200,6 +200,147 @@ fn test_rename_cross_file_via_source() {
 }
 
 #[test]
+fn test_rename_string_assignment_keeps_quotes() {
+    // `"foo" <- 1` binds `foo` via a string. Renaming keeps it a string rather
+    // than unquoting to `bar <- 1`, so the binding form is preserved.
+    let code = "\"foo\" <- 1\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    let expected: Vec<TextEdit> = vec![
+        TextEdit {
+            range: range((0, 0), (0, 5)),
+            new_text: "\"bar\"".to_string(),
+        },
+        TextEdit {
+            range: range((1, 0), (1, 3)),
+            new_text: "bar".to_string(),
+        },
+    ];
+    assert_eq!(edits, expected);
+}
+
+#[test]
+fn test_rename_assign_call_keeps_quotes() {
+    // `assign("foo", 1)` binds `foo` via a string argument. Unquoting it to
+    // `assign(bar, 1)` would change the program, so the rename stays quoted.
+    let code = "assign(\"foo\", 1)\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    let expected: Vec<TextEdit> = vec![
+        TextEdit {
+            range: range((0, 7), (0, 12)),
+            new_text: "\"bar\"".to_string(),
+        },
+        TextEdit {
+            range: range((1, 0), (1, 3)),
+            new_text: "bar".to_string(),
+        },
+    ];
+    assert_eq!(edits, expected);
+}
+
+#[test]
+fn test_rename_assign_call_from_definition_site() {
+    // Rename invoked with the cursor ON the `assign()` name literal (not a later
+    // use) works too. This is what the def's own range enables: `definition_at`
+    // hit-tests the name token at the definition site.
+    let code = "assign(\"foo\", 1)\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    // Cursor inside the `"foo"` literal.
+    let params = make_rename_params(uri.clone(), 0, 8, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    let expected: Vec<TextEdit> = vec![
+        TextEdit {
+            range: range((0, 7), (0, 12)),
+            new_text: "\"bar\"".to_string(),
+        },
+        TextEdit {
+            range: range((1, 0), (1, 3)),
+            new_text: "bar".to_string(),
+        },
+    ];
+    assert_eq!(edits, expected);
+
+    // TODO!(nse-resolver): rename of a `%<>%`/`%<~%` binding can't be tested here
+    // yet, from a use or from its definition site. `SalsaImportsResolver` only
+    // resolves `base`, so the operators aren't recognized as assign effects at
+    // this layer until the resolver walks the search path. Operator recognition
+    // and its name range are covered in `oak_semantic`'s builder tests meanwhile.
+}
+
+#[test]
+fn test_rename_assign_call_preserves_single_quote_delimiter() {
+    let code = "assign('foo', 1)\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let def_edit = edit
+        .changes
+        .unwrap()
+        .remove(&uri)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.range.start.line == 0)
+        .unwrap();
+    assert_eq!(def_edit.new_text, "'bar'");
+}
+
+#[test]
+fn test_rename_string_bound_symbol_to_spaced_name_stays_a_string() {
+    // A name needing backticks as an identifier is a plain string in the
+    // string-form site: `"foo" <- 1` -> `"new name" <- 1`, use -> `` `new name` ``.
+    let code = "\"foo\" <- 1\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 1, 0, "new name");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    assert_eq!(edits[0].new_text, "\"new name\"");
+    assert_eq!(edits[1].new_text, "`new name`");
+}
+
+#[test]
+fn test_rename_assign_call_to_non_syntactic_name_stays_a_string() {
+    // A non-syntactic target lands verbatim inside the quotes,
+    // `assign("non-syntactic", 1)`, with no backticks (a string holds any name).
+    // The bare-identifier use of the same symbol still gets backticks.
+    let code = "assign(\"foo\", 1)\nfoo\n";
+    let uri = test_path("test.R");
+    let state = make_state(&uri, code);
+
+    let params = make_rename_params(uri.clone(), 1, 0, "non-syntactic");
+    let edit = rename(params, &state).unwrap().unwrap();
+
+    let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
+    edits.sort_by_key(|e| e.range.start);
+    assert_eq!(edits[0].new_text, "\"non-syntactic\"");
+    assert_eq!(edits[1].new_text, "`non-syntactic`");
+}
+
+#[test]
 fn test_rename_to_reserved_word_errors() {
     let code = "foo <- 1\n";
     let uri = test_path("test.R");

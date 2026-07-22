@@ -994,6 +994,54 @@ local({
     );
 }
 
+#[test]
+fn test_nse_assign_shadows_base_callee_eager() {
+    // `assign("local", identity)` binds `local`, so the later `local({...})` is
+    // NOT NSE. The scan records the assign-created binding in flow order, so the
+    // later callee sees the shadow in the same pass.
+    let index = index(
+        "\
+assign(\"local\", identity)
+local({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    // No NSE scope: `local` is shadowed, so `x` lands at file scope.
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_assign_shadows_base_callee_in_lazy_body() {
+    // The file-scope `assign("local", ...)` must be visible to the lazy shadow
+    // check when `f`'s deferred body resolves `local`. The file scan completes
+    // before the walk enters `f`, so `bound_names[file]` already carries
+    // `local` and the callee is correctly treated as shadowed (not NSE).
+    let index = index(
+        "\
+assign(\"local\", identity)
+f <- function() local({
+    x <- 1
+})
+",
+    );
+
+    // Scopes: file(0) and f(1) only. A phantom NSE scope inside `f` would be a
+    // third.
+    assert_eq!(index.scope_ids().count(), 2);
+    let f_scope = ScopeId::from(1);
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
 // --- Current + Lazy owner bindings visible before the walk ---
 
 #[test]

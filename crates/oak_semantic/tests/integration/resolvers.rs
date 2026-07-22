@@ -33,8 +33,17 @@ impl TestImportsResolver {
     /// Resolver with base always attached: the minimum for the bare base NSE
     /// functions (`local`, `with`, `within`, `evalq`) to resolve.
     pub fn with_base() -> Self {
+        Self::with_attached(&[])
+    }
+
+    /// Resolver with `packages` always attached, plus base last. For effects
+    /// contributed by a package that would otherwise need a `library()` call to
+    /// enter the flow-precise attach set, e.g. magrittr's `%<>%` operator.
+    pub fn with_attached(packages: &[&str]) -> Self {
+        let mut always_attached: Vec<String> = packages.iter().map(|pkg| pkg.to_string()).collect();
+        always_attached.push(String::from("base"));
         Self {
-            always_attached: vec![String::from("base")],
+            always_attached,
             consultations: Rc::new(Cell::new(0)),
             consultation_log: Rc::new(RefCell::new(Vec::new())),
             sources: HashMap::new(),

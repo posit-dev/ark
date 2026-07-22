@@ -16,6 +16,19 @@ pub struct FileRange {
     pub range: TextRange,
 }
 
+/// One edit produced by [`rename`]: a span to replace and the text to write.
+///
+/// The text is already rendered in the site's own spelling, a bare identifier,
+/// or a quoted string when the site binds the name in string form. So the LSP
+/// layer only converts ranges and wires files, it makes no decision about how
+/// the name should appear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameEdit {
+    pub file: File,
+    pub range: TextRange,
+    pub new_text: String,
+}
+
 /// A location in source code that the editor can navigate to.
 ///
 /// Shared result type for IDE features like goto-definition, hover,

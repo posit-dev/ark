@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_path::FilePath;
-use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::PrepareRenameResponse;
@@ -58,19 +57,18 @@ pub(crate) fn rename(
 
     let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
 
-    // Normalize the new name to its canonical R syntax (backtick-wrapped if
-    // needed) before searching, so an invalid name fails fast.
-    let new_text = to_identifier_text(&new_name)?;
-    let ranges = oak_ide::rename(db, file, offset)?;
+    // oak_ide resolves the sites and renders each edit in its own spelling
+    // (bare identifier, or a quoted string for a string-form binding).
+    let edits = oak_ide::rename(db, file, offset, &new_name)?;
 
     let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
-    for range in ranges {
-        let line_index = range.file.line_index(db);
-        let target_url = state.wire_url(range.file);
-        let range = to_proto::range(range.range, line_index, encoding)?;
+    for edit in edits {
+        let line_index = edit.file.line_index(db);
+        let target_url = state.wire_url(edit.file);
+        let range = to_proto::range(edit.range, line_index, encoding)?;
         changes.entry(target_url).or_default().push(TextEdit {
             range,
-            new_text: new_text.clone(),
+            new_text: edit.new_text,
         });
     }
 
