@@ -2,6 +2,7 @@ use crate::effects::Argument;
 use crate::effects::ArgumentsAnnotation;
 use crate::effects::AttachAnnotation;
 use crate::effects::EffectsHandlers;
+use crate::effects::SourceAnnotation;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -48,6 +49,7 @@ macro_rules! nse {
                     }),+],
                 }),
                 attach: None,
+                source: None,
             },
         }
     };
@@ -64,6 +66,23 @@ macro_rules! attach {
                 attach: Some(&AttachAnnotation {
                     character_only: $character_only,
                 }),
+                source: None,
+            },
+        }
+    };
+}
+
+/// A source entry: `(path-argument position)`. The function reads and evaluates
+/// another file, injecting its top-level names into the caller.
+macro_rules! source {
+    ($pkg:literal, $func:literal, $pos:literal) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: Some(&SourceAnnotation { position: $pos }),
             },
         }
     };
@@ -80,6 +99,8 @@ static REGISTRY: &[Entry] = &[
     // base attach
     attach!("base", "library", 0, true),
     attach!("base", "require", 0, true),
+    // base source
+    source!("base", "source", 0),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny

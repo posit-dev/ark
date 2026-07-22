@@ -13,6 +13,7 @@ use super::is_right_assignment;
 use super::is_super_assignment;
 use super::BoundNames;
 use super::SemanticIndexBuilder;
+use super::SourcedFile;
 use crate::effects::Argument;
 use crate::effects::CallContext;
 use crate::effects::Effects;
@@ -26,8 +27,9 @@ use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Scan a call for effects (NSE scopes, attaches) and record its decisions
-    /// for the walk to reuse. The callee is resolved once through [`resolve_effects`].
+    /// Scan a call for effects (NSE scopes, attaches, sources) and record its
+    /// decisions for the walk to reuse. The callee is resolved once through
+    /// [`resolve_effects`].
     ///
     /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
     /// `Current + Eager` transparently, `Nested + Eager` by descending into the
@@ -36,9 +38,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// because resolution of effects in these lazy scopes needs the child's own
     /// flow context.
     pub(super) fn scan_call(&mut self, call: &RCall) {
-        let (nse_args, attach) = match self.resolve_effects(call) {
-            Some(effects) => (effects.arguments, effects.attach),
-            None => (None, None),
+        let (nse_args, attach, source) = match self.resolve_effects(call) {
+            Some(effects) => (effects.arguments, effects.attach, effects.source),
+            None => (None, None, None),
         };
 
         if let Some(package) = attach {
@@ -48,6 +50,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
                 self.attached_flow.push(package);
+            }
+        }
+
+        // Cache each recognized path with its resolution. The walk reads them
+        // back to emit one `Source` semantic call per file. `scan_source_call()`
+        // binds the sourced names as it goes so a later callee in this scope
+        // can see them.
+        if let Some(paths) = source {
+            let range = call.syntax().text_trimmed_range();
+            for path in paths {
+                let resolution = self.scan_source_call(&path, range);
+                self.call_resolutions
+                    .entry(range)
+                    .or_default()
+                    .source
+                    .push(SourcedFile { path, resolution });
             }
         }
 
@@ -235,8 +253,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let attach = handlers
             .attach
             .and_then(|handler| handler.resolve(call, &ctx));
+        let source = handlers
+            .source
+            .and_then(|handler| handler.resolve(call, &ctx));
 
-        Some(Effects { arguments, attach })
+        Some(Effects {
+            arguments,
+            attach,
+            source,
+        })
     }
 
     /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
