@@ -809,9 +809,16 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An NSE call recognized in a lazy context whose binding is overwritten
-    /// later on (in subsequent parent code or in another lazy context).
-    LazyShadowAmbiguity { name: String, range: TextRange },
+    /// An NSE call recognized in a lazy context whose callee is also bound by a
+    /// lazy-crossed ancestor with undetermined timing, so the NSE decision is a
+    /// guess. `call_range` points at the NSE call we recognized, `overwrite_range`
+    /// at the ancestor binding that could invalidate it (a later assignment in
+    /// parent code, or one from another lazy context).
+    LazyShadowAmbiguity {
+        name: String,
+        call_range: TextRange,
+        overwrite_range: TextRange,
+    },
 }
 
 // --- Iterators ---

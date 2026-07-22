@@ -167,8 +167,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     bin.left()
                 };
                 if let Ok(target) = target {
-                    if let Some((name, _)) = assignment_name(&target) {
-                        self.record_owner_name(name);
+                    if let Some((name, range)) = assignment_name(&target) {
+                        self.record_owner_name(name, range);
                     }
                 }
             },
@@ -186,7 +186,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
             AnyRExpression::RForStatement(stmt) => {
                 if let Ok(variable) = stmt.variable() {
-                    self.record_owner_name(variable.name_text());
+                    self.record_owner_name(
+                        variable.name_text(),
+                        variable.syntax().text_trimmed_range(),
+                    );
                 }
                 if let Ok(body) = stmt.body() {
                     self.scan_lazy_owner_bindings(&body);
@@ -268,8 +271,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // If a lazy-crossed ancestor binds it whole-scope, that binding's
                 // timing relative to this deferred body is undetermined, so the
                 // decision is a guess. Flag it.
-                if self.is_lazily_shadowed(&name) {
-                    self.record_lazy_shadow_ambiguity(name, call.syntax().text_trimmed_range());
+                if let Some(overwrite_range) = self.is_lazily_shadowed(&name) {
+                    self.record_lazy_shadow_ambiguity(
+                        name,
+                        call.syntax().text_trimmed_range(),
+                        overwrite_range,
+                    );
                 }
                 Some(nse)
             },
@@ -308,13 +315,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// scope may bind `name` with a timing we can't pin down, either a later
     /// assignment, or one from another deferred body that could run before or
     /// after us We detect this ambiguity here so it can be linted.
-    fn is_lazily_shadowed(&self, name: &str) -> bool {
+    ///
+    /// Returns the site of the shadowing binding.
+    fn is_lazily_shadowed(&self, name: &str) -> Option<TextRange> {
         let mut scope = self.current_scope;
         let mut crossed_lazy = self.scopes[scope].kind.is_lazy();
 
         while let Some(parent) = self.scopes[scope].parent {
-            if crossed_lazy && self.scope_binds_anywhere(parent, name) {
-                return true;
+            if crossed_lazy {
+                if let Some(range) = self.scope_binding_range(parent, name) {
+                    return Some(range);
+                }
             }
 
             if self.scopes[parent].kind.is_lazy() {
@@ -323,12 +334,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             scope = parent;
         }
 
-        false
+        None
     }
 
-    fn record_lazy_shadow_ambiguity(&mut self, name: String, range: TextRange) {
+    fn record_lazy_shadow_ambiguity(
+        &mut self,
+        name: String,
+        call_range: TextRange,
+        overwrite_range: TextRange,
+    ) {
         self.diagnostics
-            .push(SemanticDiagnostic::LazyShadowAmbiguity { name, range });
+            .push(SemanticDiagnostic::LazyShadowAmbiguity {
+                name,
+                call_range,
+                overwrite_range,
+            });
     }
 
     /// Process a call the scan pass decided is NSE. Match its arguments

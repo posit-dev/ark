@@ -1209,11 +1209,20 @@ local <- identity
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::LazyShadowAmbiguity { name, range } => {
+        SemanticDiagnostic::LazyShadowAmbiguity {
+            name,
+            call_range,
+            overwrite_range,
+        } => {
             assert_eq!(name, "local");
-            let start = u32::from(range.start()) as usize;
-            let end = u32::from(range.end()) as usize;
-            assert_eq!(&source[start..end], "local({ x <- 1 })");
+
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "local({ x <- 1 })");
+
+            let overwrite_start = u32::from(overwrite_range.start()) as usize;
+            let overwrite_end = u32::from(overwrite_range.end()) as usize;
+            assert_eq!(&source[overwrite_start..overwrite_end], "local");
         },
     }
 }
