@@ -1,6 +1,6 @@
 use url::Url;
 
-use crate::effects::Effects;
+use crate::effects::EffectsHandlers;
 use crate::effects_registry;
 
 /// The result of resolving a `source()` call. Returned by
@@ -54,17 +54,20 @@ pub trait ImportsResolver {
     ///
     /// - `attached`: packages attached at this point, in flow order.
     /// - `lazy`: whether the callee sits in a lazy context like a function.
-    fn resolve_effects(&mut self, name: &str, attached: &[String], lazy: bool) -> Option<Effects> {
+    fn resolve_effects(
+        &mut self,
+        name: &str,
+        attached: &[String],
+        lazy: bool,
+    ) -> Option<EffectsHandlers> {
         let _ = (name, attached, lazy);
         None
     }
 
     /// Resolve a namespace-qualified callee `pkg::fn` (or equivalently with
     /// `:::`) to its effects.
-    fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<Effects> {
-        effects_registry::lookup(package, name)
-            .copied()
-            .map(Effects::nse)
+    fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<EffectsHandlers> {
+        effects_registry::lookup(package, name).copied()
     }
 }
 

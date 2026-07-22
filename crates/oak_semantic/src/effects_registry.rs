@@ -1,5 +1,7 @@
 use crate::effects::Argument;
 use crate::effects::ArgumentsAnnotation;
+use crate::effects::AttachAnnotation;
+use crate::effects::EffectsHandlers;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -8,15 +10,15 @@ use crate::semantic_index::NseTiming::Lazy;
 struct Entry {
     package: &'static str,
     function: &'static str,
-    annotation: ArgumentsAnnotation,
+    effects: EffectsHandlers,
 }
 
-/// Look up the NSE annotation for a `(package, function)` pair.
-pub fn lookup(package: &str, function: &str) -> Option<&'static ArgumentsAnnotation> {
+/// Look up the effect handlers of a `(package, function)` pair.
+pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers> {
     REGISTRY
         .iter()
         .find(|e| e.package == package && e.function == function)
-        .map(|e| &e.annotation)
+        .map(|e| &e.effects)
 }
 
 /// Whether any registry entry annotates `name`. This is the bare-callee front
@@ -29,43 +31,65 @@ pub fn annotates(name: &str) -> bool {
     REGISTRY.iter().any(|e| e.function == name)
 }
 
-/// One registry entry. Each `(name, position, scope, laziness)` tuple is a
-/// scoped argument; list more than one for a function that scopes several.
-macro_rules! entry {
+/// An NSE entry. Each `(name, position, scope, laziness)` tuple is a scoped
+/// argument; list more than one for a function that scopes several.
+macro_rules! nse {
     ($pkg:literal, $func:literal, $(($name:literal, $pos:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
         Entry {
             package: $pkg,
             function: $func,
-            annotation: ArgumentsAnnotation {
-                arguments: &[$(Argument {
-                    name: $name,
-                    position: $pos,
-                    scope: $scope,
-                    timing: $timing,
-                }),+],
+            effects: EffectsHandlers {
+                arguments: Some(&ArgumentsAnnotation {
+                    arguments: &[$(Argument {
+                        name: $name,
+                        position: $pos,
+                        scope: $scope,
+                        timing: $timing,
+                    }),+],
+                }),
+                attach: None,
+            },
+        }
+    };
+}
+
+/// An attach entry: `(package-argument position, has-`character.only`-flag)`.
+macro_rules! attach {
+    ($pkg:literal, $func:literal, $pos:literal, $character_only:literal) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: None,
+                attach: Some(&AttachAnnotation {
+                    character_only: $character_only,
+                }),
             },
         }
     };
 }
 
 static REGISTRY: &[Entry] = &[
-    // base
-    entry!("base", "evalq", ("expr", 0, Current, Eager)),
-    entry!("base", "local", ("expr", 0, Nested, Eager)),
-    entry!("base", "with", ("expr", 1, Nested, Eager)),
-    entry!("base", "with.default", ("expr", 1, Nested, Eager)),
-    entry!("base", "within", ("expr", 1, Nested, Eager)),
-    entry!("base", "within.data.frame", ("expr", 1, Nested, Eager)),
+    // base NSE
+    nse!("base", "evalq", ("expr", 0, Current, Eager)),
+    nse!("base", "local", ("expr", 0, Nested, Eager)),
+    nse!("base", "with", ("expr", 1, Nested, Eager)),
+    nse!("base", "with.default", ("expr", 1, Nested, Eager)),
+    nse!("base", "within", ("expr", 1, Nested, Eager)),
+    nse!("base", "within.data.frame", ("expr", 1, Nested, Eager)),
+    // base attach
+    attach!("base", "library", 0, true),
+    attach!("base", "require", 0, true),
     // rlang
-    entry!("rlang", "on_load", ("expr", 0, Current, Lazy)),
+    nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny
-    entry!("shiny", "observe", ("x", 0, Nested, Lazy)),
-    entry!("shiny", "reactive", ("x", 0, Nested, Lazy)),
-    entry!("shiny", "renderPlot", ("expr", 0, Nested, Lazy)),
-    entry!("shiny", "renderPrint", ("expr", 0, Nested, Lazy)),
-    entry!("shiny", "renderTable", ("expr", 0, Nested, Lazy)),
-    entry!("shiny", "renderText", ("expr", 0, Nested, Lazy)),
-    entry!("shiny", "renderUI", ("expr", 0, Nested, Lazy)),
+    nse!("shiny", "observe", ("x", 0, Nested, Lazy)),
+    nse!("shiny", "reactive", ("x", 0, Nested, Lazy)),
+    nse!("shiny", "renderPlot", ("expr", 0, Nested, Lazy)),
+    nse!("shiny", "renderPrint", ("expr", 0, Nested, Lazy)),
+    nse!("shiny", "renderTable", ("expr", 0, Nested, Lazy)),
+    nse!("shiny", "renderText", ("expr", 0, Nested, Lazy)),
+    nse!("shiny", "renderUI", ("expr", 0, Nested, Lazy)),
     // testthat
-    entry!("testthat", "test_that", ("code", 1, Nested, Eager)),
+    nse!("testthat", "test_that", ("code", 1, Nested, Eager)),
 ];
