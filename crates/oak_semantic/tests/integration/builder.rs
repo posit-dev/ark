@@ -1538,6 +1538,35 @@ fn test_directive_multiple_arguments() {
 }
 
 #[test]
+fn test_directive_character_only_string() {
+    // `character.only = TRUE` reads the package argument with the standard rule.
+    // A string literal resolves to its text.
+    let index = index_with_base("library(\"dplyr\", character.only = TRUE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
+}
+
+#[test]
+fn test_directive_character_only_identifier_not_attached() {
+    // With `character.only = TRUE` the package argument is a variable to resolve,
+    // not a symbol. We can't chase it statically, so nothing is attached, rather
+    // than wrongly attaching a package literally named `x`.
+    let index = index_with_base("library(x, character.only = TRUE)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_directive_character_only_false_is_quoted() {
+    // `character.only = FALSE` leaves the package argument quoted, so the symbol
+    // text is the package name.
+    let index = index_with_base("library(dplyr, character.only = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
+}
+
+#[test]
 fn test_directive_no_arguments_ignored() {
     let index = index_with_base("library()");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
