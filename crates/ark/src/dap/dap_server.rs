@@ -53,6 +53,8 @@ use crate::r_task::RTask;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
+use crate::timeout::eval_timeout;
+use crate::timeout::with_timeout;
 
 /// Sentinel expression sent by the frontend to notify the kernel that the user
 /// selected a different stack frame in the debugger UI. Subsequent console
@@ -115,6 +117,14 @@ pub struct DapHandler {
     pub(crate) r_request_tx: Sender<RRequest>,
 }
 
+/// Outcome of a debugger `evaluate` request, produced on the R thread by
+/// [`DapHandler::evaluate()`] and turned into a DAP response by each transport.
+pub(crate) enum EvaluateOutcome {
+    Ok(ResponseBody),
+    TimedOut,
+    Error(String),
+}
+
 impl DapHandler {
     pub fn new(state: Arc<Mutex<Dap>>, r_request_tx: Sender<RRequest>) -> Self {
         Self {
@@ -125,10 +135,11 @@ impl DapHandler {
 
     /// Dispatch a parsed DAP request to the appropriate handler.
     ///
-    /// `Evaluate` is not handled here because `dispatch()` returns
-    /// synchronously, while Evaluate requires an async round-trip through the
-    /// R thread. Each transport calls [`DapHandler::evaluate()`] directly
-    /// inside its own async mechanism.
+    /// `Evaluate` is not handled here because it runs user code, which must
+    /// happen on the R thread. Each transport calls [`DapHandler::evaluate()`]
+    /// through its own mechanism (an idle task on the console, a try-idle one
+    /// on the notebook). The other commands run directly here without touching
+    /// the R thread.
     pub fn dispatch(&self, req: Request) -> DapOutput {
         let cmd = req.command.clone();
 
@@ -680,11 +691,11 @@ impl DapHandler {
         expression: &str,
         frame_id: Option<i64>,
         capture: &mut ConsoleOutputCapture,
-    ) -> anyhow::Result<ResponseBody> {
+    ) -> EvaluateOutcome {
         if expression == SELECTED_FRAME_EXPRESSION {
             log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
             Console::get_mut().set_debug_selected_frame_id(frame_id);
-            return Ok(ResponseBody::Evaluate(EvaluateResponse {
+            return EvaluateOutcome::Ok(ResponseBody::Evaluate(EvaluateResponse {
                 result: String::new(),
                 type_field: None,
                 presentation_hint: None,
@@ -706,18 +717,31 @@ impl DapHandler {
         // would leave the mutex locked forever. The env stays valid without the
         // lock because its owning `RObject` remains in the state's map, which
         // only the R thread mutates.
-        let env = state
-            .lock()
-            .unwrap()
-            .frame_env(frame_id)
-            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        let env = match state.lock().unwrap().frame_env(frame_id) {
+            Ok(env) => env,
+            Err(err) => return EvaluateOutcome::Error(err.to_string()),
+        };
 
         let capture = if print { Some(capture) } else { None };
-        let variable = Dap::evaluate(expr, env, capture)?;
+
+        // Run under `with_timeout()` so a long-running or inflooping Watch Pane
+        // expression is interrupted instead of freezing the kernel.
+        let (res, timed_out) = with_timeout(eval_timeout(), || Dap::evaluate(expr, env, capture));
+
+        if timed_out {
+            return EvaluateOutcome::TimedOut;
+        }
+
+        let variable = match res {
+            Ok(Ok(variable)) => variable,
+            Ok(Err(err)) => return EvaluateOutcome::Error(format!("{err}")),
+            // An R longjump that escaped `Dap::evaluate()`'s own `try_catch`.
+            Err(err) => return EvaluateOutcome::Error(err.to_string()),
+        };
         log::trace!("DAP: Evaluate completed");
 
         let response = state.lock().unwrap().into_evaluate_response(variable);
-        Ok(ResponseBody::Evaluate(response))
+        EvaluateOutcome::Ok(ResponseBody::Evaluate(response))
     }
 }
 
@@ -918,8 +942,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
         };
         log::trace!("DAP: Got request: {:#?}", req);
 
-        // Evaluate is async: the response is sent later via `responses_tx`.
-        // It is the only command that needs transport-specific handling.
+        // Evaluate runs user code on the R thread, so it's handled off on an
+        // idle task to keep `serve()` responsive to other requests. Its
+        // response is delivered asynchronously via `responses_tx`.
         if let Command::Evaluate(args) = &req.command {
             let args = args.clone();
             if let Err(err) = self.handle_evaluate(req, args) {
@@ -995,8 +1020,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.send_event(event)
     }
 
-    // Tied to the TCP transport for now. For Jupyter we need to figure out how
-    // to do async responses with Jupyter's Control channel.
+    /// Evaluate an expression on the R thread, with a timeout.
+    ///
+    /// Spawns an idle task to handle the evaluation request asynchronously
+    /// without blocking the DAP service while the evaluation is in flight on
+    /// the R thread. The eval runs under `timeout::with_timeout()`, which
+    /// guards against a runaway expression (e.g. an infloop in the watch pane).
     fn handle_evaluate(
         &mut self,
         req: Request,
@@ -1007,13 +1036,11 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let state = self.handler.state.clone();
         let responses_tx = self.responses_tx.clone();
 
-        log::trace!("DAP: Spawning idle task for evaluate");
         r_task::spawn(RTask::send_idle_any_prompt(async move |mut capture| {
-            log::trace!("DAP: Idle task started for evaluate");
-
             let rsp = match DapHandler::evaluate(&state, &expression, frame_id, &mut capture) {
-                Ok(body) => req.success(body),
-                Err(err) => req.error(&format!("Error: {err}")),
+                EvaluateOutcome::Ok(body) => req.success(body),
+                EvaluateOutcome::TimedOut => req.error("Evaluation timed out"),
+                EvaluateOutcome::Error(err) => req.error(&format!("Error: {err}")),
             };
 
             responses_tx.send(rsp).log_err();

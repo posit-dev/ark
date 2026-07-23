@@ -20,7 +20,6 @@ use crossbeam::channel::Sender;
 use harp::exec::r_sandbox;
 #[cfg(debug_assertions)]
 use libr::SEXP;
-use stdext::result::ResultExt;
 use uuid::Uuid;
 
 use crate::console::Console;
@@ -109,12 +108,9 @@ const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Attempt to run `f` on the R thread if it is currently idle at a prompt.
 ///
-/// Returns `None` if R was busy. Otherwise returns `Some` with the outcome:
+/// Returns `None` if R was busy, i.e. the Console event loop did not accept the
+/// task within `TRY_IDLE_TIMEOUT`. Otherwise returns `Some` with the outcome:
 /// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
-///
-/// On the bounded(0) channel, `send_timeout` only hands off the task when the
-/// event loop's `Select` is parked receiving, so the task runs iff R is idle.
-/// Waiting up to `TRY_IDLE_TIMEOUT`.
 pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
 where
     F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
@@ -148,7 +144,12 @@ where
         },
     }
 
-    done_rx.recv().log_err()?;
+    if done_rx.recv().is_err() {
+        // Likely from a main thread panic, log as best effort
+        log::error!("`try_idle_task`: task disconnected without completing");
+        return None;
+    }
+
     let out = result.lock().unwrap().take();
     out
 }
