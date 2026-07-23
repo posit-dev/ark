@@ -3,326 +3,23 @@ use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
-use biome_rowan::AstNodeList;
-use biome_rowan::AstSeparatedList;
 use biome_rowan::TextRange;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
 
-use super::assignment_name;
-use super::is_assignment;
-use super::is_right_assignment;
-use super::is_super_assignment;
-use super::BoundNames;
-use super::ScanBindings;
+use super::scan::ScanBindings;
 use super::SemanticIndexBuilder;
-use super::SourcedFile;
 use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
-use crate::effects::ResolvedArgumentEffect;
-use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
-use crate::semantic_index::EvalEnv;
-use crate::semantic_index::EvalTiming;
-use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Scan a call for effects (NSE scopes, attaches, sources, assigns) and
-    /// record its decisions for the walk to reuse. The callee is resolved once
-    /// through [`resolve_effects`].
-    ///
-    /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
-    /// `Current + Eager` transparently, `Nested + Eager` by descending into the
-    /// body and holding the names it binds as pending. `Nested + Lazy` and
-    /// `Current + Lazy` bodies are their own scan units and deferred to the walk
-    /// because resolution of effects in these lazy scopes needs the child's own
-    /// flow context.
-    pub(super) fn scan_call(&mut self, call: &RCall) {
-        let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
-            Some(effects) => (
-                effects.arguments,
-                effects.attach,
-                effects.source,
-                effects.assign,
-            ),
-            None => (None, None, None, None),
-        };
-
-        if let Some(package) = attach {
-            self.scan
-                .call_resolutions
-                .entry(call.syntax().text_trimmed_range())
-                .or_default()
-                .attach = Some(package.clone());
-            if !self.scopes[self.current_scope].kind.is_lazy() {
-                self.scan.attached_flow.push(package);
-            }
-        }
-
-        // Cache each recognized path with its resolution. The walk reads them
-        // back to emit one `Source` semantic call per file. `scan_source_call()`
-        // binds the sourced names as it goes so a later callee in this scope
-        // can see them.
-        if let Some(paths) = source {
-            let range = call.syntax().text_trimmed_range();
-            for path in paths {
-                let resolution = self.scan_source_call(&path, range);
-                self.scan
-                    .call_resolutions
-                    .entry(range)
-                    .or_default()
-                    .source
-                    .push(SourcedFile { path, resolution });
-            }
-        }
-
-        // Record each assigned name as a binding so a later callee in this scope
-        // sees it shadowed (e.g. `assign("local", identity)` masks base
-        // `local`).
-        if let Some(bindings) = assign {
-            let range = call.syntax().text_trimmed_range();
-            for binding in bindings {
-                self.record_binding(binding.name.clone(), range);
-                self.scan
-                    .call_resolutions
-                    .entry(range)
-                    .or_default()
-                    .assign
-                    .push(binding);
-            }
-        }
-
-        let Some(arg_effects) = arg_effects else {
-            if let Ok(args) = call.arguments() {
-                for item in args.items().iter() {
-                    let Ok(arg) = item else { continue };
-                    if let Some(value) = arg.value() {
-                        self.scan_expression(&value);
-                    }
-                }
-            }
-            return;
-        };
-
-        let Ok(args) = call.arguments() else {
-            return;
-        };
-        let items = args.items();
-
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            let Some(value) = arg.value() else { continue };
-
-            match &arg_effects[i] {
-                None => self.scan_expression(&value),
-                // Quoted argument: only the unquoted holes are live. Scan these,
-                // suppress the rest.
-                Some(ResolvedArgumentEffect::Quote { holes }) => {
-                    for hole in holes {
-                        self.scan_expression(hole);
-                    }
-                },
-                Some(ResolvedArgumentEffect::EvalQ { env, timing }) => match (env, timing) {
-                    // Calls like `evalq()`
-                    (EvalEnv::Current, EvalTiming::Eager) => self.scan_expression(&value),
-
-                    // Calls like `on_load()`. Its body runs later, so its defs
-                    // land in the enclosing scope. We don't resolve the body's
-                    // calls here. The walk does that once it enters the child
-                    // scope. But we do grab the names it defines now, so the
-                    // owner's bound names are complete before the walk reaches a sibling.
-                    (EvalEnv::Current, EvalTiming::Lazy) => {
-                        self.record_enclosing_flow(value.syntax().text_trimmed_range());
-                        self.scan_lazy_owner_bindings(&value);
-                    },
-
-                    // Calls like `local()`. Its body runs eagerly at the call
-                    // site, so its environment IS the current `flow_state`.
-                    // Descend now, holding the names bound in this scope as
-                    // pending so the walk has access to them. No `flow_state`
-                    // reset: the child sees exactly what `begin_scan()` would
-                    // have seeded.
-                    // No `record_enclosing_flow()`: eager `Nested` bodies are
-                    // never scanned at walk time, so nothing would read it.
-                    (EvalEnv::Nested, EvalTiming::Eager) => {
-                        let old = self.scan.flow_state.snapshot();
-
-                        let range = value.syntax().text_trimmed_range();
-                        self.scan.eager_descent.open.push(BoundNames::new());
-                        self.scan_expression(&value);
-                        if let Some(bound) = self.scan.eager_descent.open.pop() {
-                            self.scan.eager_descent.pending.insert(range, bound);
-                        }
-
-                        self.scan.flow_state.restore(old);
-                    },
-
-                    // Calls like `reactive()`. Its body runs at an unknown
-                    // later time, so it's a child scope scanned when the walk
-                    // enters it. Record the names it inherits for its callee
-                    // resolution, same as a function body.
-                    (EvalEnv::Nested, EvalTiming::Lazy) => {
-                        self.record_enclosing_flow(value.syntax().text_trimmed_range());
-                    },
-                },
-            }
-        }
-
-        // Hand the resolved argument effects to the walk (at the end to avoid a clone)
-        self.scan
-            .call_resolutions
-            .entry(call.syntax().text_trimmed_range())
-            .or_default()
-            .arguments = Some(arg_effects);
-    }
-
-    /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
-    pub(super) fn scan_operator_assign(&mut self, bin: &RBinaryExpression) {
-        let Some(bindings) = self.resolve_operator_assign(bin) else {
-            return;
-        };
-        let range = bin.syntax().text_trimmed_range();
-        for binding in bindings {
-            self.record_binding(binding.name.clone(), range);
-            self.scan
-                .call_resolutions
-                .entry(range)
-                .or_default()
-                .assign
-                .push(binding);
-        }
-    }
-
-    /// Recognize a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`)
-    /// as an assign effect and build its bindings, or `None` for any other binary
-    /// operator.
-    fn resolve_operator_assign(&mut self, bin: &RBinaryExpression) -> Option<Vec<AssignBinding>> {
-        let op = bin.operator().ok()?;
-
-        // A binding operator is either a `%...%` (`SPECIAL`, e.g. `%<>%`, where
-        // the operator text distinguishes it from `%>%`) or the walrus `:=`
-        // (`WALRUS`). Gate on the token kind before consulting the registry so we
-        // skip the resolver for ordinary operators like `+`.
-        if !matches!(op.kind(), RSyntaxKind::SPECIAL | RSyntaxKind::WALRUS) {
-            return None;
-        }
-        let op_text = op.text_trimmed();
-
-        // Bail early if this operator is not known to have effects annotations
-        if !effects::annotates(op_text) {
-            return None;
-        }
-
-        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
-
-        let bindings = ScanBindings { builder: &*self };
-        let ctx = CallContext::with_bindings(&bindings);
-        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
-    }
-
-    /// Copy the names a `Current + Lazy` body defines into the owner's
-    /// bound names, without marking them bound in the scan's flow state.
-    ///
-    /// This feeds enclosing snapshots only. A free variable elsewhere can
-    /// resolve to a name an `on_load({ ... })` defines in the owner, and
-    /// `register_enclosing_snapshot()` reads `bound_names` to find that ancestor.
-    /// The scan doesn't descend into these bodies otherwise, so their names
-    /// would only reach the owner when the walk later gets to the call, too late
-    /// for a sibling scanned before then. Collecting them now keeps the owner's
-    /// bound names complete before the walk touches any sibling.
-    ///
-    /// NSE shadow resolution does not read `bound_names`, so an incomplete
-    /// collection here can't flip an NSE decision. `is_locally_bound` reads the
-    /// captured eager bindings, which exclude deferred names by construction.
-    ///
-    /// We cover the realistic shapes, direct assignments and control flow, e.g.
-    /// `on_load({ x <- 1 })`. We stop at nested calls and function bodies
-    /// however, so we only add names the walk will also route, never a phantom.
-    /// `register_enclosing_snapshot` reads `binds()` as "a real definition
-    /// exists", so a phantom would send it chasing a binding that isn't there.
-    /// The price is a binding buried in a nested transparent call, e.g.
-    /// `on_load({ evalq(helper <- ...) })`, which we miss here, so a free
-    /// variable can't resolve to it. TODO(nse): We could potentially walk
-    /// transparent (Current) nested calls to collect those too.
-    ///
-    /// The names go to `bound_names` only, never to `flow_state`. The body
-    /// runs at some later time, so at an eager position after the call these
-    /// names aren't bound yet, and an eager callee there must still treat them
-    /// as unbound.
-    fn scan_lazy_owner_bindings(&mut self, expr: &AnyRExpression) {
-        match expr {
-            AnyRExpression::RBracedExpressions(braced) => {
-                for expr in braced.expressions().iter() {
-                    self.scan_lazy_owner_bindings(&expr);
-                }
-            },
-
-            AnyRExpression::RBinaryExpression(bin) => {
-                // `<<-` binds in an ancestor, not the owner, so it's not routed
-                // here (matching `add_definition`).
-                if !is_assignment(bin) || is_super_assignment(bin) {
-                    return;
-                }
-                let target = if is_right_assignment(bin) {
-                    bin.right()
-                } else {
-                    bin.left()
-                };
-                if let Ok(target) = target {
-                    if let Some((name, range)) = assignment_name(&target) {
-                        self.record_owner_name(name, range);
-                    }
-                }
-            },
-
-            AnyRExpression::RIfStatement(stmt) => {
-                if let Ok(consequence) = stmt.consequence() {
-                    self.scan_lazy_owner_bindings(&consequence);
-                }
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.scan_lazy_owner_bindings(&alternative);
-                    }
-                }
-            },
-
-            AnyRExpression::RForStatement(stmt) => {
-                if let Ok(variable) = stmt.variable() {
-                    self.record_owner_name(
-                        variable.name_text(),
-                        variable.syntax().text_trimmed_range(),
-                    );
-                }
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
-
-            AnyRExpression::RWhileStatement(stmt) => {
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
-
-            AnyRExpression::RRepeatStatement(stmt) => {
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
-
-            // Stop everywhere else: function bodies are child scopes, and a
-            // call's arguments aren't part of this scope's direct level.
-            _ => {},
-        }
-    }
-
-    /// Resolve a call's effects.
-    fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
+    pub(super) fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
         let handlers = self.resolve_effects_handlers(call)?;
 
         // `resolve_effects_handlers()` returns owned handlers, so its `&mut
@@ -457,6 +154,36 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         None
     }
 
+    /// Recognize a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`)
+    /// as an assign effect and build its bindings, or `None` for any other binary
+    /// operator.
+    pub(super) fn resolve_operator_assign(
+        &mut self,
+        bin: &RBinaryExpression,
+    ) -> Option<Vec<AssignBinding>> {
+        let op = bin.operator().ok()?;
+
+        // A binding operator is either a `%...%` (`SPECIAL`, e.g. `%<>%`, where
+        // the operator text distinguishes it from `%>%`) or the walrus `:=`
+        // (`WALRUS`). Gate on the token kind before consulting the registry so we
+        // skip the resolver for ordinary operators like `+`.
+        if !matches!(op.kind(), RSyntaxKind::SPECIAL | RSyntaxKind::WALRUS) {
+            return None;
+        }
+        let op_text = op.text_trimmed();
+
+        // Bail early if this operator is not known to have effects annotations
+        if !effects::annotates(op_text) {
+            return None;
+        }
+
+        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+
+        let bindings = ScanBindings { builder: &*self };
+        let ctx = CallContext::with_bindings(&bindings);
+        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
+    }
+
     /// Detect ambiguities caused by laziness.
     ///
     /// We've recognized an effect for `name` (NSE scope or attach) because it
@@ -499,96 +226,5 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 call_range,
                 overwrite_range,
             });
-    }
-
-    /// Process a call the scan pass decided is NSE, using the resolved argument
-    /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
-    /// inline.
-    pub(super) fn collect_nse_call(&mut self, call: &RCall, arg_effects: ResolvedArgumentEffects) {
-        let Ok(args) = call.arguments() else {
-            return;
-        };
-        let items = args.items();
-
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            let Some(value) = arg.value() else { continue };
-
-            let Some(argument) = &arg_effects[i] else {
-                self.collect_expression(&value);
-                continue;
-            };
-            match argument {
-                ResolvedArgumentEffect::EvalQ { env, timing } => {
-                    self.collect_nse_argument(*env, *timing, &value)
-                },
-                // Quoted argument: only the unquote holes are live.
-                ResolvedArgumentEffect::Quote { holes } => {
-                    for hole in holes {
-                        self.collect_expression(hole);
-                    }
-                },
-            }
-        }
-    }
-
-    /// Walk a single NSE argument body, pushing a scope when appropriate.
-    ///
-    /// `Current + Eager` stays in the current scope. `Nested + Eager` was
-    /// already scanned by the descent, so we install its pending names and only
-    /// walk. The remaining lazy bodies are their own scan units that we scan
-    /// here on entry.
-    fn collect_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
-        match (env, timing) {
-            // Calls like `evalq()`
-            (EvalEnv::Current, EvalTiming::Eager) => {
-                self.collect_expression(value);
-            },
-
-            // Calls like `local()`
-            (EvalEnv::Nested, EvalTiming::Eager) => {
-                let range = value.syntax().text_trimmed_range();
-                let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager);
-                let scope = self.push_scope(kind, range);
-
-                // Install the pending names the descent recorded for this body,
-                // before collecting so lazy children inside can see them via
-                // `scope_binds_anywhere()`.
-                match self.scan.eager_descent.pending.remove(&range) {
-                    Some(bound) => self.scan.bound_names[scope] = bound,
-                    None => {
-                        // An eager NSE scope is reachable only through the scan
-                        // unit that descended into it, so the pending set must
-                        // exist. If not this is a builder bug. In release
-                        // builds we still scan the body here so the walk can
-                        // proceed. This fallback runs with an empty eager
-                        // environment and its shadow decisions are more
-                        // degraded than a real lazy unit's.
-                        stdext::debug_panic!(
-                            "Missing pending bound names for eager NSE body at {range:?}"
-                        );
-                        self.begin_scan();
-                        self.scan_expression(value);
-                    },
-                }
-
-                self.collect_expression(value);
-                self.pop_scope(scope);
-            },
-
-            (env, timing) => {
-                let kind = ScopeKind::Nse(env, timing);
-                let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
-
-                // Scan the child body before walking it. A `Current + Lazy`
-                // scope routes its defs to the owner and holds no bound names of its
-                // own, which `record_binding` handles; the scan still runs to
-                // record the body's NSE decisions in the child's flow context.
-                self.begin_scan();
-                self.scan_expression(value);
-                self.collect_expression(value);
-                self.pop_scope(scope);
-            },
-        }
     }
 }
