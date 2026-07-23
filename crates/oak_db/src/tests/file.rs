@@ -141,6 +141,31 @@ fn test_semantic_index_matches_oak_semantic() {
 }
 
 #[test]
+fn test_semantic_index_recognizes_bare_base_nse() {
+    // Base NSE resolves through the real `SalsaImportsResolver` (base-only
+    // `resolve_effects`): a bare `local()` still pushes a nested NSE scope, so
+    // `x` lands there rather than at file scope.
+    use oak_semantic::semantic_index::NseScope;
+    use oak_semantic::semantic_index::NseTiming;
+    use oak_semantic::semantic_index::ScopeId;
+    use oak_semantic::semantic_index::ScopeKind;
+
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "local({\n    x <- 1\n})\n");
+
+    let index = file.semantic_index(&db);
+    let file_scope = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(NseScope::Nested, NseTiming::Eager)
+    );
+    assert!(index.symbols(file_scope).get("x").is_none());
+    assert!(index.symbols(local_scope).get("x").is_some());
+}
+
+#[test]
 fn test_semantic_index_backdates_on_equivalent_content_set() {
     let mut db = TestDb::new();
     let file = new_file(&mut db, "a.R", "x <- 1\n");
