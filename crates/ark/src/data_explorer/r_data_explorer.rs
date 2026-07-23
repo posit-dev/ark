@@ -1169,9 +1169,6 @@ impl RDataExplorer {
                 let labels = format_string(row_names.sexp, format_options);
                 Ok(labels)
             },
-            // Defense in depth: `row.names()` returns `NULL` for a table with no
-            // row names, so treat that as "no labels" rather than an error.
-            NILSXP => Ok(vec![]),
             _ => Err(anyhow!(
                 "`row.names` should be strings, got {:?}",
                 row_names.kind()
