@@ -52,7 +52,7 @@ jobs:
 
     sign_windows:
         name: "Sign Windows Binaries"
-        uses: posit-dev/posit-gh-actions/.github/workflows/sign-windows.yml@main
+        uses: posit-dev/posit-gh-actions/.github/workflows/sign-windows-digicert.yml@main
         needs: [build_windows]
         secrets: inherit
         strategy:
