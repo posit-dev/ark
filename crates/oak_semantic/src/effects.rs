@@ -94,7 +94,7 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
     ///
     /// `ctx` provides semantic resolution, e.g. resolve an argument to a
     /// statically known string or boolean.
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Self::Output>;
+    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Self::Output>;
 }
 
 /// Where an effect is invoked. Most effects are only ever calls but an Assign
@@ -113,7 +113,26 @@ pub enum EffectSite<'a> {
 /// Contributed statically like [`EffectHandler`], so it's `Sync` for the
 /// registry `static`s.
 pub trait AssignHandler: std::fmt::Debug + Sync {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>>;
+    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>>;
+}
+
+/// Scope state a handler needs that the call syntax alone can't answer, backed
+/// by the builder's flow-precise binding tables.
+///
+/// `substitute` uses this to tell which symbols in its argument name a binding
+/// in the current scope (so they resolve here, against substitute's env) from
+/// those that stay quoted (so they resolve wherever the result is later
+/// evaluated).
+pub trait ScopeBindings {
+    /// Whether `name` is bound in the current scope. With `inherits`, also
+    /// counts bindings inherited from enclosing scopes, mirroring R's
+    /// `get(..., inherits=)`.
+    fn is_bound(&self, name: &str, inherits: bool) -> bool;
+
+    /// Whether the current scope is the global (file) scope. R's `substitute`
+    /// substitutes nothing in the global environment, so a handler falls back to
+    /// a plain quote there.
+    fn is_global_scope(&self) -> bool;
 }
 
 /// Whether an assign effect reads its target before writing it.
@@ -128,15 +147,38 @@ pub enum TargetAccess {
 
 /// Context for effect handlers.
 ///
-/// Allows querying the properties or static values of arguments. Stateless
-/// today, an extension point for information a call's syntax doesn't carry (e.g.
-/// resolving a `character.only` variable to its string value) once that lands.
+/// Allows querying the properties or static values of arguments, and the
+/// binding state of the surrounding scope.
 #[derive(Default)]
-pub struct CallContext;
+pub struct CallContext<'a> {
+    bindings: Option<&'a dyn ScopeBindings>,
+}
 
-impl CallContext {
-    pub fn new() -> Self {
-        Self
+impl<'a> CallContext<'a> {
+    /// A context backed by the builder's scope state, for handlers that query
+    /// bindings (`substitute`).
+    pub fn with_bindings(bindings: &'a dyn ScopeBindings) -> Self {
+        Self {
+            bindings: Some(bindings),
+        }
+    }
+
+    /// Whether `name` is bound in the current scope (see
+    /// [`ScopeBindings::is_bound`]). Without a bindings backing (a [`Default`]
+    /// context) we can't tell, so we answer "unbound", the choice that leaves a
+    /// symbol quoted rather than treating it as a use.
+    pub fn is_bound(&self, name: &str, inherits: bool) -> bool {
+        self.bindings
+            .is_some_and(|bindings| bindings.is_bound(name, inherits))
+    }
+
+    /// Whether the current scope is the global (file) scope (see
+    /// [`ScopeBindings::is_global_scope`]). Without a bindings backing (a
+    /// [`Default`] context) we assume global, so `substitute` degrades to a
+    /// plain quote (its no-substitution behaviour).
+    pub fn current_scope_is_global(&self) -> bool {
+        self.bindings
+            .is_none_or(|bindings| bindings.is_global_scope())
     }
 
     /// Match `call`'s arguments to `formals`, returning for each call argument
@@ -287,7 +329,7 @@ impl ArgumentEffect {
 impl EffectHandler for ArgumentsAnnotation {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<ResolvedArgumentEffects> {
+    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let arguments = self.arguments;
         let formals: Vec<Formal> = arguments
             .iter()
@@ -322,7 +364,7 @@ pub struct SourceAnnotation {
 impl EffectHandler for SourceAnnotation {
     type Output = Vec<String>;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Vec<String>> {
+    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<String>> {
         let args = call.arguments().ok()?;
 
         // The path is matched positionally among unnamed arguments rather than
@@ -387,7 +429,7 @@ pub struct AssignAnnotation {
 }
 
 impl AssignHandler for AssignAnnotation {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Call(call) = site else {
             return None;
         };
@@ -454,7 +496,7 @@ pub struct BindingOperatorHandler {
 }
 
 impl AssignHandler for BindingOperatorHandler {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Operator(bin) = site else {
             return None;
         };

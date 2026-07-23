@@ -14,6 +14,7 @@ use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
 use super::BoundNames;
+use super::ScanBindings;
 use super::SemanticIndexBuilder;
 use super::SourcedFile;
 use crate::effects;
@@ -211,7 +212,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
-        let ctx = CallContext::new();
+
+        let bindings = ScanBindings { builder: &*self };
+        let ctx = CallContext::with_bindings(&bindings);
         handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
     }
 
@@ -314,7 +317,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Resolve a call's effects.
     fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
         let handlers = self.resolve_effects_handlers(call)?;
-        let ctx = CallContext::new();
+
+        // `resolve_effects_handlers()` returns owned handlers, so its `&mut
+        // self` borrow is finished. Reborrow immutably.
+        let bindings = ScanBindings { builder: &*self };
+        let ctx = CallContext::with_bindings(&bindings);
 
         let arguments = handlers
             .arguments
