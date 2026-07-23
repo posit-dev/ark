@@ -112,24 +112,24 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
 struct SemanticIndexBuilder<R: ImportsResolver> {
     resolver: R,
     scopes: IndexVec<ScopeId, Scope>,
-    symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
-    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
-    uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
-    use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
     current_scope: ScopeId,
-    bound_names: IndexVec<ScopeId, BoundNames>,
-    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-    // Snapshots shared across every use of a free variable in lazy contexts,
-    // keyed by (nested scope, nested symbol).
-    lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
-    semantic_calls: Vec<SemanticCall>,
-    namespace_accesses: Vec<NamespaceAccess>,
-    // Per-call facts resolved by the scanner in flow order, keyed by the call's
-    // range. See `CallResolution`.
-    call_resolutions: FxHashMap<TextRange, CallResolution>,
     // Diagnostics collected during the build and logged on `finish()`. A minimal
     // channel for now, no user-facing surface.
     diagnostics: Vec<SemanticDiagnostic>,
+    scan: ScanState,
+    walk: WalkState,
+}
+
+/// State owned by the scan pass: its working state plus the products the walk
+/// reads back (`bound_names`, `call_resolutions`, `eager_descent.pending`).
+/// The walk also writes `bound_names`, but only to install scan-produced data:
+/// the lockstep push in `push_scope()` and the pending install in
+/// `collect_nse_argument()`.
+struct ScanState {
+    bound_names: IndexVec<ScopeId, BoundNames>,
+    // Per-call facts resolved by the scanner in flow order, keyed by the call's
+    // range. See `CallResolution`.
+    call_resolutions: FxHashMap<TextRange, CallResolution>,
     // The scan's flow-precise binding state for the scope being scanned, reset
     // at each scope's `begin_scan()`. See [`FlowState`].
     flow_state: FlowState,
@@ -148,6 +148,22 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // Bound names of Eager + Nested bodies like `local()` are discovered inline
     // by the scanner. See `EagerNestedDescent`.
     eager_descent: EagerNestedDescent,
+}
+
+/// State written by the walk pass: the per-scope arenas and the flat outputs
+/// carried into the final [`SemanticIndex`]. Note that the scan reads some of
+/// this data mid-flight, which is why we keep both states in a single builder.
+struct WalkState {
+    symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
+    uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
+    use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
+    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+    // Snapshots shared across every use of a free variable in lazy contexts,
+    // keyed by (nested scope, nested symbol).
+    lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
+    semantic_calls: Vec<SemanticCall>,
+    namespace_accesses: Vec<NamespaceAccess>,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -180,23 +196,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         Self {
             scopes,
-            symbol_tables,
-            definitions,
-            uses,
-            use_def_maps,
             current_scope: file_scope,
-            bound_names,
-            enclosing_snapshots: FxHashMap::default(),
-            lazy_snapshots: FxHashMap::default(),
-            semantic_calls: Vec::new(),
-            namespace_accesses: Vec::new(),
-            call_resolutions: FxHashMap::default(),
-            flow_state: FlowState::default(),
-            enclosing_flow: FxHashMap::default(),
-            attached_flow: Vec::new(),
-            eager_descent: EagerNestedDescent::default(),
             diagnostics: Vec::new(),
             resolver,
+            scan: ScanState {
+                bound_names,
+                call_resolutions: FxHashMap::default(),
+                flow_state: FlowState::default(),
+                enclosing_flow: FxHashMap::default(),
+                attached_flow: Vec::new(),
+                eager_descent: EagerNestedDescent::default(),
+            },
+            walk: WalkState {
+                symbol_tables,
+                definitions,
+                uses,
+                use_def_maps,
+                enclosing_snapshots: FxHashMap::default(),
+                lazy_snapshots: FxHashMap::default(),
+                semantic_calls: Vec::new(),
+                namespace_accesses: Vec::new(),
+            },
         }
     }
 
@@ -216,11 +236,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         });
         self.current_scope = id;
 
-        self.symbol_tables.push(SymbolTableBuilder::new());
-        self.definitions.push(IndexVec::new());
-        self.uses.push(IndexVec::new());
-        self.use_def_maps.push(UseDefMapBuilder::new());
-        self.bound_names.push(BoundNames::new());
+        self.walk.symbol_tables.push(SymbolTableBuilder::new());
+        self.walk.definitions.push(IndexVec::new());
+        self.walk.uses.push(IndexVec::new());
+        self.walk.use_def_maps.push(UseDefMapBuilder::new());
+        self.scan.bound_names.push(BoundNames::new());
 
         id
     }
@@ -253,14 +273,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         }
 
-        let symbol_id = self.symbol_tables[self.current_scope].intern(name, flags);
-        let def_id = self.definitions[self.current_scope].push(Definition {
+        let symbol_id = self.walk.symbol_tables[self.current_scope].intern(name, flags);
+        let def_id = self.walk.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
         });
-        self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-        self.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
+        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
     }
 
     /// Route a definition from a `Current + Lazy` scope to the scope that
@@ -280,14 +300,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
-        let symbol_id = self.symbol_tables[target_scope].intern(name, flags);
-        let def_id = self.definitions[target_scope].push(Definition {
+        let symbol_id = self.walk.symbol_tables[target_scope].intern(name, flags);
+        let def_id = self.walk.definitions[target_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
         });
 
-        self.use_def_maps[target_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[target_scope].ensure_symbol(symbol_id);
 
         // Deferred: the body executes at an unknown later time, so the
         // definition shouldn't shadow what's already live. This is the same
@@ -298,7 +318,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // file-level uses that run before the lazy body executes. Ideally
         // these defs would only be reachable from lazy scopes (functions),
         // not from eager/file-level code.
-        self.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
+        self.walk.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
     }
 
     /// The scope that owns definitions of a `Current + Lazy` NSE scope. The
@@ -330,38 +350,41 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // in the file scope it already sits in. The marker scope and the
             // binding scope coincide, so record one definition carrying both
             // flags rather than pushing two coinciding entries.
-            let symbol_id = self.symbol_tables[self.current_scope].intern(
+            let symbol_id = self.walk.symbol_tables[self.current_scope].intern(
                 name,
                 SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
             );
-            let def_id = self.definitions[self.current_scope].push(Definition {
+            let def_id = self.walk.definitions[self.current_scope].push(Definition {
                 symbol: symbol_id,
                 kind,
                 range,
             });
-            self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-            self.use_def_maps[self.current_scope].record_deferred_definition(symbol_id, def_id);
+            self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+            self.walk.use_def_maps[self.current_scope]
+                .record_deferred_definition(symbol_id, def_id);
             return;
         };
 
         let target_scope = self.resolve_super_target(name, parent);
 
         let symbol_id =
-            self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
-        self.definitions[self.current_scope].push(Definition {
+            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
+        self.walk.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
             kind: kind.clone(),
             range,
         });
 
-        let target_symbol = self.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
-        let target_def_id = self.definitions[target_scope].push(Definition {
+        let target_symbol =
+            self.walk.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
+        let target_def_id = self.walk.definitions[target_scope].push(Definition {
             symbol: target_symbol,
             kind,
             range,
         });
-        self.use_def_maps[target_scope].ensure_symbol(target_symbol);
-        self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);
+        self.walk.use_def_maps[target_scope].ensure_symbol(target_symbol);
+        self.walk.use_def_maps[target_scope]
+            .record_deferred_definition(target_symbol, target_def_id);
     }
 
     // Walk up from `start` to the first scope where `name` already has
@@ -372,8 +395,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
         let mut scope = start;
         loop {
-            if let Some(id) = self.symbol_tables[scope].id(name) {
-                if self.symbol_tables[scope]
+            if let Some(id) = self.walk.symbol_tables[scope].id(name) {
+                if self.walk.symbol_tables[scope]
                     .symbol(id)
                     .flags()
                     .contains(SymbolFlags::IS_BOUND)
@@ -389,17 +412,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
-        let symbol_id = self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
-        let use_id = self.uses[self.current_scope].push(Use {
+        let symbol_id =
+            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
+        let use_id = self.walk.uses[self.current_scope].push(Use {
             symbol: symbol_id,
             range,
         });
-        self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-        self.use_def_maps[self.current_scope].record_use(symbol_id, use_id);
+        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[self.current_scope].record_use(symbol_id, use_id);
 
         // Associate free variables with the enclosing snapshot where the
         // variable is defined
-        if self.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
+        if self.walk.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
             self.register_enclosing_snapshot(name, symbol_id, use_id);
         }
     }
@@ -436,15 +460,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // flag, it already exists. If found via pre-scan only, the later
                 // `add_definition()` call during the full walk will set `IS_BOUND`.
                 let enclosing_symbol_id =
-                    self.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
-                self.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
+                    self.walk.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
+                self.walk.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
 
                 let entry = if all_eager {
                     // Eager: a fresh point-in-time snapshot per use, no dedup and
                     // no watcher. Two uses at different points in the body can
                     // capture different enclosing states (e.g. either side of a
                     // `<<-`), so they can't share.
-                    let snapshot_id = self.use_def_maps[current_scope]
+                    let snapshot_id = self.walk.use_def_maps[current_scope]
                         .register_eager_snapshot(enclosing_symbol_id);
                     (current_scope, snapshot_id)
                 } else {
@@ -453,13 +477,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // and reuse it across uses.
                     let dedup_key = (self.current_scope, nested_symbol);
 
-                    if let Some(&entry) = self.lazy_snapshots.get(&dedup_key) {
+                    if let Some(&entry) = self.walk.lazy_snapshots.get(&dedup_key) {
                         entry
                     } else {
-                        let snapshot_id = self.use_def_maps[current_scope]
+                        let snapshot_id = self.walk.use_def_maps[current_scope]
                             .register_lazy_snapshot(enclosing_symbol_id);
                         let entry = (current_scope, snapshot_id);
-                        self.lazy_snapshots.insert(dedup_key, entry);
+                        self.walk.lazy_snapshots.insert(dedup_key, entry);
                         entry
                     }
                 };
@@ -468,7 +492,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     nested_scope: self.current_scope,
                     nested_use: use_id,
                 };
-                self.enclosing_snapshots.insert(use_key, entry);
+                self.walk.enclosing_snapshots.insert(use_key, entry);
 
                 return;
             }
@@ -488,7 +512,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
-        self.walked_binding(scope, name).is_some() || self.bound_names[scope].binds(name)
+        self.walked_binding(scope, name).is_some() || self.scan.bound_names[scope].binds(name)
     }
 
     /// Whether the current evaluation frame binds `name` (see [`scan_scope`]).
@@ -514,7 +538,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn scan_scope(&self) -> Option<ScanScope<'_>> {
-        if let Some(bound) = self.eager_descent.open.last() {
+        if let Some(bound) = self.scan.eager_descent.open.last() {
             return Some(ScanScope::Descent(bound));
         }
 
@@ -533,14 +557,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// seeds straight into `flow_state` without a `bound_names` entry). Used to
     /// point the lazy-shadow diagnostic at the overwrite.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
-        if let Some(range) = self.bound_names[scope].binding_range(name) {
+        if let Some(range) = self.scan.bound_names[scope].binding_range(name) {
             return Some(range);
         }
 
         // `IS_BOUND` always has a matching `Definition` row (see the invariant
         // in `resolve_symbol()`), so the find never misses when the flag is set.
         let sym_id = self.walked_binding(scope, name)?;
-        self.definitions[scope]
+        self.walk.definitions[scope]
             .iter()
             .find(|(_id, def)| def.symbol == sym_id)
             .map(|(_id, def)| def.range)
@@ -549,8 +573,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// The symbol `name` interns to in `scope`, if the walk has already recorded
     /// an `IS_BOUND` definition for it.
     fn walked_binding(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
-        let sym_id = self.symbol_tables[scope].id(name)?;
-        self.symbol_tables[scope]
+        let sym_id = self.walk.symbol_tables[scope].id(name)?;
+        self.walk.symbol_tables[scope]
             .symbol(sym_id)
             .flags()
             .contains(SymbolFlags::IS_BOUND)
@@ -564,8 +588,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
     pub(super) fn record_enclosing_flow(&mut self, range: TextRange) {
-        self.enclosing_flow
-            .insert(range, self.flow_state.snapshot());
+        self.scan
+            .enclosing_flow
+            .insert(range, self.scan.flow_state.snapshot());
     }
 
     // --- Scan pass ---
@@ -588,14 +613,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     pub(super) fn begin_scan(&mut self) {
         let range = self.scopes[self.current_scope].range;
 
-        match self.enclosing_flow.get(&range).cloned() {
-            Some(entry) => self.flow_state.restore(entry),
-            None => self.flow_state.clear(),
+        match self.scan.enclosing_flow.get(&range).cloned() {
+            Some(entry) => self.scan.flow_state.restore(entry),
+            None => self.scan.flow_state.clear(),
         }
 
-        for (_id, symbol) in self.symbol_tables[self.current_scope].iter() {
+        for (_id, symbol) in self.walk.symbol_tables[self.current_scope].iter() {
             if symbol.flags().contains(SymbolFlags::IS_BOUND) {
-                self.flow_state.bind(symbol.name().to_string());
+                self.scan.flow_state.bind(symbol.name().to_string());
             }
         }
     }
@@ -719,14 +744,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                let pre_if = self.flow_state.snapshot();
+                let pre_if = self.scan.flow_state.snapshot();
 
                 if let Ok(consequence) = stmt.consequence() {
                     self.scan_expression(&consequence);
                 }
 
-                let post_if = self.flow_state.snapshot();
-                self.flow_state.restore(pre_if);
+                let post_if = self.scan.flow_state.snapshot();
+                self.scan.flow_state.restore(pre_if);
 
                 if let Some(else_clause) = stmt.else_clause() {
                     if let Ok(alternative) = else_clause.alternative() {
@@ -735,7 +760,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // Both branches' bindings are live afterwards.
-                self.flow_state.merge(post_if);
+                self.scan.flow_state.merge(post_if);
             },
 
             // `while`/`repeat` loops, subsets, extractions, parentheses, unary
@@ -777,7 +802,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.flow_state.bind(text);
+            self.scan.flow_state.bind(text);
         }
 
         for param in params.items().iter() {
@@ -818,7 +843,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
-                self.attached_flow.push(pkg.clone());
+                self.scan.attached_flow.push(pkg.clone());
             }
         }
 
@@ -834,7 +859,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// same routing `add_definition_to_owner` does during the walk.
     fn record_binding(&mut self, name: String, range: TextRange) {
         self.record_owner_name(name.clone(), range);
-        self.flow_state.bind(name);
+        self.scan.flow_state.bind(name);
     }
 
     /// Route a binding NAME into its owner scope's bound names, matching
@@ -847,7 +872,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// a deferred body's names to the owner's bound names without also marking them
     /// bound in `flow_state` (see that helper for why).
     fn record_owner_name(&mut self, name: String, range: TextRange) {
-        if let Some(bound) = self.eager_descent.open.last_mut() {
+        if let Some(bound) = self.scan.eager_descent.open.last_mut() {
             bound.add(name, range);
             return;
         }
@@ -856,12 +881,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
         } {
-            self.bound_names[target].add(name, range);
+            self.scan.bound_names[target].add(name, range);
         }
     }
 
     fn nse_effect(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
-        self.call_resolutions
+        self.scan
+            .call_resolutions
             .get(&call.syntax().text_trimmed_range())
             .and_then(|resolution| resolution.arguments.clone())
     }
@@ -909,6 +935,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 } else {
                     let range = bin.syntax().text_trimmed_range();
                     let is_binding_op = self
+                        .scan
                         .call_resolutions
                         .get(&range)
                         .is_some_and(|resolution| !resolution.assign.is_empty());
@@ -997,19 +1024,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.collect_expression(&sequence);
                 }
 
-                let pre_loop = self.use_def_maps[self.current_scope].snapshot();
+                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 if let Ok(body) = stmt.body() {
-                    let first_use = self.uses[self.current_scope].next_id();
+                    let first_use = self.walk.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
-                        &self.uses[self.current_scope],
+                        &self.walk.uses[self.current_scope],
                     );
                 }
 
-                self.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -1018,15 +1045,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.collect_expression(&condition);
                 }
 
-                let pre_if = self.use_def_maps[self.current_scope].snapshot();
+                let pre_if = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 // If-body (consequence)
                 if let Ok(consequence) = stmt.consequence() {
                     self.collect_expression(&consequence);
                 }
 
-                let post_if = self.use_def_maps[self.current_scope].snapshot();
-                self.use_def_maps[self.current_scope].restore(pre_if);
+                let post_if = self.walk.use_def_maps[self.current_scope].snapshot();
+                self.walk.use_def_maps[self.current_scope].restore(pre_if);
 
                 // Else-body (alternative), if present. If absent, the
                 // "else path" is just the pre-if state we restored to.
@@ -1037,7 +1064,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // After: definitions from both branches are live
-                self.use_def_maps[self.current_scope].merge(post_if);
+                self.walk.use_def_maps[self.current_scope].merge(post_if);
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -1045,32 +1072,32 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.collect_expression(&condition);
                 }
 
-                let pre_loop = self.use_def_maps[self.current_scope].snapshot();
+                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 if let Ok(body) = stmt.body() {
-                    let first_use = self.uses[self.current_scope].next_id();
+                    let first_use = self.walk.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
-                        &self.uses[self.current_scope],
+                        &self.walk.uses[self.current_scope],
                     );
                 }
 
                 // Body may not execute
-                self.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
             },
 
             AnyRExpression::RRepeatStatement(stmt) => {
                 // Body always executes at least once, so no merge with pre-loop state.
                 if let Ok(body) = stmt.body() {
-                    let pre_loop = self.use_def_maps[self.current_scope].snapshot();
-                    let first_use = self.uses[self.current_scope].next_id();
+                    let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
+                    let first_use = self.walk.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
-                        &self.uses[self.current_scope],
+                        &self.walk.uses[self.current_scope],
                     );
                 }
             },
@@ -1263,7 +1290,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
         let offset = expr.syntax().text_trimmed_range().start();
-        self.namespace_accesses
+        self.walk
+            .namespace_accesses
             .push(NamespaceAccess::new(package, symbol, kind, offset));
     }
 
@@ -1274,6 +1302,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // `library()` inside `local({...})`.
         let range = call.syntax().text_trimmed_range();
         if let Some(package) = self
+            .scan
             .call_resolutions
             .get(&range)
             .and_then(|resolution| resolution.attach.clone())
@@ -1285,6 +1314,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // path and cached the sourced files by range. Their presence is the
         // recognition marker, so we dispatch on it rather than the callee name.
         if self
+            .scan
             .call_resolutions
             .get(&range)
             .is_some_and(|resolution| !resolution.source.is_empty())
@@ -1296,6 +1326,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // emit the corresponding definitions so they feed the use-def map,
         // `exports()`, and goto.
         if self
+            .scan
             .call_resolutions
             .get(&range)
             .is_some_and(|resolution| !resolution.assign.is_empty())
@@ -1314,7 +1345,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // be called. Same reasoning as `source()` calls.
     fn record_attach(&mut self, call: &RCall, package: String) {
         let call_offset = call.syntax().text_trimmed_range().start();
-        self.semantic_calls.push(SemanticCall {
+        self.walk.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Attach { package },
             offset: call_offset,
             scope: self.current_scope,
@@ -1344,7 +1375,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // Read back what the scan cached: the sourced files, each with its
         // resolution. The scan is the single point that extracts the paths and
         // consults `resolve_source`, so the walk never re-parses or re-resolves.
-        let sourced = match self.call_resolutions.get(&range) {
+        let sourced = match self.scan.call_resolutions.get(&range) {
             Some(resolution) => resolution.source.clone(),
             None => return,
         };
@@ -1355,7 +1386,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // reflective queries (diagnostics for unresolved `source()`,
             // file-dependency views) read the outcome without re-resolving.
             let resolved = resolution.as_ref().map(|r| r.url.clone());
-            self.semantic_calls.push(SemanticCall {
+            self.walk.semantic_calls.push(SemanticCall {
                 kind: SemanticCallKind::Source { path, resolved },
                 offset: call_offset,
                 scope: self.current_scope,
@@ -1391,7 +1422,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // to this `source()`'s offset so scope-layer composition treats
             // them identically to local `library()` calls.
             for pkg in resolution.packages {
-                self.semantic_calls.push(SemanticCall {
+                self.walk.semantic_calls.push(SemanticCall {
                     kind: SemanticCallKind::Attach { package: pkg },
                     offset: call_offset,
                     scope: self.current_scope,
@@ -1412,7 +1443,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Read back the bindings the scan extracted (their presence is what the
         // caller checked before dispatching here).
-        let bindings = match self.call_resolutions.get(&range) {
+        let bindings = match self.scan.call_resolutions.get(&range) {
             Some(resolution) => resolution.assign.clone(),
             None => return,
         };
@@ -1444,7 +1475,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// scan recognized, after its operands were collected as uses.
     fn collect_assign_operator(&mut self, bin: &RBinaryExpression) {
         let range = bin.syntax().text_trimmed_range();
-        let bindings = match self.call_resolutions.get(&range) {
+        let bindings = match self.scan.call_resolutions.get(&range) {
             Some(resolution) if !resolution.assign.is_empty() => resolution.assign.clone(),
             _ => return,
         };
@@ -1471,6 +1502,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let symbol_tables = self
+            .walk
             .symbol_tables
             .into_iter()
             .map(|b| Arc::new(b.build()))
@@ -1478,24 +1510,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // The file scope's exit flow state is the file's exports. Capture it
         // before the builders are consumed below.
-        let file_final_bindings = self.use_def_maps[ScopeId::from(0)].final_bindings().clone();
+        let file_final_bindings = self.walk.use_def_maps[ScopeId::from(0)]
+            .final_bindings()
+            .clone();
 
         let use_def_maps: IndexVec<ScopeId, _> = self
+            .walk
             .use_def_maps
             .into_iter()
-            .zip(self.uses.iter())
+            .zip(self.walk.uses.iter())
             .map(|(b, (_, uses))| Arc::new(b.finish(uses)))
             .collect();
 
         SemanticIndex::new(
             self.scopes,
             symbol_tables,
-            self.definitions,
-            self.uses,
+            self.walk.definitions,
+            self.walk.uses,
             use_def_maps,
-            self.enclosing_snapshots,
-            self.semantic_calls,
-            self.namespace_accesses,
+            self.walk.enclosing_snapshots,
+            self.walk.semantic_calls,
+            self.walk.namespace_accesses,
             self.diagnostics,
             file_final_bindings,
         )
@@ -1544,7 +1579,7 @@ impl<R: ImportsResolver> ScopeBindings for ScanBindings<'_, R> {
             // The scan's `flow_state` carries the current scope's bindings plus
             // the inherited eager environment seeded at `begin_scan`, so it's
             // the lexical answer.
-            return self.builder.flow_state.is_bound(name);
+            return self.builder.scan.flow_state.is_bound(name);
         }
         self.builder.scan_scope_binds(name)
     }

@@ -54,12 +54,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
 
         if let Some(package) = attach {
-            self.call_resolutions
+            self.scan
+                .call_resolutions
                 .entry(call.syntax().text_trimmed_range())
                 .or_default()
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
-                self.attached_flow.push(package);
+                self.scan.attached_flow.push(package);
             }
         }
 
@@ -71,7 +72,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let range = call.syntax().text_trimmed_range();
             for path in paths {
                 let resolution = self.scan_source_call(&path, range);
-                self.call_resolutions
+                self.scan
+                    .call_resolutions
                     .entry(range)
                     .or_default()
                     .source
@@ -86,7 +88,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let range = call.syntax().text_trimmed_range();
             for binding in bindings {
                 self.record_binding(binding.name.clone(), range);
-                self.call_resolutions
+                self.scan
+                    .call_resolutions
                     .entry(range)
                     .or_default()
                     .assign
@@ -147,16 +150,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // No `record_enclosing_flow()`: eager `Nested` bodies are
                     // never scanned at walk time, so nothing would read it.
                     (EvalEnv::Nested, EvalTiming::Eager) => {
-                        let old = self.flow_state.snapshot();
+                        let old = self.scan.flow_state.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
-                        self.eager_descent.open.push(BoundNames::new());
+                        self.scan.eager_descent.open.push(BoundNames::new());
                         self.scan_expression(&value);
-                        if let Some(bound) = self.eager_descent.open.pop() {
-                            self.eager_descent.pending.insert(range, bound);
+                        if let Some(bound) = self.scan.eager_descent.open.pop() {
+                            self.scan.eager_descent.pending.insert(range, bound);
                         }
 
-                        self.flow_state.restore(old);
+                        self.scan.flow_state.restore(old);
                     },
 
                     // Calls like `reactive()`. Its body runs at an unknown
@@ -171,7 +174,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         // Hand the resolved argument effects to the walk (at the end to avoid a clone)
-        self.call_resolutions
+        self.scan
+            .call_resolutions
             .entry(call.syntax().text_trimmed_range())
             .or_default()
             .arguments = Some(arg_effects);
@@ -185,7 +189,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let range = bin.syntax().text_trimmed_range();
         for binding in bindings {
             self.record_binding(binding.name.clone(), range);
-            self.call_resolutions
+            self.scan
+                .call_resolutions
                 .entry(range)
                 .or_default()
                 .assign
@@ -405,7 +410,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // at `begin_scan()`. Forward and deferred (lazy-routed)
         // bindings are excluded. A forward one isn't in `flow_state`
         // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-        if self.flow_state.is_bound(sym) {
+        if self.scan.flow_state.is_bound(sym) {
             return self.resolve_local_effects(sym);
         }
 
@@ -424,7 +429,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let lazy = self.scopes[self.current_scope].kind.is_lazy();
         let effects = self
             .resolver
-            .resolve_effects(sym, &self.attached_flow, lazy)?;
+            .resolve_effects(sym, &self.scan.attached_flow, lazy)?;
 
         // The callee is unbound by any eager binding, so its effect
         // holds. If a lazy-crossed ancestor binds it whole-scope, that
@@ -549,8 +554,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // Install the pending names the descent recorded for this body,
                 // before collecting so lazy children inside can see them via
                 // `scope_binds_anywhere()`.
-                match self.eager_descent.pending.remove(&range) {
-                    Some(bound) => self.bound_names[scope] = bound,
+                match self.scan.eager_descent.pending.remove(&range) {
+                    Some(bound) => self.scan.bound_names[scope] = bound,
                     None => {
                         // An eager NSE scope is reachable only through the scan
                         // unit that descended into it, so the pending set must
