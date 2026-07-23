@@ -2039,6 +2039,39 @@ fn test_row_names_matrix() {
     );
 }
 
+// Regression test for posit-dev/positron#12547: a matrix with row names used to
+// produce a blank Data Explorer grid. Positron's first cache update sends
+// `get_row_labels` with an empty selection, and subsetting a matrix to zero rows
+// drops its row names to `NULL`, which used to error rather than return no labels.
+#[test]
+fn test_row_names_matrix_empty_selection() {
+    let setup = open_data_explorer_from_expression(
+        "matrix(1:4, nrow = 2, dimnames = list(c(\"A\", \"B\"), NULL))",
+        Some("m"),
+    )
+    .unwrap();
+
+    // The matrix has row names, so state reports them.
+    TestAssertions::assert_state(&setup, |state| {
+        assert!(state.has_row_labels);
+    });
+
+    // An empty selection returns empty labels rather than erroring.
+    TestAssertions::assert_row_labels(&setup, SelectionBuilder::indices(vec![]), |labels| {
+        assert_eq!(labels[0].len(), 0);
+    });
+
+    // A range selection still returns the actual row names.
+    let range = ArraySelection::SelectRange(DataSelectionRange {
+        first_index: 0,
+        last_index: 1,
+    });
+    TestAssertions::assert_row_labels(&setup, range, |labels| {
+        assert_eq!(labels[0][0], "A");
+        assert_eq!(labels[0][1], "B");
+    });
+}
+
 #[test]
 fn test_schema_identification() {
     let setup = open_data_explorer_from_expression(
