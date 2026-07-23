@@ -8,6 +8,7 @@
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::completions::sources::CompletionSource;
@@ -38,8 +39,6 @@ impl CompletionSource for SubsetSource {
 pub(crate) fn completions_from_subset(
     context: &DocumentContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    const ENQUOTE: bool = true;
-
     let mut node = context.node;
     let mut needs_completions = false;
 
@@ -82,7 +81,7 @@ pub(crate) fn completions_from_subset(
 
     let text = child.node_as_str(context.contents)?.to_string();
 
-    completions_from_evaluated_object_names(&text, ENQUOTE, node.node_type())
+    completions_from_evaluated_object_names(&text, QuoteStyle::Double, node.node_type())
 }
 
 #[cfg(test)]
