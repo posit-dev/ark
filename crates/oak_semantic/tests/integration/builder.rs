@@ -1022,6 +1022,159 @@ fn test_bquote_multiple_holes() {
 }
 
 #[test]
+fn test_substitute_reports_parameter_use() {
+    // `substitute(x)` in a function frame substitutes the parameter `x`, so `x`
+    // is a use of that binding (the `deparse(substitute(x))` idiom).
+    let index = index_with_base("f <- function(x) substitute(x)");
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_USED)
+            .union(SymbolFlags::IS_PARAMETER)
+    );
+}
+
+#[test]
+fn test_substitute_leaves_free_symbol_quoted() {
+    // A symbol the frame doesn't bind stays quoted, so `y` is not a use while the
+    // parameter `x` is.
+    let index = index_with_base("f <- function(x) substitute(x + y)");
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(fun).get("y").is_none());
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_USED)
+            .union(SymbolFlags::IS_PARAMETER)
+    );
+}
+
+#[test]
+fn test_substitute_global_frame_quotes() {
+    // R substitutes nothing in the global environment, so a top-level
+    // `substitute` is a plain quote: `a` stays bound-only and `b` is absent. The
+    // one use is the `substitute` callee itself.
+    let index = index_with_base("a <- 1\nsubstitute(a + b)");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("a").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(file).get("b").is_none());
+    assert_eq!(index.uses(file).len(), 1);
+}
+
+#[test]
+fn test_substitute_protects_argument_tag() {
+    // The value `x` is substituted, but the `x =` tag is a name, not a symbol, so
+    // it stays quoted. The two uses are the `substitute` callee and the value
+    // `x`; without tag protection there would be a third for the tag.
+    let index = index_with_base("f <- function(x) substitute(list(x = x))");
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(fun).get("list").is_none());
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_USED)
+            .union(SymbolFlags::IS_PARAMETER)
+    );
+    assert_eq!(index.uses(fun).len(), 2);
+}
+
+#[test]
+fn test_substitute_replaces_extraction_member() {
+    // Unlike ordinary evaluation, `substitute` replaces the `$` member too, so
+    // the parameter `v` in `d$v` is a use while `d` stays quoted.
+    let index = index_with_base("f <- function(v) substitute(d$v)");
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(fun).get("d").is_none());
+    assert_eq!(
+        index.symbols(fun).get("v").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_USED)
+            .union(SymbolFlags::IS_PARAMETER)
+    );
+}
+
+#[test]
+fn test_substitute_explicit_env_quotes_even_environment() {
+    // We bail on any explicit `env`, even `environment()` (which names the frame
+    // we'd otherwise query), until proper env resolution lands. So `x` stays
+    // quoted rather than being reported as a use.
+    let index = index_with_base("f <- function(x) substitute(x, environment())");
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND.union(SymbolFlags::IS_PARAMETER)
+    );
+}
+
+#[test]
+fn test_substitute_non_default_env_quotes() {
+    // An explicit `env` we can't see into falls back to a plain quote, so the
+    // parameter `x` is not reported as a use.
+    let index = index_with_base("f <- function(x) substitute(x, list())");
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND.union(SymbolFlags::IS_PARAMETER)
+    );
+}
+
+#[test]
+fn test_substitute_local_frame() {
+    // Inside `local()`, the frame is the local body, so a name the body binds is
+    // substituted and reported as a use.
+    let index = index_with_base("local({\n  y <- 1\n  substitute(y)\n})");
+    let local = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(local).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED)
+    );
+}
+
+#[test]
+fn test_substitute_quotes_nested_function_inertly() {
+    // A nested function in the argument is inert language data. The frame binds
+    // nothing, so no symbol inside is a use, and the function is not itself a
+    // scope. It would only become a scope once the result is evaluated.
+    let index = index_with_base("f <- function() substitute(function(x) x + 1)");
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(fun).get("x").is_none());
+    assert_eq!(index.child_scope_ids(fun).count(), 0);
+}
+
+#[test]
+fn test_substitute_replaces_symbol_in_nested_function() {
+    // `substitute` replaces symbols syntactically, ignoring the nested function's
+    // own scope, so the body `x` (bound by the outer frame) is a use of the outer
+    // parameter. The inner formal `x` is a tag and stays quoted, and the nested
+    // function is not itself a scope. The two uses are the `substitute` callee
+    // and the body `x`.
+    let index = index_with_base("g <- function(x) substitute(function(x) x + 1)");
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(fun).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_USED)
+            .union(SymbolFlags::IS_PARAMETER)
+    );
+    assert_eq!(index.child_scope_ids(fun).count(), 0);
+    assert_eq!(index.uses(fun).len(), 2);
+}
+
+#[test]
 fn test_local_quote_definition_shadows() {
     // A local `quote` shadows base's, so `quote(y)` is an ordinary call and `y`
     // is a use again.
@@ -2300,7 +2453,7 @@ static COLLATION_HANDLER: CollationHandler = CollationHandler;
 impl EffectHandler for CollationHandler {
     type Output = Vec<String>;
 
-    fn resolve(&self, _call: &RCall, _ctx: &CallContext) -> Option<Vec<String>> {
+    fn resolve(&self, _call: &RCall, _ctx: &CallContext<'_>) -> Option<Vec<String>> {
         Some(vec!["a.R".into(), "b.R".into()])
     }
 }
@@ -2361,7 +2514,7 @@ struct MultiAssignHandler;
 static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
 
 impl AssignHandler for MultiAssignHandler {
-    fn resolve(&self, site: EffectSite, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, _ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Call(call) = site else {
             return None;
         };

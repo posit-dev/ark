@@ -58,6 +58,7 @@ use rustc_hash::FxHashSet;
 
 use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffects;
+use crate::effects::ScopeBindings;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::Definition;
@@ -488,6 +489,40 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         self.walked_binding(scope, name).is_some() || self.bound_names[scope].binds(name)
+    }
+
+    /// Whether the current evaluation frame binds `name` (see [`scan_scope`]).
+    /// For a scope, delegates to [`scope_binds_anywhere`]. For a `local()`
+    /// descent body, the names collected into it so far.
+    ///
+    /// [`scan_scope`]: Self::scan_scope
+    /// [`scope_binds_anywhere`]: Self::scope_binds_anywhere
+    fn scan_scope_binds(&self, name: &str) -> bool {
+        match self.scan_scope() {
+            Some(ScanScope::Descent(bound)) => bound.binds(name),
+            Some(ScanScope::Scope(scope)) => self.scope_binds_anywhere(scope, name),
+            None => false,
+        }
+    }
+
+    fn scan_scope_is_global(&self) -> bool {
+        match self.scan_scope() {
+            Some(ScanScope::Scope(scope)) => matches!(self.scopes[scope].kind, ScopeKind::File),
+            Some(ScanScope::Descent(_)) => false,
+            None => true,
+        }
+    }
+
+    fn scan_scope(&self) -> Option<ScanScope<'_>> {
+        if let Some(bound) = self.eager_descent.open.last() {
+            return Some(ScanScope::Descent(bound));
+        }
+
+        let scope = match self.scopes[self.current_scope].kind {
+            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner()?,
+            _ => self.current_scope,
+        };
+        Some(ScanScope::Scope(scope))
     }
 
     /// The site where `scope` binds `name`, matching what
@@ -1494,6 +1529,31 @@ struct SourcedFile {
     resolution: Option<SourceResolution>,
 }
 
+/// Backs a [`CallContext`]'s [`ScopeBindings`] with the builder's live scope
+/// state, so an effect handler (`substitute`) can query bindings during the
+/// scan without reaching into the builder directly.
+///
+/// [`CallContext`]: crate::effects::CallContext
+struct ScanBindings<'a, R: ImportsResolver> {
+    builder: &'a SemanticIndexBuilder<R>,
+}
+
+impl<R: ImportsResolver> ScopeBindings for ScanBindings<'_, R> {
+    fn is_bound(&self, name: &str, inherits: bool) -> bool {
+        if inherits {
+            // The scan's `flow_state` carries the current scope's bindings plus
+            // the inherited eager environment seeded at `begin_scan`, so it's
+            // the lexical answer.
+            return self.builder.flow_state.is_bound(name);
+        }
+        self.builder.scan_scope_binds(name)
+    }
+
+    fn is_global_scope(&self) -> bool {
+        self.builder.scan_scope_is_global()
+    }
+}
+
 /// The scan's flow-precise binding state: which names are bound at the current
 /// point of the current scan unit, in flow order.
 ///
@@ -1599,6 +1659,17 @@ impl BoundNames {
     fn binding_range(&self, name: &str) -> Option<TextRange> {
         self.by_name.get(name).copied()
     }
+}
+
+/// A scope as the scan sees it. A `local()` body scanned inline has no arena
+/// scope yet and its bindings are stored in the staging [`EagerNestedDescent`].
+/// Every other scope is materialized in the arena. [`scan_scope`] resolves
+/// which one is the current evaluation frame.
+///
+/// [`scan_scope`]: SemanticIndexBuilder::scan_scope
+enum ScanScope<'a> {
+    Descent(&'a BoundNames),
+    Scope(ScopeId),
 }
 
 fn is_assignment(bin: &RBinaryExpression) -> bool {

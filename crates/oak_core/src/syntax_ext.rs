@@ -1,7 +1,10 @@
+use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRSelector;
+use aether_syntax::RCall;
 use aether_syntax::RIdentifier;
 use aether_syntax::RStringValue;
 use biome_rowan::AstNode;
+use biome_rowan::AstSeparatedList;
 
 // Candidates for upstreaming into `aether_syntax`.
 
@@ -58,6 +61,24 @@ impl AnyRSelectorExt for AnyRSelector {
             AnyRSelector::RStringValue(node) => node.string_text(),
             AnyRSelector::RDots(_) | AnyRSelector::RDotDotI(_) => None,
         }
+    }
+}
+
+pub trait RCallExt {
+    /// The value expression of the argument at `position`, counting in call
+    /// order. `None` when there's no argument there or it has no value.
+    fn argument_value(&self, position: usize) -> Option<AnyRExpression>;
+}
+
+impl RCallExt for RCall {
+    fn argument_value(&self, position: usize) -> Option<AnyRExpression> {
+        self.arguments()
+            .ok()?
+            .items()
+            .iter()
+            .nth(position)?
+            .ok()?
+            .value()
     }
 }
 
