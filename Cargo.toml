@@ -111,6 +111,7 @@ serde_with = "3.19.0"
 sha2 = "0.11.0"
 smallvec = "1.15.1"
 socket2 = "0.6.3"
+stacker = "0.1.21"
 stdext = { path = "crates/stdext" }
 streaming-iterator = "0.1.9"
 strum = "0.28.0"
