@@ -571,10 +571,9 @@ impl GlobalState {
 
                 dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
 
-                // Warm the workspace index once the scan settles. Editor
-                // writes don't need to re-warm: they imply an open document,
-                // and the diagnostics passes they trigger force the same
-                // memos.
+                // Warm the workspace symbol index once the scan settles. The
+                // oak semantic index is warmed separately on every revision (see
+                // the revision-advanced block below).
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
                     analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
                 }
@@ -631,6 +630,16 @@ impl GlobalState {
                 &self.lsp_state.source_pool,
                 &self.events_tx,
             );
+
+            // Re-warm the oak semantic indexes on every revision, counting on
+            // idempotence (warm files are salsa cache hits). Runs on a snapshot,
+            // so a concurrent write just cancels the in-flight warm and the next
+            // revision re-runs it. This is what carries warmup through the
+            // startup write-storm (each source/edit cancels the previous warm,
+            // and the revision after the storm settles completes it), and it
+            // means a freshly-typed `pkg::` dependency is warmed as soon as its
+            // sources land and bump the revision.
+            analysis::warm_semantic_indexes(&self.world, &self.lsp_state.analysis_pool);
         }
 
         Ok(())

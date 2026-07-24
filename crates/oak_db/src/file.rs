@@ -317,11 +317,23 @@ fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
         .map(|(_, r)| r)
 }
 
+/// Warm the tracked queries an LSP request reads on `file`, so the first
+/// request after a scan doesn't pay the cold build.
+///
+/// Computing `imports()` builds the file's `semantic_index` and its cross-file
+/// import view in one go; the file's collation predecessors get pulled in (and
+/// primed shallow) as a side effect. Best-effort, meant to run off the request
+/// thread once a scan settles.
+pub fn warm_file(db: &dyn Db, file: File) {
+    file.imports(db);
+}
+
 /// Guard against stack overflow when `semantic_index` recurses across files.
 const STACK_RED_ZONE: usize = 1024 * 1024;
 const STACK_GROW_BY: usize = 8 * 1024 * 1024;
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
+    log::error!("Building index for {}", file.path(db));
     #[cfg(test)]
     let _depth = recursion_depth::enter();
 

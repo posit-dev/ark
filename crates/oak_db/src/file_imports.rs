@@ -46,7 +46,7 @@ pub enum ImportLayer {
 /// flow-ordered set.
 ///
 /// [`SalsaImportsResolver`]: crate::imports::SalsaImportsResolver
-#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub(crate) struct CrossFileLayers {
     pub above: Vec<ImportLayer>,
     pub below: Vec<ImportLayer>,
