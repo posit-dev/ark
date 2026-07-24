@@ -298,13 +298,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     // --- Recursive descent ---
 
-    pub(super) fn collect_expression_list(&mut self, list: &RExpressionList) {
+    pub(super) fn walk_expression_list(&mut self, list: &RExpressionList) {
         for expr in list.iter() {
-            self.collect_expression(&expr);
+            self.walk_expression(&expr);
         }
     }
 
-    fn collect_expression(&mut self, expr: &AnyRExpression) {
+    fn walk_expression(&mut self, expr: &AnyRExpression) {
         match expr {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
@@ -322,11 +322,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             },
 
             AnyRExpression::RFunctionDefinition(func) => {
-                self.collect_function(func);
+                self.walk_function(func);
             },
 
             AnyRExpression::RBracedExpressions(braced) => {
-                self.collect_expression_list(&braced.expressions());
+                self.walk_expression_list(&braced.expressions());
             },
 
             AnyRExpression::RBinaryExpression(bin) => {
@@ -335,7 +335,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // the parser into `RArgumentNameClause` instead, so it never
                 // reaches here.
                 if is_assignment(bin) {
-                    self.collect_assignment(bin);
+                    self.walk_assignment(bin);
                 } else {
                     let range = bin.syntax().text_trimmed_range();
                     let is_binding_op = self
@@ -353,15 +353,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // carries a per-operator "reads target" flag.
                     if !is_binding_op {
                         if let Ok(lhs) = bin.left() {
-                            self.collect_expression(&lhs);
+                            self.walk_expression(&lhs);
                         }
                     }
                     if let Ok(rhs) = bin.right() {
-                        self.collect_expression(&rhs);
+                        self.walk_expression(&rhs);
                     }
                     // A `%...%` operator the scan recognized as an assign effect
                     // emits its binding here, after the operand uses.
-                    self.collect_assign_operator(bin);
+                    self.walk_assign_operator(bin);
                 }
             },
 
@@ -372,43 +372,43 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // Record the callee as a use (a no-op for `pkg::fn`) before
                 // handling NSE.
                 if let Ok(func) = call.function() {
-                    self.collect_expression(&func);
+                    self.walk_expression(&func);
                 }
 
                 if let Some(scoping) = self.nse_effect(call) {
-                    self.collect_nse_call(call, scoping)
+                    self.walk_nse_call(call, scoping)
                 } else if let Ok(args) = call.arguments() {
-                    self.collect_arguments(&args.items());
+                    self.walk_arguments(&args.items());
                 }
 
-                self.collect_semantic_call(call);
+                self.walk_semantic_call(call);
             },
             AnyRExpression::RSubset(subset) => {
                 if let Ok(object) = subset.function() {
-                    self.collect_expression(&object);
+                    self.walk_expression(&object);
                 }
                 if let Ok(args) = subset.arguments() {
-                    self.collect_arguments(&args.items());
+                    self.walk_arguments(&args.items());
                 }
             },
             AnyRExpression::RSubset2(subset) => {
                 if let Ok(object) = subset.function() {
-                    self.collect_expression(&object);
+                    self.walk_expression(&object);
                 }
                 if let Ok(args) = subset.arguments() {
-                    self.collect_arguments(&args.items());
+                    self.walk_arguments(&args.items());
                 }
             },
 
             AnyRExpression::RExtractExpression(extract) => {
                 // For `x$name` or `x@slot`, collect the object and skip the member
                 if let Ok(object) = extract.left() {
-                    self.collect_expression(&object);
+                    self.walk_expression(&object);
                 }
             },
 
             AnyRExpression::RNamespaceExpression(expr) => {
-                self.collect_namespace_access(expr);
+                self.walk_namespace_access(expr);
             },
 
             AnyRExpression::RForStatement(stmt) => {
@@ -425,14 +425,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     );
                 }
                 if let Ok(sequence) = stmt.sequence() {
-                    self.collect_expression(&sequence);
+                    self.walk_expression(&sequence);
                 }
 
                 let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 if let Ok(body) = stmt.body() {
                     let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.collect_expression(&body);
+                    self.walk_expression(&body);
                     self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
@@ -446,14 +446,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             AnyRExpression::RIfStatement(stmt) => {
                 // Condition is always evaluated
                 if let Ok(condition) = stmt.condition() {
-                    self.collect_expression(&condition);
+                    self.walk_expression(&condition);
                 }
 
                 let pre_if = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 // If-body (consequence)
                 if let Ok(consequence) = stmt.consequence() {
-                    self.collect_expression(&consequence);
+                    self.walk_expression(&consequence);
                 }
 
                 let post_if = self.walk.use_def_maps[self.current_scope].snapshot();
@@ -463,7 +463,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // "else path" is just the pre-if state we restored to.
                 if let Some(else_clause) = stmt.else_clause() {
                     if let Ok(alternative) = else_clause.alternative() {
-                        self.collect_expression(&alternative);
+                        self.walk_expression(&alternative);
                     }
                 }
 
@@ -473,14 +473,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
             AnyRExpression::RWhileStatement(stmt) => {
                 if let Ok(condition) = stmt.condition() {
-                    self.collect_expression(&condition);
+                    self.walk_expression(&condition);
                 }
 
                 let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
 
                 if let Ok(body) = stmt.body() {
                     let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.collect_expression(&body);
+                    self.walk_expression(&body);
                     self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
@@ -497,7 +497,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 if let Ok(body) = stmt.body() {
                     let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
                     let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.collect_expression(&body);
+                    self.walk_expression(&body);
                     self.walk.use_def_maps[self.current_scope].finish_loop_defs(
                         &pre_loop,
                         first_use,
@@ -509,7 +509,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             AnyRExpression::RBogusExpression(_) => {},
 
             // Generic fallback: walk over descendant nodes and collect their
-            // `AnyRExpression` children, letting `collect_expression`
+            // `AnyRExpression` children, letting `walk_expression`
             // handle their contents. This covers `RUnaryExpression`,
             // `RParenthesizedExpression`, `RReturnExpression`, literals, and
             // any future expression types without needing explicit arms.
@@ -525,16 +525,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // Currently this works by accident because the generic traversal is
             // transparent to both `declare()` and `~`.
             _ => {
-                self.collect_descendants(expr.syntax());
+                self.walk_descendants(expr.syntax());
             },
         }
     }
 
     // Walk descendant nodes of `expr`, collecting the outermost
-    // `AnyRExpression` nodes and recursing into them via `collect_expression`.
+    // `AnyRExpression` nodes and recursing into them via `walk_expression`.
     // This skips intermediate wrapper nodes (e.g. `RElseClause`) while
     // correctly stopping at expression boundaries.
-    fn collect_descendants(&mut self, node: &RSyntaxNode) {
+    fn walk_descendants(&mut self, node: &RSyntaxNode) {
         let mut preorder = node.preorder();
 
         // Skip the root node itself
@@ -545,13 +545,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 continue;
             };
             if let Some(expr) = node.cast::<AnyRExpression>() {
-                self.collect_expression(&expr);
+                self.walk_expression(&expr);
                 preorder.skip_subtree();
             }
         }
     }
 
-    fn collect_function(&mut self, fun: &RFunctionDefinition) {
+    fn walk_function(&mut self, fun: &RFunctionDefinition) {
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
         if let Ok(params) = fun.parameters() {
@@ -563,28 +563,28 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.begin_scan();
             self.scan_parameter_defaults(&params);
 
-            // `collect_parameters` adds the parameter definitions and walks
+            // `walk_parameters` adds the parameter definitions and walks
             // each default in source order, finding the NSE decisions the scan
             // above recorded.
-            self.collect_parameters(&params);
+            self.walk_parameters(&params);
         }
         if let Ok(body) = fun.body() {
             self.begin_scan();
             self.scan_expression(&body);
-            self.collect_expression(&body);
+            self.walk_expression(&body);
         }
 
         self.pop_scope(scope);
     }
 
-    fn collect_parameters(&mut self, params: &RParameters) {
+    fn walk_parameters(&mut self, params: &RParameters) {
         for param in params.items().iter() {
             let Ok(param) = param else { continue };
-            self.collect_parameter(&param);
+            self.walk_parameter(&param);
         }
     }
 
-    fn collect_parameter(&mut self, param: &RParameter) {
+    fn walk_parameter(&mut self, param: &RParameter) {
         let flags = SymbolFlags::IS_BOUND.union(SymbolFlags::IS_PARAMETER);
 
         if let Ok(name) = param.name() {
@@ -618,12 +618,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         if let Some(default) = param.default() {
             if let Ok(value) = default.value() {
-                self.collect_expression(&value);
+                self.walk_expression(&value);
             }
         }
     }
 
-    fn collect_assignment(&mut self, op: &RBinaryExpression) {
+    fn walk_assignment(&mut self, op: &RBinaryExpression) {
         let right = is_right_assignment(op);
         let super_assign = is_super_assignment(op);
 
@@ -632,7 +632,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // to a different place (previous binding).
         let value = if right { op.left() } else { op.right() };
         if let Ok(value) = value {
-            self.collect_expression(&value);
+            self.walk_expression(&value);
         }
 
         let target = if right { op.right() } else { op.left() };
@@ -641,7 +641,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let Some((name, range)) = assignment_name(&target) else {
             // Complex target (`x$foo <- rhs`, `x[1] <- rhs`, etc.) does
             // not represent a binding. We recurse for uses.
-            self.collect_expression(&target);
+            self.walk_expression(&target);
             return;
         };
 
@@ -661,16 +661,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    fn collect_arguments(&mut self, args: &RArgumentList) {
+    fn walk_arguments(&mut self, args: &RArgumentList) {
         for item in args.iter() {
             let Ok(arg) = item else { continue };
             if let Some(value) = arg.value() {
-                self.collect_expression(&value);
+                self.walk_expression(&value);
             }
         }
     }
 
-    fn collect_namespace_access(&mut self, expr: &RNamespaceExpression) {
+    fn walk_namespace_access(&mut self, expr: &RNamespaceExpression) {
         let Ok(operator) = expr.operator() else {
             return;
         };
@@ -699,7 +699,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .push(NamespaceAccess::new(package, symbol, kind, offset));
     }
 
-    fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
+    fn walk_semantic_call(&mut self, call: &aether_syntax::RCall) {
         // Attach: the scan recognized it (shadow- and mask-aware) and recorded
         // the package by range. We emit the `SemanticCall::Attach` here so it
         // carries the walk-time scope, e.g. the pushed NSE scope for a
@@ -723,7 +723,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .get(&range)
             .is_some_and(|resolution| !resolution.source.is_empty())
         {
-            self.collect_source_call(call);
+            self.walk_source_call(call);
         }
 
         // Assign: same recognition path. The scan cached the bound names and we
@@ -735,7 +735,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .get(&range)
             .is_some_and(|resolution| !resolution.assign.is_empty())
         {
-            self.collect_assign_call(call);
+            self.walk_assign_call(call);
         }
     }
 
@@ -772,7 +772,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // global environment. We currently inject into the calling scope
     // regardless to keep the sourcing mechanism simple. A future diagnostic
     // should suggest `local = TRUE` in nested contexts.
-    fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
+    fn walk_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
 
@@ -842,7 +842,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     // use-def map, `exports()`, and goto exactly like a syntactic assignment.
     // The name is not chased to its value, so an `assign("f", local)` def
     // carries no NSE, just like `f <- local`.
-    fn collect_assign_call(&mut self, call: &aether_syntax::RCall) {
+    fn walk_assign_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
 
         // Read back the bindings the scan extracted (their presence is what the
@@ -877,7 +877,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Emit the `Assign` definition for a binding operator (e.g. `x %<>% f()`) the
     /// scan recognized, after its operands were collected as uses.
-    fn collect_assign_operator(&mut self, bin: &RBinaryExpression) {
+    fn walk_assign_operator(&mut self, bin: &RBinaryExpression) {
         let range = bin.syntax().text_trimmed_range();
         let bindings = match self.scan.call_resolutions.get(&range) {
             Some(resolution) if !resolution.assign.is_empty() => resolution.assign.clone(),
@@ -890,7 +890,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Process a call the scan pass decided is NSE, using the resolved argument
     /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
     /// inline.
-    pub(super) fn collect_nse_call(&mut self, call: &RCall, arg_effects: ResolvedArgumentEffects) {
+    pub(super) fn walk_nse_call(&mut self, call: &RCall, arg_effects: ResolvedArgumentEffects) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -901,17 +901,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Some(value) = arg.value() else { continue };
 
             let Some(argument) = &arg_effects[i] else {
-                self.collect_expression(&value);
+                self.walk_expression(&value);
                 continue;
             };
             match argument {
                 ResolvedArgumentEffect::EvalQ { env, timing } => {
-                    self.collect_nse_argument(*env, *timing, &value)
+                    self.walk_nse_argument(*env, *timing, &value)
                 },
                 // Quoted argument: only the unquote holes are live.
                 ResolvedArgumentEffect::Quote { holes } => {
                     for hole in holes {
-                        self.collect_expression(hole);
+                        self.walk_expression(hole);
                     }
                 },
             }
@@ -924,11 +924,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already scanned by the descent, so we install its pending names and only
     /// walk. The remaining lazy bodies are their own scan units that we scan
     /// here on entry.
-    fn collect_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
+    fn walk_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
         match (env, timing) {
             // Calls like `evalq()`
             (EvalEnv::Current, EvalTiming::Eager) => {
-                self.collect_expression(value);
+                self.walk_expression(value);
             },
 
             // Calls like `local()`
@@ -958,7 +958,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
                 }
 
-                self.collect_expression(value);
+                self.walk_expression(value);
                 self.pop_scope(scope);
             },
 
@@ -972,7 +972,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // record the body's NSE decisions in the child's flow context.
                 self.begin_scan();
                 self.scan_expression(value);
-                self.collect_expression(value);
+                self.walk_expression(value);
                 self.pop_scope(scope);
             },
         }
