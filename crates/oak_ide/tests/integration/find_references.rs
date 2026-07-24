@@ -214,6 +214,31 @@ fn test_on_exit_body_use_has_lazy_view() {
     ]);
 }
 
+#[test]
+fn test_bquote_hole_nested_in_quoted_call() {
+    // `foo(...)` is itself inside the quoted `expr`, so its call name is not a
+    // live use; only the escaped `.(foo)` argument is. Regression test for a
+    // reported LSP crash on this shape; it does not reproduce at this layer.
+    let source = "foo <- function() {}\nbquote(foo(.(foo)))\n";
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
+
+    let hole_use = source.rfind("foo").unwrap() as u32;
+
+    let refs = find_references(&db, file, offset(0), true);
+    assert_eq!(ranges(&refs), vec![
+        range(0, 3),
+        range(hole_use, hole_use + 3)
+    ]);
+
+    // Same result when the cursor starts on the hole's `foo` itself.
+    let refs = find_references(&db, file, offset(hole_use), true);
+    assert_eq!(ranges(&refs), vec![
+        range(0, 3),
+        range(hole_use, hole_use + 3)
+    ]);
+}
+
 // --- Boundary cursor ---
 
 #[test]

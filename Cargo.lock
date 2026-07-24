@@ -2571,8 +2571,10 @@ dependencies = [
  "oak_package_metadata",
  "oak_scan",
  "oak_semantic",
+ "oak_source",
  "salsa",
  "stdext",
+ "tempfile",
  "url",
 ]
 
