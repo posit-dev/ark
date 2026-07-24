@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use salsa::Setter;
 
+use crate::all_known_files;
+use crate::all_used_files;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
@@ -148,4 +150,71 @@ fn test_root_path_index_invalidates_per_root() {
     // Look up the file in B. A still cached; B's index re-executes.
     let _ = db.file_by_path(&file_path("b/file.R"));
     assert_eq!(db.executions("root_path_index"), 3);
+}
+
+#[test]
+fn test_all_used_files_excludes_unrelated_library_files() {
+    let mut db = TestDb::new();
+
+    let lib = library_root(&db, "libs");
+    let used_pkg = Package::new(
+        &db,
+        file_path("libs/used/DESCRIPTION"),
+        "used".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        vec![],
+        Vec::new(),
+    );
+    let used_file = File::new(
+        &db,
+        file_path("libs/used/R/a.R"),
+        FileRevision::zero(),
+        None,
+        Some(used_pkg),
+    );
+    used_pkg.set_files(&mut db).to(vec![used_file]);
+
+    let unused_pkg = Package::new(
+        &db,
+        file_path("libs/unused/DESCRIPTION"),
+        "unused".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        vec![],
+        Vec::new(),
+    );
+    let unused_file = File::new(
+        &db,
+        file_path("libs/unused/R/a.R"),
+        FileRevision::zero(),
+        None,
+        Some(unused_pkg),
+    );
+    unused_pkg.set_files(&mut db).to(vec![unused_file]);
+
+    lib.set_packages(&mut db).to(vec![used_pkg, unused_pkg]);
+    db.library_roots().set_roots(&mut db).to(vec![lib]);
+
+    let root = workspace_root(&db, "proj");
+    let script = File::new(
+        &db,
+        file_path("proj/script.R"),
+        FileRevision::zero(),
+        Some("library(used)\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![script]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `all_known_files` doesn't know about dependencies, so both installed
+    // packages show up, referenced or not.
+    assert_eq!(all_known_files(&db), &vec![script, used_file, unused_file]);
+
+    // `all_used_files` drops `unused`: nothing in the workspace references it.
+    assert_eq!(all_used_files(&db), &vec![script, used_file]);
 }

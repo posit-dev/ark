@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use biome_rowan::TextSize;
-use oak_db::all_files;
+use oak_db::all_used_files;
 use oak_db::Db;
 use oak_db::Definition;
 use oak_db::File;
@@ -226,9 +226,10 @@ fn find_namespace_references<'db>(
     results
 }
 
-/// Every db file whose contents mention `text`.
+/// Every db file whose contents mention `text`, scoped to the workspace plus
+/// its actual dependencies (not every package under `.libPaths()`).
 fn all_matching_files(db: &dyn Db, text: &str) -> Vec<File> {
-    all_files(db)
+    all_used_files(db)
         .iter()
         .filter(|&&f| f.source_text(db).contains(text))
         .copied()

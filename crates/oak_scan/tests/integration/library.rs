@@ -497,7 +497,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
 
 #[test]
 fn test_all_files_emits_shared_file_once_under_deepest_root() {
-    use oak_db::all_files;
+    use oak_db::all_known_files;
     use oak_scan::FileEntry;
 
     let mut db = OakDatabase::new();
@@ -539,7 +539,7 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
 
     let file = p1.files(&db)[0];
     assert_eq!(file.root(&db), Some(long));
-    assert_eq!(all_files(&db), &vec![file]);
+    assert_eq!(all_known_files(&db), &vec![file]);
 }
 
 #[test]
