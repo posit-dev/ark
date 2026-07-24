@@ -306,21 +306,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
-        // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now
-        for diagnostic in &self.diagnostics {
-            match diagnostic {
-                SemanticDiagnostic::LazyShadowAmbiguity {
-                    name,
-                    call_range,
-                    overwrite_range,
-                } => log::warn!(
-                    "Lazy-shadow ambiguity: callee `{name}` at {call_range:?} is recognized \
-                     as effectful, but a lazy-crossed ancestor binds it at {overwrite_range:?} \
-                     with undetermined timing"
-                ),
-            }
-        }
-
         let symbol_tables = self
             .walk
             .symbol_tables

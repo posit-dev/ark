@@ -2,7 +2,10 @@ use std::fs;
 use std::sync::Arc;
 
 use aether_path::FilePath;
+use biome_line_index::LineIndex;
+use biome_rowan::TextRange;
 use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
@@ -317,7 +320,45 @@ fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
-    oak_semantic::build_index(&parsed.tree(), resolver)
+    let index = oak_semantic::build_index(&parsed.tree(), resolver);
+
+    // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now.
+    // The builder is file-agnostic, so it carries them on the index and leaves
+    // the file reference to us.
+    let diagnostics = index.diagnostics();
+    if !diagnostics.is_empty() {
+        let path = file.path(db);
+        let line_index = file.line_index(db);
+
+        for diagnostic in diagnostics {
+            match diagnostic {
+                SemanticDiagnostic::LazyShadowAmbiguity {
+                    name,
+                    call_range,
+                    overwrite_range,
+                } => {
+                    let call = format_line_col(line_index, *call_range);
+                    let overwrite = format_line_col(line_index, *overwrite_range);
+                    log::warn!(
+                        "Lazy-shadow ambiguity in {path}:{call}: callee `{name}` is recognized \
+                         as effectful, but a lazy-crossed ancestor binds it at {overwrite} with \
+                         undetermined timing"
+                    )
+                },
+            }
+        }
+    }
+
+    index
+}
+
+/// Render a byte range as `line:col` (1-based), anchored at its start, for a log
+/// message. Falls back to the raw byte range if the offset can't be mapped.
+fn format_line_col(line_index: &LineIndex, range: TextRange) -> String {
+    match line_index.line_col(range.start()) {
+        Some(pos) => format!("{}:{}", pos.line + 1, pos.col + 1),
+        None => format!("{range:?}"),
+    }
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
