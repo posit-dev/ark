@@ -289,14 +289,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    fn nse_effect(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
+    fn argument_effects(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
         self.scan
             .call_resolutions
             .get(&call.syntax().text_trimmed_range())
             .and_then(|resolution| resolution.arguments.clone())
     }
-
-    // --- Recursive descent ---
 
     pub(super) fn walk_expression_list(&mut self, list: &RExpressionList) {
         for expr in list.iter() {
@@ -375,8 +373,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&func);
                 }
 
-                if let Some(scoping) = self.nse_effect(call) {
-                    self.walk_nse_call(call, scoping)
+                if let Some(effects) = self.argument_effects(call) {
+                    self.walk_nse_call(call, effects)
                 } else if let Ok(args) = call.arguments() {
                     self.walk_arguments(&args.items());
                 }
@@ -699,11 +697,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .push(NamespaceAccess::new(package, symbol, kind, offset));
     }
 
+    // Handle effects recognised by the scan and emit semantic calls
     fn walk_semantic_call(&mut self, call: &aether_syntax::RCall) {
-        // Attach: the scan recognized it (shadow- and mask-aware) and recorded
-        // the package by range. We emit the `SemanticCall::Attach` here so it
-        // carries the walk-time scope, e.g. the pushed NSE scope for a
-        // `library()` inside `local({...})`.
         let range = call.syntax().text_trimmed_range();
         if let Some(package) = self
             .scan
@@ -711,12 +706,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .get(&range)
             .and_then(|resolution| resolution.attach.clone())
         {
-            self.record_attach(call, package);
+            self.walk_attach_call(call, package);
         }
 
-        // Source: the scan recognized it (shadow- and mask-aware) on the resolve
-        // path and cached the sourced files by range. Their presence is the
-        // recognition marker, so we dispatch on it rather than the callee name.
         if self
             .scan
             .call_resolutions
@@ -726,9 +718,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.walk_source_call(call);
         }
 
-        // Assign: same recognition path. The scan cached the bound names and we
-        // emit the corresponding definitions so they feed the use-def map,
-        // `exports()`, and goto.
         if self
             .scan
             .call_resolutions
@@ -739,15 +728,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // ## `library()` / `require()` scoping
-    //
-    // In R, `library()` always modifies the global search path regardless
-    // of where it's called. Statically, we scope the call to
-    // `self.current_scope`: at file scope it's visible everywhere (sequential
-    // execution is guaranteed), but inside a function it's only visible
-    // within that function and its children, since the function might never
-    // be called. Same reasoning as `source()` calls.
-    fn record_attach(&mut self, call: &RCall, package: String) {
+    fn walk_attach_call(&mut self, call: &aether_syntax::RCall, package: String) {
+        // At runtime, `library()` always modifies the global search path
+        // regardless of where it's called. Statically, we scope the call to
+        // `self.current_scope`: at file scope it's visible everywhere
+        // (sequential execution is guaranteed), but inside a function it's
+        // only visible within that function and its children, since the
+        // function might never be called. Same reasoning as `source()` calls.
         let call_offset = call.syntax().text_trimmed_range().start();
         self.walk.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Attach { package },
@@ -756,8 +743,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         });
     }
 
-    // ## `source()` resolution
-    //
     // `source("file.R")` creates `DefinitionKind::Import` forwarding
     // bindings in the current scope for each top-level name exported by
     // the target file. These participate in the use-def map like normal
@@ -835,8 +820,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // ## `assign()` binding
-    //
     // `assign("x", value)` binds `x` in the current scope, the same as `x <-
     // value` would. We record a `DefinitionKind::Assign` def so it feeds the
     // use-def map, `exports()`, and goto exactly like a syntactic assignment.
@@ -855,26 +838,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.add_assign_definitions(&AnyRExpression::RCall(call.clone()), bindings);
     }
 
-    fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {
-        for binding in bindings {
-            // The def's own range is the name token, captured at scan time, so a
-            // cursor on the name at the definition site hit-tests to it, the same
-            // as a syntactic `<-` binding.
-            let name_range = binding.name_expr.text_trimmed_range();
-            let name = binding.name_expr.as_ptr().clone();
-            self.add_definition(
-                &binding.name,
-                SymbolFlags::IS_BOUND,
-                DefinitionKind::Assign {
-                    node: AstPtr::new(node),
-                    name,
-                    value: binding.value_expr,
-                },
-                name_range,
-            );
-        }
-    }
-
     /// Emit the `Assign` definition for a binding operator (e.g. `x %<>% f()`) the
     /// scan recognized, after its operands were collected as uses.
     fn walk_assign_operator(&mut self, bin: &RBinaryExpression) {
@@ -890,7 +853,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Process a call the scan pass decided is NSE, using the resolved argument
     /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
     /// inline.
-    pub(super) fn walk_nse_call(&mut self, call: &RCall, arg_effects: ResolvedArgumentEffects) {
+    pub(super) fn walk_nse_call(&mut self, call: &RCall, effects: ResolvedArgumentEffects) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -900,11 +863,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(arg) = item else { continue };
             let Some(value) = arg.value() else { continue };
 
-            let Some(argument) = &arg_effects[i] else {
+            let Some(effect) = &effects[i] else {
                 self.walk_expression(&value);
                 continue;
             };
-            match argument {
+            match effect {
                 ResolvedArgumentEffect::EvalQ { env, timing } => {
                     self.walk_nse_argument(*env, *timing, &value)
                 },
@@ -975,6 +938,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.walk_expression(value);
                 self.pop_scope(scope);
             },
+        }
+    }
+
+    fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {
+        for binding in bindings {
+            // The def's own range is the name token, captured at scan time, so a
+            // cursor on the name at the definition site hit-tests to it, the same
+            // as a syntactic `<-` binding.
+            let name_range = binding.name_expr.text_trimmed_range();
+            let name = binding.name_expr.as_ptr().clone();
+            self.add_definition(
+                &binding.name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::Assign {
+                    node: AstPtr::new(node),
+                    name,
+                    value: binding.value_expr,
+                },
+                name_range,
+            );
         }
     }
 }
