@@ -28,6 +28,7 @@ use super::assignment_name;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
+use super::scan::BodyScan;
 use super::scan::SourcedFile;
 use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
@@ -314,7 +315,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // Scan the default values before collecting them. R binds all
             // formals into the frame at once, so a default sees every parameter
             // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `flow_state`
+            // not NSE. So we seed the whole formal set into `bound_so_far`
             // up front rather than flow-ordered, then scan each default.
             self.begin_scan();
             self.scan_parameter_defaults(&params);
@@ -658,21 +659,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager);
                 let scope = self.push_scope(kind, range);
 
-                // Install the pending names the descent recorded for this body,
+                // Install the scanned names the descent recorded for this body,
                 // before collecting so lazy children inside can see them via
                 // `scope_binds_anywhere()`.
-                match self.scan.eager_descent.pending.remove(&range) {
-                    Some(bound) => self.scan.bound_names[scope] = bound,
-                    None => {
+                match self.scan.body_scans.remove(&range) {
+                    Some(BodyScan::Scanned(bound)) => self.scan.bound_anywhere[scope] = bound,
+                    _ => {
                         // An eager NSE scope is reachable only through the scan
-                        // unit that descended into it, so the pending set must
+                        // unit that descended into it, so its scanned entry must
                         // exist. If not this is a builder bug. In release
                         // builds we still scan the body here so the walk can
                         // proceed. This fallback runs with an empty eager
                         // environment and its shadow decisions are more
                         // degraded than a real lazy unit's.
                         stdext::debug_panic!(
-                            "Missing pending bound names for eager NSE body at {range:?}"
+                            "Missing scanned bound names for eager NSE body at {range:?}"
                         );
                         self.begin_scan();
                         self.scan_expression(value);

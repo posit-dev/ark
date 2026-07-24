@@ -101,13 +101,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // First check for a local definition (which in the future may
         // carry declared effects that we resolve here)
         //
-        // Looked up from `flow_state` which already carries every
+        // Looked up from `bound_so_far` which already carries every
         // eager binding visible here: the scope's own flow-precise
         // bindings so far, plus the enclosing eager environment seeded
         // at `begin_scan()`. Forward and deferred (lazy-routed)
-        // bindings are excluded. A forward one isn't in `flow_state`
+        // bindings are excluded. A forward one isn't in `bound_so_far`
         // yet, and a deferred one (`on_load`, `<<-`) never enters it.
-        if self.scan.flow_state.is_bound(sym) {
+        if self.scan.bound_so_far.is_bound(sym) {
             return self.resolve_local_effects(sym);
         }
 

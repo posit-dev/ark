@@ -57,14 +57,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     pub(super) fn begin_scan(&mut self) {
         let range = self.scopes[self.current_scope].range;
 
-        match self.scan.enclosing_flow.get(&range).cloned() {
-            Some(entry) => self.scan.flow_state.restore(entry),
-            None => self.scan.flow_state.clear(),
+        match self.scan.body_scans.get(&range) {
+            // The file scope has no entry: nothing is inherited, so start clean.
+            None => self.scan.bound_so_far.clear(),
+            Some(BodyScan::Deferred(snapshot)) => {
+                let snapshot = snapshot.clone();
+                self.scan.bound_so_far.restore(snapshot);
+            },
+            Some(BodyScan::Scanned(_)) => {
+                // A body scanned inline by an eager descent is installed by the
+                // walk without a re-scan, so `begin_scan()` should never meet one.
+                stdext::debug_panic!("`begin_scan()` on an already-scanned body at {range:?}");
+                self.scan.bound_so_far.clear();
+            },
         }
 
         for (_id, symbol) in self.walk.symbol_tables[self.current_scope].iter() {
             if symbol.flags().contains(SymbolFlags::IS_BOUND) {
-                self.scan.flow_state.bind(symbol.name().to_string());
+                self.scan.bound_so_far.bind(symbol.name().to_string());
             }
         }
     }
@@ -80,7 +90,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Runs before the walk of a scope. It decides NSE-ness at each call the
     /// same way the walk's [`is_locally_bound`](Self::is_locally_bound) would,
     /// records the decision in `call_resolutions` for the walk to reuse, and adds
-    /// non-skipped definition names to `bound_names`. The bound names must be
+    /// non-skipped definition names to `bound_anywhere`. The bound names must be
     /// complete before the walk descends into any child scope, because a lazy
     /// child body can reference an ancestor def the ancestor's walk hasn't
     /// reached yet.
@@ -92,7 +102,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// - A `Current + Eager` body pushes no scope, so it stays part of this
     ///   scope's direct level and is scanned through transparently.
     /// - A `Nested + Eager` body is descended into with a save/restore of
-    ///   `flow_state`, and the names it binds are left pending for the walk to
+    ///   `bound_so_far`, and the names it binds are left pending for the walk to
     ///   install without re-scanning.
     /// - Function and lazy bodies (`Nested + Lazy`, `Current + Lazy`) are their
     ///   own scan units, scanned separately when the walk enters them, because
@@ -188,14 +198,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                let pre_if = self.scan.flow_state.snapshot();
+                let pre_if = self.scan.bound_so_far.snapshot();
 
                 if let Ok(consequence) = stmt.consequence() {
                     self.scan_expression(&consequence);
                 }
 
-                let post_if = self.scan.flow_state.snapshot();
-                self.scan.flow_state.restore(pre_if);
+                let post_if = self.scan.bound_so_far.snapshot();
+                self.scan.bound_so_far.restore(pre_if);
 
                 if let Some(else_clause) = stmt.else_clause() {
                     if let Ok(alternative) = else_clause.alternative() {
@@ -204,7 +214,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // Both branches' bindings are live afterwards.
-                self.scan.flow_state.merge(post_if);
+                self.scan.bound_so_far.merge(post_if);
             },
 
             // `while`/`repeat` loops, subsets, extractions, parentheses, unary
@@ -345,24 +355,29 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
 
                     // Calls like `local()`. Its body runs eagerly at the call
-                    // site, so its environment IS the current `flow_state`.
+                    // site, so its environment IS the current `bound_so_far`.
                     // Descend now, holding the names bound in this scope as
-                    // pending so the walk has access to them. No `flow_state`
+                    // pending so the walk has access to them. No `bound_so_far`
                     // reset: the child sees exactly what `begin_scan()` would
                     // have seeded.
                     // No `record_enclosing_flow()`: eager `Nested` bodies are
                     // never scanned at walk time, so nothing would read it.
                     (EvalEnv::Nested, EvalTiming::Eager) => {
-                        let old = self.scan.flow_state.snapshot();
+                        let old = self.scan.bound_so_far.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
-                        self.scan.eager_descent.open.push(BoundNames::new());
+                        self.scan.open.push(ScanScope {
+                            kind: ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager),
+                            bound: BoundNames::new(),
+                        });
                         self.scan_expression(&value);
-                        if let Some(bound) = self.scan.eager_descent.open.pop() {
-                            self.scan.eager_descent.pending.insert(range, bound);
+                        if let Some(scope) = self.scan.open.pop() {
+                            self.scan
+                                .body_scans
+                                .insert(range, BodyScan::Scanned(scope.bound));
                         }
 
-                        self.scan.flow_state.restore(old);
+                        self.scan.bound_so_far.restore(old);
                     },
 
                     // Calls like `reactive()`. Its body runs at an unknown
@@ -389,13 +404,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// This feeds enclosing snapshots only. A free variable elsewhere can
     /// resolve to a name an `on_load({ ... })` defines in the owner, and
-    /// `register_enclosing_snapshot()` reads `bound_names` to find that ancestor.
+    /// `register_enclosing_snapshot()` reads `bound_anywhere` to find that ancestor.
     /// The scan doesn't descend into these bodies otherwise, so their names
     /// would only reach the owner when the walk later gets to the call, too late
     /// for a sibling scanned before then. Collecting them now keeps the owner's
     /// bound names complete before the walk touches any sibling.
     ///
-    /// NSE shadow resolution does not read `bound_names`, so an incomplete
+    /// NSE shadow resolution does not read `bound_anywhere`, so an incomplete
     /// collection here can't flip an NSE decision. `is_locally_bound` reads the
     /// captured eager bindings, which exclude deferred names by construction.
     ///
@@ -409,7 +424,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// variable can't resolve to it. TODO(nse): We could potentially walk
     /// transparent (Current) nested calls to collect those too.
     ///
-    /// The names go to `bound_names` only, never to `flow_state`. The body
+    /// The names go to `bound_anywhere` only, never to `bound_so_far`. The body
     /// runs at some later time, so at an eager position after the call these
     /// names aren't bound yet, and an eager callee there must still treat them
     /// as unbound.
@@ -498,7 +513,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     pub(super) fn scan_parameter_defaults(&mut self, params: &RParameters) {
-        // Seed `flow_state` with every parameter names so a callee inside a
+        // Seed `bound_so_far` with every parameter names so a callee inside a
         // default value sees the full formal set
         for param in params.items().iter() {
             let Ok(param) = param else { continue };
@@ -508,7 +523,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.scan.flow_state.bind(text);
+            self.scan.bound_so_far.bind(text);
         }
 
         for param in params.items().iter() {
@@ -564,30 +579,34 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// [`scope_binds_anywhere`]: Self::scope_binds_anywhere
     fn scan_scope_binds(&self, name: &str) -> bool {
         match self.scan_scope() {
-            Some(ScanScope::Descent(bound)) => bound.binds(name),
-            Some(ScanScope::Scope(scope)) => self.scope_binds_anywhere(scope, name),
+            Some(ScanScopeRef::Descent(bound)) => bound.binds(name),
+            Some(ScanScopeRef::Scope(scope)) => self.scope_binds_anywhere(scope, name),
             None => false,
         }
     }
 
     fn scan_scope_is_global(&self) -> bool {
         match self.scan_scope() {
-            Some(ScanScope::Scope(scope)) => matches!(self.scopes[scope].kind, ScopeKind::File),
-            Some(ScanScope::Descent(_)) => false,
+            Some(ScanScopeRef::Scope(scope)) => matches!(self.scopes[scope].kind, ScopeKind::File),
+            Some(ScanScopeRef::Descent(_)) => false,
             None => true,
         }
     }
 
-    fn scan_scope(&self) -> Option<ScanScope<'_>> {
-        if let Some(bound) = self.scan.eager_descent.open.last() {
-            return Some(ScanScope::Descent(bound));
+    fn scan_scope(&self) -> Option<ScanScopeRef<'_>> {
+        // The current evaluation frame is the innermost open frame that owns
+        // names. A lazy frame owns nothing, so skip past it.
+        for frame in self.scan.open.iter().rev() {
+            if !frame.kind.is_lazy() {
+                return Some(ScanScopeRef::Descent(&frame.bound));
+            }
         }
 
         let scope = match self.scopes[self.current_scope].kind {
             ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner()?,
             _ => self.current_scope,
         };
-        Some(ScanScope::Scope(scope))
+        Some(ScanScopeRef::Scope(scope))
     }
 }
 
@@ -596,48 +615,51 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Record the names a child scope (function body, NSE argument) about to be
     /// created at `range` inherits from its ancestors, to seed the child's scan
-    /// in `begin_scan`. Called during the scan, where `flow_state` is the
+    /// in `begin_scan`. Called during the scan, where `bound_so_far` is the
     /// parent's flow-precise state at the child's definition point (already
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
     fn record_enclosing_flow(&mut self, range: TextRange) {
         self.scan
-            .enclosing_flow
-            .insert(range, self.scan.flow_state.snapshot());
+            .body_scans
+            .insert(range, BodyScan::Deferred(self.scan.bound_so_far.snapshot()));
     }
 
     /// Record a binding in the scan's flow state.
     ///
-    /// The flow-precise `flow_state` always learns the name, so a
+    /// The flow-precise `bound_so_far` always learns the name, so a
     /// later callee in this scope sees it shadowed. The bound names only get it
     /// when the current scope owns it. A `Current + Lazy` scope routes its defs
     /// to the owner, so the name is added to the owner's bound names instead, the
     /// same routing `add_definition_to_owner` does during the walk.
     fn record_binding(&mut self, name: String, range: TextRange) {
         self.record_owner_name(name.clone(), range);
-        self.scan.flow_state.bind(name);
+        self.scan.bound_so_far.bind(name);
     }
 
     /// Route a binding NAME into its owner scope's bound names, matching
-    /// `add_definition`'s routing. When a descent is open the name goes to the
-    /// descent top, which is always an eager `Nested` body scanned inline and so
-    /// owns its bindings. Otherwise a `Current + Lazy` scope routes to
-    /// `definition_owner()` and every other scope owns its bindings.
+    /// `add_definition`'s routing. It goes to the innermost open frame that owns
+    /// names (an eager `Nested` body like `local()`); a lazy frame owns nothing,
+    /// so its names skip past it. With no owning frame open, a `Current + Lazy`
+    /// scope routes to `definition_owner()` and every other scope owns its
+    /// bindings.
     ///
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
-    /// bound in `flow_state` (see that helper for why).
+    /// bound in `bound_so_far` (see that helper for why).
     fn record_owner_name(&mut self, name: String, range: TextRange) {
-        if let Some(bound) = self.scan.eager_descent.open.last_mut() {
-            bound.add(name, range);
-            return;
+        for frame in self.scan.open.iter_mut().rev() {
+            if !frame.kind.is_lazy() {
+                frame.bound.add(name, range);
+                return;
+            }
         }
 
         if let Some(target) = match self.scopes[self.current_scope].kind {
             ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner(),
             _ => Some(self.current_scope),
         } {
-            self.scan.bound_names[target].add(name, range);
+            self.scan.bound_anywhere[target].add(name, range);
         }
     }
 }
@@ -681,10 +703,10 @@ pub(super) struct ScanBindings<'a, R: ImportsResolver> {
 impl<R: ImportsResolver> ScopeBindings for ScanBindings<'_, R> {
     fn is_bound(&self, name: &str, inherits: bool) -> bool {
         if inherits {
-            // The scan's `flow_state` carries the current scope's bindings plus
+            // The scan's `bound_so_far` carries the current scope's bindings plus
             // the inherited eager environment seeded at `begin_scan`, so it's
             // the lexical answer.
-            return self.builder.scan.flow_state.is_bound(name);
+            return self.builder.scan.bound_so_far.is_bound(name);
         }
         self.builder.scan_scope_binds(name)
     }
@@ -741,33 +763,40 @@ impl FlowState {
     }
 }
 
-/// Tracks eager `Nested` NSE bodies scanned inline during the scan.
+/// A scope the scan has entered but the walk has not yet allocated in the
+/// arena. A `local()` descent, or (in the next commit) an `on_load()` body
+/// during its deferred scan. Innermost last on the `open` stack.
 ///
-/// An eager `Nested` body like `local()` runs immediately at its call site, so
-/// we scan it inline instead of deferring it to the walk. `open` is the stack
-/// of bodies being scanned right now, with the innermost on top.
-/// `record_owner_name()` routes a binding to the top so names land on the body
-/// that owns them. When a descent finishes, its names move to `pending`, keyed
-/// by the body's range.
+/// The body's arena scope doesn't exist yet, because the walk allocates scopes
+/// in preorder and allocating one mid-scan would break the `Scope::descendants`
+/// invariant. So a descent's names stage here on `bound` while the scan is
+/// inside it, keyed by nothing but stack position.
 ///
-/// `pending` is keyed by range rather than written straight into
-/// `bound_names[scope]` because the body's arena scope doesn't exist yet: the
-/// walk allocates scopes in preorder, and allocating one mid-scan would break
-/// the `Scope::descendants` invariant. The range is the body's pre-arena
-/// identity until the walk pushes its scope.
+/// `record_owner_name()` routes a binding to the innermost owning frame so names
+/// land on the body that owns them. When a descent finishes, its `bound` moves
+/// into `body_scans` as [`BodyScan::Scanned`], keyed by the body's range, its
+/// pre-arena identity until the walk pushes its scope.
+pub(super) struct ScanScope {
+    pub(super) kind: ScopeKind,
+    pub(super) bound: BoundNames,
+}
+
+/// What the scan prepared for a child body, keyed by the body's text range
+/// (the body's identity until the walk pushes its arena scope).
 ///
-/// Once the walk pushes that scope, it installs the pending names into it
-/// instead of re-scanning. It does this before collecting the body, because a
-/// lazy child inside (a function or lazy NSE body) runs later than the walk
-/// reaches it, so it can reference a binding defined further down this scope.
-/// Resolving that name checks whether an enclosing scope binds it
+/// The walk installs a body's names before collecting the body, because a lazy
+/// child inside (a function or lazy NSE body) runs later than the walk reaches
+/// it, so it can reference a binding defined further down this scope. Resolving
+/// that name checks whether an enclosing scope binds it
 /// (`scope_binds_anywhere()`), and the walk hasn't recorded that binding yet, so
 /// the scan-populated bound set has to be complete up front. That's the reason
 /// the scan collects bound names ahead of the walk at all.
-#[derive(Default)]
-pub(super) struct EagerNestedDescent {
-    pub(super) open: Vec<BoundNames>,
-    pub(super) pending: FxHashMap<TextRange, BoundNames>,
+pub(super) enum BodyScan {
+    /// A walk-time scan unit (function body, `Nested + Lazy` like `reactive()`).
+    /// The walk seeds `begin_scan()` from this snapshot.
+    Deferred(FlowState),
+    /// Already scanned inline by an eager `Nested` descent (e.g. `local()`).
+    Scanned(BoundNames),
 }
 
 /// All definitions in a scope, collected by the scan pass before the
@@ -802,12 +831,12 @@ impl BoundNames {
 }
 
 /// A scope as the scan sees it. A `local()` body scanned inline has no arena
-/// scope yet and its bindings are stored in the staging [`EagerNestedDescent`].
+/// scope yet and its bindings are stored on the [`ScanScope`] `open` stack.
 /// Every other scope is materialized in the arena. [`scan_scope`] resolves
 /// which one is the current evaluation frame.
 ///
 /// [`scan_scope`]: SemanticIndexBuilder::scan_scope
-enum ScanScope<'a> {
+enum ScanScopeRef<'a> {
     Descent(&'a BoundNames),
     Scope(ScopeId),
 }
