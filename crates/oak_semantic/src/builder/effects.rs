@@ -16,6 +16,7 @@ use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -117,13 +118,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        // Now check imports since the symbol is locally unbound. The
-        // arena's `current_scope` is the scan unit's scope (the descent
-        // pushes no arena scopes), so its laziness is the "am I in a lazy
-        // context" test the resolver needs. `attached_flow` is the
-        // flow-precise attach prefix during the file scan and the
-        // complete end-of-file set during the walk.
-        let lazy = self.scopes[self.current_scope].kind.is_lazy();
+        // Now check imports since the symbol is locally unbound
+        let lazy = self.scan_is_lazy();
         let effects = self
             .resolver
             .resolve_effects(sym, &self.scan.attached_flow, lazy)?;
@@ -186,30 +182,86 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// We've recognized an effect for `name` (NSE scope or attach) because it
     /// was locally unbound at the current flow cursor and eager-flow resolution
-    /// found one. If we're in a lazy context, that decision could be wrong: an
-    /// enclosing scope may bind `name` with a timing we can't pin down, either a
-    /// later assignment, or one from another deferred body that could run before
-    /// or after us. We detect this ambiguity here so it can be linted.
+    /// found an effect. If we're in a lazy context, that decision could be
+    /// wrong: an enclosing scope may bind `name` with a timing we can't pin
+    /// down, either a later assignment, or one from another deferred body that
+    /// could run before or after us. We detect this ambiguity here so it can be
+    /// linted.
     ///
     /// Returns the site of the shadowing binding.
     fn is_lazily_shadowed(&self, name: &str) -> Option<TextRange> {
-        let mut scope = self.current_scope;
-        let mut crossed_lazy = self.scopes[scope].kind.is_lazy();
+        let mut open_scopes = self.scan.open_scopes.iter().rev();
+        match open_scopes.next() {
+            // Search the body's ancestors from the inside out for a binding of
+            // `name` we can't order against the body (see the doc above). Here
+            // the body is the innermost open scope, e.g. a `local()` /
+            // `on_load()` body the scan entered before the walk gave it an
+            // arena scope. Its ancestors are the frames beneath it, then the
+            // arena scopes from `current_scope` out (included). The `None` arm
+            // is the mirror case, where `current_scope` is the body itself and
+            // the walk starts at its parent.
+            Some(body) => {
+                let mut crossed_lazy = body.kind.is_lazy();
+                for scope in open_scopes {
+                    if crossed_lazy {
+                        if let Some(range) = scope.bindings.binding_range(name) {
+                            return Some(range);
+                        }
+                    }
+                    if scope.kind.is_lazy() {
+                        crossed_lazy = true;
+                    }
+                }
 
-        while let Some(parent) = self.scopes[scope].parent {
+                self.lazy_shadow_in_arena(name, Some(self.current_scope), crossed_lazy)
+            },
+
+            // No frames: the body is `current_scope` itself (a function or
+            // other lazy context like `reactive()`, scanned at walk time), so
+            // its ancestors start at its parent.
+            None => self.lazy_shadow_in_arena(
+                name,
+                self.scopes[self.current_scope].parent,
+                self.scopes[self.current_scope].kind.is_lazy(),
+            ),
+        }
+    }
+
+    /// Walk arena scopes outward from `start`, returning the first that binds
+    /// `name` after a lazy boundary has been crossed.
+    fn lazy_shadow_in_arena(
+        &self,
+        name: &str,
+        start: Option<ScopeId>,
+        mut crossed_lazy: bool,
+    ) -> Option<TextRange> {
+        let mut scope = start;
+
+        while let Some(s) = scope {
             if crossed_lazy {
-                if let Some(range) = self.scope_binding_range(parent, name) {
+                if let Some(range) = self.scope_binding_range(s, name) {
                     return Some(range);
                 }
             }
-
-            if self.scopes[parent].kind.is_lazy() {
+            if self.scopes[s].kind.is_lazy() {
                 crossed_lazy = true;
             }
-            scope = parent;
+            scope = self.scopes[s].parent;
         }
 
         None
+    }
+
+    /// Whether the scan is currently inside a lazy context.
+    ///
+    /// Laziness is monotone from the outside in. Once an enclosing context runs
+    /// lazily, everything nested in it does too, even an eager `local()`.
+    fn scan_is_lazy(&self) -> bool {
+        self.scopes[self.current_scope].kind.is_lazy() ||
+            self.scan
+                .open_scopes
+                .iter()
+                .any(|frame| frame.kind.is_lazy())
     }
 
     fn record_lazy_shadow_ambiguity(

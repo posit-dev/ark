@@ -44,9 +44,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Seeds it with two things:
     ///
     /// - The names inherited from enclosing scopes, captured when this scope was
-    ///   entered (`enclosing_flow`). The parent's own scan was seeded the same
-    ///   way, so this is transitively complete: it holds every eager binding
-    ///   visible from an ancestor at this scope's definition point.
+    ///   entered (its `BodyScan::Deferred` snapshot). The parent's own scan was
+    ///   seeded the same way, so this is transitively complete: it holds every
+    ///   eager binding visible from an ancestor at this scope's definition point.
     /// - The scope's own already-bound names. For a function scope that's the
     ///   parameters, recorded just before the scan runs. For file and NSE scopes
     ///   nothing local is bound yet.
@@ -102,11 +102,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// - A `Current + Eager` body pushes no scope, so it stays part of this
     ///   scope's direct level and is scanned through transparently.
     /// - A `Nested + Eager` body is descended into with a save/restore of
-    ///   `bound_so_far`, and the names it binds are left pending for the walk to
-    ///   install without re-scanning.
-    /// - Function and lazy bodies (`Nested + Lazy`, `Current + Lazy`) are their
-    ///   own scan units, scanned separately when the walk enters them, because
-    ///   NSE resolution there needs the child's own flow context.
+    ///   `bound_so_far`, and the names it binds are staged as
+    ///   `BodyScan::Scanned` for the walk to install without re-scanning.
+    /// - A `Current + Lazy` body (`on_load()`) binds into the owner scope but
+    ///   runs later, so it is queued and scanned at the end of this unit, once
+    ///   the owner's `bound_anywhere` is complete (see `scan_deferred_bodies()`).
+    /// - Function and `Nested + Lazy` bodies are their own scan units, scanned
+    ///   separately when the walk enters them, because NSE resolution there needs
+    ///   the child's own flow context.
     ///
     /// Branch analysis is precise. In `if (c) local <- f else local({ y <- 1
     /// })` the else branch sees an NSE call because `local` is unbound on the
@@ -117,7 +120,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // A function body is a child scope, scanned when it's entered.
                 // Record the names it inherits now so that when we later resolve
                 // an NSE callee inside the body, we can check whether one of them
-                // shadows it (see `enclosing_flow`).
+                // shadows it (see `record_enclosing_flow()`).
                 self.record_enclosing_flow(func.syntax().text_trimmed_range());
             },
 
@@ -251,10 +254,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
     /// `Current + Eager` transparently, `Nested + Eager` by descending into the
-    /// body and holding the names it binds as pending. `Nested + Lazy` and
-    /// `Current + Lazy` bodies are their own scan units and deferred to the walk
-    /// because resolution of effects in these lazy scopes needs the child's own
-    /// flow context.
+    /// body and staging the names it binds. A `Current + Lazy` body (`on_load()`)
+    /// is queued and scanned at the end of this scan unit's drain, once the
+    /// owner's bindings are complete. A `Nested + Lazy` body (`reactive()`) is
+    /// its own scan unit, deferred to the walk because resolution of effects in
+    /// that lazy scope needs the child's own flow context.
     fn scan_call(&mut self, call: &RCall) {
         let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
             Some(effects) => (
@@ -344,33 +348,40 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // Calls like `evalq()`
                     (EvalEnv::Current, EvalTiming::Eager) => self.scan_expression(&value),
 
-                    // Calls like `on_load()`. Its body runs later, so its defs
-                    // land in the enclosing scope. We don't resolve the body's
-                    // calls here. The walk does that once it enters the child
-                    // scope. But we do grab the names it defines now, so the
-                    // owner's bound names are complete before the walk reaches a sibling.
+                    // Calls like `on_load()`. Its body runs later and binds
+                    // into the owner scope, so we queue it and scan it at the
+                    // end of this scan unit, once the owner's lexical
+                    // environment is fully known. See `scan_deferred_bodies()`.
                     (EvalEnv::Current, EvalTiming::Lazy) => {
-                        self.record_enclosing_flow(value.syntax().text_trimmed_range());
-                        self.scan_lazy_owner_bindings(&value);
+                        self.scan.deferred_bodies.push(DeferredBody {
+                            body: value.clone(),
+                            bound_so_far: self.scan.bound_so_far.snapshot(),
+                        });
                     },
 
                     // Calls like `local()`. Its body runs eagerly at the call
                     // site, so its environment IS the current `bound_so_far`.
-                    // Descend now, holding the names bound in this scope as
-                    // pending so the walk has access to them. No `bound_so_far`
-                    // reset: the child sees exactly what `begin_scan()` would
-                    // have seeded.
+                    // Descend now, staging the names it binds as `Scanned` so the
+                    // walk has access to them. No `bound_so_far` reset: the child
+                    // sees exactly what `begin_scan()` would have seeded.
                     // No `record_enclosing_flow()`: eager `Nested` bodies are
                     // never scanned at walk time, so nothing would read it.
                     (EvalEnv::Nested, EvalTiming::Eager) => {
                         let old = self.scan.bound_so_far.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
+                        let watermark = self.scan.deferred_bodies.len();
                         self.scan.open_scopes.push(OpenScope {
                             kind: ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager),
                             bindings: BindingSites::new(),
                         });
                         self.scan_expression(&value);
+
+                        // Drain `on_load`s inside this `local()` before popping
+                        // its frame, so their names route to the `local` frame,
+                        // not the scope below it.
+                        self.scan_deferred_bodies(watermark);
+
                         if let Some(scope) = self.scan.open_scopes.pop() {
                             self.scan
                                 .body_scans
@@ -399,99 +410,37 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .arguments = Some(arg_effects);
     }
 
-    /// Copy the names a `Current + Lazy` body defines into the owner's
-    /// bound names, without marking them bound in the scan's flow state.
-    ///
-    /// This feeds enclosing snapshots only. A free variable elsewhere can
-    /// resolve to a name an `on_load({ ... })` defines in the owner, and
-    /// `register_enclosing_snapshot()` reads `bound_anywhere` to find that ancestor.
-    /// The scan doesn't descend into these bodies otherwise, so their names
-    /// would only reach the owner when the walk later gets to the call, too late
-    /// for a sibling scanned before then. Collecting them now keeps the owner's
-    /// bound names complete before the walk touches any sibling.
-    ///
-    /// NSE shadow resolution does not read `bound_anywhere`, so an incomplete
-    /// collection here can't flip an NSE decision. `is_locally_bound` reads the
-    /// captured eager bindings, which exclude deferred names by construction.
-    ///
-    /// We cover the realistic shapes, direct assignments and control flow, e.g.
-    /// `on_load({ x <- 1 })`. We stop at nested calls and function bodies
-    /// however, so we only add names the walk will also route, never a phantom.
-    /// `register_enclosing_snapshot` reads `binds()` as "a real definition
-    /// exists", so a phantom would send it chasing a binding that isn't there.
-    /// The price is a binding buried in a nested transparent call, e.g.
-    /// `on_load({ evalq(helper <- ...) })`, which we miss here, so a free
-    /// variable can't resolve to it. TODO(nse): We could potentially walk
-    /// transparent (Current) nested calls to collect those too.
-    ///
-    /// The names go to `bound_anywhere` only, never to `bound_so_far`. The body
-    /// runs at some later time, so at an eager position after the call these
-    /// names aren't bound yet, and an eager callee there must still treat them
-    /// as unbound.
-    fn scan_lazy_owner_bindings(&mut self, expr: &AnyRExpression) {
-        match expr {
-            AnyRExpression::RBracedExpressions(braced) => {
-                for expr in braced.expressions().iter() {
-                    self.scan_lazy_owner_bindings(&expr);
-                }
-            },
+    /// Scan the `Current + Lazy` bodies queued since `watermark`, now that the
+    /// enclosing unit's `bound_anywhere` is complete. Runs with the owner's
+    /// frame context still live (the arena `current_scope`, plus any open eager
+    /// frame like a `local()` the `on_load` sits in).
+    pub(super) fn scan_deferred_bodies(&mut self, watermark: usize) {
+        // Take the queued bodies above `watermark` and scan them by value.
+        // Scanning a deferred body can enqueue nested `on_load()` bodies, which
+        // push past `watermark` again, so loop until the tail is empty.
+        // Splitting the tail off leaves the outer units' entries below
+        // `watermark` in place, and drops `deferred_bodies` back to `watermark`
+        // once drained.
+        loop {
+            let batch = self.scan.deferred_bodies.split_off(watermark);
+            if batch.is_empty() {
+                break;
+            }
 
-            AnyRExpression::RBinaryExpression(bin) => {
-                // `<<-` binds in an ancestor, not the owner, so it's not routed
-                // here (matching `add_definition`).
-                if !is_assignment(bin) || is_super_assignment(bin) {
-                    return;
-                }
-                let target = if is_right_assignment(bin) {
-                    bin.right()
-                } else {
-                    bin.left()
-                };
-                if let Ok(target) = target {
-                    if let Some((name, range)) = assignment_name(&target) {
-                        self.record_owner_name(name, range);
-                    }
-                }
-            },
+            for DeferredBody { body, bound_so_far } in batch {
+                let old = self.scan.bound_so_far.snapshot();
+                self.scan.bound_so_far.restore(bound_so_far);
 
-            AnyRExpression::RIfStatement(stmt) => {
-                if let Ok(consequence) = stmt.consequence() {
-                    self.scan_lazy_owner_bindings(&consequence);
-                }
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.scan_lazy_owner_bindings(&alternative);
-                    }
-                }
-            },
+                self.scan.open_scopes.push(OpenScope {
+                    kind: ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy),
+                    bindings: BindingSites::new(),
+                });
 
-            AnyRExpression::RForStatement(stmt) => {
-                if let Ok(variable) = stmt.variable() {
-                    self.record_owner_name(
-                        variable.name_text(),
-                        variable.syntax().text_trimmed_range(),
-                    );
-                }
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
+                self.scan_expression(&body);
 
-            AnyRExpression::RWhileStatement(stmt) => {
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
-
-            AnyRExpression::RRepeatStatement(stmt) => {
-                if let Ok(body) = stmt.body() {
-                    self.scan_lazy_owner_bindings(&body);
-                }
-            },
-
-            // Stop everywhere else: function bodies are child scopes, and a
-            // call's arguments aren't part of this scope's direct level.
-            _ => {},
+                self.scan.open_scopes.pop();
+                self.scan.bound_so_far.restore(old);
+            }
         }
     }
 
@@ -744,11 +693,20 @@ impl FlowState {
     }
 }
 
-/// A scope entered by the scan that doesn't have an allocated arena yet.
+/// A scope the scan has entered but the walk has not yet allocated in the
+/// arena. A `local()` descent, or an `on_load()` body during its deferred scan.
+/// Innermost last on the `open_scopes` stack.
 ///
-/// When a scan descent finishes, its `bindings` moves into `body_scans` as
-/// [`BodyScan::Scanned`], keyed by the body's range, its pre-arena identity
-/// until the walk pushes its scope.
+/// The arena scope doesn't exist yet because the walk allocates scopes in
+/// preorder, and allocating one mid-scan would break the `Scope::descendants`
+/// invariant. So a scope's names stage here on `bindings` while the scan is
+/// inside it, keyed by nothing but stack position.
+///
+/// `record_binding()` routes a binding to the innermost owning frame so names
+/// land on the body that owns them. A `local()` descent finishes by moving its
+/// `bindings` into `body_scans` as [`BodyScan::Scanned`], keyed by the body's
+/// range, its pre-arena identity until the walk pushes its scope. An `on_load()`
+/// body owns no names (they route to the owner), so its frame is discarded.
 pub(super) struct OpenScope {
     pub(super) kind: ScopeKind,
     pub(super) bindings: BindingSites,
@@ -762,6 +720,15 @@ pub(super) enum BodyScan {
     Deferred(FlowState),
     /// Already scanned inline by an eager `Nested` descent (e.g. `local()`).
     Scanned(BindingSites),
+}
+
+/// A `Current + Lazy` body queued at its call site, scanned once its
+/// enclosing scan unit finishes when the lexical environment is fully known.
+#[derive(Clone)]
+pub(super) struct DeferredBody {
+    pub(super) body: AnyRExpression,
+    /// `bound_so_far` captured at the call site, the body's inherited eager env.
+    pub(super) bound_so_far: FlowState,
 }
 
 /// All definitions in a scope, collected by the scan pass before the

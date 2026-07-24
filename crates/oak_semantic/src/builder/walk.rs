@@ -309,6 +309,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn walk_function(&mut self, fun: &RFunctionDefinition) {
+        let watermark = self.scan.deferred_bodies.len();
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
         if let Ok(params) = fun.parameters() {
@@ -325,9 +326,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // above recorded.
             self.walk_parameters(&params);
         }
+
         if let Ok(body) = fun.body() {
             self.begin_scan();
             self.scan_expression(&body);
+            self.scan_deferred_bodies(watermark);
             self.walk_expression(&body);
         }
 
@@ -641,11 +644,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Walk a single NSE argument body, pushing a scope when appropriate.
-    ///
-    /// `Current + Eager` stays in the current scope. `Nested + Eager` was
-    /// already scanned by the descent, so we install its pending names and only
-    /// walk. The remaining lazy bodies are their own scan units that we scan
-    /// here on entry.
     fn walk_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
         match (env, timing) {
             // Calls like `evalq()`
@@ -684,16 +682,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.pop_scope(scope);
             },
 
-            (env, timing) => {
-                let kind = ScopeKind::Nse(env, timing);
+            // Calls like `on_load()`. The deferred drain already scanned this
+            // body (its names are in the owner, its NSE decisions cached), so we
+            // only push the scope and walk.
+            (EvalEnv::Current, EvalTiming::Lazy) => {
+                let kind = ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy);
+                let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
+                self.walk_expression(value);
+                self.pop_scope(scope);
+            },
+
+            // Calls like `reactive()`. Its own scan unit, scanned here on entry
+            // in the child's flow context. Its body can queue `on_load()`s that
+            // own the `reactive()` scope, so drain them before walking.
+            (EvalEnv::Nested, EvalTiming::Lazy) => {
+                let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy);
                 let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
 
-                // Scan the child body before walking it. A `Current + Lazy`
-                // scope routes its defs to the owner and holds no bound names of its
-                // own, which `record_binding` handles; the scan still runs to
-                // record the body's NSE decisions in the child's flow context.
                 self.begin_scan();
+                let watermark = self.scan.deferred_bodies.len();
                 self.scan_expression(value);
+                self.scan_deferred_bodies(watermark);
                 self.walk_expression(value);
                 self.pop_scope(scope);
             },

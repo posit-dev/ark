@@ -42,6 +42,7 @@ use rustc_hash::FxHashMap;
 use scan::BindingSites;
 use scan::BodyScan;
 use scan::CallResolution;
+use scan::DeferredBody;
 use scan::FlowState;
 use scan::OpenScope;
 
@@ -84,6 +85,7 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
     let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.begin_scan();
     builder.scan_expression_list(&root.expressions());
+    builder.scan_deferred_bodies(0);
     builder.walk_expression_list(&root.expressions());
     builder.finish()
 }
@@ -139,6 +141,9 @@ struct ScanState {
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
+    // `Current + Lazy` bodies (e.g. `rlang::on_load()`) queued at their call
+    // sites, scanned when their enclosing scan unit finishes.
+    deferred_bodies: Vec<DeferredBody>,
 }
 
 /// State written by the walk pass: the per-scope arenas and the flat outputs
@@ -197,6 +202,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 body_scans: FxHashMap::default(),
                 attached_flow: Vec::new(),
                 open_scopes: Vec::new(),
+                deferred_bodies: Vec::new(),
             },
             walk: WalkState {
                 symbol_tables,
