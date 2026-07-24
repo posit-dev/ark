@@ -51,252 +51,9 @@ use crate::semantic_index::SymbolId;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 
+// Traversal
+
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    fn add_definition(
-        &mut self,
-        name: &str,
-        flags: SymbolFlags,
-        kind: DefinitionKind,
-        range: TextRange,
-    ) {
-        // `Nse(Current, Lazy)` scopes don't own any definitions. We add the
-        // definitions to the real enclosing owner scope. Note that `Current +
-        // Eager` never reaches here because it doesn't push a scope.
-        if matches!(
-            self.scopes[self.current_scope].kind,
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
-        ) {
-            self.add_definition_to_owner(name, flags, kind, range);
-            return;
-        }
-
-        let symbol_id = self.walk.symbol_tables[self.current_scope].intern(name, flags);
-        let def_id = self.walk.definitions[self.current_scope].push(Definition {
-            symbol: symbol_id,
-            kind,
-            range,
-        });
-        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-        self.walk.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
-    }
-
-    /// Route a definition from a `Current + Lazy` scope to the scope that
-    /// owns it. That's the nearest ancestor scope which holds its own
-    /// definitions. A chain of `Current + Lazy` scopes (e.g. `on_load()` nested
-    /// in `on_load()`) is skipped: each one routes to its own owner, so they
-    /// all land in the same outer scope.
-    fn add_definition_to_owner(
-        &mut self,
-        name: &str,
-        flags: SymbolFlags,
-        kind: DefinitionKind,
-        range: TextRange,
-    ) {
-        let Some(target_scope) = self.definition_owner() else {
-            stdext::debug_panic!("Current + Lazy scope has no parent");
-            return;
-        };
-
-        let symbol_id = self.walk.symbol_tables[target_scope].intern(name, flags);
-        let def_id = self.walk.definitions[target_scope].push(Definition {
-            symbol: symbol_id,
-            kind,
-            range,
-        });
-
-        self.walk.use_def_maps[target_scope].ensure_symbol(symbol_id);
-
-        // Deferred: the body executes at an unknown later time, so the
-        // definition shouldn't shadow what's already live. This is the same
-        // mechanism as `<<-`.
-        //
-        // Known imprecision: the deferred def is visible to ALL uses in
-        // the parent scope (with `may_be_unbound: true`), including
-        // file-level uses that run before the lazy body executes. Ideally
-        // these defs would only be reachable from lazy scopes (functions),
-        // not from eager/file-level code.
-        self.walk.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
-    }
-
-    // Super-assignment is lexically in the current scope but binds in an
-    // ancestor. We record the definition in the current scope and append
-    // it to the target scope's use-def map (without shadowing prior
-    // definitions).
-    //
-    // R's `<<-` walks up the environment chain from the parent, targeting
-    // the first scope where the symbol is already bound. If no binding is
-    // found, it assigns in the global (file) scope.
-    fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
-        let Some(parent) = self.scopes[self.current_scope].parent else {
-            // A top-level `<<-` has no enclosing frame to walk to, so it binds
-            // in the file scope it already sits in. The marker scope and the
-            // binding scope coincide, so record one definition carrying both
-            // flags rather than pushing two coinciding entries.
-            let symbol_id = self.walk.symbol_tables[self.current_scope].intern(
-                name,
-                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
-            );
-            let def_id = self.walk.definitions[self.current_scope].push(Definition {
-                symbol: symbol_id,
-                kind,
-                range,
-            });
-            self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-            self.walk.use_def_maps[self.current_scope]
-                .record_deferred_definition(symbol_id, def_id);
-            return;
-        };
-
-        let target_scope = self.resolve_super_target(name, parent);
-
-        let symbol_id =
-            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
-        self.walk.definitions[self.current_scope].push(Definition {
-            symbol: symbol_id,
-            kind: kind.clone(),
-            range,
-        });
-
-        let target_symbol =
-            self.walk.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
-        let target_def_id = self.walk.definitions[target_scope].push(Definition {
-            symbol: target_symbol,
-            kind,
-            range,
-        });
-        self.walk.use_def_maps[target_scope].ensure_symbol(target_symbol);
-        self.walk.use_def_maps[target_scope]
-            .record_deferred_definition(target_symbol, target_def_id);
-    }
-
-    // Walk up from `start` to the first scope where `name` already has
-    // `IS_BOUND`. Returns that scope, or the file scope if no binding is found
-    // (mirroring R's assignment to the global environment). Reaching the file
-    // scope unbound ends the walk there, so its `parent` of `None` is the
-    // natural terminator.
-    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
-        let mut scope = start;
-        loop {
-            if let Some(id) = self.walk.symbol_tables[scope].id(name) {
-                if self.walk.symbol_tables[scope]
-                    .symbol(id)
-                    .flags()
-                    .contains(SymbolFlags::IS_BOUND)
-                {
-                    return scope;
-                }
-            }
-            let Some(parent) = self.scopes[scope].parent else {
-                return scope;
-            };
-            scope = parent;
-        }
-    }
-
-    fn add_use(&mut self, name: &str, range: TextRange) {
-        let symbol_id =
-            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
-        let use_id = self.walk.uses[self.current_scope].push(Use {
-            symbol: symbol_id,
-            range,
-        });
-        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-        self.walk.use_def_maps[self.current_scope].record_use(symbol_id, use_id);
-
-        // Associate free variables with the enclosing snapshot where the
-        // variable is defined
-        if self.walk.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
-            self.register_enclosing_snapshot(name, symbol_id, use_id);
-        }
-    }
-
-    fn register_enclosing_snapshot(&mut self, name: &str, nested_symbol: SymbolId, use_id: UseId) {
-        // We're looking for a parent definition for this scope's free variable
-        // so start from parent
-        let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
-            return;
-        };
-
-        // Eager vs lazy snapshot for this free variable. Eager snapshots are
-        // precise, lazy ones over-approximate. For instance in:
-        //
-        // ```
-        // x <- 1
-        // local({ x })
-        // x <- 2
-        // ```
-        //
-        // The eager body in `local()` captures `x <- 1` but not `x <- 2`. If
-        // the body was inside a lazy context like `function()` instead, the use
-        // of `x` could run at any time and we'd fall back to the accumulated
-        // union `{1, 2}`, which is an over-approximation.
-        //
-        // A precise enclosing snapshot requires eagerness throughout, which we
-        // track with `all_eager`.
-        let mut all_eager = !self.scopes[self.current_scope].kind.is_lazy();
-
-        loop {
-            if self.scope_binds_anywhere(current_scope, name) {
-                // Intern with empty flags: we just need a stable `SymbolId` for
-                // the lookup key. If the symbol was found via its `IS_BOUND`
-                // flag, it already exists. If found via pre-scan only, the later
-                // `add_definition()` call during the full walk will set `IS_BOUND`.
-                let enclosing_symbol_id =
-                    self.walk.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
-                self.walk.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
-
-                let entry = if all_eager {
-                    // Eager: a fresh point-in-time snapshot per use, no dedup and
-                    // no watcher. Two uses at different points in the body can
-                    // capture different enclosing states (e.g. either side of a
-                    // `<<-`), so they can't share.
-                    let snapshot_id = self.walk.use_def_maps[current_scope]
-                        .register_eager_snapshot(enclosing_symbol_id);
-                    (current_scope, snapshot_id)
-                } else {
-                    // Lazy: every use of this symbol resolves to the same
-                    // growing snapshot, so dedup on (nested scope, nested symbol)
-                    // and reuse it across uses.
-                    let dedup_key = (self.current_scope, nested_symbol);
-
-                    if let Some(&entry) = self.walk.lazy_snapshots.get(&dedup_key) {
-                        entry
-                    } else {
-                        let snapshot_id = self.walk.use_def_maps[current_scope]
-                            .register_lazy_snapshot(enclosing_symbol_id);
-                        let entry = (current_scope, snapshot_id);
-                        self.walk.lazy_snapshots.insert(dedup_key, entry);
-                        entry
-                    }
-                };
-
-                let use_key = EnclosingSnapshotKey {
-                    nested_scope: self.current_scope,
-                    nested_use: use_id,
-                };
-                self.walk.enclosing_snapshots.insert(use_key, entry);
-
-                return;
-            }
-
-            if self.scopes[current_scope].kind.is_lazy() {
-                all_eager = false;
-            }
-
-            let Some(parent) = self.scopes[current_scope].parent else {
-                return;
-            };
-            current_scope = parent;
-        }
-    }
-
-    fn argument_effects(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
-        self.scan
-            .call_resolutions
-            .get(&call.syntax().text_trimmed_range())
-            .and_then(|resolution| resolution.arguments.clone())
-    }
-
     pub(super) fn walk_expression_list(&mut self, list: &RExpressionList) {
         for expr in list.iter() {
             self.walk_expression(&expr);
@@ -854,7 +611,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Process a call the scan pass decided is NSE, using the resolved argument
     /// scoping the scan cached. Handle each scoped argument, pushing NSE scopes
     /// inline.
-    pub(super) fn walk_nse_call(&mut self, call: &RCall, effects: ResolvedArgumentEffects) {
+    fn walk_nse_call(&mut self, call: &RCall, effects: ResolvedArgumentEffects) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -942,6 +699,134 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
+    fn argument_effects(&self, call: &RCall) -> Option<ResolvedArgumentEffects> {
+        self.scan
+            .call_resolutions
+            .get(&call.syntax().text_trimmed_range())
+            .and_then(|resolution| resolution.arguments.clone())
+    }
+}
+
+// State management
+
+impl<R: ImportsResolver> SemanticIndexBuilder<R> {
+    fn add_definition(
+        &mut self,
+        name: &str,
+        flags: SymbolFlags,
+        kind: DefinitionKind,
+        range: TextRange,
+    ) {
+        // `Nse(Current, Lazy)` scopes don't own any definitions. We add the
+        // definitions to the real enclosing owner scope. Note that `Current +
+        // Eager` never reaches here because it doesn't push a scope.
+        if matches!(
+            self.scopes[self.current_scope].kind,
+            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
+        ) {
+            self.add_definition_to_owner(name, flags, kind, range);
+            return;
+        }
+
+        let symbol_id = self.walk.symbol_tables[self.current_scope].intern(name, flags);
+        let def_id = self.walk.definitions[self.current_scope].push(Definition {
+            symbol: symbol_id,
+            kind,
+            range,
+        });
+        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
+    }
+
+    /// Route a definition from a `Current + Lazy` scope to the scope that
+    /// owns it. That's the nearest ancestor scope which holds its own
+    /// definitions. A chain of `Current + Lazy` scopes (e.g. `on_load()` nested
+    /// in `on_load()`) is skipped: each one routes to its own owner, so they
+    /// all land in the same outer scope.
+    fn add_definition_to_owner(
+        &mut self,
+        name: &str,
+        flags: SymbolFlags,
+        kind: DefinitionKind,
+        range: TextRange,
+    ) {
+        let Some(target_scope) = self.definition_owner() else {
+            stdext::debug_panic!("Current + Lazy scope has no parent");
+            return;
+        };
+
+        let symbol_id = self.walk.symbol_tables[target_scope].intern(name, flags);
+        let def_id = self.walk.definitions[target_scope].push(Definition {
+            symbol: symbol_id,
+            kind,
+            range,
+        });
+
+        self.walk.use_def_maps[target_scope].ensure_symbol(symbol_id);
+
+        // Deferred: the body executes at an unknown later time, so the
+        // definition shouldn't shadow what's already live. This is the same
+        // mechanism as `<<-`.
+        //
+        // Known imprecision: the deferred def is visible to ALL uses in
+        // the parent scope (with `may_be_unbound: true`), including
+        // file-level uses that run before the lazy body executes. Ideally
+        // these defs would only be reachable from lazy scopes (functions),
+        // not from eager/file-level code.
+        self.walk.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
+    }
+
+    // Super-assignment is lexically in the current scope but binds in an
+    // ancestor. We record the definition in the current scope and append
+    // it to the target scope's use-def map (without shadowing prior
+    // definitions).
+    //
+    // R's `<<-` walks up the environment chain from the parent, targeting
+    // the first scope where the symbol is already bound. If no binding is
+    // found, it assigns in the global (file) scope.
+    fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
+        let Some(parent) = self.scopes[self.current_scope].parent else {
+            // A top-level `<<-` has no enclosing frame to walk to, so it binds
+            // in the file scope it already sits in. The marker scope and the
+            // binding scope coincide, so record one definition carrying both
+            // flags rather than pushing two coinciding entries.
+            let symbol_id = self.walk.symbol_tables[self.current_scope].intern(
+                name,
+                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
+            );
+            let def_id = self.walk.definitions[self.current_scope].push(Definition {
+                symbol: symbol_id,
+                kind,
+                range,
+            });
+            self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+            self.walk.use_def_maps[self.current_scope]
+                .record_deferred_definition(symbol_id, def_id);
+            return;
+        };
+
+        let target_scope = self.resolve_super_target(name, parent);
+
+        let symbol_id =
+            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
+        self.walk.definitions[self.current_scope].push(Definition {
+            symbol: symbol_id,
+            kind: kind.clone(),
+            range,
+        });
+
+        let target_symbol =
+            self.walk.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
+        let target_def_id = self.walk.definitions[target_scope].push(Definition {
+            symbol: target_symbol,
+            kind,
+            range,
+        });
+        self.walk.use_def_maps[target_scope].ensure_symbol(target_symbol);
+        self.walk.use_def_maps[target_scope]
+            .record_deferred_definition(target_symbol, target_def_id);
+    }
+
     fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {
         for binding in bindings {
             // The def's own range is the name token, captured at scan time, so a
@@ -959,6 +844,127 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 },
                 name_range,
             );
+        }
+    }
+
+    // Walk up from `start` to the first scope where `name` already has
+    // `IS_BOUND`. Returns that scope, or the file scope if no binding is found
+    // (mirroring R's assignment to the global environment). Reaching the file
+    // scope unbound ends the walk there, so its `parent` of `None` is the
+    // natural terminator.
+    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
+        let mut scope = start;
+        loop {
+            if let Some(id) = self.walk.symbol_tables[scope].id(name) {
+                if self.walk.symbol_tables[scope]
+                    .symbol(id)
+                    .flags()
+                    .contains(SymbolFlags::IS_BOUND)
+                {
+                    return scope;
+                }
+            }
+            let Some(parent) = self.scopes[scope].parent else {
+                return scope;
+            };
+            scope = parent;
+        }
+    }
+
+    fn add_use(&mut self, name: &str, range: TextRange) {
+        let symbol_id =
+            self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
+        let use_id = self.walk.uses[self.current_scope].push(Use {
+            symbol: symbol_id,
+            range,
+        });
+        self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[self.current_scope].record_use(symbol_id, use_id);
+
+        // Associate free variables with the enclosing snapshot where the
+        // variable is defined
+        if self.walk.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
+            self.register_enclosing_snapshot(name, symbol_id, use_id);
+        }
+    }
+
+    fn register_enclosing_snapshot(&mut self, name: &str, nested_symbol: SymbolId, use_id: UseId) {
+        // We're looking for a parent definition for this scope's free variable
+        // so start from parent
+        let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
+            return;
+        };
+
+        // Eager vs lazy snapshot for this free variable. Eager snapshots are
+        // precise, lazy ones over-approximate. For instance in:
+        //
+        // ```
+        // x <- 1
+        // local({ x })
+        // x <- 2
+        // ```
+        //
+        // The eager body in `local()` captures `x <- 1` but not `x <- 2`. If
+        // the body was inside a lazy context like `function()` instead, the use
+        // of `x` could run at any time and we'd fall back to the accumulated
+        // union `{1, 2}`, which is an over-approximation.
+        //
+        // A precise enclosing snapshot requires eagerness throughout, which we
+        // track with `all_eager`.
+        let mut all_eager = !self.scopes[self.current_scope].kind.is_lazy();
+
+        loop {
+            if self.scope_binds_anywhere(current_scope, name) {
+                // Intern with empty flags: we just need a stable `SymbolId` for
+                // the lookup key. If the symbol was found via its `IS_BOUND`
+                // flag, it already exists. If found via pre-scan only, the later
+                // `add_definition()` call during the full walk will set `IS_BOUND`.
+                let enclosing_symbol_id =
+                    self.walk.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
+                self.walk.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
+
+                let entry = if all_eager {
+                    // Eager: a fresh point-in-time snapshot per use, no dedup and
+                    // no watcher. Two uses at different points in the body can
+                    // capture different enclosing states (e.g. either side of a
+                    // `<<-`), so they can't share.
+                    let snapshot_id = self.walk.use_def_maps[current_scope]
+                        .register_eager_snapshot(enclosing_symbol_id);
+                    (current_scope, snapshot_id)
+                } else {
+                    // Lazy: every use of this symbol resolves to the same
+                    // growing snapshot, so dedup on (nested scope, nested symbol)
+                    // and reuse it across uses.
+                    let dedup_key = (self.current_scope, nested_symbol);
+
+                    if let Some(&entry) = self.walk.lazy_snapshots.get(&dedup_key) {
+                        entry
+                    } else {
+                        let snapshot_id = self.walk.use_def_maps[current_scope]
+                            .register_lazy_snapshot(enclosing_symbol_id);
+                        let entry = (current_scope, snapshot_id);
+                        self.walk.lazy_snapshots.insert(dedup_key, entry);
+                        entry
+                    }
+                };
+
+                let use_key = EnclosingSnapshotKey {
+                    nested_scope: self.current_scope,
+                    nested_use: use_id,
+                };
+                self.walk.enclosing_snapshots.insert(use_key, entry);
+
+                return;
+            }
+
+            if self.scopes[current_scope].kind.is_lazy() {
+                all_eager = false;
+            }
+
+            let Some(parent) = self.scopes[current_scope].parent else {
+                return;
+            };
+            current_scope = parent;
         }
     }
 }

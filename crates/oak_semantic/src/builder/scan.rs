@@ -36,6 +36,8 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SymbolFlags;
 
+// Traversal
+
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Reset the flow-precise binding state for a fresh scope's scan.
     ///
@@ -243,7 +245,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// `Current + Lazy` bodies are their own scan units and deferred to the walk
     /// because resolution of effects in these lazy scopes needs the child's own
     /// flow context.
-    pub(super) fn scan_call(&mut self, call: &RCall) {
+    fn scan_call(&mut self, call: &RCall) {
         let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
             Some(effects) => (
                 effects.arguments,
@@ -411,7 +413,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// runs at some later time, so at an eager position after the call these
     /// names aren't bound yet, and an eager callee there must still treat them
     /// as unbound.
-    pub(super) fn scan_lazy_owner_bindings(&mut self, expr: &AnyRExpression) {
+    fn scan_lazy_owner_bindings(&mut self, expr: &AnyRExpression) {
         match expr {
             AnyRExpression::RBracedExpressions(braced) => {
                 for expr in braced.expressions().iter() {
@@ -479,7 +481,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Scan a binary operator for an assign effect (e.g. magrittr's `x %<>% f()`)
-    pub(super) fn scan_operator_assign(&mut self, bin: &RBinaryExpression) {
+    fn scan_operator_assign(&mut self, bin: &RBinaryExpression) {
         let Some(bindings) = self.resolve_operator_assign(bin) else {
             return;
         };
@@ -529,7 +531,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// can't locate the target.
     ///
     /// [`scan_call`]: Self::scan_call
-    pub(super) fn scan_source_call(
+    fn scan_source_call(
         &mut self,
         path: &str,
         source_range: TextRange,
@@ -587,14 +589,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
         Some(ScanScope::Scope(scope))
     }
+}
 
+// State management
+
+impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Record the names a child scope (function body, NSE argument) about to be
     /// created at `range` inherits from its ancestors, to seed the child's scan
     /// in `begin_scan`. Called during the scan, where `flow_state` is the
     /// parent's flow-precise state at the child's definition point (already
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
-    pub(super) fn record_enclosing_flow(&mut self, range: TextRange) {
+    fn record_enclosing_flow(&mut self, range: TextRange) {
         self.scan
             .enclosing_flow
             .insert(range, self.scan.flow_state.snapshot());
@@ -607,7 +613,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// when the current scope owns it. A `Current + Lazy` scope routes its defs
     /// to the owner, so the name is added to the owner's bound names instead, the
     /// same routing `add_definition_to_owner` does during the walk.
-    pub(super) fn record_binding(&mut self, name: String, range: TextRange) {
+    fn record_binding(&mut self, name: String, range: TextRange) {
         self.record_owner_name(name.clone(), range);
         self.scan.flow_state.bind(name);
     }
@@ -621,7 +627,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
     /// a deferred body's names to the owner's bound names without also marking them
     /// bound in `flow_state` (see that helper for why).
-    pub(super) fn record_owner_name(&mut self, name: String, range: TextRange) {
+    fn record_owner_name(&mut self, name: String, range: TextRange) {
         if let Some(bound) = self.scan.eager_descent.open.last_mut() {
             bound.add(name, range);
             return;
@@ -703,13 +709,18 @@ pub(super) struct FlowState {
 }
 
 impl FlowState {
+    /// Whether `name` is bound at the current point.
+    pub(super) fn is_bound(&self, name: &str) -> bool {
+        self.bound.contains(name)
+    }
+
     /// Save the current state, to rewind to or to seed a child scan unit from.
-    pub(super) fn snapshot(&self) -> FlowState {
+    fn snapshot(&self) -> FlowState {
         self.clone()
     }
 
     /// Rewind to `snapshot`, dropping any bindings recorded since it was taken.
-    pub(super) fn restore(&mut self, snapshot: FlowState) {
+    fn restore(&mut self, snapshot: FlowState) {
         *self = snapshot;
     }
 
@@ -722,11 +733,6 @@ impl FlowState {
     /// Record `name` as bound from here on.
     fn bind(&mut self, name: String) {
         self.bound.insert(name);
-    }
-
-    /// Whether `name` is bound at the current point.
-    pub(super) fn is_bound(&self, name: &str) -> bool {
-        self.bound.contains(name)
     }
 
     /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).
@@ -782,16 +788,16 @@ impl BoundNames {
         }
     }
 
-    fn add(&mut self, name: String, range: TextRange) {
-        self.by_name.entry(name).or_insert(range);
-    }
-
     pub(super) fn binds(&self, name: &str) -> bool {
         self.by_name.contains_key(name)
     }
 
     pub(super) fn binding_range(&self, name: &str) -> Option<TextRange> {
         self.by_name.get(name).copied()
+    }
+
+    fn add(&mut self, name: String, range: TextRange) {
+        self.by_name.entry(name).or_insert(range);
     }
 }
 
