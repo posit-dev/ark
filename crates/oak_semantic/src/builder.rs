@@ -65,7 +65,7 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
-mod builder_nse;
+mod effects;
 mod scan;
 mod walk;
 
