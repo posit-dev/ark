@@ -50,7 +50,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///   nothing local is bound yet.
     ///
     /// Parameter defaults are a special case: they are scanned before the params
-    /// are recorded, so `collect_function` seeds the full formal set by hand
+    /// are recorded, so `walk_function` seeds the full formal set by hand
     /// (all formals bind at once in R, so a default sees every parameter name).
     pub(super) fn begin_scan(&mut self) {
         let range = self.scopes[self.current_scope].range;
@@ -117,7 +117,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 if is_assignment(bin) {
                     let right = is_right_assignment(bin);
 
-                    // Value side first, mirroring `collect_assignment`: it may
+                    // Value side first, mirroring `walk_assignment`: it may
                     // hold NSE calls or nested defs that flow before the binding.
                     let value = if right { bin.left() } else { bin.right() };
                     if let Ok(value) = value {
@@ -217,7 +217,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Walk descendant nodes of `expr`, scanning the outermost
     /// `AnyRExpression` children. The scan analog of
-    /// `collect_descendants`.
+    /// `walk_descendants`.
     fn scan_descendants(&mut self, node: &RSyntaxNode) {
         let mut preorder = node.preorder();
         preorder.next();

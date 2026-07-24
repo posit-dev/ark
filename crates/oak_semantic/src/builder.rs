@@ -75,17 +75,17 @@ mod walk;
 ///
 /// See the module docs for the scan/walk split. The scan
 /// ([`scan_expression`]) runs first over each scope, then the walk
-/// ([`collect_expression`]) reuses its decisions and pushes NSE scopes inline.
+/// ([`walk_expression`]) reuses its decisions and pushes NSE scopes inline.
 ///
 /// [`scan_expression`]: SemanticIndexBuilder::scan_expression
-/// [`collect_expression`]: SemanticIndexBuilder::collect_expression
+/// [`walk_expression`]: SemanticIndexBuilder::walk_expression
 pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
 
     let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.begin_scan();
     builder.scan_expression_list(&root.expressions());
-    builder.collect_expression_list(&root.expressions());
+    builder.walk_expression_list(&root.expressions());
     builder.finish()
 }
 
@@ -107,7 +107,7 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
 /// reads back (`bound_names`, `call_resolutions`, `eager_descent.pending`).
 /// The walk also writes `bound_names`, but only to install scan-produced data:
 /// the lockstep push in `push_scope()` and the pending install in
-/// `collect_nse_argument()`.
+/// `walk_nse_argument()`.
 struct ScanState {
     bound_names: IndexVec<ScopeId, BoundNames>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
