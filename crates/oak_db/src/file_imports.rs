@@ -312,6 +312,16 @@ fn testthat_load_layers(file: File, db: &dyn Db, package: Package) -> CrossFileL
 /// first. Reads each file's `attached_packages`, never the caller's own index.
 /// An attach to a package absent from every root is dropped (no entity).
 fn predecessor_attach_layers(db: &dyn Db, files: &[File]) -> Vec<ImportLayer> {
+    // Warm the indices in forward load order before the LIFO pass below.
+    // `files` is LIFO (latest predecessor first). Reading attaches in LIFO
+    // order demands the latest predecessor's index first, which recursively
+    // demands its own predecessors, and so on. To reduce stack depth, query
+    // attached packages in the reverse order so that each file's own
+    // predecessors are already built when its turn comes in the LIFO pass.
+    for file in files.iter().rev() {
+        file.attached_packages(db);
+    }
+
     files
         .iter()
         .flat_map(|file| {

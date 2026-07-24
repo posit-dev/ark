@@ -4,6 +4,7 @@ use salsa::Setter;
 
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
+use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
@@ -557,4 +558,54 @@ fn test_imports_is_cached_per_file() {
     let _ = file.imports(&db);
 
     assert_eq!(db.executions("imports"), 1);
+}
+
+#[test]
+fn test_cross_file_layers_cascade_stays_shallow() {
+    // Building a late-collation file resolves its effects, which reaches back
+    // through every predecessor's index. Without the forward-prime in
+    // `predecessor_attach_layers` that walk recurses as deep as the collation,
+    // which is what overflowed the stack in the IDE. Assert the nesting stays
+    // flat regardless of collation length.
+    //
+    // We assert on recursion depth, not "does it crash", because
+    // `stacker::maybe_grow` in `build_semantic_index` grows the stack and would
+    // hide a regression from a crash-based check. Depth is independent of it.
+    let mut db = TestDb::new();
+
+    const N: usize = 150;
+    let owned: Vec<(String, String)> = (0..N)
+        .map(|i| (format!("w/pkg/R/f{i:04}.R"), "local(1)\n".to_string()))
+        .collect();
+    let files: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(path, contents)| (path.as_str(), contents.as_str()))
+        .collect();
+    let (_pkg, entities) = make_package(&mut db, "pkg", Namespace::default(), &files);
+
+    crate::file::recursion_depth::reset();
+
+    // Cold build of the last collation file: its effect resolution demands
+    // every predecessor's index. Forward-priming keeps the nesting shallow.
+    let _ = entities[N - 1].semantic_index(&db);
+
+    assert!(crate::file::recursion_depth::max() < 10);
+}
+
+#[test]
+fn test_cross_file_layers_memoized_across_effect_calls() {
+    // Each effectful call consults `cross_file_layers(file, view)` while the
+    // file's index builds. Memoizing it keeps that to one execution per file
+    // instead of one per call, which was the O(N^2) that froze the LSP.
+    let mut db = TestDb::new();
+
+    let body = "local(1)\n".repeat(20);
+    let (_pkg, entities) = make_package(&mut db, "pkg", Namespace::default(), &[(
+        "w/pkg/R/a.R",
+        &body,
+    )]);
+
+    let _ = entities[0].semantic_index(&db);
+
+    assert_eq!(db.executions("cross_file_layers"), 1);
 }
