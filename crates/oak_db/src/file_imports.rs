@@ -46,6 +46,7 @@ pub enum ImportLayer {
 /// flow-ordered set.
 ///
 /// [`SalsaImportsResolver`]: crate::imports::SalsaImportsResolver
+#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
 pub(crate) struct CrossFileLayers {
     pub above: Vec<ImportLayer>,
     pub below: Vec<ImportLayer>,
@@ -55,17 +56,19 @@ impl CrossFileLayers {
     /// Flatten to a single lookup-ordered layer list, splicing the file's own
     /// `library()` attaches into the band between the definition/namespace
     /// layers (which outrank them) and the rest of the search path.
-    pub(crate) fn splice_own_attaches(self, own: Vec<ImportLayer>) -> Vec<ImportLayer> {
-        let CrossFileLayers { mut above, below } = self;
-        above.reserve(own.len() + below.len());
-        above.extend(own);
-        above.extend(below);
-        above
+    pub(crate) fn splice_own_attaches(&self, own: Vec<ImportLayer>) -> Vec<ImportLayer> {
+        let mut out = Vec::with_capacity(self.above.len() + own.len() + self.below.len());
+
+        out.extend(self.above.iter().cloned());
+        out.extend(own);
+        out.extend(self.below.iter().cloned());
+
+        out
     }
 }
 
 /// The point in a package's load at which a file views its collation siblings.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CollationView {
     /// Deferred (a function body, or end-of-file): the code runs after the
     /// whole collation has loaded, so every sibling is visible.
@@ -171,6 +174,12 @@ impl File {
     /// The cross-file layers this file sees at load time, excluding its own
     /// attaches (see [`CrossFileLayers`]). Never reads the file's own semantic
     /// index, so it's safe to call while that index is being built.
+    ///
+    /// Tracked and keyed on `(self, view)`. Resolving one file's effects reads
+    /// this once per annotated call, and each rebuild walks every collation
+    /// predecessor's `attached_packages`, so recomputing it per call would be
+    /// O(predecessors) each time.
+    #[salsa::tracked(returns(ref))]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
         match self.package(db) {
             // A `tests/testthat/` file: sees the whole package plus sourced
