@@ -18,6 +18,13 @@ use tracing_subscriber::Layer;
 
 use crate::logger_hprof;
 
+/// Every first-party crate's directory name under `crates/`, baked in by
+/// `build.rs` so [`internal_crates()`] doesn't need a hardcoded list that
+/// goes stale as crates are added.
+fn internal_crates() -> impl Iterator<Item = &'static str> {
+    env!("ARK_INTERNAL_CRATES").split(',')
+}
+
 pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
     static ONCE: Once = Once::new();
 
@@ -35,7 +42,7 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
             .and_then(|c| c.get(1))
             .map(|c| c.as_str())
         {
-            for pkg in ["amalthea", "harp", "stdext"] {
+            for pkg in internal_crates().filter(|&pkg| pkg != "ark") {
                 if let Ok(directive) = format!("{pkg}={level}").parse() {
                     env_filter = env_filter.add_directive(directive);
                 }
@@ -109,5 +116,27 @@ fn non_blocking(file: Option<&str>, cell: &OnceCell<WorkerGuard>) -> BoxMakeWrit
         BoxMakeWriter::new(writer)
     } else {
         BoxMakeWriter::new(std::io::stderr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::internal_crates;
+
+    #[test]
+    fn test_internal_crates_includes_path_crates() {
+        let crates: Vec<&str> = internal_crates().collect();
+        assert!(crates.contains(&"oak_db"));
+        assert!(crates.contains(&"oak_semantic"));
+        assert!(crates.contains(&"amalthea"));
+        assert!(crates.contains(&"harp"));
+        assert!(crates.contains(&"stdext"));
+    }
+
+    #[test]
+    fn test_internal_crates_excludes_git_dependencies() {
+        let crates: Vec<&str> = internal_crates().collect();
+        assert!(!crates.contains(&"aether_factory"));
+        assert!(!crates.contains(&"aether_syntax"));
     }
 }
