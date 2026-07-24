@@ -718,13 +718,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         kind: DefinitionKind,
         range: TextRange,
     ) {
-        // `Nse(Current, Lazy)` scopes don't own any definitions. We add the
-        // definitions to the real enclosing owner scope. Note that `Current +
-        // Eager` never reaches here because it doesn't push a scope.
-        if matches!(
-            self.scopes[self.current_scope].kind,
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
-        ) {
+        // A scope that doesn't own its bindings routes its definitions to the
+        // enclosing owner scope. Only `Nse(Current, Lazy)` (`on_load`) reaches
+        // here as such: `Current + Eager` pushes no scope, so it never does.
+        if !self.scopes[self.current_scope].kind.owns_bindings() {
             self.add_definition_to_owner(name, flags, kind, range);
             return;
         }
@@ -751,19 +748,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         kind: DefinitionKind,
         range: TextRange,
     ) {
-        let Some(target_scope) = self.definition_owner() else {
+        let Some(owner_scope) = self.enclosing_owner() else {
             stdext::debug_panic!("Current + Lazy scope has no parent");
             return;
         };
 
-        let symbol_id = self.walk.symbol_tables[target_scope].intern(name, flags);
-        let def_id = self.walk.definitions[target_scope].push(Definition {
+        let symbol_id = self.walk.symbol_tables[owner_scope].intern(name, flags);
+        let def_id = self.walk.definitions[owner_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
         });
 
-        self.walk.use_def_maps[target_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[owner_scope].ensure_symbol(symbol_id);
 
         // Deferred: the body executes at an unknown later time, so the
         // definition shouldn't shadow what's already live. This is the same
@@ -774,7 +771,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // file-level uses that run before the lazy body executes. Ideally
         // these defs would only be reachable from lazy scopes (functions),
         // not from eager/file-level code.
-        self.walk.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
+        self.walk.use_def_maps[owner_scope].record_deferred_definition(symbol_id, def_id);
     }
 
     // Super-assignment is lexically in the current scope but binds in an

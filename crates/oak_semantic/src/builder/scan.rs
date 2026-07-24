@@ -27,7 +27,7 @@ use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::effects::ScopeBindings;
+use crate::effects::ScopeContext;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::EvalEnv;
@@ -366,15 +366,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         let old = self.scan.bound_so_far.snapshot();
 
                         let range = value.syntax().text_trimmed_range();
-                        self.scan.open.push(ScanScope {
+                        self.scan.open_scopes.push(OpenScope {
                             kind: ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager),
-                            bound: BoundNames::new(),
+                            bindings: BindingSites::new(),
                         });
                         self.scan_expression(&value);
-                        if let Some(scope) = self.scan.open.pop() {
+                        if let Some(scope) = self.scan.open_scopes.pop() {
                             self.scan
                                 .body_scans
-                                .insert(range, BodyScan::Scanned(scope.bound));
+                                .insert(range, BodyScan::Scanned(scope.bindings));
                         }
 
                         self.scan.bound_so_far.restore(old);
@@ -579,34 +579,31 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// [`scope_binds_anywhere`]: Self::scope_binds_anywhere
     fn scan_scope_binds(&self, name: &str) -> bool {
         match self.scan_scope() {
-            Some(ScanScopeRef::Descent(bound)) => bound.binds(name),
-            Some(ScanScopeRef::Scope(scope)) => self.scope_binds_anywhere(scope, name),
-            None => false,
+            ScanScope::Open(scope) => scope.binds(name),
+            ScanScope::Arena(scope) => self.scope_binds_anywhere(scope, name),
         }
     }
 
     fn scan_scope_is_global(&self) -> bool {
         match self.scan_scope() {
-            Some(ScanScopeRef::Scope(scope)) => matches!(self.scopes[scope].kind, ScopeKind::File),
-            Some(ScanScopeRef::Descent(_)) => false,
-            None => true,
+            ScanScope::Open(_) => false,
+            ScanScope::Arena(scope) => matches!(self.scopes[scope].kind, ScopeKind::File),
         }
     }
 
-    fn scan_scope(&self) -> Option<ScanScopeRef<'_>> {
-        // The current evaluation frame is the innermost open frame that owns
-        // names. A lazy frame owns nothing, so skip past it.
-        for frame in self.scan.open.iter().rev() {
-            if !frame.kind.is_lazy() {
-                return Some(ScanScopeRef::Descent(&frame.bound));
+    fn scan_scope(&self) -> ScanScope<'_> {
+        // The current evaluation scope is the innermost open scope that owns
+        // its bindings.
+        for scope in self.scan.open_scopes.iter().rev() {
+            if scope.kind.owns_bindings() {
+                return ScanScope::Open(&scope.bindings);
             }
         }
 
-        let scope = match self.scopes[self.current_scope].kind {
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner()?,
-            _ => self.current_scope,
-        };
-        Some(ScanScopeRef::Scope(scope))
+        // Return the arena's current scope if there is no owning open scope.
+        // This arena's scope is always owning because `Current + Lazy` bodies
+        // (e.g. `on_load()`) are scanned with their owner set to `current_scope`.
+        ScanScope::Arena(self.current_scope)
     }
 }
 
@@ -625,42 +622,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .insert(range, BodyScan::Deferred(self.scan.bound_so_far.snapshot()));
     }
 
-    /// Record a binding in the scan's flow state.
+    /// Record a binding in both scan binding views.
     ///
-    /// The flow-precise `bound_so_far` always learns the name, so a
-    /// later callee in this scope sees it shadowed. The bound names only get it
-    /// when the current scope owns it. A `Current + Lazy` scope routes its defs
-    /// to the owner, so the name is added to the owner's bound names instead, the
-    /// same routing `add_definition_to_owner` does during the walk.
+    /// `bound_so_far` always learns the name, so a later eager callee in this
+    /// scope sees it shadowed. The name also routes into an owning scope's
+    /// `bound_anywhere`, matching `add_definition`'s routing during the walk. It
+    /// goes to the innermost open frame that owns its bindings (an eager
+    /// `Nested` body like `local()`); a lazy frame owns nothing, so its names
+    /// skip past it to the owner below. With no owning frame open, it lands in
+    /// the arena `current_scope`, which always owns its bindings at scan time
+    /// (the same invariant `scan_scope()` relies on).
     fn record_binding(&mut self, name: String, range: TextRange) {
-        self.record_owner_name(name.clone(), range);
-        self.scan.bound_so_far.bind(name);
-    }
+        self.scan.bound_so_far.bind(name.clone());
 
-    /// Route a binding NAME into its owner scope's bound names, matching
-    /// `add_definition`'s routing. It goes to the innermost open frame that owns
-    /// names (an eager `Nested` body like `local()`); a lazy frame owns nothing,
-    /// so its names skip past it. With no owning frame open, a `Current + Lazy`
-    /// scope routes to `definition_owner()` and every other scope owns its
-    /// bindings.
-    ///
-    /// Split from `record_binding` so `scan_lazy_owner_bindings` can add
-    /// a deferred body's names to the owner's bound names without also marking them
-    /// bound in `bound_so_far` (see that helper for why).
-    fn record_owner_name(&mut self, name: String, range: TextRange) {
-        for frame in self.scan.open.iter_mut().rev() {
-            if !frame.kind.is_lazy() {
-                frame.bound.add(name, range);
+        for frame in self.scan.open_scopes.iter_mut().rev() {
+            if frame.kind.owns_bindings() {
+                frame.bindings.add(name, range);
                 return;
             }
         }
-
-        if let Some(target) = match self.scopes[self.current_scope].kind {
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy) => self.definition_owner(),
-            _ => Some(self.current_scope),
-        } {
-            self.scan.bound_anywhere[target].add(name, range);
-        }
+        self.scan.bound_anywhere[self.current_scope].add(name, range);
     }
 }
 
@@ -691,7 +672,7 @@ pub(super) struct SourcedFile {
     pub(super) resolution: Option<SourceResolution>,
 }
 
-/// Backs a [`CallContext`]'s [`ScopeBindings`] with the builder's live scope
+/// Backs a [`CallContext`]'s [`ScopeQuery`] with the builder's live scope
 /// state, so an effect handler (`substitute`) can query bindings during the
 /// scan without reaching into the builder directly.
 ///
@@ -700,7 +681,7 @@ pub(super) struct ScanBindings<'a, R: ImportsResolver> {
     pub(super) builder: &'a SemanticIndexBuilder<R>,
 }
 
-impl<R: ImportsResolver> ScopeBindings for ScanBindings<'_, R> {
+impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
     fn is_bound(&self, name: &str, inherits: bool) -> bool {
         if inherits {
             // The scan's `bound_so_far` carries the current scope's bindings plus
@@ -711,7 +692,7 @@ impl<R: ImportsResolver> ScopeBindings for ScanBindings<'_, R> {
         self.builder.scan_scope_binds(name)
     }
 
-    fn is_global_scope(&self) -> bool {
+    fn is_global(&self) -> bool {
         self.builder.scan_scope_is_global()
     }
 }
@@ -763,54 +744,36 @@ impl FlowState {
     }
 }
 
-/// A scope the scan has entered but the walk has not yet allocated in the
-/// arena. A `local()` descent, or (in the next commit) an `on_load()` body
-/// during its deferred scan. Innermost last on the `open` stack.
+/// A scope entered by the scan that doesn't have an allocated arena yet.
 ///
-/// The body's arena scope doesn't exist yet, because the walk allocates scopes
-/// in preorder and allocating one mid-scan would break the `Scope::descendants`
-/// invariant. So a descent's names stage here on `bound` while the scan is
-/// inside it, keyed by nothing but stack position.
-///
-/// `record_owner_name()` routes a binding to the innermost owning frame so names
-/// land on the body that owns them. When a descent finishes, its `bound` moves
-/// into `body_scans` as [`BodyScan::Scanned`], keyed by the body's range, its
-/// pre-arena identity until the walk pushes its scope.
-pub(super) struct ScanScope {
+/// When a scan descent finishes, its `bindings` moves into `body_scans` as
+/// [`BodyScan::Scanned`], keyed by the body's range, its pre-arena identity
+/// until the walk pushes its scope.
+pub(super) struct OpenScope {
     pub(super) kind: ScopeKind,
-    pub(super) bound: BoundNames,
+    pub(super) bindings: BindingSites,
 }
 
-/// What the scan prepared for a child body, keyed by the body's text range
-/// (the body's identity until the walk pushes its arena scope).
-///
-/// The walk installs a body's names before collecting the body, because a lazy
-/// child inside (a function or lazy NSE body) runs later than the walk reaches
-/// it, so it can reference a binding defined further down this scope. Resolving
-/// that name checks whether an enclosing scope binds it
-/// (`scope_binds_anywhere()`), and the walk hasn't recorded that binding yet, so
-/// the scan-populated bound set has to be complete up front. That's the reason
-/// the scan collects bound names ahead of the walk at all.
+/// Scan state for a child body, keyed by the body's text range (the body's
+/// identity until the walk pushes its arena scope).
 pub(super) enum BodyScan {
     /// A walk-time scan unit (function body, `Nested + Lazy` like `reactive()`).
     /// The walk seeds `begin_scan()` from this snapshot.
     Deferred(FlowState),
     /// Already scanned inline by an eager `Nested` descent (e.g. `local()`).
-    Scanned(BoundNames),
+    Scanned(BindingSites),
 }
 
 /// All definitions in a scope, collected by the scan pass before the
 /// walk. Skips child-scope bodies (nested functions and `Nested` NSE bodies).
 ///
-/// Keeps each name's earliest binding site in scan order, which is source
-/// order within the scope. A name bound several times reads as bound
-/// throughout, and this earliest site is what the lazy-shadow diagnostic points
-/// at, once `is_lazily_shadowed` has picked the nearest binding ancestor.
-pub(super) struct BoundNames {
+/// Keeps each name's earliest binding site in scan order. This earliest site is
+/// mentioned in the lazy-shadow diagnostics.
+pub(super) struct BindingSites {
     by_name: FxHashMap<String, TextRange>,
 }
 
-impl BoundNames {
+impl BindingSites {
     pub(super) fn new() -> Self {
         Self {
             by_name: FxHashMap::default(),
@@ -836,7 +799,7 @@ impl BoundNames {
 /// which one is the current evaluation frame.
 ///
 /// [`scan_scope`]: SemanticIndexBuilder::scan_scope
-enum ScanScopeRef<'a> {
-    Descent(&'a BoundNames),
-    Scope(ScopeId),
+enum ScanScope<'a> {
+    Open(&'a BindingSites),
+    Arena(ScopeId),
 }
