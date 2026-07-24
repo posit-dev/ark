@@ -2539,3 +2539,63 @@ f <- function() {
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
 }
+
+// --- `on.exit` (Current + Lazy) ---
+
+#[test]
+fn test_nse_on_exit_routes_defs_to_function() {
+    // `on.exit` is Current + Lazy, like `on_load`, but its owner is the
+    // enclosing function rather than the file: a binding inside the body runs in
+    // the function's frame at exit, so it routes there.
+    let index = index_with_base(
+        "\
+f <- function() {
+    on.exit({
+        x <- 1
+    })
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let on_exit_scope = ScopeId::from(2);
+
+    // `x` routes to the function scope, not the `on.exit` body.
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(on_exit_scope).get("x").is_none());
+
+    assert_eq!(
+        index.scope(on_exit_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
+    );
+    assert_eq!(index.scope(on_exit_scope).parent(), Some(f_scope));
+}
+
+#[test]
+fn test_nse_on_exit_body_reads_function_frame_lazily() {
+    // `on.exit(x)` runs at function exit, so its read of `x` sees the whole
+    // function frame (lazy view): both `x <- 1` and the later `x <- 2` reach it.
+    // An eager read would capture only `x <- 1`.
+    let index = index_with_base(
+        "\
+f <- function() {
+    x <- 1
+    on.exit(x)
+    x <- 2
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let on_exit_scope = ScopeId::from(2);
+
+    let (enclosing_scope, bindings) = index
+        .enclosing_bindings(on_exit_scope, UseId::from(0))
+        .unwrap();
+    assert_eq!(enclosing_scope, f_scope);
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(1)
+    ]);
+}

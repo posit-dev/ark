@@ -192,6 +192,28 @@ fn test_references_from_assign_definition_site() {
     // search path.
 }
 
+// --- NSE lazy scopes ---
+
+#[test]
+fn test_on_exit_body_use_has_lazy_view() {
+    // `on.exit(x)` runs at function exit, so its read of `x` sees the whole
+    // function frame (lazy view): both `x <- 1` and the later `x <- 2` reach it.
+    // Find-references from the *second* def includes the on.exit use even though
+    // that use sits textually before it. An eager view would exclude it.
+    let source = "f <- function() {\n  x <- 1\n  on.exit(x)\n  x <- 2\n}\n";
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
+
+    let on_exit_use = (source.find("on.exit(x)").unwrap() + "on.exit(".len()) as u32;
+    let second_def = source.rfind("x <- 2").unwrap() as u32;
+
+    let refs = find_references(&db, file, offset(second_def), true);
+    assert_eq!(ranges(&refs), vec![
+        range(on_exit_use, on_exit_use + 1),
+        range(second_def, second_def + 1),
+    ]);
+}
+
 // --- Boundary cursor ---
 
 #[test]

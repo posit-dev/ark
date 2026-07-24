@@ -15,10 +15,15 @@ use crate::effects::EffectsHandlers;
 use crate::semantic_index::EvalEnv::Current;
 use crate::semantic_index::EvalEnv::Nested;
 use crate::semantic_index::EvalTiming::Eager;
+use crate::semantic_index::EvalTiming::Lazy;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     // base NSE
     nse!("base", "evalq", ("expr", 0, Current, Eager)),
+    // `on.exit(expr)` captures `expr` and runs it in the current function's
+    // frame when the function exits. Bindings land in that frame (`Current`) at
+    // an unknown later time (`Lazy`), the same shape as `rlang::on_load()`.
+    nse!("base", "on.exit", ("expr", 0, Current, Lazy)),
     nse!("base", "local", ("expr", 0, Nested, Eager)),
     nse!("base", "with", ("expr", 1, Nested, Eager)),
     nse!("base", "with.default", ("expr", 1, Nested, Eager)),

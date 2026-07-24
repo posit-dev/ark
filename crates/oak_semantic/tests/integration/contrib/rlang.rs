@@ -342,3 +342,62 @@ local({
     let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, local_scope);
 }
+
+// --- `defer` (Current + Lazy) ---
+
+#[test]
+fn test_nse_rlang_defer_routes_defs_to_function() {
+    // `rlang::defer` is Current + Lazy: like `on.exit`, a binding in the body
+    // runs in the enclosing function's frame at exit, so it routes there.
+    let index = index_with_attached(
+        "\
+f <- function() {
+    defer({
+        x <- 1
+    })
+}
+",
+        &["rlang"],
+    );
+    let f_scope = ScopeId::from(1);
+    let defer_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(defer_scope).get("x").is_none());
+    assert_eq!(
+        index.scope(defer_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
+    );
+    assert_eq!(index.scope(defer_scope).parent(), Some(f_scope));
+}
+
+#[test]
+fn test_nse_withr_defer_routes_defs_to_function() {
+    // `withr::defer` shares the `Current + Lazy` shape of `rlang::defer`.
+    let index = index_with_attached(
+        "\
+f <- function() {
+    defer({
+        x <- 1
+    })
+}
+",
+        &["withr"],
+    );
+    let f_scope = ScopeId::from(1);
+    let defer_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(defer_scope).get("x").is_none());
+    assert_eq!(
+        index.scope(defer_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
+    );
+    assert_eq!(index.scope(defer_scope).parent(), Some(f_scope));
+}
