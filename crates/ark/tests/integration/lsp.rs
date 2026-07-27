@@ -61,6 +61,22 @@ fn test_lsp_survives_abrupt_disconnect() {
     assert!(lsp2.server_capabilities().completion_provider.is_some());
 }
 
+// Reproduces https://github.com/ebkalderon/tower-lsp/issues/399 and #424:
+// some clients send `exit` but never close their own end of the connection
+// afterward. The server must hang up on its own rather than waiting forever
+// for more input that will never arrive.
+#[test]
+fn test_lsp_exits_promptly_after_exit_without_client_close() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    // Sends `shutdown`/`exit` but deliberately leaves our end of the socket
+    // open, unlike the client's normal teardown on `Drop`.
+    lsp.shutdown();
+
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+}
+
 // The two cases below test errors that don't depend on the rename
 // implementation's resolution capabilities. New-name validation always
 // applies (R language constraints), so these tests stay valid once

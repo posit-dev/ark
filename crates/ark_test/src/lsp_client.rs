@@ -260,6 +260,56 @@ impl LspClient {
         self.initialized = false;
     }
 
+    /// Assert the server closes its end of the connection within `timeout`.
+    ///
+    /// Meant to be called right after `shutdown()`. Some clients never close
+    /// their own socket after sending `exit`
+    /// (<https://github.com/ebkalderon/tower-lsp/issues/399>), so the server
+    /// must hang up on its own rather than waiting forever for more input.
+    ///
+    /// Tolerates benign notifications (e.g. `window/logMessage`) the server
+    /// may still emit while winding down.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an unexpected request/response, or if `timeout` elapses
+    /// without the connection closing.
+    #[track_caller]
+    pub fn expect_server_closes_connection(&mut self, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("Server did not close the connection within {timeout:?} after `exit`");
+            }
+            self.reader.get_ref().set_read_timeout(Some(remaining)).unwrap();
+
+            match self.recv_message() {
+                Ok(message) if message.contains_key("id") => panic!(
+                    "Unexpected message while waiting for connection to close: {message:?}"
+                ),
+                // A benign notification, e.g. `window/logMessage`; keep waiting for the close.
+                Ok(_) => continue,
+                Err(err) => {
+                    let timed_out = err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
+                        matches!(
+                            io_err.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        )
+                    });
+                    if timed_out {
+                        panic!(
+                            "Server did not close the connection within {timeout:?} after `exit`"
+                        );
+                    }
+                    // Any other error here (e.g. clean EOF) means the server hung up, as expected.
+                    return;
+                },
+            }
+        }
+    }
+
     fn send_raw(&mut self, message: &Value) {
         let body = serde_json::to_string(message).unwrap();
         write!(
