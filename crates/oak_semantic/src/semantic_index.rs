@@ -893,6 +893,12 @@ pub enum SemanticDiagnostic {
         call_range: TextRange,
         overwrite_range: TextRange,
     },
+    /// An NSE call whose bare callee is shadowed by a *conditional* local
+    /// binding (`if (cond) local <- identity; local({...})`). The eager linear
+    /// scan dropped the conditional binding and resolved the effect (built the
+    /// scope), so the scope shape is condition-dependent. `call_range` points at
+    /// the call.
+    ConditionalShadowAmbiguity { name: String, call_range: TextRange },
 }
 
 // --- Iterators ---

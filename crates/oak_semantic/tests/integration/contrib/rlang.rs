@@ -240,6 +240,7 @@ rlang::on_load({ local <- identity })
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
         SemanticDiagnostic::LazyShadowAmbiguity { name, .. } => assert_eq!(name, "local"),
+        other => panic!("unexpected diagnostic: {other:?}"),
     }
 }
 

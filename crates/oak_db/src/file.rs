@@ -376,6 +376,14 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
                          undetermined timing"
                     )
                 },
+                SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+                    let call = format_line_col(line_index, *call_range);
+                    log::warn!(
+                        "Conditional-shadow ambiguity in {path}:{call}: callee `{name}` is \
+                         recognized as effectful, but a conditional local binding could shadow it \
+                         on some path"
+                    )
+                },
             }
         }
     }

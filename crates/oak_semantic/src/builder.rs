@@ -112,7 +112,8 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
 ///
 /// - An eager callee is shadowed only by bindings that already ran.
 ///   `bound_so_far` reflects this view. It rewinds at branch joins and is
-///   reseeded for each scan unit.
+///   reseeded for each scan unit. Forward bindings (defined later) and
+///   deferred bindings (`on.exit()`, `<<-`) don't enter `bound_so_far`.
 /// - A lazy body runs after its scope has finished and resolves symbols
 ///   in the whole scope. `bound_anywhere` reflects this view.
 ///

@@ -1367,6 +1367,62 @@ local({
 }
 
 #[test]
+fn test_nse_conditionally_shadowed_name_builds_scope_and_lints() {
+    // Eager linear view: a conditional shadow (`local` bound on only one path)
+    // drops out of `bound_so_far` at the branch join, so the scan resolves the
+    // effect and builds the NSE scope with `y` scoped inside. We settle on that
+    // reading (no mirror) and record an ambiguity diagnostic, because a local
+    // binding could have suppressed the effect on the `cond` path.
+    let source = "\
+if (cond) local <- identity
+local({
+    y <- 1
+})
+y
+";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // Not mirrored: `y` at file scope is only the trailing use, and it resolves
+    // to nothing (the binding lives in the NSE scope in the chosen reading).
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    let (_, use_id, _) = index
+        .uses_of("y")
+        .into_iter()
+        .find(|(scope, _, _)| *scope == file)
+        .unwrap();
+    let bindings = index.use_def_map(file).bindings_at_use(use_id);
+    assert!(bindings.may_be_unbound());
+    assert!(bindings.definitions().is_empty());
+
+    // The conditional shadow of `local` is flagged.
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n    y <- 1\n})");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
 fn test_nse_ancestor_shadowed_name_no_scope() {
     // A `local` binding in an ENCLOSING scope shadows the base function too,
     // even when the call site sits in a nested scope where `local` is free.
@@ -1403,6 +1459,131 @@ f <- function() {
         index.symbols(f_scope).get("y").unwrap().flags(),
         SymbolFlags::IS_BOUND
     );
+}
+
+#[test]
+fn test_conditional_shadow_ancestor_lazy_is_lint_covered() {
+    // A conditional shadow of `local` in an ENCLOSING scope, with the NSE call
+    // inside a lazy nested scope (a function body). The conditional-shadow
+    // diagnostic is same-scope only and doesn't fire, but the file isn't silent:
+    // the lazy-shadow diagnostic catches it, because inside a lazy body `local`
+    // resolves against the ancestor union where the conditional binding lives.
+    let source = "\
+if (cond) local <- identity
+f <- function() local({
+    y <- 1
+})
+";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::LazyShadowAmbiguity {
+            name,
+            call_range,
+            overwrite_range,
+        } => {
+            assert_eq!(name, "local");
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "local({\n    y <- 1\n})");
+            let ov_start = u32::from(overwrite_range.start()) as usize;
+            let ov_end = u32::from(overwrite_range.end()) as usize;
+            assert_eq!(&source[ov_start..ov_end], "local");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_conditional_shadow_same_scope_in_eager_nse() {
+    // The conditional-shadow diagnostic works one level down too. Here the
+    // conditional binding and the shadowed call sit in the SAME eager NSE scope
+    // (the outer `local` body), so the inner `local({...})` is flagged just as
+    // it would be at file scope.
+    let source = "\
+local({
+    if (cond) local <- identity
+    local({
+        y <- 1
+    })
+})
+";
+    let index = index_with_base(source);
+
+    let outer = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+    assert_eq!(
+        index.scope(outer).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.scope(inner).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(inner).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "known blind spot: an eager-nested ancestor conditional shadow is \
+            unflagged until reachability constraints land"]
+fn test_conditional_shadow_ancestor_eager_blind_spot() {
+    // `local` is conditionally shadowed in an ENCLOSING scope and the call sits
+    // in a nested EAGER scope (a `with()` body) that never binds `local`. This
+    // is the genuine zero-coverage case: same-scope detection can't see the
+    // ancestor's binding, and the eager body means the lazy-shadow diagnostic
+    // doesn't apply either, so today no diagnostic fires. Reachability
+    // constraints should flag the inner call, matching the binding's `cond`
+    // guard against the call's.
+    let source = "\
+if (cond) local <- identity
+with(d, {
+    local({
+        y <- 1
+    })
+})
+";
+    let index = index_with_base(source);
+
+    // The NSE scope is still built (we settle on the effectful reading), so the
+    // only thing missing today is the ambiguity diagnostic.
+    let inner = ScopeId::from(2);
+    assert_eq!(
+        index.scope(inner).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(inner).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
 }
 
 #[test]
@@ -2196,6 +2377,7 @@ local <- identity
             let overwrite_end = u32::from(overwrite_range.end()) as usize;
             assert_eq!(&source[overwrite_start..overwrite_end], "local");
         },
+        other => panic!("unexpected diagnostic: {other:?}"),
     }
 }
 
@@ -2599,3 +2781,5 @@ f <- function() {
         DefinitionId::from(1)
     ]);
 }
+
+

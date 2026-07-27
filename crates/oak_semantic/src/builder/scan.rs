@@ -34,6 +34,7 @@ use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
+use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SymbolFlags;
 
 // Traversal
@@ -190,9 +191,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&sequence);
                 }
 
-                // Since the body may not run (empty sequence), a binding
-                // created in the body is _conditional_. The snapshot/merge
-                // dance records the conditionality.
+                // Since the body may not run (empty sequence), a binding created
+                // in the body isn't on every path, so the snapshot/merge
+                // intersects it away and it doesn't persist past the loop.
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
@@ -227,8 +228,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // Since the body may not run (condition false on entry), a
-                // binding created in the body is _conditional_. The
-                // snapshot/merge dance records the conditionality.
+                // binding created in the body isn't on every path, so the
+                // snapshot/merge intersects it away and it doesn't persist.
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
@@ -393,6 +394,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
+        // We resolved an effect for a callee that isn't bound on every path. If
+        // it's bound on *some* earlier path here (a conditional shadow that
+        // dropped out of the eager linear view), the scope-shape decision is
+        // ambiguous, so flag it before descending into the body.
+        self.record_conditional_shadow_ambiguity(call, &arg_effects);
+
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -475,6 +482,77 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .entry(call.syntax().text_trimmed_range())
             .or_default()
             .arguments = Some(arg_effects);
+    }
+
+    /// Flag an NSE call whose scope only exists on some branches, because a
+    /// *conditional* binding earlier in this scope shadows its callee.
+    ///
+    /// Take `if (cond) local <- identity` then `local({ y <- 1 })`. On the
+    /// branch where the shadow held, `local` is the user's own standard
+    /// evaluation function. The scope shape ambiguously depends on `cond`,
+    /// which we record here.
+    ///
+    /// A conditional shadow is a binding on some path through this scope but not
+    /// on every path, so we test both halves directly: bound somewhere in the
+    /// scope, and not bound on every path. A binding on every path is a definite
+    /// shadow that suppresses the effect, so that call is a plain local one and
+    /// never reaches here.
+    ///
+    /// Two things narrow what fires. The effect must actually build a scope, so
+    /// we skip `evalq()` (the `Current + Eager` quadrant, which builds none).
+    /// And we check only the current scan scope, so a conditional shadow in an
+    /// enclosing scope slips through. In
+    ///
+    /// ```r
+    /// if (cond) local <- identity
+    /// with(d, {
+    ///     local({ y <- 1 })
+    /// })
+    /// ```
+    ///
+    /// the `local({...})` call sits in the `with()` scope, which never bound
+    /// `local`, so nothing flags it even though the shape still depends on
+    /// `cond`. The `with()` body must be eager for this to go silent: a lazy
+    /// body (a function, `reactive()`) instead trips the lazy-shadow diagnostic,
+    /// which resolves against the ancestor union. Reachability constraints will
+    /// close the eager gap by matching the binding's guard against the call's,
+    /// rather than tracking a coarse per-scope set.
+    ///
+    /// The bindings of `on_load()` or `on.exit()` are not visible yet because
+    /// their bodies are scanned after this call. That lazy-timed shadow is left
+    /// to the lazy-shadow diagnostic.
+    fn record_conditional_shadow_ambiguity(
+        &mut self,
+        call: &RCall,
+        arg_effects: &ResolvedArgumentEffects,
+    ) {
+        let creates_scope = arg_effects.iter().flatten().any(|effect| {
+            matches!(
+                effect,
+                ResolvedArgumentEffect::EvalQ { env, timing }
+                    if !matches!((*env, *timing), (EvalEnv::Current, EvalTiming::Eager))
+            )
+        });
+        if !creates_scope {
+            return;
+        }
+
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        let name = ident.name_text();
+
+        // A conditional shadow is a binding on some path but not all: present in
+        // this scope's union (`scan_scope_binds()`) yet absent from `bound_so_far`.
+        let conditionally_shadowed =
+            self.scan_scope_binds(&name) && !self.scan.bound_so_far.is_bound(&name);
+        if !conditionally_shadowed {
+            return;
+        }
+
+        let call_range = call.syntax().text_trimmed_range();
+        self.diagnostics
+            .push(SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range });
     }
 
     /// Scan the `Current + Lazy` bodies queued since `watermark`, now that the
@@ -716,43 +794,33 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
     }
 }
 
-/// Whether a name is bound (or a package attached) on every path reaching the
-/// current point, or only on some. Recorded during the scan and meant for later
-/// consumers (the effect-decision and possibly-unavailable lints).
+/// Whether an effect is on every path reaching the current point, or
+/// only some.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Certainty {
     Definite,
     Conditional,
 }
 
-impl Certainty {
-    /// Combine two paths that both bind the name: definite only if both are.
-    fn and(self, other: Certainty) -> Certainty {
-        match (self, other) {
-            (Certainty::Definite, Certainty::Definite) => Certainty::Definite,
-            _ => Certainty::Conditional,
-        }
-    }
-}
-
-/// The scan's flow-precise binding state: which names are bound at the current
-/// point of the current scan unit, in flow order, each tagged with whether it's
-/// bound on every path here or only some (see [`Certainty`]).
+/// The scan's eager linear binding state: the names bound on every path reaching
+/// the current point of the current scan unit. Branch and loop joins
+/// intersection-merge, so a binding made on only some paths is visible inside
+/// its branch and then dropped at the join.
 ///
 /// It's the scan's own flow state, a coarse variant of the walk's use-def map,
-/// which isn't built yet. `is_bound` answers "is this name bound here?" (a plain
-/// union across branches) so the scan can tell whether a callee is shadowed and
-/// decide whether a call is NSE. The certainty tag is the finer answer,
-/// recorded for later consumers.
+/// which isn't built yet. `is_bound` answers "is this name definitely bound
+/// here?" so the scan can tell whether a callee is shadowed and decide whether a
+/// call is NSE. A conditional shadow drops out here, so it falls through to the
+/// effect and the walk records the ambiguity.
 #[derive(Clone, Default)]
 pub(super) struct FlowState {
-    bound: FxHashMap<String, Certainty>,
+    bound: FxHashSet<String>,
 }
 
 impl FlowState {
-    /// Whether `name` is bound at the current point, on any path.
+    /// Whether `name` is bound on every path reaching the current point.
     pub(super) fn is_bound(&self, name: &str) -> bool {
-        self.bound.contains_key(name)
+        self.bound.contains(name)
     }
 
     /// Save the current state, to rewind to or to seed a child scan unit from.
@@ -765,27 +833,15 @@ impl FlowState {
         *self = snapshot;
     }
 
-    /// Join another path's state in at a branch or loop merge. A name bound on
-    /// both paths keeps the combined certainty (definite only if both are), a
-    /// name bound on only one path becomes conditional.
-    fn merge(&mut self, existing: FlowState) {
-        for (name, certainty) in self.bound.iter_mut() {
-            if !existing.bound.contains_key(name) {
-                *certainty = Certainty::Conditional;
-            }
-        }
-        for (name, existing_certainty) in existing.bound {
-            self.bound
-                .entry(name)
-                .and_modify(|certainty| *certainty = certainty.and(existing_certainty))
-                .or_insert(Certainty::Conditional);
-        }
+    /// Intersect another path's state at a branch or loop join: keep only names
+    /// bound on both paths, so a binding made on just one path drops out.
+    fn merge(&mut self, other: FlowState) {
+        self.bound.retain(|name| other.bound.contains(name));
     }
 
-    /// Record `name` as bound on every path from here (a plain, unconditional
-    /// binding). A later `merge()` downgrades it if it turns out branch-local.
+    /// Record `name` as bound from here on this path.
     fn bind(&mut self, name: String) {
-        self.bound.insert(name, Certainty::Definite);
+        self.bound.insert(name);
     }
 
     /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).
@@ -900,59 +956,39 @@ mod tests {
     use rustc_hash::FxHashSet;
 
     use super::branch_conditional_attaches;
-    use super::Certainty;
     use super::FlowState;
 
-    fn certainty(state: &FlowState, name: &str) -> Option<Certainty> {
-        state.bound.get(name).copied()
-    }
-
     #[test]
-    fn test_certainty_and_is_definite_only_when_both_are() {
-        assert_eq!(
-            Certainty::Definite.and(Certainty::Definite),
-            Certainty::Definite
-        );
-        assert_eq!(
-            Certainty::Definite.and(Certainty::Conditional),
-            Certainty::Conditional
-        );
-        assert_eq!(
-            Certainty::Conditional.and(Certainty::Definite),
-            Certainty::Conditional
-        );
-    }
-
-    #[test]
-    fn test_bind_is_definite() {
+    fn test_bind_is_bound() {
         let mut state = FlowState::default();
         state.bind("x".to_string());
-        assert_eq!(certainty(&state, "x"), Some(Certainty::Definite));
+        assert!(state.is_bound("x"));
     }
 
     #[test]
-    fn test_merge_one_branch_binding_is_conditional() {
-        // `if (c) x <- 1`: the else path is empty, the if path binds `x`.
+    fn test_merge_one_branch_binding_drops() {
+        // `if (c) x <- 1`: the else path is empty, the if path binds `x`, so
+        // `x` isn't on every path and drops at the join.
         let mut else_path = FlowState::default();
         let mut if_path = FlowState::default();
         if_path.bind("x".to_string());
         else_path.merge(if_path);
-        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Conditional));
+        assert!(!else_path.is_bound("x"));
     }
 
     #[test]
-    fn test_merge_both_branches_binding_is_definite() {
-        // `if (c) x <- 1 else x <- 2`: both paths bind `x`.
+    fn test_merge_both_branches_binding_persists() {
+        // `if (c) x <- 1 else x <- 2`: both paths bind `x`, so it persists.
         let mut else_path = FlowState::default();
         else_path.bind("x".to_string());
         let mut if_path = FlowState::default();
         if_path.bind("x".to_string());
         else_path.merge(if_path);
-        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Definite));
+        assert!(else_path.is_bound("x"));
     }
 
     #[test]
-    fn test_merge_keeps_pre_branch_binding_definite() {
+    fn test_merge_keeps_pre_branch_binding() {
         // `x <- 1; if (c) y <- 1`: `x` is bound before, `y` only in the branch.
         let mut pre = FlowState::default();
         pre.bind("x".to_string());
@@ -960,20 +996,21 @@ mod tests {
         if_path.bind("y".to_string());
         let mut else_path = pre;
         else_path.merge(if_path);
-        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Definite));
-        assert_eq!(certainty(&else_path, "y"), Some(Certainty::Conditional));
+        assert!(else_path.is_bound("x"));
+        assert!(!else_path.is_bound("y"));
     }
 
     #[test]
-    fn test_merge_loop_body_binding_is_conditional() {
-        // `for (i in xs) z <- 1`: `i` is bound before the body, `z` only inside.
+    fn test_merge_loop_body_binding_drops() {
+        // `for (i in xs) z <- 1`: `i` is bound before the body, `z` only inside,
+        // so `z` drops when the body merges with the pre-loop state.
         let mut pre_body = FlowState::default();
         pre_body.bind("i".to_string());
         let mut post_body = pre_body.clone();
         post_body.bind("z".to_string());
         post_body.merge(pre_body);
-        assert_eq!(certainty(&post_body, "i"), Some(Certainty::Definite));
-        assert_eq!(certainty(&post_body, "z"), Some(Certainty::Conditional));
+        assert!(post_body.is_bound("i"));
+        assert!(!post_body.is_bound("z"));
     }
 
     #[test]

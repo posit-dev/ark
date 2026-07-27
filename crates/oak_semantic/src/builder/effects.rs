@@ -100,14 +100,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// diagnostic.
     fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
         // First check for a local definition (which in the future may
-        // carry declared effects that we resolve here)
-        //
-        // Looked up from `bound_so_far` which already carries every
-        // eager binding visible here: the scope's own flow-precise
-        // bindings so far, plus the enclosing eager environment seeded
-        // at `begin_scan()`. Forward and deferred (lazy-routed)
-        // bindings are excluded. A forward one isn't in `bound_so_far`
-        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
+        // carry declared effects that we resolve here).
         if self.scan.bound_so_far.is_bound(sym) {
             return self.resolve_local_effects(sym);
         }
