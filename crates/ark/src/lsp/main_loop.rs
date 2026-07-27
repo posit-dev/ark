@@ -32,11 +32,11 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tower_lsp::jsonrpc;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::Diagnostic;
-use tower_lsp::lsp_types::MessageType;
-use tower_lsp::Client;
+use tower_lsp_server::jsonrpc;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::Client;
 use url::Url;
 
 use super::backend::RequestResponse;
@@ -61,6 +61,8 @@ use crate::lsp::state::WorldState;
 use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 use crate::url::ExtUrl;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
@@ -484,7 +486,9 @@ impl GlobalState {
                             respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?;
                         },
                         LspRequest::OnTypeFormatting(params) => {
-                            state_handlers::did_change_formatting_options(&params.text_document_position.text_document.uri, &params.options, &mut self.world);
+                            if let Some(uri) = params.text_document_position.text_document.uri.to_url().log_err() {
+                                state_handlers::did_change_formatting_options(&uri, &params.options, &mut self.world);
+                            }
                             respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
                         },
                         LspRequest::CodeAction(params) => {
@@ -857,6 +861,9 @@ impl AuxiliaryState {
                 .insert(uri.clone(), diagnostics.clone());
         }
 
+        let Some(uri) = uri.to_uri().log_err() else {
+            return;
+        };
         self.client
             .publish_diagnostics(uri, diagnostics, version)
             .await
@@ -1148,7 +1155,7 @@ fn warm_workspace_index(state: WorldStateSnapshot) {
 mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
-    use tower_lsp::jsonrpc;
+    use tower_lsp_server::jsonrpc;
     use url::Url;
 
     use super::catch_cancellation;

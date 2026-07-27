@@ -6,9 +6,9 @@ use assert_matches::assert_matches;
 use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::GotoDefinitionParams;
-use tower_lsp::lsp_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
 use url::Url;
 
 use super::source_handler::TestBehavior;
@@ -27,12 +27,15 @@ use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UrlUriExt;
 use crate::lsp::util::test_path;
 
-fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
+fn make_params(uri: Url, line: u32, character: u32) -> GotoDefinitionParams {
     GotoDefinitionParams {
         text_document_position_params: lsp_types::TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri },
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: uri.to_uri().unwrap(),
+            },
             position: lsp_types::Position::new(line, character),
         },
         work_done_progress_params: Default::default(),
@@ -75,7 +78,7 @@ fn test_goto_definition_prefers_local_symbol() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, uri);
+            assert_eq!(links[0].target_uri, uri.to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -85,7 +88,7 @@ fn test_goto_definition_prefers_local_symbol() {
 fn test_target_uri_is_verbatim() {
     // The doubled slash normalises away in `FilePath`, so the target URI is
     // only correct if it comes from the buffer's verbatim URL.
-    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
+    let uri = Url::parse("file:///C:/proj//file.R").unwrap();
     let state = make_state(&uri, "foo <- 1\nfoo\n");
 
     let params = make_params(uri.clone(), 1, 0);
@@ -93,7 +96,7 @@ fn test_target_uri_is_verbatim() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, uri);
+            assert_eq!(links[0].target_uri, uri.to_uri().unwrap());
         }
     );
     assert_ne!(FilePath::from_url(&uri).to_url(), uri);
@@ -152,7 +155,7 @@ fn test_resolves_across_source_directive() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 6)));
         }
     );
@@ -174,7 +177,7 @@ fn test_local_def_shadows_sourced() {
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, script_uri);
+            assert_eq!(links[0].target_uri, script_uri.to_uri().unwrap());
             assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
         }
     );
@@ -198,9 +201,9 @@ fn test_sourced_file_with_repeated_def_offers_both() {
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 2);
-            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 10), (0, 12)));
-            assert_eq!(links[1].target_uri, helpers_uri);
+            assert_eq!(links[1].target_uri, helpers_uri.to_uri().unwrap());
             assert_eq!(links[1].target_range, range((0, 23), (0, 25)));
         }
     );
@@ -226,7 +229,7 @@ fn test_sourced_file_with_sequential_redef_offers_runtime_winner() {
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, helpers_uri);
+            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
             assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
         }
     );
@@ -292,7 +295,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(foo_file));
+            assert_eq!(links[0].target_uri, world.wire_url(foo_file).to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -358,7 +361,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(bar_file));
+            assert_eq!(links[0].target_uri, world.wire_url(bar_file).to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -424,7 +427,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         goto_definition(make_params(use_uri.clone(), 0, 6), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -434,7 +437,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         goto_definition(make_params(use_uri.clone(), 1, 7), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
             assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
         }
     );
@@ -444,7 +447,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         goto_definition(make_params(use_uri.clone(), 2, 7), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file));
+            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );

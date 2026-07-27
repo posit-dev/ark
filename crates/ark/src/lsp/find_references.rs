@@ -3,16 +3,18 @@ use aether_lsp_utils::proto::to_proto;
 use aether_path::FilePath;
 use oak_db::Db;
 use stdext::result::ResultExt;
-use tower_lsp::lsp_types::Location;
-use tower_lsp::lsp_types::ReferenceParams;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::ReferenceParams;
 
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 
 pub(crate) fn find_references(
     params: ReferenceParams,
     state: &WorldState,
 ) -> anyhow::Result<Vec<Location>> {
-    let uri = params.text_document_position.text_document.uri;
+    let uri = params.text_document_position.text_document.uri.to_url()?;
     let position = params.text_document_position.position;
     let include_declaration = params.context.include_declaration;
 
@@ -30,7 +32,8 @@ pub(crate) fn find_references(
         .iter()
         .filter_map(|fr| {
             let range = to_proto::range(fr.range, fr.file.line_index(db), encoding).log_err()?;
-            Some(Location::new(state.wire_url(fr.file), range))
+            let uri = state.wire_url(fr.file).to_uri().log_err()?;
+            Some(Location::new(uri, range))
         })
         .collect();
 

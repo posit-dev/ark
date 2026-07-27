@@ -14,35 +14,35 @@ use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
 use stdext::result::ResultExt;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::CompletionOptions;
-use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
-use tower_lsp::lsp_types::DidChangeConfigurationParams;
-use tower_lsp::lsp_types::DidChangeTextDocumentParams;
-use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
-use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
-use tower_lsp::lsp_types::DidCloseTextDocumentParams;
-use tower_lsp::lsp_types::DidOpenTextDocumentParams;
-use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
-use tower_lsp::lsp_types::ExecuteCommandOptions;
-use tower_lsp::lsp_types::FileChangeType;
-use tower_lsp::lsp_types::FoldingRangeProviderCapability;
-use tower_lsp::lsp_types::FormattingOptions;
-use tower_lsp::lsp_types::HoverProviderCapability;
-use tower_lsp::lsp_types::ImplementationProviderCapability;
-use tower_lsp::lsp_types::InitializeParams;
-use tower_lsp::lsp_types::InitializeResult;
-use tower_lsp::lsp_types::OneOf;
-use tower_lsp::lsp_types::RenameOptions;
-use tower_lsp::lsp_types::SelectionRangeProviderCapability;
-use tower_lsp::lsp_types::ServerCapabilities;
-use tower_lsp::lsp_types::ServerInfo;
-use tower_lsp::lsp_types::SignatureHelpOptions;
-use tower_lsp::lsp_types::TextDocumentSyncCapability;
-use tower_lsp::lsp_types::TextDocumentSyncKind;
-use tower_lsp::lsp_types::WorkDoneProgressOptions;
-use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
-use tower_lsp::lsp_types::WorkspaceServerCapabilities;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::CompletionOptions;
+use tower_lsp_server::ls_types::CompletionOptionsCompletionItem;
+use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
+use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
+use tower_lsp_server::ls_types::ExecuteCommandOptions;
+use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FoldingRangeProviderCapability;
+use tower_lsp_server::ls_types::FormattingOptions;
+use tower_lsp_server::ls_types::HoverProviderCapability;
+use tower_lsp_server::ls_types::ImplementationProviderCapability;
+use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::InitializeResult;
+use tower_lsp_server::ls_types::OneOf;
+use tower_lsp_server::ls_types::RenameOptions;
+use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
+use tower_lsp_server::ls_types::ServerCapabilities;
+use tower_lsp_server::ls_types::ServerInfo;
+use tower_lsp_server::ls_types::SignatureHelpOptions;
+use tower_lsp_server::ls_types::TextDocumentSyncCapability;
+use tower_lsp_server::ls_types::TextDocumentSyncKind;
+use tower_lsp_server::ls_types::WorkDoneProgressOptions;
+use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
+use tower_lsp_server::ls_types::WorkspaceServerCapabilities;
 use tracing::Instrument;
 use url::Url;
 
@@ -62,6 +62,8 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::open_file_wire_urls;
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 
 // Handlers that mutate the world state
 
@@ -175,6 +177,7 @@ pub(crate) fn initialize(
             }),
             ..ServerCapabilities::default()
         },
+        offset_encoding: None,
     };
 
     Ok(result)
@@ -189,7 +192,7 @@ pub(super) fn effective_workspace_uris(params: &InitializeParams) -> Vec<Url> {
         .workspace_folders
         .iter()
         .flatten()
-        .map(|folder| folder.uri.clone())
+        .filter_map(|folder| folder.uri.to_url().log_err())
         .collect()
 }
 
@@ -199,7 +202,7 @@ pub(crate) fn did_open(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let contents = params.text_document.text;
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.to_url()?;
     let version = params.text_document.version;
 
     let file = state.db.upsert_editor(FilePath::from_url(&uri), contents);
@@ -217,12 +220,12 @@ pub(crate) fn did_change(
     lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let uri = &params.text_document.uri;
-    let key = FilePath::from_url(uri);
+    let uri = params.text_document.uri.to_url()?;
+    let key = FilePath::from_url(&uri);
     let new_version = params.text_document.version;
     let encoding = state.config.position_encoding;
 
-    let file = state.open_file(uri)?;
+    let file = state.open_file(&uri)?;
 
     // Reject out-of-order change notifications. The spec allows version numbers
     // to skip values but requires them to increase monotonically. A lower
@@ -245,7 +248,7 @@ pub(crate) fn did_change(
     );
     state.db.upsert_editor(key.clone(), new_contents);
 
-    state.open_file_mut(uri)?.set_version(Some(new_version));
+    state.open_file_mut(&uri)?.set_version(Some(new_version));
 
     // Notify console about document change to invalidate breakpoints.
     lsp_state
@@ -261,7 +264,7 @@ pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.to_url()?;
 
     // Publish empty set of diagnostics to clear them
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
@@ -295,7 +298,7 @@ pub(crate) fn did_change_watched_files(
         .iter()
         .filter_map(|change| {
             Some(FileEvent {
-                path: FilePath::from_url(&change.uri),
+                path: FilePath::from_url(&change.uri.to_url().log_err()?),
                 kind: file_event_kind(change.typ)?,
             })
         })
@@ -326,12 +329,20 @@ pub(crate) fn did_change_workspace_folders(
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    let removed: HashSet<Url> = params.event.removed.iter().map(|f| f.uri.clone()).collect();
+    let removed: HashSet<Url> = params
+        .event
+        .removed
+        .iter()
+        .filter_map(|f| f.uri.to_url().log_err())
+        .collect();
     state.workspace.folders.retain(|uri| !removed.contains(uri));
 
     for folder in params.event.added {
-        if !state.workspace.folders.contains(&folder.uri) {
-            state.workspace.folders.push(folder.uri);
+        let Some(uri) = folder.uri.to_url().log_err() else {
+            continue;
+        };
+        if !state.workspace.folders.contains(&uri) {
+            state.workspace.folders.push(uri);
         }
     }
 
@@ -357,7 +368,7 @@ pub(crate) fn did_change_workspace_folders(
 
 pub(crate) async fn did_change_configuration(
     _params: DidChangeConfigurationParams,
-    client: &tower_lsp::Client,
+    client: &tower_lsp_server::Client,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     // The notification params sometimes contain data but it seems in practice
@@ -405,7 +416,7 @@ pub(crate) fn did_change_formatting_options(
 
 async fn update_config(
     uris: Vec<Url>,
-    client: &tower_lsp::Client,
+    client: &tower_lsp_server::Client,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     // Keep track of existing config to detect whether it was changed
@@ -429,10 +440,11 @@ async fn update_config(
     let mut document_items: Vec<_> = uris
         .iter()
         .flat_map(|uri| {
+            let scope_uri = uri.to_uri().log_err();
             DOCUMENT_SETTINGS
                 .iter()
-                .map(|mapping| lsp_types::ConfigurationItem {
-                    scope_uri: Some(uri.clone()),
+                .map(move |mapping| lsp_types::ConfigurationItem {
+                    scope_uri: scope_uri.clone(),
                     section: Some(mapping.key.to_string()),
                 })
         })

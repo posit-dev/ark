@@ -15,7 +15,7 @@ use regex::Regex;
 use stdext::result::ResultExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::Range;
+use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 

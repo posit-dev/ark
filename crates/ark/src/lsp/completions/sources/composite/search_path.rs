@@ -15,7 +15,7 @@ use harp::vector::Vector;
 use harp::RObject;
 use libr::R_EmptyEnv;
 use libr::R_lsInternal;
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;

@@ -12,15 +12,16 @@ use std::collections::HashMap;
 use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::Db;
 use oak_db::File;
-use tower_lsp::lsp_types;
+use stdext::result::ResultExt;
+use tower_lsp_server::ls_types as lsp_types;
 use tree_sitter::Point;
 use tree_sitter::Range;
-use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::db::ArkDb;
 use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::open_file::OpenFile;
+use crate::lsp::traits::url::UrlUriExt;
 
 mod roxygen;
 
@@ -107,6 +108,9 @@ impl CodeActions {
         capabilities: &Capabilities,
     ) -> lsp_types::CodeActionResponse {
         let line_index = file.line_index(db);
+        let Some(uri) = file.wire_url().to_uri().log_err() else {
+            return Vec::new();
+        };
 
         self.actions
             .into_iter()
@@ -128,7 +132,7 @@ impl CodeActions {
                     .ok()?;
 
                 let workspace_edit = code_action_workspace_text_edit(
-                    file.wire_url().clone(),
+                    uri.clone(),
                     file.version(),
                     edits,
                     capabilities,
@@ -164,7 +168,7 @@ pub(crate) fn code_action(
 /// Creates a common kind of `WorkspaceEdit` composed of one or more `TextEdit`s to
 /// apply to a single document
 pub(crate) fn code_action_workspace_text_edit(
-    uri: Url,
+    uri: lsp_types::Uri,
     version: Option<i32>,
     edits: Vec<lsp_types::TextEdit>,
     capabilities: &Capabilities,

@@ -8,7 +8,7 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 
 #[test]
 fn test_dap_set_breakpoints_unverified() {
@@ -284,7 +284,7 @@ foo()
 
     // Open the file on the LSP using its real URL so the LSP-side `UrlId`
     // canonicalizes to the same one the DAP indexed the breakpoint under.
-    let uri = lsp_types::Url::from_file_path(&file.path).unwrap();
+    let uri = lsp_types::Uri::from_file_path(&file.path).unwrap();
     lsp.send_notification(
         "textDocument/didOpen",
         serde_json::to_value(lsp_types::DidOpenTextDocumentParams {

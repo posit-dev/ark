@@ -1,24 +1,23 @@
 use aether_path::FilePath;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::Location;
-use tower_lsp::lsp_types::ReferenceContext;
-use tower_lsp::lsp_types::ReferenceParams;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::ReferenceContext;
+use tower_lsp_server::ls_types::ReferenceParams;
+use url::Url;
 
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
 use crate::lsp::find_references::find_references;
+use crate::lsp::traits::url::UrlUriExt;
 use crate::lsp::util::test_path;
 
-fn make_params(
-    uri: lsp_types::Url,
-    line: u32,
-    character: u32,
-    include_decl: bool,
-) -> ReferenceParams {
+fn make_params(uri: Url, line: u32, character: u32, include_decl: bool) -> ReferenceParams {
     ReferenceParams {
         text_document_position: lsp_types::TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri },
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: uri.to_uri().unwrap(),
+            },
             position: lsp_types::Position::new(line, character),
         },
         context: ReferenceContext {
@@ -27,6 +26,17 @@ fn make_params(
         work_done_progress_params: Default::default(),
         partial_result_params: Default::default(),
     }
+}
+
+/// Build the `Location` we expect `find_references()` to return for `uri`.
+fn location(uri: &Url, range: lsp_types::Range) -> Location {
+    Location::new(uri.to_uri().unwrap(), range)
+}
+
+/// Does this `Location` point at `uri`? `Location.uri` is the wire `Uri`;
+/// `uri` here is our internal `Url`, so convert before comparing.
+fn at(loc: &Location, uri: &Url) -> bool {
+    loc.uri == uri.to_uri().unwrap()
 }
 
 #[test]
@@ -38,9 +48,9 @@ fn test_intra_file_use_and_def() {
     let params = make_params(uri.clone(), 1, 0, true);
     let locs = find_references(params, &state).unwrap();
     let expected: Vec<Location> = vec![
-        Location::new(uri.clone(), range((0, 0), (0, 3))),
-        Location::new(uri.clone(), range((1, 0), (1, 3))),
-        Location::new(uri, range((1, 6), (1, 9))),
+        location(&uri, range((0, 0), (0, 3))),
+        location(&uri, range((1, 0), (1, 3))),
+        location(&uri, range((1, 6), (1, 9))),
     ];
     assert_eq!(locs, expected);
 }
@@ -53,7 +63,7 @@ fn test_excludes_declaration() {
 
     let params = make_params(uri.clone(), 1, 0, false);
     let locs = find_references(params, &state).unwrap();
-    assert_eq!(locs, vec![Location::new(uri, range((1, 0), (1, 3)))]);
+    assert_eq!(locs, vec![location(&uri, range((1, 0), (1, 3)))]);
 }
 
 #[test]
@@ -78,8 +88,8 @@ fn test_cursor_past_trailing_edge_resolves() {
     let locs = find_references(params, &state).unwrap();
 
     let expected: Vec<Location> = vec![
-        Location::new(uri.clone(), range((0, 0), (0, 3))),
-        Location::new(uri, range((1, 0), (1, 3))),
+        location(&uri, range((0, 0), (0, 3))),
+        location(&uri, range((1, 0), (1, 3))),
     ];
     assert_eq!(locs, expected);
 }
@@ -110,7 +120,7 @@ fn test_different_binding_not_included() {
 
     let params = make_params(uri1.clone(), 0, 0, true);
     let locs = find_references(params, &state).unwrap();
-    assert!(locs.iter().all(|l| l.uri == uri1));
+    assert!(locs.iter().all(|l| at(l, &uri1)));
     assert_eq!(locs.len(), 2);
 }
 
@@ -131,8 +141,8 @@ fn test_function_scope_target_stays_in_file() {
 
     // Only file1's parameter and its use. No file2 hits.
     let expected: Vec<Location> = vec![
-        Location::new(uri1.clone(), range((0, 14), (0, 15))),
-        Location::new(uri1, range((1, 2), (1, 3))),
+        location(&uri1, range((0, 14), (0, 15))),
+        location(&uri1, range((1, 2), (1, 3))),
     ];
     assert_eq!(locs, expected);
 }
@@ -156,19 +166,19 @@ fn test_cross_file_dollar_kind() {
     // a.R's `foo$bar` member
     assert!(locs
         .iter()
-        .any(|l| l.uri == uri1 && l.range == range((1, 4), (1, 7))));
+        .any(|l| at(l, &uri1) && l.range == range((1, 4), (1, 7))));
     // b.R's `foo$bar` member (matches)
     assert!(locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((0, 4), (0, 7))));
+        .any(|l| at(l, &uri2) && l.range == range((0, 4), (0, 7))));
     // b.R's `baz$bar` member (matches -- LHS is irrelevant for member scan)
     assert!(locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((1, 4), (1, 7))));
+        .any(|l| at(l, &uri2) && l.range == range((1, 4), (1, 7))));
     // b.R's plain `bar` (Symbol kind, does NOT match)
     assert!(!locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((2, 0), (2, 3))));
+        .any(|l| at(l, &uri2) && l.range == range((2, 0), (2, 3))));
 }
 
 #[test]
@@ -177,14 +187,14 @@ fn test_locations_use_verbatim_url() {
     // it away, so a path round-trip would change it. Locations must carry the
     // exact URI the editor opened the buffer with.
     let code = "foo <- 1\nfoo\n";
-    let uri = lsp_types::Url::parse("file:///C:/proj//foo.R").unwrap();
+    let uri = Url::parse("file:///C:/proj//foo.R").unwrap();
     let state = make_state(&uri, code);
 
     let params = make_params(uri.clone(), 1, 0, true);
     let locs = find_references(params, &state).unwrap();
 
     assert!(!locs.is_empty());
-    assert!(locs.iter().all(|loc| loc.uri == uri));
+    assert!(locs.iter().all(|loc| at(loc, &uri)));
     // Confirm the round-trip really would have differed, so the check above bites.
     assert_ne!(FilePath::from_url(&uri).to_url(), uri);
 }
@@ -217,17 +227,17 @@ fn test_cross_file_namespace_access() {
     // a.R's `dplyr::mutate`
     assert!(locs
         .iter()
-        .any(|l| l.uri == uri1 && l.range == range((0, 7), (0, 13))));
+        .any(|l| at(l, &uri1) && l.range == range((0, 7), (0, 13))));
     // b.R's `dplyr::mutate` (matches)
     assert!(locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((0, 7), (0, 13))));
+        .any(|l| at(l, &uri2) && l.range == range((0, 7), (0, 13))));
     // b.R's `tidyr::mutate` (different namespace, does NOT match)
     assert!(!locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((1, 7), (1, 13))));
+        .any(|l| at(l, &uri2) && l.range == range((1, 7), (1, 13))));
     // b.R's bare `mutate()` (not a namespace access, does NOT match) TODO
     assert!(!locs
         .iter()
-        .any(|l| l.uri == uri2 && l.range == range((2, 0), (2, 6))));
+        .any(|l| at(l, &uri2) && l.range == range((2, 0), (2, 6))));
 }

@@ -5,20 +5,22 @@ use aether_lsp_utils::proto::to_proto;
 use aether_path::FilePath;
 use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::PrepareRenameResponse;
-use tower_lsp::lsp_types::RenameParams;
-use tower_lsp::lsp_types::TextDocumentPositionParams;
-use tower_lsp::lsp_types::TextEdit;
-use tower_lsp::lsp_types::WorkspaceEdit;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::PrepareRenameResponse;
+use tower_lsp_server::ls_types::RenameParams;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
+use tower_lsp_server::ls_types::TextEdit;
+use tower_lsp_server::ls_types::WorkspaceEdit;
 
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 
 pub(crate) fn prepare_rename(
     params: TextDocumentPositionParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<PrepareRenameResponse>> {
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.to_url()?;
     let position = params.position;
 
     let db = &state.db;
@@ -45,7 +47,7 @@ pub(crate) fn rename(
     params: RenameParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<WorkspaceEdit>> {
-    let uri = params.text_document_position.text_document.uri;
+    let uri = params.text_document_position.text_document.uri.to_url()?;
     let position = params.text_document_position.position;
     let new_name = params.new_name;
 
@@ -63,12 +65,12 @@ pub(crate) fn rename(
     let new_text = to_identifier_text(&new_name)?;
     let ranges = oak_ide::rename(db, file, offset)?;
 
-    let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
+    let mut changes: HashMap<lsp_types::Uri, Vec<TextEdit>> = HashMap::new();
     for range in ranges {
         let line_index = range.file.line_index(db);
-        let target_url = state.wire_url(range.file);
+        let target_uri = state.wire_url(range.file).to_uri()?;
         let range = to_proto::range(range.range, line_index, encoding)?;
-        changes.entry(target_url).or_default().push(TextEdit {
+        changes.entry(target_uri).or_default().push(TextEdit {
             range,
             new_text: new_text.clone(),
         });

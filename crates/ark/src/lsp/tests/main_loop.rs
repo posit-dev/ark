@@ -9,10 +9,10 @@
 
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
-use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
-use tower_lsp::lsp_types::WorkspaceFolder;
-use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
-use url::Url;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::WorkspaceFolder;
+use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use super::utils::test_client;
 use super::utils::write_sources;
@@ -52,7 +52,7 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     let params = DidChangeWorkspaceFoldersParams {
         event: WorkspaceFoldersChangeEvent {
             added: vec![WorkspaceFolder {
-                uri: Url::from_file_path(tmp.path()).unwrap(),
+                uri: Uri::from_file_path(tmp.path()).unwrap(),
                 name: String::new(),
             }],
             removed: vec![],

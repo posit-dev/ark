@@ -26,7 +26,7 @@ too_many_arguments = "allow"
 [workspace.dependencies]
 actix-web = "4.13.0"
 aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
-aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_lsp_utils = { path = "crates/aether_lsp_utils" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_path = { path = "crates/aether_path" }
@@ -53,6 +53,7 @@ ctor = "1.0.0"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }
 dashmap = "6.1.0"
 dirs = "6.0.0"
+dissimilar = "1.0.9"
 ego-tree = "0.11.0"
 embed-resource = "3.0.9"
 env_logger = "0.11.10"
@@ -72,6 +73,7 @@ libc = "0.2.186"
 libloading = "0.9.0"
 libr = { path = "crates/libr" }
 log = "0.4.29"
+memchr = "2.7.4"
 mime_guess = "2.0.5"
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal"] }
 notify = "8.2.0"
@@ -117,8 +119,7 @@ syn = { version = "2.0.117", features = ["full"] }
 tar = "0.4.45"
 tempfile = "3.27.0"
 tokio = { version = "1.52.1", features = ["full"] }
-# For https://github.com/ebkalderon/tower-lsp/pull/428
-tower-lsp = { branch = "bugfix/patches", git = "https://github.com/lionel-/tower-lsp" }
+tower-lsp-server = "0.23.0"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"

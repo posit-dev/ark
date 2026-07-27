@@ -5,10 +5,10 @@
 //
 //
 
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::Documentation;
-use tower_lsp::lsp_types::MarkupContent;
-use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::Documentation;
+use tower_lsp_server::ls_types::MarkupContent;
+use tower_lsp_server::ls_types::MarkupKind;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_function;

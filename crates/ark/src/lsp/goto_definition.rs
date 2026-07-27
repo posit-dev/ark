@@ -4,23 +4,29 @@ use aether_lsp_utils::proto::PositionEncoding;
 use aether_path::FilePath;
 use oak_db::Db;
 use oak_ide::NavigationTarget;
-use tower_lsp::lsp_types::GotoDefinitionParams;
-use tower_lsp::lsp_types::GotoDefinitionResponse;
-use tower_lsp::lsp_types::LocationLink;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::LocationLink;
 
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 
 pub(crate) fn goto_definition(
     params: GotoDefinitionParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
-    let uri = &params.text_document_position_params.text_document.uri;
+    let uri = params
+        .text_document_position_params
+        .text_document
+        .uri
+        .to_url()?;
     let position = params.text_document_position_params.position;
 
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_path(&FilePath::from_url(uri)) else {
+    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
         return Ok(None);
     };
 
@@ -56,7 +62,7 @@ fn nav_target_to_link(
 
     Ok(LocationLink {
         origin_selection_range: None,
-        target_uri: state.wire_url(target.file),
+        target_uri: state.wire_url(target.file).to_uri()?,
         target_range,
         target_selection_range,
     })

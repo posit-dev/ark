@@ -22,17 +22,17 @@ use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
-use tower_lsp::jsonrpc;
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::request::GotoImplementationParams;
-use tower_lsp::lsp_types::request::GotoImplementationResponse;
-use tower_lsp::lsp_types::FoldingRange;
-use tower_lsp::lsp_types::SelectionRange;
-use tower_lsp::lsp_types::*;
-use tower_lsp::Client;
-use tower_lsp::LanguageServer;
-use tower_lsp::LspService;
-use tower_lsp::Server;
+use tower_lsp_server::jsonrpc;
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::request::GotoImplementationParams;
+use tower_lsp_server::ls_types::request::GotoImplementationResponse;
+use tower_lsp_server::ls_types::FoldingRange;
+use tower_lsp_server::ls_types::SelectionRange;
+use tower_lsp_server::ls_types::*;
+use tower_lsp_server::Client;
+use tower_lsp_server::LanguageServer;
+use tower_lsp_server::LspService;
+use tower_lsp_server::Server;
 
 use super::main_loop::LSP_HAS_CRASHED;
 use crate::console::Console;
@@ -284,7 +284,6 @@ impl Backend {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         cast_response!(
@@ -319,12 +318,13 @@ impl LanguageServer for Backend {
     async fn symbol(
         &self,
         params: WorkspaceSymbolParams,
-    ) -> Result<Option<Vec<SymbolInformation>>> {
-        cast_response!(
+    ) -> Result<Option<WorkspaceSymbolResponse>> {
+        let info: Option<Vec<SymbolInformation>> = cast_response!(
             self,
             self.request(LspRequest::WorkspaceSymbol(params)).await,
             LspResponse::WorkspaceSymbol
-        )
+        )?;
+        Ok(info.map(WorkspaceSymbolResponse::Flat))
     }
 
     async fn document_symbol(
@@ -526,7 +526,7 @@ impl Backend {
     async fn virtual_document(
         &self,
         params: VirtualDocumentParams,
-    ) -> tower_lsp::jsonrpc::Result<VirtualDocumentResponse> {
+    ) -> tower_lsp_server::jsonrpc::Result<VirtualDocumentResponse> {
         cast_response!(
             self,
             self.request(LspRequest::VirtualDocument(params)).await,
@@ -537,7 +537,7 @@ impl Backend {
     async fn input_boundaries(
         &self,
         params: InputBoundariesParams,
-    ) -> tower_lsp::jsonrpc::Result<InputBoundariesResponse> {
+    ) -> tower_lsp_server::jsonrpc::Result<InputBoundariesResponse> {
         cast_response!(
             self,
             self.request(LspRequest::InputBoundaries(params)).await,

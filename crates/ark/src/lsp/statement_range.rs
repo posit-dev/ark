@@ -14,9 +14,9 @@ use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::unwrap;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::Position;
-use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
@@ -844,7 +844,7 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
-    use tower_lsp::lsp_types;
+    use tower_lsp_server::ls_types as lsp_types;
     use tree_sitter::Node;
     use tree_sitter::Parser;
     use tree_sitter::Point;

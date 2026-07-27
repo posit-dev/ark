@@ -4,9 +4,9 @@
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::CompletionTextEdit;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionTextEdit;
 
 use crate::fixtures::point_from_cursor;
 use crate::lsp::completions::provide_completions;

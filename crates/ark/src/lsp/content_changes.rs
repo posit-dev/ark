@@ -1,6 +1,6 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 
 // --- source
 // authors = ["rust-analyzer team"]

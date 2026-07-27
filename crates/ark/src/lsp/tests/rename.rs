@@ -4,39 +4,36 @@ use oak_db::DbInputs;
 use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::PrepareRenameResponse;
-use tower_lsp::lsp_types::RenameParams;
-use tower_lsp::lsp_types::TextDocumentPositionParams;
-use tower_lsp::lsp_types::TextEdit;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::PrepareRenameResponse;
+use tower_lsp_server::ls_types::RenameParams;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
+use tower_lsp_server::ls_types::TextEdit;
+use url::Url;
 
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
 use crate::lsp::rename::prepare_rename;
 use crate::lsp::rename::rename;
+use crate::lsp::traits::url::UrlUriExt;
 use crate::lsp::util::test_path;
 
-fn make_prepare_params(
-    uri: lsp_types::Url,
-    line: u32,
-    character: u32,
-) -> TextDocumentPositionParams {
+fn make_prepare_params(uri: Url, line: u32, character: u32) -> TextDocumentPositionParams {
     TextDocumentPositionParams {
-        text_document: lsp_types::TextDocumentIdentifier { uri },
+        text_document: lsp_types::TextDocumentIdentifier {
+            uri: uri.to_uri().unwrap(),
+        },
         position: lsp_types::Position::new(line, character),
     }
 }
 
-fn make_rename_params(
-    uri: lsp_types::Url,
-    line: u32,
-    character: u32,
-    new_name: &str,
-) -> RenameParams {
+fn make_rename_params(uri: Url, line: u32, character: u32, new_name: &str) -> RenameParams {
     RenameParams {
         text_document_position: TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri },
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: uri.to_uri().unwrap(),
+            },
             position: lsp_types::Position::new(line, character),
         },
         new_name: new_name.to_string(),
@@ -79,14 +76,14 @@ fn test_edits_keyed_by_verbatim_url() {
     // The `WorkspaceEdit` must key its changes on the buffer's verbatim URL,
     // not a normalised round-trip, or the editor won't match them to the file.
     let code = "foo <- 1\nfoo\n";
-    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
+    let uri = Url::parse("file:///C:/proj//file.R").unwrap();
     let state = make_state(&uri, code);
 
     let params = make_rename_params(uri.clone(), 0, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let changes = edit.changes.expect("changes map");
-    assert!(changes.contains_key(&uri));
+    assert!(changes.contains_key(&uri.to_uri().unwrap()));
     assert_ne!(FilePath::from_url(&uri).to_url(), uri);
 }
 
@@ -101,7 +98,10 @@ fn test_rename_emits_edits_for_def_and_uses() {
 
     let changes = edit.changes.expect("changes map");
     assert_eq!(changes.len(), 1);
-    let mut edits = changes.get(&uri).expect("edits for uri").clone();
+    let mut edits = changes
+        .get(&uri.to_uri().unwrap())
+        .expect("edits for uri")
+        .clone();
     edits.sort_by_key(|e| e.range.start);
     let expected: Vec<TextEdit> = vec![
         TextEdit {
@@ -140,8 +140,8 @@ fn test_rename_excludes_independent_binding_in_other_file() {
     let changes = edit.changes.expect("changes map");
     // Only file1 should be in the changes (file2 has a different binding).
     assert_eq!(changes.len(), 1);
-    assert!(changes.contains_key(&uri1));
-    assert!(!changes.contains_key(&uri2));
+    assert!(changes.contains_key(&uri1.to_uri().unwrap()));
+    assert!(!changes.contains_key(&uri2.to_uri().unwrap()));
 }
 
 #[test]
@@ -184,14 +184,14 @@ fn test_rename_cross_file_via_source() {
     let changes = edit.changes.expect("changes map");
     assert_eq!(changes.len(), 2);
 
-    let mut edits1 = changes[&uri1].clone();
+    let mut edits1 = changes[&uri1.to_uri().unwrap()].clone();
     edits1.sort_by_key(|e| e.range.start);
     assert_eq!(edits1, vec![TextEdit {
         range: range((0, 0), (0, 6)),
         new_text: "renamed".to_string(),
     }]);
 
-    let mut edits2 = changes[&uri2].clone();
+    let mut edits2 = changes[&uri2.to_uri().unwrap()].clone();
     edits2.sort_by_key(|e| e.range.start);
     assert_eq!(edits2, vec![TextEdit {
         range: range((1, 0), (1, 6)),
@@ -218,7 +218,11 @@ fn test_rename_to_name_with_space_wraps_in_backticks() {
 
     let params = make_rename_params(uri.clone(), 0, 0, "new name");
     let edit = rename(params, &state).unwrap().unwrap();
-    let edits = edit.changes.unwrap().remove(&uri).unwrap();
+    let edits = edit
+        .changes
+        .unwrap()
+        .remove(&uri.to_uri().unwrap())
+        .unwrap();
     assert!(edits.iter().all(|e| e.new_text == "`new name`"));
 }
 
@@ -230,7 +234,11 @@ fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
 
     let params = make_rename_params(uri.clone(), 0, 0, "1foo");
     let edit = rename(params, &state).unwrap().unwrap();
-    let edits = edit.changes.unwrap().remove(&uri).unwrap();
+    let edits = edit
+        .changes
+        .unwrap()
+        .remove(&uri.to_uri().unwrap())
+        .unwrap();
     assert!(edits.iter().all(|e| e.new_text == "`1foo`"));
 }
 

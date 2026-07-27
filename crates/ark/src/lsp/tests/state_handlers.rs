@@ -15,15 +15,16 @@ use oak_db::DbInputs;
 use oak_scan::DbScan;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
-use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
-use tower_lsp::lsp_types::DidCloseTextDocumentParams;
-use tower_lsp::lsp_types::FileChangeType;
-use tower_lsp::lsp_types::FileEvent;
-use tower_lsp::lsp_types::InitializeParams;
-use tower_lsp::lsp_types::TextDocumentIdentifier;
-use tower_lsp::lsp_types::WorkspaceFolder;
-use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FileEvent;
+use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::WorkspaceFolder;
+use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use crate::lsp::main_loop::dispatch_scan_requests;
@@ -38,6 +39,7 @@ use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::lsp::traits::url::UrlUriExt;
 
 /// Local sync wrappers around the async-shaped scheduler API. Tests
 /// don't need the timing flexibility, so each operation kicks off
@@ -163,7 +165,7 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
 
 fn event(path: &Path, typ: FileChangeType) -> FileEvent {
     FileEvent {
-        uri: Url::from_file_path(path).unwrap(),
+        uri: Uri::from_file_path(path).unwrap(),
         typ,
     }
 }
@@ -402,7 +404,7 @@ fn test_description_deleted_demotes_package_to_scripts() {
 
 fn folder(uri: &str) -> WorkspaceFolder {
     WorkspaceFolder {
-        uri: Url::parse(uri).unwrap(),
+        uri: uri.parse().unwrap(),
         name: String::new(),
     }
 }
@@ -419,6 +421,8 @@ fn test_effective_workspace_uris_reads_workspace_folders() {
     assert_eq!(uris[1].as_str(), "file:///b");
 }
 
+// `root_uri` is deprecated in the protocol, but that's the point of these tests
+#[allow(deprecated)]
 #[test]
 fn test_effective_workspace_uris_ignores_legacy_root_uri() {
     // We dropped the `root_uri` fallback, so a client sending only the
@@ -426,19 +430,20 @@ fn test_effective_workspace_uris_ignores_legacy_root_uri() {
     // `workspace_folders` is absent or an empty list.
     let absent = InitializeParams {
         workspace_folders: None,
-        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        root_uri: Some("file:///legacy".parse().unwrap()),
         ..Default::default()
     };
     assert!(effective_workspace_uris(&absent).is_empty());
 
     let empty = InitializeParams {
         workspace_folders: Some(vec![]),
-        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        root_uri: Some("file:///legacy".parse().unwrap()),
         ..Default::default()
     };
     assert!(effective_workspace_uris(&empty).is_empty());
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_effective_workspace_uris_single_file_mode() {
     let params = InitializeParams {
@@ -460,7 +465,7 @@ fn folders_change(
 
 fn folder_for(path: &Path) -> WorkspaceFolder {
     WorkspaceFolder {
-        uri: Url::from_file_path(path).unwrap(),
+        uri: Uri::from_file_path(path).unwrap(),
         name: String::new(),
     }
 }
@@ -649,7 +654,9 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // Now close the buffer. File should move from orphan to stale.
     let params = DidCloseTextDocumentParams {
-        text_document: TextDocumentIdentifier { uri: url.clone() },
+        text_document: TextDocumentIdentifier {
+            uri: url.to_uri().unwrap(),
+        },
     };
     did_close(params, &mut state).unwrap();
 

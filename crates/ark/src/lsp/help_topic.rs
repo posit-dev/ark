@@ -8,8 +8,8 @@
 use oak_db::File;
 use serde::Deserialize;
 use serde::Serialize;
-use tower_lsp::lsp_types::Position;
-use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Tree;

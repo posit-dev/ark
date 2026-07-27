@@ -6,8 +6,8 @@
 
 #[cfg(test)]
 mod function_call_tests {
-    use tower_lsp::lsp_types::CompletionItemKind;
-    use tower_lsp::lsp_types::InsertTextFormat;
+    use tower_lsp_server::ls_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
@@ -81,8 +81,8 @@ mod function_call_tests {
 
 #[cfg(test)]
 mod function_reference_tests {
-    use tower_lsp::lsp_types::CompletionItemKind;
-    use tower_lsp::lsp_types::InsertTextFormat;
+    use tower_lsp_server::ls_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_no_command;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
@@ -157,8 +157,8 @@ mod function_reference_tests {
 /// Tests where namespace is added retroactively
 #[cfg(test)]
 mod namespace_post_hoc_tests {
-    use tower_lsp::lsp_types::CompletionItemKind;
-    use tower_lsp::lsp_types::InsertTextFormat;
+    use tower_lsp_server::ls_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
     use crate::lsp::completions::tests::utils::assert_sort_text_has_priority_prefix;
@@ -244,7 +244,7 @@ mod namespace_post_hoc_tests {
 
 #[cfg(test)]
 mod empty_args_tests {
-    use tower_lsp::lsp_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::CompletionItemKind;
 
     use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
     use crate::lsp::completions::tests::utils::assert_text_edit;
@@ -292,7 +292,7 @@ mod empty_args_tests {
 
 #[cfg(test)]
 mod nonempty_args_tests {
-    use tower_lsp::lsp_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::CompletionItemKind;
 
     use crate::lsp::completions::tests::utils::assert_no_command;
     use crate::lsp::completions::tests::utils::assert_text_edit;

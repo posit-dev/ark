@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 
 use oak_db::File;
 use regex::Regex;
-use tower_lsp::lsp_types::FoldingRange;
-use tower_lsp::lsp_types::FoldingRangeKind;
+use tower_lsp_server::ls_types::FoldingRange;
+use tower_lsp_server::ls_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp;

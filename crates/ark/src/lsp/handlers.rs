@@ -9,40 +9,40 @@ use anyhow::anyhow;
 use serde_json::Value;
 use stdext::result::ResultExt;
 use stdext::unwrap;
-use tower_lsp::lsp_types::CodeActionParams;
-use tower_lsp::lsp_types::CodeActionResponse;
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::CompletionParams;
-use tower_lsp::lsp_types::CompletionResponse;
-use tower_lsp::lsp_types::DidChangeWatchedFilesRegistrationOptions;
-use tower_lsp::lsp_types::DocumentOnTypeFormattingParams;
-use tower_lsp::lsp_types::DocumentSymbolParams;
-use tower_lsp::lsp_types::DocumentSymbolResponse;
-use tower_lsp::lsp_types::FileSystemWatcher;
-use tower_lsp::lsp_types::FoldingRange;
-use tower_lsp::lsp_types::FoldingRangeParams;
-use tower_lsp::lsp_types::GlobPattern;
-use tower_lsp::lsp_types::GotoDefinitionParams;
-use tower_lsp::lsp_types::GotoDefinitionResponse;
-use tower_lsp::lsp_types::Hover;
-use tower_lsp::lsp_types::HoverContents;
-use tower_lsp::lsp_types::HoverParams;
-use tower_lsp::lsp_types::Location;
-use tower_lsp::lsp_types::MessageType;
-use tower_lsp::lsp_types::PrepareRenameResponse;
-use tower_lsp::lsp_types::ReferenceParams;
-use tower_lsp::lsp_types::Registration;
-use tower_lsp::lsp_types::RenameParams;
-use tower_lsp::lsp_types::SelectionRange;
-use tower_lsp::lsp_types::SelectionRangeParams;
-use tower_lsp::lsp_types::SignatureHelp;
-use tower_lsp::lsp_types::SignatureHelpParams;
-use tower_lsp::lsp_types::SymbolInformation;
-use tower_lsp::lsp_types::TextDocumentPositionParams;
-use tower_lsp::lsp_types::TextEdit;
-use tower_lsp::lsp_types::WorkspaceEdit;
-use tower_lsp::lsp_types::WorkspaceSymbolParams;
-use tower_lsp::Client;
+use tower_lsp_server::ls_types::CodeActionParams;
+use tower_lsp_server::ls_types::CodeActionResponse;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionParams;
+use tower_lsp_server::ls_types::CompletionResponse;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
+use tower_lsp_server::ls_types::DocumentOnTypeFormattingParams;
+use tower_lsp_server::ls_types::DocumentSymbolParams;
+use tower_lsp_server::ls_types::DocumentSymbolResponse;
+use tower_lsp_server::ls_types::FileSystemWatcher;
+use tower_lsp_server::ls_types::FoldingRange;
+use tower_lsp_server::ls_types::FoldingRangeParams;
+use tower_lsp_server::ls_types::GlobPattern;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::Hover;
+use tower_lsp_server::ls_types::HoverContents;
+use tower_lsp_server::ls_types::HoverParams;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::ls_types::PrepareRenameResponse;
+use tower_lsp_server::ls_types::ReferenceParams;
+use tower_lsp_server::ls_types::Registration;
+use tower_lsp_server::ls_types::RenameParams;
+use tower_lsp_server::ls_types::SelectionRange;
+use tower_lsp_server::ls_types::SelectionRangeParams;
+use tower_lsp_server::ls_types::SignatureHelp;
+use tower_lsp_server::ls_types::SignatureHelpParams;
+use tower_lsp_server::ls_types::SymbolInformation;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
+use tower_lsp_server::ls_types::TextEdit;
+use tower_lsp_server::ls_types::WorkspaceEdit;
+use tower_lsp_server::ls_types::WorkspaceSymbolParams;
+use tower_lsp_server::Client;
 use tracing::Instrument;
 
 use crate::analysis::input_boundaries::input_boundaries;
@@ -77,6 +77,7 @@ use crate::lsp::statement_range::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
+use crate::lsp::traits::url::UriExt;
 use crate::r_task;
 
 pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
@@ -187,8 +188,8 @@ pub(crate) fn handle_folding_range(
     params: FoldingRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
-    let uri = &params.text_document.uri;
-    let file = state.open_file(uri)?.file();
+    let uri = params.text_document.uri.to_url()?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     match folding_range(db, file) {
         Ok(foldings) => Ok(Some(foldings)),
@@ -213,7 +214,7 @@ pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
 ) -> LspResult<Option<CompletionResponse>> {
-    let uri = params.text_document_position.text_document.uri;
+    let uri = params.text_document_position.text_document.uri.to_url()?;
     let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
@@ -259,7 +260,11 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
-    let uri = params.text_document_position_params.text_document.uri;
+    let uri = params
+        .text_document_position_params
+        .text_document
+        .uri
+        .to_url()?;
     let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
@@ -302,7 +307,11 @@ pub(crate) fn handle_signature_help(
     params: SignatureHelpParams,
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
-    let uri = params.text_document_position_params.text_document.uri;
+    let uri = params
+        .text_document_position_params
+        .text_document
+        .uri
+        .to_url()?;
     let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
@@ -349,8 +358,8 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let uri = &params.text_document.uri;
-    let file = state.open_file(uri)?.file();
+    let uri = params.text_document.uri.to_url()?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -420,8 +429,8 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let uri = &params.text_document.uri;
-    let file = state.open_file(uri)?.file();
+    let uri = params.text_document.uri.to_url()?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -434,8 +443,8 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let uri = &params.text_document.uri;
-    let file = state.open_file(uri)?.file();
+    let uri = params.text_document.uri.to_url()?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -449,8 +458,8 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let uri = &ctxt.text_document.uri;
-    let open_file = state.open_file(uri)?;
+    let uri = ctxt.text_document.uri.to_url()?;
+    let open_file = state.open_file(&uri)?;
     let encoding = state.config.position_encoding;
 
     let db = &state.db;
@@ -480,7 +489,7 @@ pub(crate) fn handle_code_action(
     lsp_state: &LspState,
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.to_url()?;
     let file = state.open_file(&uri)?;
     let db = &state.db;
     let encoding = state.config.position_encoding;

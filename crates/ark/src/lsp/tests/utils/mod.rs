@@ -10,10 +10,11 @@ pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_scan::DbScan;
-use tower_lsp::lsp_types;
-use tower_lsp::Client;
-use tower_lsp::LanguageServer;
-use tower_lsp::LspService;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::Client;
+use tower_lsp_server::LanguageServer;
+use tower_lsp_server::LspService;
+use url::Url;
 
 use crate::lsp::state::WorldState;
 
@@ -24,15 +25,14 @@ use crate::lsp::state::WorldState;
 pub(super) fn test_client() -> Client {
     struct Dummy;
 
-    #[tower_lsp::async_trait]
     impl LanguageServer for Dummy {
         async fn initialize(
             &self,
             _: lsp_types::InitializeParams,
-        ) -> tower_lsp::jsonrpc::Result<lsp_types::InitializeResult> {
+        ) -> tower_lsp_server::jsonrpc::Result<lsp_types::InitializeResult> {
             Ok(lsp_types::InitializeResult::default())
         }
-        async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
+        async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
             Ok(())
         }
     }
@@ -57,7 +57,7 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     }
 }
 
-pub(super) fn make_state(uri: &lsp_types::Url, contents: &str) -> WorldState {
+pub(super) fn make_state(uri: &Url, contents: &str) -> WorldState {
     let mut state = WorldState::default();
     insert_file(&mut state, uri, contents);
     state
@@ -66,7 +66,7 @@ pub(super) fn make_state(uri: &lsp_types::Url, contents: &str) -> WorldState {
 /// Insert an editor buffer, the same as `did_open` performs, so handlers
 /// reading either `state.documents` or `state.db` (via `file_by_path`) see a
 /// consistent file.
-pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, contents: &str) {
+pub(super) fn insert_file(state: &mut WorldState, uri: &Url, contents: &str) {
     let file = state
         .db
         .upsert_editor(FilePath::from_url(uri), contents.to_string());

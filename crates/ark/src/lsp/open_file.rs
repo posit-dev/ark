@@ -3,7 +3,7 @@ use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::Db;
 use oak_db::File;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 use url::Url;
 
 use crate::lsp::config::DocumentConfig;

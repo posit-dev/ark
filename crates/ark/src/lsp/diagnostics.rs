@@ -16,8 +16,8 @@ use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
 use oak_db::File;
 use stdext::*;
-use tower_lsp::lsp_types::Diagnostic;
-use tower_lsp::lsp_types::DiagnosticSeverity;
+use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::DiagnosticSeverity;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
@@ -1175,8 +1175,8 @@ mod tests {
     use oak_db::OakDatabase;
     use oak_scan::DbScan;
     use tempfile::TempDir;
-    use tower_lsp::lsp_types;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types as lsp_types;
+    use tower_lsp_server::ls_types::Position;
 
     use crate::console::console_inputs;
     use crate::lsp::state::WorldState;

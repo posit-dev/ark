@@ -11,14 +11,15 @@ use std::result::Result::Ok;
 
 use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::File;
+use stdext::result::ResultExt;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::DocumentSymbol;
-use tower_lsp::lsp_types::DocumentSymbolParams;
-use tower_lsp::lsp_types::Location;
-use tower_lsp::lsp_types::Range;
-use tower_lsp::lsp_types::SymbolInformation;
-use tower_lsp::lsp_types::SymbolKind;
-use tower_lsp::lsp_types::WorkspaceSymbolParams;
+use tower_lsp_server::ls_types::DocumentSymbol;
+use tower_lsp_server::ls_types::DocumentSymbolParams;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::Range;
+use tower_lsp_server::ls_types::SymbolInformation;
+use tower_lsp_server::ls_types::SymbolKind;
+use tower_lsp_server::ls_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
 use crate::lsp::db::ArkDb;
@@ -29,6 +30,8 @@ use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlUriExt;
 use crate::treesitter::point_end_of_previous_row;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -76,7 +79,9 @@ pub(crate) fn symbols(
             return;
         };
 
-        let uri = state.wire_url(file);
+        let Some(uri) = state.wire_url(file).to_uri().log_err() else {
+            return;
+        };
 
         match &entry.data {
             IndexEntryData::Function { name, arguments: _ } => {
@@ -160,8 +165,8 @@ pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    let uri = &params.text_document.uri;
-    let file = state.open_file(uri)?.file();
+    let uri = params.text_document.uri.to_url()?;
+    let file = state.open_file(&uri)?.file();
     let db = &state.db;
     let ast = file.tree_sitter(db);
 
@@ -792,7 +797,7 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
     use oak_scan::DbScan;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types::Position;
 
     use super::*;
     use crate::lsp::config::LspConfig;

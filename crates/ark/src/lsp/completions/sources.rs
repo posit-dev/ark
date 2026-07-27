@@ -10,7 +10,7 @@ pub(crate) mod composite;
 pub(crate) mod unique;
 pub(crate) mod utils;
 
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 

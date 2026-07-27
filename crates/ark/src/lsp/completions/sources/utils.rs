@@ -12,7 +12,7 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::utils::r_inherits;
 use regex::Regex;
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 

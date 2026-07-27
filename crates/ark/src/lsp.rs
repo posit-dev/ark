@@ -50,13 +50,13 @@ mod tests;
 // These send LSP messages in a non-async and non-blocking way.
 // The LOG level is not timestamped so we're not using it.
 macro_rules! log_info {
-    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp::lsp_types::MessageType::INFO, $($arg)+))
+    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp_server::ls_types::MessageType::INFO, $($arg)+))
 }
 macro_rules! log_warn {
-    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp::lsp_types::MessageType::WARNING, $($arg)+))
+    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp_server::ls_types::MessageType::WARNING, $($arg)+))
 }
 macro_rules! log_error {
-    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp::lsp_types::MessageType::ERROR, $($arg)+))
+    ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp_server::ls_types::MessageType::ERROR, $($arg)+))
 }
 macro_rules! _log {
     ($lvl:expr, $($arg:tt)+) => ({

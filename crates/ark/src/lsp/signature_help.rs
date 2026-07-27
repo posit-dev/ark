@@ -19,11 +19,11 @@ use libr::*;
 use log::info;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::Documentation;
-use tower_lsp::lsp_types::ParameterInformation;
-use tower_lsp::lsp_types::ParameterLabel;
-use tower_lsp::lsp_types::SignatureHelp;
-use tower_lsp::lsp_types::SignatureInformation;
+use tower_lsp_server::ls_types::Documentation;
+use tower_lsp_server::ls_types::ParameterInformation;
+use tower_lsp_server::ls_types::ParameterLabel;
+use tower_lsp_server::ls_types::SignatureHelp;
+use tower_lsp_server::ls_types::SignatureInformation;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
@@ -506,7 +506,7 @@ mod tests {
     use harp::r_symbol;
     use harp::RObject;
     use libr::R_xlen_t;
-    use tower_lsp::lsp_types::ParameterLabel;
+    use tower_lsp_server::ls_types::ParameterLabel;
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::document_context::TestDocument;
