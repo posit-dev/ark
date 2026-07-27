@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
-use aether_path::FilePath;
+use anyhow::Context;
 use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use tower_lsp_server::ls_types as lsp_types;
@@ -14,19 +14,18 @@ use tower_lsp_server::ls_types::WorkspaceEdit;
 
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
-use crate::lsp::traits::url::UrlUriExt;
 
 pub(crate) fn prepare_rename(
     params: TextDocumentPositionParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<PrepareRenameResponse>> {
-    let uri = params.text_document.uri.to_url()?;
+    let path = params.text_document.uri.to_document_path()?;
     let position = params.position;
 
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
+    let Some(file) = db.file_by_path(&path) else {
         return Ok(None);
     };
 
@@ -47,14 +46,18 @@ pub(crate) fn rename(
     params: RenameParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<WorkspaceEdit>> {
-    let uri = params.text_document_position.text_document.uri.to_url()?;
+    let path = params
+        .text_document_position
+        .text_document
+        .uri
+        .to_document_path()?;
     let position = params.text_document_position.position;
     let new_name = params.new_name;
 
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_path(&FilePath::from_url(&uri)) else {
+    let Some(file) = db.file_by_path(&path) else {
         return Ok(None);
     };
 
@@ -66,10 +69,19 @@ pub(crate) fn rename(
     let ranges = oak_ide::rename(db, file, offset)?;
 
     let mut changes: HashMap<lsp_types::Uri, Vec<TextEdit>> = HashMap::new();
-    for range in ranges {
-        let line_index = range.file.line_index(db);
-        let target_uri = state.wire_url(range.file).to_uri()?;
-        let range = to_proto::range(range.range, line_index, encoding)?;
+    for file_range in ranges {
+        let line_index = file_range.file.line_index(db);
+        let path = file_range.file.path(db);
+
+        // A rename is all or nothing. Skipping a file here would rename some
+        // uses of the symbol and silently leave the rest behind, so we bail
+        // instead.
+        let target_uri = state
+            .wire_uri(file_range.file)
+            .with_context(|| format!("Can't rename: no valid URI for `{path}`."))?;
+        let range = to_proto::range(file_range.range, line_index, encoding)
+            .with_context(|| format!("Can't rename: no valid text range in `{path}`."))?;
+
         changes.entry(target_uri).or_default().push(TextEdit {
             range,
             new_text: new_text.clone(),

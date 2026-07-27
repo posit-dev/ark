@@ -9,6 +9,7 @@ use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::Uri;
 use url::Url;
 
 use super::source_handler::TestBehavior;
@@ -27,15 +28,13 @@ use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
-use crate::lsp::traits::url::UrlUriExt;
+use crate::lsp::traits::url::UrlExt;
 use crate::lsp::util::test_path;
 
-fn make_params(uri: Url, line: u32, character: u32) -> GotoDefinitionParams {
+fn make_params(uri: &Uri, line: u32, character: u32) -> GotoDefinitionParams {
     GotoDefinitionParams {
         text_document_position_params: lsp_types::TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier {
-                uri: uri.to_uri().unwrap(),
-            },
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
             position: lsp_types::Position::new(line, character),
         },
         work_done_progress_params: Default::default(),
@@ -45,20 +44,19 @@ fn make_params(uri: Url, line: u32, character: u32) -> GotoDefinitionParams {
 
 /// A state with several open files, each mirrored into `oak` like `did_open`
 /// does, so `source()` targets resolve through `file_by_path`.
-fn make_state_with(files: &[(&Url, &str)]) -> WorldState {
+fn make_state_with(files: &[(&str, &str)]) -> WorldState {
     let mut state = WorldState::default();
-    for (uri, code) in files {
-        insert_file(&mut state, uri, code);
+    for (wire, code) in files {
+        insert_file(&mut state, wire, code);
     }
     state
 }
 
 #[test]
 fn test_goto_definition() {
-    let uri = test_path("test.R");
-    let state = make_state(&uri, "foo <- 42\nprint(foo)\n");
+    let (state, uri) = make_state(test_path("test.R").as_str(), "foo <- 42\nprint(foo)\n");
 
-    let params = make_params(uri, 1, 6);
+    let params = make_params(&uri, 1, 6);
 
     assert_matches!(
         goto_definition(params, &state).unwrap(),
@@ -70,15 +68,14 @@ fn test_goto_definition() {
 
 #[test]
 fn test_goto_definition_prefers_local_symbol() {
-    let uri = test_path("file.R");
-    let state = make_state(&uri, "foo <- 1\nfoo\n");
+    let (state, uri) = make_state(test_path("file.R").as_str(), "foo <- 1\nfoo\n");
 
-    let params = make_params(uri.clone(), 1, 0);
+    let params = make_params(&uri, 1, 0);
 
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, uri.to_uri().unwrap());
+            assert_eq!(links[0].target_uri, uri);
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -86,41 +83,50 @@ fn test_goto_definition_prefers_local_symbol() {
 
 #[test]
 fn test_target_uri_is_verbatim() {
-    // The doubled slash normalises away in `FilePath`, so the target URI is
-    // only correct if it comes from the buffer's verbatim URL.
-    let uri = Url::parse("file:///C:/proj//file.R").unwrap();
-    let state = make_state(&uri, "foo <- 1\nfoo\n");
+    // `FilePath` normalisation would collapse the doubled slash, decode and
+    // re-encode the percent-escaped drive colon with different casing, and
+    // leave the encoded brackets raw, so a `Url` round-trip changes all three
+    // wire strings below. The target URI is only correct if it comes from the
+    // buffer's verbatim URI.
+    for wire in [
+        "file:///C:/proj//file.R",
+        "file:///c%3A/proj/file.R",
+        "file:///C:/proj/f%5B1%5D.R",
+    ] {
+        let (state, uri) = make_state(wire, "foo <- 1\nfoo\n");
 
-    let params = make_params(uri.clone(), 1, 0);
+        let params = make_params(&uri, 1, 0);
 
-    assert_matches!(
-        goto_definition(params, &state).unwrap(),
-        Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, uri.to_uri().unwrap());
-        }
-    );
-    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
+        assert_matches!(
+            goto_definition(params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri.as_str(), wire);
+            }
+        );
+        // Confirm the round-trip really would have differed, so the check
+        // above bites.
+        let url = Url::parse(wire).unwrap();
+        assert_ne!(FilePath::from_url(&url).to_url(), url);
+    }
 }
 
 #[test]
 fn test_unbound_identifier_returns_none() {
     // A free identifier with no reachable binding returns `None`, matching how
     // rust-analyzer and ty handle the same case.
-    let uri = test_path("file.R");
-    let state = make_state(&uri, "foo\n");
+    let (state, uri) = make_state(test_path("file.R").as_str(), "foo\n");
 
-    let params = make_params(uri, 0, 0);
+    let params = make_params(&uri, 0, 0);
     assert_eq!(goto_definition(params, &state).unwrap(), None);
 }
 
 #[test]
 fn test_cursor_on_operator_returns_none() {
     // Cursor on `<-`, not on an identifier use: nothing to resolve.
-    let uri = test_path("file.R");
-    let state = make_state(&uri, "foo <- 1\n");
+    let (state, uri) = make_state(test_path("file.R").as_str(), "foo <- 1\n");
 
     // Cursor on the `<` of `<-` at column 4.
-    let params = make_params(uri, 0, 4);
+    let params = make_params(&uri, 0, 4);
     assert_eq!(goto_definition(params, &state).unwrap(), None);
 }
 
@@ -129,11 +135,14 @@ fn test_unlinked_cross_file_returns_none() {
     // `foo` is defined in another open file, but this file doesn't `source()`
     // it, so R semantics can't reach it. goto-def is precise: it returns `None`
     // rather than guessing by name across the workspace like the legacy ark handler.
-    let uses_uri = test_path("uses.R");
-    let defs_uri = test_path("defs.R");
-    let state = make_state_with(&[(&uses_uri, "foo\n"), (&defs_uri, "foo <- function() 1\n")]);
+    let uses_wire = test_path("uses.R");
+    let uses_uri: Uri = uses_wire.as_str().parse().unwrap();
+    let state = make_state_with(&[
+        (uses_wire.as_str(), "foo\n"),
+        (test_path("defs.R").as_str(), "foo <- function() 1\n"),
+    ]);
 
-    let params = make_params(uses_uri, 0, 0);
+    let params = make_params(&uses_uri, 0, 0);
     assert_eq!(goto_definition(params, &state).unwrap(), None);
 }
 
@@ -144,18 +153,20 @@ fn test_resolves_across_source_directive() {
     // `definition_to_link` (the target file's own line index + URL). The
     // resolution itself is covered exhaustively by `oak_db`'s `file_resolve_at`
     // tests; this checks the goto-def wiring on top of it.
-    let script_uri = test_path("script.R");
-    let helpers_uri = test_path("helpers.R");
+    let script_wire = test_path("script.R");
+    let helpers_wire = test_path("helpers.R");
+    let helpers_uri: Uri = helpers_wire.as_str().parse().unwrap();
     let state = make_state_with(&[
-        (&script_uri, "source(\"helpers.R\")\nhelper\n"),
-        (&helpers_uri, "helper <- function() 1\n"),
+        (script_wire.as_str(), "source(\"helpers.R\")\nhelper\n"),
+        (helpers_wire.as_str(), "helper <- function() 1\n"),
     ]);
 
-    let params = make_params(script_uri, 1, 0);
+    let script_uri: Uri = script_wire.as_str().parse().unwrap();
+    let params = make_params(&script_uri, 1, 0);
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
+            assert_eq!(links[0].target_uri, helpers_uri);
             assert_eq!(links[0].target_range, range((0, 0), (0, 6)));
         }
     );
@@ -166,18 +177,22 @@ fn test_local_def_shadows_sourced() {
     // A local `<-` after a `source()` shadows the sourced binding, so the use
     // resolves to the local def (in this file), not the sourced one. The link
     // range must point at the local def.
-    let script_uri = test_path("script.R");
-    let helpers_uri = test_path("helpers.R");
+    let script_wire = test_path("script.R");
+    let helpers_wire = test_path("helpers.R");
+    let script_uri: Uri = script_wire.as_str().parse().unwrap();
     let state = make_state_with(&[
-        (&script_uri, "source(\"helpers.R\")\nfoo <- 1\nfoo\n"),
-        (&helpers_uri, "foo <- function() 2\n"),
+        (
+            script_wire.as_str(),
+            "source(\"helpers.R\")\nfoo <- 1\nfoo\n",
+        ),
+        (helpers_wire.as_str(), "foo <- function() 2\n"),
     ]);
 
-    let params = make_params(script_uri.clone(), 2, 0);
+    let params = make_params(&script_uri, 2, 0);
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
-            assert_eq!(links[0].target_uri, script_uri.to_uri().unwrap());
+            assert_eq!(links[0].target_uri, script_uri);
             assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
         }
     );
@@ -189,21 +204,23 @@ fn test_sourced_file_with_repeated_def_offers_both() {
     // `if`/`else`, either arm could run, so goto-def offers both candidate
     // definitions, in definition order. Ranges are in the target file's
     // coordinates.
-    let script_uri = test_path("script.R");
-    let helpers_uri = test_path("helpers.R");
+    let script_wire = test_path("script.R");
+    let helpers_wire = test_path("helpers.R");
+    let helpers_uri: Uri = helpers_wire.as_str().parse().unwrap();
     let state = make_state_with(&[
-        (&script_uri, "source(\"helpers.R\")\nfn\n"),
-        (&helpers_uri, "if (cond) fn <- 1 else fn <- 2\n"),
+        (script_wire.as_str(), "source(\"helpers.R\")\nfn\n"),
+        (helpers_wire.as_str(), "if (cond) fn <- 1 else fn <- 2\n"),
     ]);
 
-    let params = make_params(script_uri, 1, 0);
+    let script_uri: Uri = script_wire.as_str().parse().unwrap();
+    let params = make_params(&script_uri, 1, 0);
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 2);
-            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
+            assert_eq!(links[0].target_uri, helpers_uri);
             assert_eq!(links[0].target_range, range((0, 10), (0, 12)));
-            assert_eq!(links[1].target_uri, helpers_uri.to_uri().unwrap());
+            assert_eq!(links[1].target_uri, helpers_uri);
             assert_eq!(links[1].target_range, range((0, 23), (0, 25)));
         }
     );
@@ -214,22 +231,24 @@ fn test_sourced_file_with_sequential_redef_offers_runtime_winner() {
     // When the sourced file binds the same name twice in sequence, the second
     // overwrites the first, so only the last binding is in effect when
     // `source()` finishes. goto-def offers just that one.
-    let script_uri = test_path("script.R");
-    let helpers_uri = test_path("helpers.R");
+    let script_wire = test_path("script.R");
+    let helpers_wire = test_path("helpers.R");
+    let helpers_uri: Uri = helpers_wire.as_str().parse().unwrap();
     let state = make_state_with(&[
-        (&script_uri, "source(\"helpers.R\")\nfn\n"),
+        (script_wire.as_str(), "source(\"helpers.R\")\nfn\n"),
         (
-            &helpers_uri,
+            helpers_wire.as_str(),
             "fn <- function() 'first'\nfn <- function() 'second'\n",
         ),
     ]);
 
-    let params = make_params(script_uri, 1, 0);
+    let script_uri: Uri = script_wire.as_str().parse().unwrap();
+    let params = make_params(&script_uri, 1, 0);
     assert_matches!(
         goto_definition(params, &state).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, helpers_uri.to_uri().unwrap());
+            assert_eq!(links[0].target_uri, helpers_uri);
             assert_eq!(links[0].target_range, range((1, 0), (1, 2)));
         }
     );
@@ -280,7 +299,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         .import("foopkg")
         .write(workspace.path());
     let use_path = workspace.path().join("R").join("use.R");
-    let use_uri = Url::from_file_path(&use_path).unwrap();
+    let use_uri: Uri = Url::from_file_path(&use_path).unwrap().to_uri().unwrap();
     write_sources(&workspace.path().join("R"), &[("use.R", "foo()\n")]);
 
     // Open the workspace folder, triggering a workspace scan
@@ -292,10 +311,10 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
     let foo_file = world.db.package_by_name("foopkg").unwrap().files(&world.db)[0];
 
     assert_matches!(
-        goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
+        goto_definition(make_params(&use_uri, 0, 0), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(foo_file).to_uri().unwrap());
+            assert_eq!(links[0].target_uri, world.wire_uri(foo_file).unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -346,7 +365,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         .import_from("barpkg", "bar")
         .write(workspace.path());
     let use_path = workspace.path().join("R").join("use.R");
-    let use_uri = Url::from_file_path(&use_path).unwrap();
+    let use_uri: Uri = Url::from_file_path(&use_path).unwrap().to_uri().unwrap();
     write_sources(&workspace.path().join("R"), &[("use.R", "bar()\n")]);
 
     // Open the workspace folder, triggering a workspace scan
@@ -358,10 +377,10 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
     let bar_file = world.db.package_by_name("barpkg").unwrap().files(&world.db)[0];
 
     assert_matches!(
-        goto_definition(make_params(use_uri, 0, 0), world).unwrap(),
+        goto_definition(make_params(&use_uri, 0, 0), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(bar_file).to_uri().unwrap());
+            assert_eq!(links[0].target_uri, world.wire_uri(bar_file).unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
@@ -408,7 +427,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
     // Workspace usage pkg functions
     let workspace = tempfile::tempdir().unwrap();
     let use_path = workspace.path().join("R").join("use.R");
-    let use_uri = Url::from_file_path(&use_path).unwrap();
+    let use_uri: Uri = Url::from_file_path(&use_path).unwrap().to_uri().unwrap();
     write_sources(&workspace.path().join("R"), &[(
         "use.R",
         "pkg::foo()\npkg:::bar()\npkg:::foo()\npkg::bar()\n",
@@ -424,37 +443,37 @@ async fn test_goto_definition_resolves_namespace_accesses() {
 
     // `pkg::f<@>oo()`, exported `foo` reached through `::`
     assert_matches!(
-        goto_definition(make_params(use_uri.clone(), 0, 6), world).unwrap(),
+        goto_definition(make_params(&use_uri, 0, 6), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
+            assert_eq!(links[0].target_uri, world.wire_uri(file).unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
 
     // `pkg:::b<@>ar()`, internal `bar` reached through `:::`
     assert_matches!(
-        goto_definition(make_params(use_uri.clone(), 1, 7), world).unwrap(),
+        goto_definition(make_params(&use_uri, 1, 7), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
+            assert_eq!(links[0].target_uri, world.wire_uri(file).unwrap());
             assert_eq!(links[0].target_range, range((1, 0), (1, 3)));
         }
     );
 
     // `pkg:::f<@>oo()`, `:::` also reaches an exported binding
     assert_matches!(
-        goto_definition(make_params(use_uri.clone(), 2, 7), world).unwrap(),
+        goto_definition(make_params(&use_uri, 2, 7), world).unwrap(),
         Some(GotoDefinitionResponse::Link(ref links)) => {
             assert_eq!(links.len(), 1);
-            assert_eq!(links[0].target_uri, world.wire_url(file).to_uri().unwrap());
+            assert_eq!(links[0].target_uri, world.wire_uri(file).unwrap());
             assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
         }
     );
 
     // `pkg::b<@>ar()`, `::` can't reach the unexported `bar`
     assert_eq!(
-        goto_definition(make_params(use_uri, 3, 6), world).unwrap(),
+        goto_definition(make_params(&use_uri, 3, 6), world).unwrap(),
         None
     );
 }

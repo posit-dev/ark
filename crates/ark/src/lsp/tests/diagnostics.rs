@@ -4,6 +4,7 @@ use url::Url;
 
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UrlExt;
 use crate::r_task;
 
 #[test]
@@ -21,13 +22,13 @@ fn test_diagnostics_published_through_refresh_snapshot() {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
-        state.insert_open_file(uri.clone(), file, None);
+        state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
         // Mirror `diagnostics_refresh_all`: fetch the `File` from the live
         // state, then hand the worker the `diagnostics_snapshot`. The snapshot's
         // oak must still serve that file.
         let file = state
-            .open_file(&uri)
+            .open_file(&FilePath::from_url(&uri))
             .expect("file is open in live state")
             .file();
 

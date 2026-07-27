@@ -188,8 +188,8 @@ pub(crate) fn handle_folding_range(
     params: FoldingRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<FoldingRange>>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     match folding_range(db, file) {
         Ok(foldings) => Ok(Some(foldings)),
@@ -214,8 +214,12 @@ pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
 ) -> LspResult<Option<CompletionResponse>> {
-    let uri = params.text_document_position.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params
+        .text_document_position
+        .text_document
+        .uri
+        .to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -260,12 +264,12 @@ pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<C
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
-    let uri = params
+    let path = params
         .text_document_position_params
         .text_document
         .uri
-        .to_url()?;
-    let file = state.open_file(&uri)?.file();
+        .to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -307,12 +311,12 @@ pub(crate) fn handle_signature_help(
     params: SignatureHelpParams,
     state: &WorldState,
 ) -> LspResult<Option<SignatureHelp>> {
-    let uri = params
+    let path = params
         .text_document_position_params
         .text_document
         .uri
-        .to_url()?;
-    let file = state.open_file(&uri)?.file();
+        .to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -358,8 +362,8 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SelectionRange>>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
@@ -429,8 +433,8 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> LspResult<Option<StatementRangeResponse>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -443,8 +447,8 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> LspResult<Option<HelpTopicResponse>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let point =
@@ -458,8 +462,8 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let uri = ctxt.text_document.uri.to_url()?;
-    let open_file = state.open_file(&uri)?;
+    let path = ctxt.text_document.uri.to_document_path()?;
+    let open_file = state.open_file(&path)?;
     let encoding = state.config.position_encoding;
 
     let db = &state.db;
@@ -489,8 +493,8 @@ pub(crate) fn handle_code_action(
     lsp_state: &LspState,
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?;
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?;
     let db = &state.db;
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;

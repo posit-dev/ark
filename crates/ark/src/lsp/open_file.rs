@@ -4,6 +4,7 @@ use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::Db;
 use oak_db::File;
 use tower_lsp_server::ls_types as lsp_types;
+#[cfg(test)]
 use url::Url;
 
 use crate::lsp::config::DocumentConfig;
@@ -19,16 +20,16 @@ pub(crate) struct OpenFile {
     file: File,
     version: Option<i32>,
     config: DocumentConfig,
-    wire_url: Url,
+    wire_uri: lsp_types::Uri,
 }
 
 impl OpenFile {
-    pub(crate) fn new(file: File, version: Option<i32>, wire_url: Url) -> Self {
+    pub(crate) fn new(file: File, version: Option<i32>, wire_uri: lsp_types::Uri) -> Self {
         Self {
             file,
             version,
             config: DocumentConfig::default(),
-            wire_url,
+            wire_uri,
         }
     }
 
@@ -61,10 +62,10 @@ impl OpenFile {
         &self.config
     }
 
-    /// The verbatim editor URL, preserved so wire output echoes the URI the
-    /// editor sent us. See [`crate::lsp::state::WorldState::wire_url`].
-    pub(crate) fn wire_url(&self) -> &Url {
-        &self.wire_url
+    /// The verbatim `Uri` the editor sent us, preserved so wire output
+    /// replays it exactly. See [`crate::lsp::state::WorldState::wire_uri`].
+    pub(crate) fn wire_uri(&self) -> &lsp_types::Uri {
+        &self.wire_uri
     }
 
     pub(crate) fn set_version(&mut self, version: Option<i32>) {
@@ -165,6 +166,7 @@ pub(crate) fn test_open_file(code: &str) -> (oak_db::OakDatabase, OpenFile) {
 
     let db = oak_db::OakDatabase::new();
     let url = Url::parse("file:///test.R").unwrap();
+    let uri: lsp_types::Uri = url.as_str().parse().unwrap();
     let key = FilePath::from_url(&url);
     let inner = File::new(
         &db,
@@ -173,7 +175,7 @@ pub(crate) fn test_open_file(code: &str) -> (oak_db::OakDatabase, OpenFile) {
         Some(code.to_string()),
         None,
     );
-    let file = OpenFile::new(inner, None, url);
+    let file = OpenFile::new(inner, None, uri);
     (db, file)
 }
 

@@ -31,7 +31,6 @@ use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::string::StringExt;
 use crate::lsp::traits::url::UriExt;
-use crate::lsp::traits::url::UrlUriExt;
 use crate::treesitter::point_end_of_previous_row;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -79,7 +78,7 @@ pub(crate) fn symbols(
             return;
         };
 
-        let Some(uri) = state.wire_url(file).to_uri().log_err() else {
+        let Some(uri) = state.wire_uri(file).log_err() else {
             return;
         };
 
@@ -165,8 +164,8 @@ pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    let uri = params.text_document.uri.to_url()?;
-    let file = state.open_file(&uri)?.file();
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
     let db = &state.db;
     let ast = file.tree_sitter(db);
 

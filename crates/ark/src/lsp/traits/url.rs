@@ -5,37 +5,32 @@
 //
 //
 
-use std::path::PathBuf;
-use std::result::Result::Ok;
-
+use aether_path::FilePath;
 use anyhow::*;
-use stdext::unwrap;
 use tower_lsp_server::ls_types::Uri;
 use url::Url;
 
-pub trait UrlExt {
-    fn file_path(&self) -> anyhow::Result<PathBuf>;
-}
-
-impl UrlExt for Url {
-    fn file_path(&self) -> anyhow::Result<PathBuf> {
-        let pathbuf = unwrap!(self.to_file_path(), Err(_) => {
-            return Err(anyhow!("error converting URI {} to PathBuf", self));
-        });
-
-        Ok(pathbuf)
-    }
-}
-
 /// `tower_lsp_server` carries document URIs on the wire as `ls_types::Uri`,
-/// a `fluent_uri`-backed type. The rest of this crate (in particular
-/// `aether_path::FilePath`) standardizes on `url::Url`. Convert at the LSP
-/// boundary so downstream code never has to deal with two URI types.
+/// a `fluent_uri`-backed type. Convert at the LSP boundary so downstream code
+/// never has to deal with two URI types.
 pub trait UriExt {
+    /// The document identity for this URI.
+    ///
+    /// Not named `to_file_path()` because of a conflict with `Uri::to_file_path()`.
+    fn to_document_path(&self) -> anyhow::Result<FilePath>;
+
+    /// The URI as a [`Url`]. Prefer [`Self::to_document_path()`] for identity.
+    /// This is for the few places that need URL structure on the way to
+    /// something else, such as deriving an [`aether_path::AbsPathBuf`] for a
+    /// workspace folder.
     fn to_url(&self) -> anyhow::Result<Url>;
 }
 
 impl UriExt for Uri {
+    fn to_document_path(&self) -> anyhow::Result<FilePath> {
+        Ok(FilePath::from_url(&self.to_url()?))
+    }
+
     fn to_url(&self) -> anyhow::Result<Url> {
         Url::parse(self.as_str())
             .with_context(|| format!("error converting URI {} to URL", self.as_str()))
@@ -44,11 +39,11 @@ impl UriExt for Uri {
 
 /// The reverse of [`UriExt::to_url()`], for building outgoing LSP responses
 /// that carry a `Uri` (e.g. `Location`, `WorkspaceEdit`).
-pub trait UrlUriExt {
+pub trait UrlExt {
     fn to_uri(&self) -> anyhow::Result<Uri>;
 }
 
-impl UrlUriExt for Url {
+impl UrlExt for Url {
     fn to_uri(&self) -> anyhow::Result<Uri> {
         self.as_str()
             .parse::<Uri>()
