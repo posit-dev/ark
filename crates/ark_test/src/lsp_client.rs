@@ -36,6 +36,8 @@ pub struct LspClient {
     server_capabilities: Option<lsp_types::ServerCapabilities>,
     /// Buffered diagnostics notifications, keyed by document URI
     diagnostics: std::collections::HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
+    /// Set by `disconnect_abruptly()` so `Drop` skips the graceful `shutdown`/`exit` sequence
+    killed: bool,
 }
 
 impl LspClient {
@@ -56,7 +58,21 @@ impl LspClient {
             open_documents: Vec::new(),
             server_capabilities: None,
             diagnostics: std::collections::HashMap::new(),
+            killed: false,
         })
+    }
+
+    /// Sever the connection with a TCP reset instead of a graceful close.
+    ///
+    /// A zero `SO_LINGER` makes the close abortive, so the socket sends a `RST`
+    /// rather than a `FIN`. That's what an abrupt client crash or network drop
+    /// looks like, as opposed to `shutdown()`, which closes cleanly.
+    pub fn disconnect_abruptly(mut self) {
+        self.killed = true;
+
+        socket2::SockRef::from(self.writer.get_ref())
+            .set_linger(Some(Duration::ZERO))
+            .unwrap();
     }
 
     /// Initialize the LSP session.
@@ -471,7 +487,7 @@ impl LspClient {
 
 impl Drop for LspClient {
     fn drop(&mut self) {
-        if std::thread::panicking() {
+        if self.killed || std::thread::panicking() {
             return;
         }
         self.shutdown();

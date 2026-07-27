@@ -498,6 +498,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "socket2 0.6.3",
  "stdext",
  "tempfile",
  "tower-lsp",

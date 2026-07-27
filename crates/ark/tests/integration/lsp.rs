@@ -8,6 +8,10 @@
 // The lsp files in ark_test are for only integration tests with the Jupyter
 // kernel, i.e. LSP features that require dynamic access to the R session.
 
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+
 use ark_test::DummyArkFrontend;
 use serde_json::json;
 
@@ -18,6 +22,43 @@ fn test_lsp_init() {
 
     // Verify the server reports completion support
     assert!(lsp.server_capabilities().completion_provider.is_some());
+}
+
+// Reproduces https://github.com/posit-dev/ark/issues/1361: an abrupt client
+// disconnect (TCP reset, e.g. the extension host being recycled) hits an
+// `unreachable!()` in our pinned tower-lsp fork's transport and panics the
+// `ark-lsp` thread.
+#[test]
+fn test_lsp_survives_abrupt_disconnect() {
+    // The panic happens on the `ark-lsp` thread, so a plain `#[should_panic]`
+    // or `catch_unwind` on this (the main test) thread can't see it. Install
+    // a hook that records panics by thread name instead, and chain to the
+    // previous hook so panic output still gets printed.
+    let panic_message: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let panic_message_hook = Arc::clone(&panic_message);
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() == Some("ark-lsp") {
+            *panic_message_hook.lock().unwrap() = Some(info.to_string());
+        }
+        previous_hook(info);
+    }));
+
+    let frontend = DummyArkFrontend::lock();
+    let lsp = frontend.start_lsp();
+
+    lsp.disconnect_abruptly();
+
+    // Give the LSP thread a moment to observe the reset.
+    std::thread::sleep(Duration::from_millis(200));
+
+    if let Some(message) = panic_message.lock().unwrap().take() {
+        panic!("`ark-lsp` thread panicked on abrupt disconnect: {message}");
+    }
+
+    // The LSP should still be usable after a client disconnects abruptly.
+    let lsp2 = frontend.start_lsp();
+    assert!(lsp2.server_capabilities().completion_provider.is_some());
 }
 
 // The two cases below test errors that don't depend on the rename
