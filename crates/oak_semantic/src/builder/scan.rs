@@ -233,15 +233,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         alternative: impl FnOnce(&mut Self),
     ) {
         let pre = self.scan.bound_so_far.snapshot();
+        // A `library()` in one branch must not be visible in the sibling
+        // branch. Peel each side's attaches off at this mark, then re-add both
+        // only after the join.
+        let attach_mark = self.scan.attached_flow.len();
 
         consequence(self);
 
         let post = self.scan.bound_so_far.snapshot();
+        let consequence_attaches = self.scan.attached_flow.split_off(attach_mark);
         self.scan.bound_so_far.restore(pre);
 
         alternative(self);
 
         self.scan.bound_so_far.merge(post);
+
+        // Both branches' attaches are live afterwards, in source order:
+        // consequence then alternative. This is consistent with how we treat
+        // assignments in branches.
+        let alternative_attaches = self.scan.attached_flow.split_off(attach_mark);
+        self.scan.attached_flow.extend(consequence_attaches);
+        self.scan.attached_flow.extend(alternative_attaches);
     }
 
     /// Walk descendant nodes of `expr`, scanning the outermost

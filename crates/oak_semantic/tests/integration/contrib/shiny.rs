@@ -135,6 +135,66 @@ reactive({
 }
 
 #[test]
+fn test_nse_attach_does_not_leak_across_branches() {
+    // `library(shiny)` in the `if` branch must not be visible in the `else`
+    // branch. On the `else` path shiny never attached, so `reactive` is not NSE
+    // and `x` stays at file scope. Without branch-scoped attaches the `else`
+    // would wrongly see shiny leaked from the `if`.
+    let index = index(
+        "\
+if (cond) {
+    library(shiny)
+} else {
+    reactive({
+        x <- 1
+    })
+}
+",
+    );
+    let file = ScopeId::from(0);
+
+    // shiny is attached on some path, so it is over-approximated as attached
+    // after the join, but the `else` scan did not see it.
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_in_branch_is_visible_after_join() {
+    // A `library(shiny)` in the `if` branch is attached on some path, so after
+    // the branch it is over-approximated as attached (union with the no-attach
+    // else path). The later `reactive` therefore resolves to shiny's NSE
+    // annotation and `x` is scoped. This exercises the re-add of a branch's
+    // attaches after the join.
+    let index = index(
+        "\
+if (cond) library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let reactive_scope = ScopeId::from(1);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_attach_local_shadow_still_wins() {
     // A local `reactive` def shadows shiny's, so the call is not NSE even with
     // shiny attached.
