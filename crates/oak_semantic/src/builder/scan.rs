@@ -31,6 +31,7 @@ use crate::effects::ResolvedArgumentEffects;
 use crate::effects::ScopeContext;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
+use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
 use crate::semantic_index::ScopeId;
@@ -337,12 +338,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
 
         if let Some(package) = attach {
+            let call_range = call.syntax().text_trimmed_range();
             self.scan
                 .call_resolutions
-                .entry(call.syntax().text_trimmed_range())
+                .entry(call_range)
                 .or_default()
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
+                self.scan
+                    .attached_anywhere
+                    .push((package.clone(), call_range));
                 self.scan.attached_so_far.push(package);
             }
         }
@@ -547,16 +552,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let name = ident.name_text();
 
         // A conditional shadow is a binding on some path but not all: present in
-        // this scope's union (`scan_scope_binds()`) yet absent from `bound_so_far`.
-        let conditionally_shadowed =
-            self.scan_scope_binds(&name) && !self.scan.bound_so_far.is_bound(&name);
-        if !conditionally_shadowed {
+        // this scope's union (`scan_scope_binding_range()`) yet absent from
+        // `bound_so_far`.
+        let Some(binding_range) = self.scan_scope_binding_range(&name) else {
+            return;
+        };
+        if self.scan.bound_so_far.is_bound(&name) {
             return;
         }
 
         let call_range = call.syntax().text_trimmed_range();
-        self.diagnostics
-            .push(SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range });
+        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { binding_range },
+        });
     }
 
     /// Scan the `Current + Lazy` bodies queued since `watermark`, now that the
@@ -670,6 +680,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
+                self.scan
+                    .attached_anywhere
+                    .push((pkg.clone(), source_range));
                 self.scan.attached_so_far.push(pkg.clone());
             }
         }
@@ -687,6 +700,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match self.scan_scope() {
             ScanScope::Open(scope) => scope.binds(name),
             ScanScope::Arena(scope) => self.scope_binds_anywhere(scope, name),
+        }
+    }
+
+    /// The site where the current evaluation frame binds `name`, matching
+    /// what [`scan_scope_binds`](Self::scan_scope_binds) counts as a binding
+    /// (so it returns `Some` on exactly the same names).
+    fn scan_scope_binding_range(&self, name: &str) -> Option<TextRange> {
+        match self.scan_scope() {
+            ScanScope::Open(scope) => scope.binding_range(name),
+            ScanScope::Arena(scope) => self.scope_binding_range(scope, name),
         }
     }
 

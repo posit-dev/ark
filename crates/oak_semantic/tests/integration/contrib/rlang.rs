@@ -1,3 +1,4 @@
+use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -239,7 +240,11 @@ rlang::on_load({ local <- identity })
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::LazyShadowAmbiguity { name, .. } => assert_eq!(name, "local"),
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            reason: AmbiguityReason::LazyShadow { .. },
+            ..
+        } => assert_eq!(name, "local"),
         other => panic!("unexpected diagnostic: {other:?}"),
     }
 }

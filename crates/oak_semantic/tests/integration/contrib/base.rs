@@ -4,6 +4,7 @@ use biome_rowan::AstNode;
 use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::SourceAnnotation;
+use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -1412,7 +1413,11 @@ y
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
             assert_eq!(name, "local");
             let start = u32::from(call_range.start()) as usize;
             let end = u32::from(call_range.end()) as usize;
@@ -1479,10 +1484,10 @@ f <- function() local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::LazyShadowAmbiguity {
+        SemanticDiagnostic::EffectAmbiguity {
             name,
             call_range,
-            overwrite_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
         } => {
             assert_eq!(name, "local");
             let call_start = u32::from(call_range.start()) as usize;
@@ -1530,7 +1535,11 @@ local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
             assert_eq!(name, "local");
             let start = u32::from(call_range.start()) as usize;
             let end = u32::from(call_range.end()) as usize;
@@ -1576,7 +1585,11 @@ with(d, {
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::ConditionalShadowAmbiguity { name, call_range } => {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
             assert_eq!(name, "local");
             let start = u32::from(call_range.start()) as usize;
             let end = u32::from(call_range.end()) as usize;
@@ -2362,10 +2375,10 @@ local <- identity
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::LazyShadowAmbiguity {
+        SemanticDiagnostic::EffectAmbiguity {
             name,
             call_range,
-            overwrite_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
         } => {
             assert_eq!(name, "local");
 

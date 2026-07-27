@@ -882,23 +882,40 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An effectful call (NSE scope or attach) recognized in a lazy context
-    /// whose callee is also bound by a lazy-crossed ancestor with undetermined
-    /// timing, so the decision is a guess. `call_range` points at the call we
-    /// recognized, `overwrite_range` at the ancestor binding that could
-    /// invalidate it (a later assignment in parent code, or one from another
-    /// lazy context).
-    LazyShadowAmbiguity {
+    /// An effect decision (NSE scope or attach) settled on the eager-linear
+    /// reading even though another reading was possible. `call_range` points at
+    /// the call we decided about, which may or may not have come out effectful;
+    /// `reason` says what made it ambiguous and where the competing site is.
+    EffectAmbiguity {
         name: String,
         call_range: TextRange,
-        overwrite_range: TextRange,
+        reason: AmbiguityReason,
     },
-    /// An NSE call whose bare callee is shadowed by a *conditional* local
-    /// binding (`if (cond) local <- identity; local({...})`). The eager linear
-    /// scan dropped the conditional binding and resolved the effect (built the
-    /// scope), so the scope shape is condition-dependent. `call_range` points at
-    /// the call.
-    ConditionalShadowAmbiguity { name: String, call_range: TextRange },
+}
+
+/// What made an [`EffectAmbiguity`](SemanticDiagnostic::EffectAmbiguity)
+/// ambiguous, and where the competing site is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AmbiguityReason {
+    /// The callee is bound by a lazy-crossed ancestor with undetermined
+    /// timing: a later assignment in parent code, or one from another
+    /// deferred body that could run before or after us. `overwrite_range`
+    /// points at that ancestor binding.
+    LazyShadow { overwrite_range: TextRange },
+    /// The callee is shadowed by a *conditional* local binding in the same
+    /// scope (`if (cond) local <- identity; local({...})`). The eager linear
+    /// scan dropped the conditional binding and resolved the effect, so the
+    /// scope shape is condition-dependent. `binding_range` points at the
+    /// conditional binding.
+    ConditionalShadow { binding_range: TextRange },
+    /// The callee would have been effectful, but the `library()`/`require()`
+    /// that annotates it was attached on only some paths and dropped at a
+    /// branch or loop join, so we read the call as plain. `attach_range` points
+    /// at that conditional attach.
+    ConditionalAttach {
+        package: String,
+        attach_range: TextRange,
+    },
 }
 
 // --- Iterators ---

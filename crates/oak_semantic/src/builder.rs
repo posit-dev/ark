@@ -145,6 +145,12 @@ struct ScanState {
     // `if (cond) { library(shiny); f <- function() reactive({ ... }) }`. Empty
     // for the file scope and for any unit defined outside a branch.
     attached_inherited: Vec<String>,
+    // Every package attached on any eager path, paired with the attaching
+    // call's range, in attach order. Unlike `attached_so_far`, this is never
+    // dropped or truncated at a branch or loop join. Used to probe whether an
+    // effect decision based on the linear view is ambiguous across paths
+    // (`record_conditional_attach_ambiguity()`).
+    attached_anywhere: Vec<(String, TextRange)>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
@@ -209,6 +215,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 body_scans: FxHashMap::default(),
                 attached_so_far: Vec::new(),
                 attached_inherited: Vec::new(),
+                attached_anywhere: Vec::new(),
                 open_scopes: Vec::new(),
                 deferred_bodies: Vec::new(),
             },

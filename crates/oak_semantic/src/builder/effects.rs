@@ -18,6 +18,7 @@ use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticDiagnostic;
 
@@ -117,20 +118,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let lazy = self.scan_is_lazy();
         let attached =
             attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far);
-        let effects = self.resolver.resolve_effects(sym, &attached, lazy)?;
+        let effects = self.resolver.resolve_effects(sym, &attached, lazy);
+
+        let Some(effects) = effects else {
+            // The search path didn't resolve. Probe whether it would have if a
+            // dropped attach had survived the join, so we can flag it.
+            self.record_conditional_attach_ambiguity(sym, range, lazy);
+            return None;
+        };
 
         // The callee is unbound by any eager binding, so its effect
         // holds. If a lazy-crossed ancestor binds it whole-scope, that
         // binding's timing relative to this deferred body is
         // undetermined, so the decision is a guess. Flag it.
-        //
-        // TODO(diagnostics): a symmetric attach ambiguity is out of
-        // scope here. A callee resolved not-effectful could be flipped
-        // by an attach from a sibling lazy body (`g <- function()
-        // library(shiny); f <- function() reactive({...}`). Detecting it
-        // needs the complete set of lazy-context attaches, a post-pass
-        // rather than this local ancestor check, so it belongs in the
-        // future salsa diagnostics query where this lint should move too.
         if let Some(overwrite_range) = self.is_lazily_shadowed(sym) {
             self.record_lazy_shadow_ambiguity(sym.to_string(), range, overwrite_range);
         }
@@ -265,12 +265,61 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         call_range: TextRange,
         overwrite_range: TextRange,
     ) {
-        self.diagnostics
-            .push(SemanticDiagnostic::LazyShadowAmbiguity {
-                name,
+        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
+        });
+    }
+
+    /// Probe whether `sym`'s effect still resolves after a conditional
+    /// attach. If the case, we record the ambiguity for diagnostics.
+    ///
+    /// This handles the eager case, where the dropped attach and the callee are
+    /// both reachable from the same scan. What's still open is the lazy-sibling
+    /// case (`g <- function() library(shiny); f <- function() reactive({...})`),
+    /// which needs the complete set of lazy-context attaches from a post-pass,
+    /// not this call-site probe. That belongs in the future salsa diagnostics
+    /// query where this lint family should move too.
+    fn record_conditional_attach_ambiguity(
+        &mut self,
+        sym: &str,
+        call_range: TextRange,
+        lazy: bool,
+    ) {
+        // A package in `attached_anywhere` but off the search path means it was
+        // dropped at a branch or loop join
+        let search_path =
+            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far);
+        let dropped: Vec<(String, TextRange)> = self
+            .scan
+            .attached_anywhere
+            .iter()
+            .filter(|(package, _)| !search_path.contains(package))
+            .cloned()
+            .collect();
+
+        // Probe one package at a time, most recent first, so the diagnostic
+        // mentions the attach that would actually have carried the effect.
+        for (package, attach_range) in dropped.into_iter().rev() {
+            if self
+                .resolver
+                .resolve_effects(sym, std::slice::from_ref(&package), lazy)
+                .is_none()
+            {
+                continue;
+            }
+
+            self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+                name: sym.to_string(),
                 call_range,
-                overwrite_range,
+                reason: AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
             });
+            return;
+        }
     }
 }
 

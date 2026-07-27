@@ -1,7 +1,9 @@
+use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::EvalEnv;
 use oak_semantic::semantic_index::EvalTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SymbolFlags;
 
 use crate::common::index_with_base as index;
@@ -364,4 +366,174 @@ reactive({
         index.symbols(file).get("y").unwrap().flags(),
         SymbolFlags::IS_BOUND
     );
+}
+
+// --- Conditional attach ambiguity diagnostics ---
+
+#[test]
+fn test_nse_conditional_attach_ambiguity_flagged() {
+    // `library(shiny)` on only the `if` path drops at the join (see
+    // `test_nse_conditional_attach_drops_at_join`), so `reactive` resolves as
+    // effectless. That's ambiguous: on the `cond` path shiny was attached, so
+    // the effect could have held. Flag it, pointing at the dropped attach.
+    let source = "\
+if (cond) library(shiny)
+reactive({
+    x <- 1
+})
+";
+    let index = index(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason:
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+        } => {
+            assert_eq!(name, "reactive");
+            assert_eq!(package, "shiny");
+
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "reactive({\n    x <- 1\n})");
+
+            let attach_start = u32::from(attach_range.start()) as usize;
+            let attach_end = u32::from(attach_range.end()) as usize;
+            assert_eq!(&source[attach_start..attach_end], "library(shiny)");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_nse_conditional_attach_names_the_responsible_package() {
+    // Two attaches drop, but only shiny annotates `reactive`. The diagnostic
+    // has to name shiny and point at its `library()`, not at whichever dropped
+    // attach happens to come last.
+    let source = "\
+if (a) library(shiny)
+if (b) library(testthat)
+reactive({
+    x <- 1
+})
+";
+    let index = index(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            reason:
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+            ..
+        } => {
+            assert_eq!(package, "shiny");
+            let start = u32::from(attach_range.start()) as usize;
+            let end = u32::from(attach_range.end()) as usize;
+            assert_eq!(&source[start..end], "library(shiny)");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_nse_coguarded_attach_no_ambiguity() {
+    // Attach and use are co-guarded (see `test_nse_coguarded_attach_reaches_lazy_body`):
+    // reaching `f`'s definition already implies shiny is attached, so
+    // `attached_inherited` resolves `reactive` on the first probe. The
+    // conditional-attach probe never runs, so nothing is flagged even though
+    // the attach is conditional in isolation.
+    let index = index(
+        "\
+if (cond) {
+    library(shiny)
+    f <- function() reactive({
+        x <- 1
+    })
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+
+    let f_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_unconditional_attach_no_ambiguity() {
+    // shiny is attached unconditionally, so nothing ever drops at a join and
+    // the first resolution already succeeds. No diagnostic.
+    let index = index(
+        "\
+library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_nse_loop_attach_ambiguity_flagged() {
+    // A `library(shiny)` in a `for` body drops after the loop (the body may not
+    // run), the same as the branch case, so it's just as flaggable.
+    let index = index(
+        "\
+for (i in pkgs) library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            reason: AmbiguityReason::ConditionalAttach { package, .. },
+            ..
+        } => {
+            assert_eq!(name, "reactive");
+            assert_eq!(package, "shiny");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_nse_attach_absent_no_ambiguity() {
+    // shiny is never attached anywhere, so `attached_anywhere` is empty and the
+    // conditional-attach probe finds nothing either. `reactive` stays
+    // non-NSE, silently.
+    let index = index(
+        "\
+reactive({
+    x <- 1
+})
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
 }
