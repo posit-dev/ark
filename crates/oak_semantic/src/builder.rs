@@ -132,12 +132,12 @@ struct ScanState {
     // See [`BodyScan`].
     body_scans: FxHashMap<TextRange, BodyScan>,
     // Packages attached in eager flow order (file level and eager NSE descents),
-    // appended only when `!is_lazy()`. Append-only, never restored across a
-    // descent or branch: attaches hit the global search path, they aren't scoped
-    // like `bound_so_far`. An eager callee reads the flow-precise prefix during
-    // the file scan. A lazy callee reads the complete set during the walk (which
-    // runs after the file scan finishes), so this doubles as the end-of-file
-    // attach view.
+    // appended only when `!is_lazy()`. Scoped to the eager linear view like
+    // `bound_so_far`: a `library()` on only one branch, or in a loop body that
+    // may not run, isn't attached on every path and drops at the join. An
+    // eager callee reads the flow-precise prefix during the file scan. A lazy
+    // callee reads the complete every-path set during the walk (which runs after
+    // the file scan finishes), so this doubles as the end-of-file attach view.
     attached_flow: Vec<String>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.

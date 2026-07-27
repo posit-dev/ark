@@ -191,14 +191,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&sequence);
                 }
 
-                // Since the body may not run (empty sequence), a binding created
-                // in the body isn't on every path, so the snapshot/merge
-                // intersects it away and it doesn't persist past the loop.
+                // Since the body may not run (empty sequence), a binding or
+                // `library()` created in the body isn't on every path, so it
+                // doesn't persist past the loop. The snapshot/merge intersects
+                // bindings away, and the mark truncates the body's attaches.
+                let attach_mark = self.scan.attached_flow.len();
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
                 }
                 self.scan.bound_so_far.merge(pre_body);
+                self.scan.attached_flow.truncate(attach_mark);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -228,13 +231,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 }
 
                 // Since the body may not run (condition false on entry), a
-                // binding created in the body isn't on every path, so the
-                // snapshot/merge intersects it away and it doesn't persist.
+                // binding or `library()` created in the body isn't on every
+                // path, so it doesn't persist. The snapshot/merge intersects
+                // bindings away, and the mark truncates the body's attaches.
+                let attach_mark = self.scan.attached_flow.len();
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
                 }
                 self.scan.bound_so_far.merge(pre_body);
+                self.scan.attached_flow.truncate(attach_mark);
             },
 
             // `repeat` loops, subsets, extractions, parentheses, unary ops, and
@@ -255,8 +261,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ) {
         let pre = self.scan.bound_so_far.snapshot();
         // A `library()` in one branch must not be visible in the sibling
-        // branch. Peel each side's attaches off at this mark, then re-add both
-        // only after the join.
+        // branch, so peel each side's attaches off at this mark and re-add only
+        // what survives the join.
         let attach_mark = self.scan.attached_flow.len();
 
         consequence(self);
@@ -269,11 +275,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         self.scan.bound_so_far.merge(post);
 
-        // Both branches' attaches stay live afterwards, in source order:
-        // consequence then alternative.
+        // A package attached on only one branch isn't attached on every path, so
+        // it drops at the join, the same as a one-branch binding dropping from
+        // `bound_so_far`. Only packages attached on both branches survive.
         let alternative_attaches = self.scan.attached_flow.split_off(attach_mark);
-        self.scan.attached_flow.extend(consequence_attaches);
-        self.scan.attached_flow.extend(alternative_attaches);
+        for package in consequence_attaches {
+            if alternative_attaches.contains(&package) {
+                self.scan.attached_flow.push(package);
+            }
+        }
     }
 
     /// Walk descendant nodes of `expr`, scanning the outermost

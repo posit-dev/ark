@@ -153,8 +153,8 @@ if (cond) {
     );
     let file = ScopeId::from(0);
 
-    // shiny is attached on some path, so it is over-approximated as attached
-    // after the join, but the `else` scan did not see it.
+    // The public attach list reports shiny (it's emitted per attach call, so it
+    // sees the attach on the `if` path), but the `else` scan never saw shiny.
     assert_eq!(index.attached_packages(), vec!["shiny"]);
     assert_eq!(index.scope_ids().count(), 1);
     assert_eq!(
@@ -164,12 +164,11 @@ if (cond) {
 }
 
 #[test]
-fn test_nse_attach_in_branch_is_visible_after_join() {
-    // A `library(shiny)` in the `if` branch is attached on some path, so after
-    // the branch it is over-approximated as attached (union with the no-attach
-    // else path). The later `reactive` therefore resolves to shiny's NSE
-    // annotation and `x` is scoped. This exercises the re-add of a branch's
-    // attaches after the join.
+fn test_nse_conditional_attach_drops_at_join() {
+    // A `library(shiny)` on only the `if` path isn't attached on every path, so
+    // it drops at the join, the same as a one-branch binding dropping from
+    // `bound_so_far`. The later `reactive` then resolves against an attach set
+    // without shiny, so it is not NSE and `x` stays at file scope.
     let index = index(
         "\
 if (cond) library(shiny)
@@ -179,17 +178,63 @@ reactive({
 ",
     );
     let file = ScopeId::from(0);
+
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    // The public attach list still reports shiny (emitted per attach call,
+    // independent of the flow-join drop).
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+}
+
+#[test]
+fn test_nse_attach_on_both_branches_survives_join() {
+    // Attached on both paths, so shiny is on every path and survives the join.
+    // The later `reactive` resolves to shiny's NSE annotation and `x` is scoped.
+    // Note that a more realistic version of this would be
+    // `library(myshinyfork)` in the `else` branch. This would be sound but we
+    // don't support this (unseen in the wild?) pattern.
+    let index = index(
+        "\
+if (cond) library(shiny) else library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
     let reactive_scope = ScopeId::from(1);
 
-    assert_eq!(index.attached_packages(), vec!["shiny"]);
     assert_eq!(index.scope_ids().count(), 2);
     assert_eq!(
         index.scope(reactive_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
     );
-    assert!(index.symbols(file).get("x").is_none());
     assert_eq!(
         index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_attach_in_loop_body_drops_after_loop() {
+    // A `library(shiny)` in a `for` body isn't attached on every path (the body
+    // may not run), so it drops after the loop. The later `reactive` is not NSE
+    // and `x` stays at file scope.
+    let index = index(
+        "\
+for (i in pkgs) library(shiny)
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
         SymbolFlags::IS_BOUND
     );
 }
@@ -217,3 +262,4 @@ reactive({
         SymbolFlags::IS_BOUND
     );
 }
+
