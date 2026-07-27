@@ -201,23 +201,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                let pre_if = self.scan.bound_so_far.snapshot();
-
-                if let Ok(consequence) = stmt.consequence() {
-                    self.scan_expression(&consequence);
-                }
-
-                let post_if = self.scan.bound_so_far.snapshot();
-                self.scan.bound_so_far.restore(pre_if);
-
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.scan_expression(&alternative);
-                    }
-                }
-
-                // Both branches' bindings are live afterwards.
-                self.scan.bound_so_far.merge(post_if);
+                self.scan_branch(
+                    |this| {
+                        if let Ok(consequence) = stmt.consequence() {
+                            this.scan_expression(&consequence);
+                        }
+                    },
+                    |this| {
+                        if let Some(else_clause) = stmt.else_clause() {
+                            if let Ok(alternative) = else_clause.alternative() {
+                                this.scan_expression(&alternative);
+                            }
+                        }
+                    },
+                );
             },
 
             // `while`/`repeat` loops, subsets, extractions, parentheses, unary
@@ -228,6 +225,23 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.scan_descendants(expr.syntax());
             },
         }
+    }
+
+    fn scan_branch(
+        &mut self,
+        consequence: impl FnOnce(&mut Self),
+        alternative: impl FnOnce(&mut Self),
+    ) {
+        let pre = self.scan.bound_so_far.snapshot();
+
+        consequence(self);
+
+        let post = self.scan.bound_so_far.snapshot();
+        self.scan.bound_so_far.restore(pre);
+
+        alternative(self);
+
+        self.scan.bound_so_far.merge(post);
     }
 
     /// Walk descendant nodes of `expr`, scanning the outermost

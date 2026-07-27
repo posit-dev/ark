@@ -185,19 +185,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&sequence);
                 }
 
-                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                if let Ok(body) = stmt.body() {
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
-
-                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk_loop_body(stmt.body().ok(), true);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -206,26 +194,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&condition);
                 }
 
-                let pre_if = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                // If-body (consequence)
-                if let Ok(consequence) = stmt.consequence() {
-                    self.walk_expression(&consequence);
-                }
-
-                let post_if = self.walk.use_def_maps[self.current_scope].snapshot();
-                self.walk.use_def_maps[self.current_scope].restore(pre_if);
-
-                // Else-body (alternative), if present. If absent, the
-                // "else path" is just the pre-if state we restored to.
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.walk_expression(&alternative);
-                    }
-                }
-
-                // After: definitions from both branches are live
-                self.walk.use_def_maps[self.current_scope].merge(post_if);
+                self.walk_branch(
+                    |this| {
+                        if let Ok(consequence) = stmt.consequence() {
+                            this.walk_expression(&consequence);
+                        }
+                    },
+                    |this| {
+                        if let Some(else_clause) = stmt.else_clause() {
+                            if let Ok(alternative) = else_clause.alternative() {
+                                this.walk_expression(&alternative);
+                            }
+                        }
+                    },
+                );
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -233,34 +215,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&condition);
                 }
 
-                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                if let Ok(body) = stmt.body() {
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
-
                 // Body may not execute
-                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk_loop_body(stmt.body().ok(), true);
             },
 
             AnyRExpression::RRepeatStatement(stmt) => {
                 // Body always executes at least once, so no merge with pre-loop state.
-                if let Ok(body) = stmt.body() {
-                    let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
+                self.walk_loop_body(stmt.body().ok(), false);
             },
 
             AnyRExpression::RBogusExpression(_) => {},
@@ -284,6 +245,50 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             _ => {
                 self.walk_descendants(expr.syntax());
             },
+        }
+    }
+
+    fn walk_branch(
+        &mut self,
+        consequence: impl FnOnce(&mut Self),
+        alternative: impl FnOnce(&mut Self),
+    ) {
+        let pre = self.walk.use_def_maps[self.current_scope].snapshot();
+
+        consequence(self);
+
+        let post = self.walk.use_def_maps[self.current_scope].snapshot();
+        self.walk.use_def_maps[self.current_scope].restore(pre);
+
+        alternative(self);
+
+        self.walk.use_def_maps[self.current_scope].merge(post);
+    }
+
+    // A loop body can run again, so a definition low in the body reaches a
+    // use above it on the next iteration. The forward walk records the use
+    // before reaching that definition, which `finish_loop_defs()` patches into
+    // the use afterward.
+    //
+    // `may_skip_body` is true when the body might run zero times, e.g. with
+    // `for`/`while`. In that case the pre-loop state must stay live alongside
+    // what the body bound. `repeat` runs at least once, so the body's state
+    // replaces it.
+    fn walk_loop_body(&mut self, body: Option<AnyRExpression>, may_skip_body: bool) {
+        let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
+
+        if let Some(body) = body {
+            let first_use = self.walk.uses[self.current_scope].next_id();
+            self.walk_expression(&body);
+            self.walk.use_def_maps[self.current_scope].finish_loop_defs(
+                &pre_loop,
+                first_use,
+                &self.walk.uses[self.current_scope],
+            );
+        }
+
+        if may_skip_body {
+            self.walk.use_def_maps[self.current_scope].merge(pre_loop);
         }
     }
 
