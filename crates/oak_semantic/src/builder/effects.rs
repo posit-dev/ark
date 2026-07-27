@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
@@ -56,7 +58,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// - A bare identifier. If bound locally it goes through the local
     ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
     ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path, against the attach set in `attached_flow`.
+    ///   search path, against the attach set in `attached_so_far`.
     /// - A `pkg::fn` namespace expression, resolved through
     ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
     ///   so there's no search-path disambiguation; the resolver answers from
@@ -113,9 +115,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Now check imports since the symbol is locally unbound
         let lazy = self.scan_is_lazy();
-        let effects = self
-            .resolver
-            .resolve_effects(sym, &self.scan.attached_flow, lazy)?;
+        let attached =
+            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far);
+        let effects = self.resolver.resolve_effects(sym, &attached, lazy)?;
 
         // The callee is unbound by any eager binding, so its effect
         // holds. If a lazy-crossed ancestor binds it whole-scope, that
@@ -270,4 +272,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 overwrite_range,
             });
     }
+}
+
+/// The packages seen in a scan unit: what it inherited at its definition point,
+/// then the eager linear set. Used for resolution of effect annotations within
+/// that scan unit.
+///
+/// The two halves only differ for a lazy body defined inside a branch that
+/// attached: the join dropped that package from `attached_so_far`, and the
+/// inherited half is what keeps it reachable.
+pub(super) fn attach_search_path<'a>(
+    inherited: &'a [String],
+    so_far: &'a [String],
+) -> Cow<'a, [String]> {
+    if inherited.is_empty() {
+        return Cow::Borrowed(so_far);
+    }
+
+    let mut path = inherited.to_vec();
+    path.extend_from_slice(so_far);
+    Cow::Owned(path)
 }

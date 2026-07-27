@@ -21,9 +21,10 @@
 //!   snapshot.
 //!
 //! So there are two flow states, on purpose. The scan's flow state tracks only
-//! eager bindings and is allowed to stay coarse (across `if` branches it
-//! over-approximates to "bound on some path"). The walk builds the precise
-//! structures, such as the use-def map.
+//! eager bindings and is allowed to stay coarse: at an `if` join it only keeps
+//! the names consistently bound on every path. The walk builds the precise
+//! structures, such as the use-def map, where conditionality is recorded as
+//! `may_be_unbound`.
 
 use std::sync::Arc;
 
@@ -131,14 +132,19 @@ struct ScanState {
     // What the scan prepared for each child body, keyed by the body's range.
     // See [`BodyScan`].
     body_scans: FxHashMap<TextRange, BodyScan>,
-    // Packages attached in eager flow order (file level and eager NSE descents),
-    // appended only when `!is_lazy()`. Scoped to the eager linear view like
-    // `bound_so_far`: a `library()` on only one branch, or in a loop body that
-    // may not run, isn't attached on every path and drops at the join. An
-    // eager callee reads the flow-precise prefix during the file scan. A lazy
-    // callee reads the complete every-path set during the walk (which runs after
-    // the file scan finishes), so this doubles as the end-of-file attach view.
-    attached_flow: Vec<String>,
+    // Packages attached on every path so far, the attach analog of
+    // `bound_so_far` (file level and eager NSE descents, appended only when
+    // `!is_lazy()`). A `library()` on only one branch, or in a loop body that
+    // may not run, drops at the join. An eager callee reads the flow-precise
+    // prefix during the file scan. A lazy callee reads the end-of-file value
+    // during the walk, paired with `attached_inherited` for what was live where
+    // that body was defined.
+    attached_so_far: Vec<String>,
+    // Attaches that were live where the current scan unit was defined, cleared
+    // and reseeded by `begin_scan()`. A lazy body inherits them, e.g. in
+    // `if (cond) { library(shiny); f <- function() reactive({ ... }) }`. Empty
+    // for the file scope and for any unit defined outside a branch.
+    attached_inherited: Vec<String>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
@@ -201,7 +207,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 call_resolutions: FxHashMap::default(),
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
-                attached_flow: Vec::new(),
+                attached_so_far: Vec::new(),
+                attached_inherited: Vec::new(),
                 open_scopes: Vec::new(),
                 deferred_bodies: Vec::new(),
             },

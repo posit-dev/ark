@@ -2696,7 +2696,7 @@ reactive({
 fn test_nse_attach_within_lazy_body_not_yet_supported() {
     // Sequential-within-one-lazy-body: when `f` runs, `library(shiny)` runs
     // before `reactive`, so `reactive` is determinately NSE. We don't promote it
-    // today: `attached_flow` only grows in eager context, so the attach inside
+    // today: `attached_so_far` only grows in eager context, so the attach inside
     // `f` (a lazy body) isn't visible to `reactive` in the same body. The attach
     // is still recorded as a `SemanticCall::Attach`. This could be supported by
     // tracking a per-unit attach set seeded from the EOF view, parallel to
@@ -2781,5 +2781,3 @@ f <- function() {
         DefinitionId::from(1)
     ]);
 }
-
-

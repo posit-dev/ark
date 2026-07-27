@@ -240,6 +240,109 @@ reactive({
 }
 
 #[test]
+fn test_nse_coguarded_attach_reaches_lazy_body() {
+    // `f` is defined in the same branch that attached shiny, so reaching its
+    // definition implies the guard held: if `f` exists at all, shiny is attached
+    // whenever it runs. The join drops shiny from the linear set before the walk
+    // scans `f`'s body, so the body inherits the attach from its definition
+    // point instead.
+    let index = index(
+        "\
+if (cond) {
+    library(shiny)
+    f <- function() reactive({
+        x <- 1
+    })
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_coguarded_attach_reaches_doubly_nested_lazy_body() {
+    // The inherited attach passes through each definition point, so it survives
+    // however many function levels sit between the `library()` and the callee.
+    let index = index(
+        "\
+if (cond) {
+    library(shiny)
+    f <- function() function() reactive({
+        x <- 1
+    })
+}
+",
+    );
+    let reactive_scope = ScopeId::from(3);
+
+    assert_eq!(index.scope_ids().count(), 4);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+}
+
+#[test]
+fn test_nse_conditional_attach_not_inherited_by_unguarded_body() {
+    // `f` is defined outside the guard, so its existence says nothing about
+    // whether shiny attached. Nothing is inherited and the every-path set has
+    // dropped shiny, so `reactive` is not NSE and `x` stays in `f`.
+    let index = index(
+        "\
+if (cond) library(shiny)
+f <- function() reactive({
+    x <- 1
+})
+",
+    );
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_nse_coguarded_attach_not_inherited_after_branch() {
+    // The inherited attach belongs to bodies defined inside the branch, not to
+    // later ones. `f` comes after the join, so it doesn't pick up shiny from the
+    // branch that `g` was defined in.
+    let index = index(
+        "\
+if (cond) {
+    library(shiny)
+    g <- function() 1
+}
+f <- function() reactive({
+    x <- 1
+})
+",
+    );
+    let f_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(f_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_attach_local_shadow_still_wins() {
     // A local `reactive` def shadows shiny's, so the call is not NSE even with
     // shiny attached.
@@ -262,4 +365,3 @@ reactive({
         SymbolFlags::IS_BOUND
     );
 }
-

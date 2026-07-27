@@ -402,3 +402,28 @@ f <- function() {
     );
     assert_eq!(index.scope(defer_scope).parent(), Some(f_scope));
 }
+
+#[test]
+fn test_nse_coguarded_attach_reaches_deferred_body() {
+    // `on_load` bodies are drained after the enclosing unit's scan, so the join
+    // has already dropped shiny from the linear set. The body inherits the
+    // attach from its call site, matching a function body defined in the branch.
+    let index = index_with_attached(
+        "\
+if (cond) {
+    library(shiny)
+    rlang::on_load(reactive({
+        x <- 1
+    }))
+}
+",
+        &["rlang", "shiny"],
+    );
+
+    let kinds: Vec<_> = index.scope_ids().map(|id| index.scope(id).kind()).collect();
+    assert_eq!(kinds, vec![
+        ScopeKind::File,
+        ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy),
+    ]);
+}

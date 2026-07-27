@@ -20,6 +20,7 @@ use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
 use super::assignment_name;
+use super::effects::attach_search_path;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -60,16 +61,25 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         match self.scan.body_scans.get(&range) {
             // The file scope has no entry: nothing is inherited, so start clean.
-            None => self.scan.bound_so_far.clear(),
-            Some(BodyScan::Deferred(snapshot)) => {
-                let snapshot = snapshot.clone();
-                self.scan.bound_so_far.restore(snapshot);
+            None => {
+                self.scan.bound_so_far.clear();
+                self.scan.attached_inherited.clear();
+            },
+            Some(BodyScan::Deferred {
+                bound_so_far,
+                attached_inherited,
+            }) => {
+                let bound_so_far = bound_so_far.clone();
+                let attached_inherited = attached_inherited.clone();
+                self.scan.bound_so_far.restore(bound_so_far);
+                self.scan.attached_inherited = attached_inherited;
             },
             Some(BodyScan::Scanned(_)) => {
                 // A body scanned inline by an eager descent is installed by the
                 // walk without a re-scan, so `begin_scan()` should never meet one.
                 stdext::debug_panic!("`begin_scan()` on an already-scanned body at {range:?}");
                 self.scan.bound_so_far.clear();
+                self.scan.attached_inherited.clear();
             },
         }
 
@@ -195,13 +205,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // `library()` created in the body isn't on every path, so it
                 // doesn't persist past the loop. The snapshot/merge intersects
                 // bindings away, and the mark truncates the body's attaches.
-                let attach_mark = self.scan.attached_flow.len();
+                let attach_mark = self.scan.attached_so_far.len();
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
                 }
                 self.scan.bound_so_far.merge(pre_body);
-                self.scan.attached_flow.truncate(attach_mark);
+                self.scan.attached_so_far.truncate(attach_mark);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -234,13 +244,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // binding or `library()` created in the body isn't on every
                 // path, so it doesn't persist. The snapshot/merge intersects
                 // bindings away, and the mark truncates the body's attaches.
-                let attach_mark = self.scan.attached_flow.len();
+                let attach_mark = self.scan.attached_so_far.len();
                 let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
                 }
                 self.scan.bound_so_far.merge(pre_body);
-                self.scan.attached_flow.truncate(attach_mark);
+                self.scan.attached_so_far.truncate(attach_mark);
             },
 
             // `repeat` loops, subsets, extractions, parentheses, unary ops, and
@@ -263,12 +273,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // A `library()` in one branch must not be visible in the sibling
         // branch, so peel each side's attaches off at this mark and re-add only
         // what survives the join.
-        let attach_mark = self.scan.attached_flow.len();
+        let attach_mark = self.scan.attached_so_far.len();
 
         consequence(self);
 
         let post = self.scan.bound_so_far.snapshot();
-        let consequence_attaches = self.scan.attached_flow.split_off(attach_mark);
+        let consequence_attaches = self.scan.attached_so_far.split_off(attach_mark);
         self.scan.bound_so_far.restore(pre);
 
         alternative(self);
@@ -278,10 +288,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // A package attached on only one branch isn't attached on every path, so
         // it drops at the join, the same as a one-branch binding dropping from
         // `bound_so_far`. Only packages attached on both branches survive.
-        let alternative_attaches = self.scan.attached_flow.split_off(attach_mark);
+        let alternative_attaches = self.scan.attached_so_far.split_off(attach_mark);
         for package in consequence_attaches {
             if alternative_attaches.contains(&package) {
-                self.scan.attached_flow.push(package);
+                self.scan.attached_so_far.push(package);
             }
         }
     }
@@ -333,7 +343,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .or_default()
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
-                self.scan.attached_flow.push(package);
+                self.scan.attached_so_far.push(package);
             }
         }
 
@@ -415,9 +425,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // end of this scan unit, once the owner's lexical
                     // environment is fully known. See `scan_deferred_bodies()`.
                     (EvalEnv::Current, EvalTiming::Lazy) => {
+                        let attached_inherited = attach_search_path(
+                            &self.scan.attached_inherited,
+                            &self.scan.attached_so_far,
+                        )
+                        .into_owned();
                         self.scan.deferred_bodies.push(DeferredBody {
                             body: value.clone(),
                             bound_so_far: self.scan.bound_so_far.snapshot(),
+                            attached_inherited,
                         });
                     },
 
@@ -560,8 +576,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 break;
             }
 
-            for DeferredBody { body, bound_so_far } in batch {
+            for DeferredBody {
+                body,
+                bound_so_far,
+                attached_inherited,
+            } in batch
+            {
                 let old = self.scan.bound_so_far.snapshot();
+                let old_attached =
+                    std::mem::replace(&mut self.scan.attached_inherited, attached_inherited);
                 self.scan.bound_so_far.restore(bound_so_far);
 
                 self.scan.open_scopes.push(OpenScope {
@@ -573,6 +596,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
                 self.scan.open_scopes.pop();
                 self.scan.bound_so_far.restore(old);
+                self.scan.attached_inherited = old_attached;
             }
         }
     }
@@ -646,7 +670,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
-                self.scan.attached_flow.push(pkg.clone());
+                self.scan.attached_so_far.push(pkg.clone());
             }
         }
 
@@ -692,16 +716,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 // State management
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Record the names a child scope (function body, NSE argument) about to be
+    /// Record what a child scope (function body, NSE argument) about to be
     /// created at `range` inherits from its ancestors, to seed the child's scan
     /// in `begin_scan`. Called during the scan, where `bound_so_far` is the
     /// parent's flow-precise state at the child's definition point (already
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
+    ///
+    /// The attaches are captured as the parent's whole search path, so a nested
+    /// body inherits a branch-local attach through however many levels of
+    /// definition sit between them.
     fn record_enclosing_flow(&mut self, range: TextRange) {
-        self.scan
-            .body_scans
-            .insert(range, BodyScan::Deferred(self.scan.bound_so_far.snapshot()));
+        let attached_inherited =
+            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far)
+                .into_owned();
+        self.scan.body_scans.insert(range, BodyScan::Deferred {
+            bound_so_far: self.scan.bound_so_far.snapshot(),
+            attached_inherited,
+        });
     }
 
     /// Record a binding in both scan binding views.
@@ -851,7 +883,10 @@ pub(super) struct OpenScope {
 pub(super) enum BodyScan {
     /// A walk-time scan unit (function body, `Nested + Lazy` like `reactive()`).
     /// The walk seeds `begin_scan()` from this snapshot.
-    Deferred(FlowState),
+    Deferred {
+        bound_so_far: FlowState,
+        attached_inherited: Vec<String>,
+    },
     /// Already scanned inline by an eager `Nested` descent (e.g. `local()`).
     Scanned(BindingSites),
 }
@@ -863,6 +898,8 @@ pub(super) struct DeferredBody {
     pub(super) body: AnyRExpression,
     /// `bound_so_far` captured at the call site, the body's inherited eager env.
     pub(super) bound_so_far: FlowState,
+    /// The attach search path at the call site, the body's inherited attaches.
+    pub(super) attached_inherited: Vec<String>,
 }
 
 /// All definitions in a scope, collected by the scan pass before the
