@@ -269,30 +269,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         self.scan.bound_so_far.merge(post);
 
-        // Both branches' attaches are live afterwards, in source order:
-        // consequence then alternative. This is consistent with how we treat
-        // assignments in branches. A package attached on only one branch is
-        // conditional, recorded before we re-add (the truncated `attached_flow`
-        // is exactly the pre-branch set at this point).
+        // Both branches' attaches stay live afterwards, in source order:
+        // consequence then alternative.
         let alternative_attaches = self.scan.attached_flow.split_off(attach_mark);
-        self.record_branch_attach_certainty(&consequence_attaches, &alternative_attaches);
         self.scan.attached_flow.extend(consequence_attaches);
         self.scan.attached_flow.extend(alternative_attaches);
-    }
-
-    /// Mark packages attached on only one branch as conditional. Called with
-    /// `attached_flow` truncated to the pre-branch set, so it names the packages
-    /// that were already attached (definite regardless of the branches).
-    fn record_branch_attach_certainty(&mut self, consequence: &[String], alternative: &[String]) {
-        let before: FxHashSet<&str> = self.scan.attached_flow.iter().map(String::as_str).collect();
-        let conditional = branch_conditional_attaches(&before, consequence, alternative);
-        drop(before);
-
-        for package in conditional {
-            self.scan
-                .attach_certainty
-                .insert(package, Certainty::Conditional);
-        }
     }
 
     /// Walk descendant nodes of `expr`, scanning the outermost
@@ -342,9 +323,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .or_default()
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
-                self.scan
-                    .attach_certainty
-                    .insert(package.clone(), Certainty::Definite);
                 self.scan.attached_flow.push(package);
             }
         }
@@ -658,9 +636,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
-                self.scan
-                    .attach_certainty
-                    .insert(pkg.clone(), Certainty::Definite);
                 self.scan.attached_flow.push(pkg.clone());
             }
         }
@@ -794,14 +769,6 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
     }
 }
 
-/// Whether an effect is on every path reaching the current point, or
-/// only some.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Certainty {
-    Definite,
-    Conditional,
-}
-
 /// The scan's eager linear binding state: the names bound on every path reaching
 /// the current point of the current scan unit. Branch and loop joins
 /// intersection-merge, so a binding made on only some paths is visible inside
@@ -928,34 +895,8 @@ enum ScanScope<'a> {
     Arena(ScopeId),
 }
 
-/// The packages that are conditionally attached after a branch: attached on
-/// exactly one of the two branches, and not already attached before it. A
-/// package attached on both branches, or before the branch, stays definite.
-fn branch_conditional_attaches(
-    before: &FxHashSet<&str>,
-    consequence: &[String],
-    alternative: &[String],
-) -> Vec<String> {
-    let in_consequence: FxHashSet<&str> = consequence.iter().map(String::as_str).collect();
-    let in_alternative: FxHashSet<&str> = alternative.iter().map(String::as_str).collect();
-
-    consequence
-        .iter()
-        .chain(alternative)
-        .filter(|package| {
-            let in_both = in_consequence.contains(package.as_str()) &&
-                in_alternative.contains(package.as_str());
-            !in_both && !before.contains(package.as_str())
-        })
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use rustc_hash::FxHashSet;
-
-    use super::branch_conditional_attaches;
     use super::FlowState;
 
     #[test]
@@ -1011,42 +952,5 @@ mod tests {
         post_body.merge(pre_body);
         assert!(post_body.is_bound("i"));
         assert!(!post_body.is_bound("z"));
-    }
-
-    #[test]
-    fn test_attaches_on_one_branch_are_conditional() {
-        let before = FxHashSet::default();
-        let consequence = vec!["shiny".to_string()];
-        let alternative: Vec<String> = vec![];
-        assert_eq!(
-            branch_conditional_attaches(&before, &consequence, &alternative),
-            vec!["shiny".to_string()]
-        );
-    }
-
-    #[test]
-    fn test_attaches_on_both_branches_stay_definite() {
-        let before = FxHashSet::default();
-        let consequence = vec!["dplyr".to_string()];
-        let alternative = vec!["dplyr".to_string()];
-        assert!(branch_conditional_attaches(&before, &consequence, &alternative).is_empty());
-    }
-
-    #[test]
-    fn test_attaches_already_bound_before_stay_definite() {
-        let before: FxHashSet<&str> = ["shiny"].into_iter().collect();
-        let consequence = vec!["shiny".to_string()];
-        let alternative: Vec<String> = vec![];
-        assert!(branch_conditional_attaches(&before, &consequence, &alternative).is_empty());
-    }
-
-    #[test]
-    fn test_distinct_branch_attaches_are_each_conditional() {
-        let before = FxHashSet::default();
-        let consequence = vec!["dplyr".to_string()];
-        let alternative = vec!["shiny".to_string()];
-        let mut conditional = branch_conditional_attaches(&before, &consequence, &alternative);
-        conditional.sort();
-        assert_eq!(conditional, vec!["dplyr".to_string(), "shiny".to_string()]);
     }
 }
