@@ -42,6 +42,7 @@ use rustc_hash::FxHashMap;
 use scan::BindingSites;
 use scan::BodyScan;
 use scan::CallResolution;
+use scan::Certainty;
 use scan::DeferredBody;
 use scan::FlowState;
 use scan::OpenScope;
@@ -138,6 +139,11 @@ struct ScanState {
     // runs after the file scan finishes), so this doubles as the end-of-file
     // attach view.
     attached_flow: Vec<String>,
+    // Per-package attach certainty (definite vs conditional), computed at the
+    // `scan_branch` merge. Recorded for the effect-decision lint; nothing reads
+    // it yet, hence `dead_code`.
+    #[allow(dead_code)]
+    attach_certainty: FxHashMap<String, Certainty>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
@@ -201,6 +207,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
                 attached_flow: Vec::new(),
+                attach_certainty: FxHashMap::default(),
                 open_scopes: Vec::new(),
                 deferred_bodies: Vec::new(),
             },

@@ -185,15 +185,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         variable.syntax().text_trimmed_range(),
                     );
                 }
+
                 if let Ok(sequence) = stmt.sequence() {
                     self.scan_expression(&sequence);
                 }
-                // A loop body only adds bindings (a name bound inside still
-                // "reaches" on the ran path), so no restore is needed, unlike
-                // the two-branch `if`/`else` below.
+
+                // Since the body may not run (empty sequence), a binding
+                // created in the body is _conditional_. The snapshot/merge
+                // dance records the conditionality.
+                let pre_body = self.scan.bound_so_far.snapshot();
                 if let Ok(body) = stmt.body() {
                     self.scan_expression(&body);
                 }
+                self.scan.bound_so_far.merge(pre_body);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -217,10 +221,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 );
             },
 
-            // `while`/`repeat` loops, subsets, extractions, parentheses, unary
-            // ops, and literals: recurse into child expressions. Loops need no
-            // flow restore (see the `for` arm). Identifiers and dots are leaves
-            // with no bindings or calls, so they fall through to a no-op walk.
+            AnyRExpression::RWhileStatement(stmt) => {
+                if let Ok(condition) = stmt.condition() {
+                    self.scan_expression(&condition);
+                }
+
+                // Since the body may not run (condition false on entry), a
+                // binding created in the body is _conditional_. The
+                // snapshot/merge dance records the conditionality.
+                let pre_body = self.scan.bound_so_far.snapshot();
+                if let Ok(body) = stmt.body() {
+                    self.scan_expression(&body);
+                }
+                self.scan.bound_so_far.merge(pre_body);
+            },
+
+            // `repeat` loops, subsets, extractions, parentheses, unary ops, and
+            // literals: recurse into child expressions. The body of a `repeat`
+            // expression always runs once, so its bindings are definite.
+            // Identifiers and dots are leaves with no bindings or calls, so
+            // they fall through to a no-op walk.
             _ => {
                 self.scan_descendants(expr.syntax());
             },
@@ -250,10 +270,28 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Both branches' attaches are live afterwards, in source order:
         // consequence then alternative. This is consistent with how we treat
-        // assignments in branches.
+        // assignments in branches. A package attached on only one branch is
+        // conditional, recorded before we re-add (the truncated `attached_flow`
+        // is exactly the pre-branch set at this point).
         let alternative_attaches = self.scan.attached_flow.split_off(attach_mark);
+        self.record_branch_attach_certainty(&consequence_attaches, &alternative_attaches);
         self.scan.attached_flow.extend(consequence_attaches);
         self.scan.attached_flow.extend(alternative_attaches);
+    }
+
+    /// Mark packages attached on only one branch as conditional. Called with
+    /// `attached_flow` truncated to the pre-branch set, so it names the packages
+    /// that were already attached (definite regardless of the branches).
+    fn record_branch_attach_certainty(&mut self, consequence: &[String], alternative: &[String]) {
+        let before: FxHashSet<&str> = self.scan.attached_flow.iter().map(String::as_str).collect();
+        let conditional = branch_conditional_attaches(&before, consequence, alternative);
+        drop(before);
+
+        for package in conditional {
+            self.scan
+                .attach_certainty
+                .insert(package, Certainty::Conditional);
+        }
     }
 
     /// Walk descendant nodes of `expr`, scanning the outermost
@@ -303,6 +341,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .or_default()
                 .attach = Some(package.clone());
             if !self.scopes[self.current_scope].kind.is_lazy() {
+                self.scan
+                    .attach_certainty
+                    .insert(package.clone(), Certainty::Definite);
                 self.scan.attached_flow.push(package);
             }
         }
@@ -539,6 +580,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
+                self.scan
+                    .attach_certainty
+                    .insert(pkg.clone(), Certainty::Definite);
                 self.scan.attached_flow.push(pkg.clone());
             }
         }
@@ -672,24 +716,43 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
     }
 }
 
+/// Whether a name is bound (or a package attached) on every path reaching the
+/// current point, or only on some. Recorded during the scan and meant for later
+/// consumers (the effect-decision and possibly-unavailable lints).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Certainty {
+    Definite,
+    Conditional,
+}
+
+impl Certainty {
+    /// Combine two paths that both bind the name: definite only if both are.
+    fn and(self, other: Certainty) -> Certainty {
+        match (self, other) {
+            (Certainty::Definite, Certainty::Definite) => Certainty::Definite,
+            _ => Certainty::Conditional,
+        }
+    }
+}
+
 /// The scan's flow-precise binding state: which names are bound at the current
-/// point of the current scan unit, in flow order.
+/// point of the current scan unit, in flow order, each tagged with whether it's
+/// bound on every path here or only some (see [`Certainty`]).
 ///
 /// It's the scan's own flow state, a coarse variant of the walk's use-def map,
-/// which isn't built yet. It answers one question, "is this name bound here?",
-/// so the scan can tell whether a callee is shadowed at each call and decide
-/// whether a call is NSE. It tracks only eager bindings, and it is allowed to
-/// stay coarse: `merge()` unions the two sides of an `if`, so that a single
-/// branch marks a name as bound.
+/// which isn't built yet. `is_bound` answers "is this name bound here?" (a plain
+/// union across branches) so the scan can tell whether a callee is shadowed and
+/// decide whether a call is NSE. The certainty tag is the finer answer,
+/// recorded for later consumers.
 #[derive(Clone, Default)]
 pub(super) struct FlowState {
-    bound: FxHashSet<String>,
+    bound: FxHashMap<String, Certainty>,
 }
 
 impl FlowState {
-    /// Whether `name` is bound at the current point.
+    /// Whether `name` is bound at the current point, on any path.
     pub(super) fn is_bound(&self, name: &str) -> bool {
-        self.bound.contains(name)
+        self.bound.contains_key(name)
     }
 
     /// Save the current state, to rewind to or to seed a child scan unit from.
@@ -702,15 +765,27 @@ impl FlowState {
         *self = snapshot;
     }
 
-    /// Union `snapshot` in, so a name reads as bound here if it was bound on
-    /// either path. This is the `if`/`else` join.
-    fn merge(&mut self, snapshot: FlowState) {
-        self.bound.extend(snapshot.bound);
+    /// Join another path's state in at a branch or loop merge. A name bound on
+    /// both paths keeps the combined certainty (definite only if both are), a
+    /// name bound on only one path becomes conditional.
+    fn merge(&mut self, existing: FlowState) {
+        for (name, certainty) in self.bound.iter_mut() {
+            if !existing.bound.contains_key(name) {
+                *certainty = Certainty::Conditional;
+            }
+        }
+        for (name, existing_certainty) in existing.bound {
+            self.bound
+                .entry(name)
+                .and_modify(|certainty| *certainty = certainty.and(existing_certainty))
+                .or_insert(Certainty::Conditional);
+        }
     }
 
-    /// Record `name` as bound from here on.
+    /// Record `name` as bound on every path from here (a plain, unconditional
+    /// binding). A later `merge()` downgrades it if it turns out branch-local.
     fn bind(&mut self, name: String) {
-        self.bound.insert(name);
+        self.bound.insert(name, Certainty::Definite);
     }
 
     /// Drop all bindings, to start a fresh scan unit (see `begin_scan()`).
@@ -795,4 +870,146 @@ impl BindingSites {
 enum ScanScope<'a> {
     Open(&'a BindingSites),
     Arena(ScopeId),
+}
+
+/// The packages that are conditionally attached after a branch: attached on
+/// exactly one of the two branches, and not already attached before it. A
+/// package attached on both branches, or before the branch, stays definite.
+fn branch_conditional_attaches(
+    before: &FxHashSet<&str>,
+    consequence: &[String],
+    alternative: &[String],
+) -> Vec<String> {
+    let in_consequence: FxHashSet<&str> = consequence.iter().map(String::as_str).collect();
+    let in_alternative: FxHashSet<&str> = alternative.iter().map(String::as_str).collect();
+
+    consequence
+        .iter()
+        .chain(alternative)
+        .filter(|package| {
+            let in_both = in_consequence.contains(package.as_str()) &&
+                in_alternative.contains(package.as_str());
+            !in_both && !before.contains(package.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_hash::FxHashSet;
+
+    use super::branch_conditional_attaches;
+    use super::Certainty;
+    use super::FlowState;
+
+    fn certainty(state: &FlowState, name: &str) -> Option<Certainty> {
+        state.bound.get(name).copied()
+    }
+
+    #[test]
+    fn test_certainty_and_is_definite_only_when_both_are() {
+        assert_eq!(
+            Certainty::Definite.and(Certainty::Definite),
+            Certainty::Definite
+        );
+        assert_eq!(
+            Certainty::Definite.and(Certainty::Conditional),
+            Certainty::Conditional
+        );
+        assert_eq!(
+            Certainty::Conditional.and(Certainty::Definite),
+            Certainty::Conditional
+        );
+    }
+
+    #[test]
+    fn test_bind_is_definite() {
+        let mut state = FlowState::default();
+        state.bind("x".to_string());
+        assert_eq!(certainty(&state, "x"), Some(Certainty::Definite));
+    }
+
+    #[test]
+    fn test_merge_one_branch_binding_is_conditional() {
+        // `if (c) x <- 1`: the else path is empty, the if path binds `x`.
+        let mut else_path = FlowState::default();
+        let mut if_path = FlowState::default();
+        if_path.bind("x".to_string());
+        else_path.merge(if_path);
+        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Conditional));
+    }
+
+    #[test]
+    fn test_merge_both_branches_binding_is_definite() {
+        // `if (c) x <- 1 else x <- 2`: both paths bind `x`.
+        let mut else_path = FlowState::default();
+        else_path.bind("x".to_string());
+        let mut if_path = FlowState::default();
+        if_path.bind("x".to_string());
+        else_path.merge(if_path);
+        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Definite));
+    }
+
+    #[test]
+    fn test_merge_keeps_pre_branch_binding_definite() {
+        // `x <- 1; if (c) y <- 1`: `x` is bound before, `y` only in the branch.
+        let mut pre = FlowState::default();
+        pre.bind("x".to_string());
+        let mut if_path = pre.clone();
+        if_path.bind("y".to_string());
+        let mut else_path = pre;
+        else_path.merge(if_path);
+        assert_eq!(certainty(&else_path, "x"), Some(Certainty::Definite));
+        assert_eq!(certainty(&else_path, "y"), Some(Certainty::Conditional));
+    }
+
+    #[test]
+    fn test_merge_loop_body_binding_is_conditional() {
+        // `for (i in xs) z <- 1`: `i` is bound before the body, `z` only inside.
+        let mut pre_body = FlowState::default();
+        pre_body.bind("i".to_string());
+        let mut post_body = pre_body.clone();
+        post_body.bind("z".to_string());
+        post_body.merge(pre_body);
+        assert_eq!(certainty(&post_body, "i"), Some(Certainty::Definite));
+        assert_eq!(certainty(&post_body, "z"), Some(Certainty::Conditional));
+    }
+
+    #[test]
+    fn test_attaches_on_one_branch_are_conditional() {
+        let before = FxHashSet::default();
+        let consequence = vec!["shiny".to_string()];
+        let alternative: Vec<String> = vec![];
+        assert_eq!(
+            branch_conditional_attaches(&before, &consequence, &alternative),
+            vec!["shiny".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_attaches_on_both_branches_stay_definite() {
+        let before = FxHashSet::default();
+        let consequence = vec!["dplyr".to_string()];
+        let alternative = vec!["dplyr".to_string()];
+        assert!(branch_conditional_attaches(&before, &consequence, &alternative).is_empty());
+    }
+
+    #[test]
+    fn test_attaches_already_bound_before_stay_definite() {
+        let before: FxHashSet<&str> = ["shiny"].into_iter().collect();
+        let consequence = vec!["shiny".to_string()];
+        let alternative: Vec<String> = vec![];
+        assert!(branch_conditional_attaches(&before, &consequence, &alternative).is_empty());
+    }
+
+    #[test]
+    fn test_distinct_branch_attaches_are_each_conditional() {
+        let before = FxHashSet::default();
+        let consequence = vec!["dplyr".to_string()];
+        let alternative = vec!["shiny".to_string()];
+        let mut conditional = branch_conditional_attaches(&before, &consequence, &alternative);
+        conditional.sort();
+        assert_eq!(conditional, vec!["dplyr".to_string(), "shiny".to_string()]);
+    }
 }
