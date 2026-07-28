@@ -478,9 +478,10 @@ async fn update_config(
     }
 
     // Refresh diagnostics if the configuration changed. The config lives
-    // outside Oak so we bump the revision manually.
+    // outside Oak so we bump the revision manually, causing diagnostics
+    // to refresh on the next tick.
     if state.config.diagnostics != diagnostics_config {
-        tracing::info!("Refreshing diagnostics after configuration changed");
+        tracing::info!("Bumping salsa revision after configuration changed");
         state.bump_revision();
     }
 
@@ -499,7 +500,7 @@ pub(crate) fn did_change_console_inputs(
     // during package development in conjunction with `devtools::load_all()`.
     // Ideally diagnostics would not rely on these though, and we wouldn't need
     // to refresh from here. The scopes live outside oak so we bump the revision
-    // manually.
+    // manually, causing diagnostics to get refreshed on the next tick.
     state.bump_revision();
 
     Ok(())

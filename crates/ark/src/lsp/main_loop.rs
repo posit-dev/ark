@@ -1027,7 +1027,7 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 /// completes and the newer batch is enqueued, any older pass has either unwound
 /// with `Cancelled` or already produced its result. Changes to state that lives
 /// outside oak (console inputs, diagnostics config) get the same barrier by
-/// advancing the revision synthetically (see `WorldState::bump_revision`).
+/// advancing the revision synthetically (see [`WorldState::bump_revision`]).
 async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
         let mut batch = vec![task];
