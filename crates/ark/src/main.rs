@@ -42,7 +42,9 @@ Available options:
 -- arg1 arg2 ...             Set the argument list to pass to R; defaults to
                              --interactive
 --startup-file FILE          An R file to run on session startup
---session-mode MODE          The mode in which the session is running (console, notebook, background)
+--session-mode MODE          The mode in which the session is running: "console"
+                             (the default), "notebook", or "background". See the
+                             configuration guide.
 --no-capture-streams         Do not capture stdout/stderr from R
 --default-repos              Set the default repositories to use, by name:
                              "rstudio" ('cran.rstudio.com', the default), or
@@ -71,6 +73,9 @@ Available options:
     print!(
         r#"
 --help                       Print this help message
+
+Configuration guide:
+https://github.com/posit-dev/ark/blob/main/doc/configuration.md
 
 "#
     );

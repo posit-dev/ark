@@ -2,6 +2,20 @@
 
 This guide details Ark's configuration.
 
+# Ark CLI
+
+## `--session-mode`
+
+The mode in which the session is running: `console` (the default), `notebook`, or `background`.
+
+`console` mode is meant for a rich frontend with an interactive console, like Positron. `notebook` mode is meant for standard Jupyter frontends, and is what `ark --install` puts in the generated kernelspec. `background` mode is for sessions that aren't connected to any UI.
+
+Console and notebook modes differ in how some output is reported to the frontend:
+
+- Errors. A Jupyter error message carries the error message in `evalue` and the backtrace in `traceback`. In console mode these are sent as-is. In notebook mode the error message is also prepended to `traceback`, because frontends such as JupyterLab only display `traceback` when it is present, discarding `evalue`. Without the prepend the error message wouldn't show at all.
+
+- Autoprint of intermediate expressions. When a single request contains several top-level expressions (e.g. `a` and `b` in `a; b; c`), console mode streams each intermediate result to the frontend, matching R behaviour. Notebook mode emits only the last expression's result, matching how a notebook cell is typically evaluated by Jupyter kernels.
+
 # Ark options
 
 ## `ark.error_entrace`
