@@ -68,13 +68,8 @@ impl<'db> Package {
         // resolve the name among its exports instead.
         if results.is_empty() {
             let name_str = name.text(db).as_str();
-            if let Some(import) = self
-                .namespace(db)
-                .imports
-                .iter()
-                .find(|import| import.name == name_str)
-            {
-                if let Some(source) = db.package_by_name(&import.package) {
+            if let Some(source_name) = self.imported_from(db).get(name_str) {
+                if let Some(source) = db.package_by_name(source_name) {
                     results = source.resolve(db, name, NamespaceVisibility::Exported);
                 }
             }

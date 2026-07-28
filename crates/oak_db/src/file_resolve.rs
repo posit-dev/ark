@@ -268,12 +268,14 @@ fn resolve_import_layer<'db>(
     let package = match layer {
         ImportLayer::File(target) => return target.resolve_export(db, name),
         ImportLayer::Package(package) => *package,
-        ImportLayer::From(map) => match map.get(name.text(db).as_str()) {
-            Some(source) => match db.package_by_name(source) {
-                Some(package) => package,
+        ImportLayer::From(importer) => {
+            match importer.imported_from(db).get(name.text(db).as_str()) {
+                Some(source) => match db.package_by_name(source) {
+                    Some(package) => package,
+                    None => return Vec::new(),
+                },
                 None => return Vec::new(),
-            },
-            None => return Vec::new(),
+            }
         },
     };
     package.resolve(db, name, NamespaceVisibility::Exported)

@@ -220,7 +220,7 @@ impl<'db> SalsaImportsResolver<'db> {
             // A NAMESPACE `importFrom` binds `name` unconditionally (that's what
             // the directive asserts), so it always shadows the search path
             // below. Its effect, if any, comes from the source package.
-            ImportLayer::From(map) => match map.get(name) {
+            ImportLayer::From(importer) => match importer.imported_from(self.db).get(name) {
                 Some(source) => {
                     let effect = self.db.package_by_name(source).and_then(|package| {
                         match self.package_binding(package, name) {
@@ -261,8 +261,8 @@ impl<'db> SalsaImportsResolver<'db> {
         }
         // Exports `name`, so it binds. Chase a re-export for the effect; a plain
         // own definition (no matching `importFrom`) only shadows.
-        match namespace.imports.iter().find(|import| import.name == name) {
-            Some(import) => match effects::lookup(&import.package, name) {
+        match package.imported_from(self.db).get(name) {
+            Some(source) => match effects::lookup(source, name) {
                 Some(effects) => PackageBinding::Effect(*effects),
                 None => PackageBinding::Shadow,
             },

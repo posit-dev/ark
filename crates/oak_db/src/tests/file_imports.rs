@@ -174,9 +174,12 @@ fn test_package_file_emits_namespace_and_collation_layers() {
     let mut shape = Vec::new();
     for layer in layers {
         match layer {
-            ImportLayer::From(map) => {
-                let mut entries: Vec<(String, String)> =
-                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            ImportLayer::From(package) => {
+                let mut entries: Vec<(String, String)> = package
+                    .imported_from(&db)
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 entries.sort();
                 shape.push(format!("From({entries:?})"));
             },
@@ -527,9 +530,12 @@ fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
     layers
         .iter()
         .map(|layer| match layer {
-            ImportLayer::From(map) => {
-                let mut entries: Vec<(String, String)> =
-                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            ImportLayer::From(package) => {
+                let mut entries: Vec<(String, String)> = package
+                    .imported_from(db)
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 entries.sort();
                 format!("From({entries:?})")
             },
