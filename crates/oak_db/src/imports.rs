@@ -59,35 +59,23 @@ impl<'db> SalsaImportsResolver<'db> {
     }
 }
 
-/// Per-build memo for `resolve_effects`, keyed on `(name, attached, lazy)`.
+/// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
 /// Sound because the answer only depends on the frozen db, and a
 /// `SalsaImportsResolver` lives exactly as long as one `File::semantic_index`
 /// build.
 #[derive(Default)]
 struct EffectsCache {
-    eager: FxHashMap<Vec<String>, FxHashMap<String, Option<EffectsHandlers>>>,
-    lazy: FxHashMap<Vec<String>, FxHashMap<String, Option<EffectsHandlers>>>,
+    entries: FxHashMap<Vec<String>, FxHashMap<String, Option<EffectsHandlers>>>,
 }
 
 impl EffectsCache {
-    fn get(&self, name: &str, attached: &[String], lazy: bool) -> Option<Option<EffectsHandlers>> {
-        let map = if lazy { &self.lazy } else { &self.eager };
-        map.get(attached)?.get(name).copied()
+    fn get(&self, name: &str, attached: &[String]) -> Option<Option<EffectsHandlers>> {
+        self.entries.get(attached)?.get(name).copied()
     }
 
-    fn insert(
-        &mut self,
-        name: &str,
-        attached: &[String],
-        lazy: bool,
-        effects: Option<EffectsHandlers>,
-    ) {
-        let map = if lazy {
-            &mut self.lazy
-        } else {
-            &mut self.eager
-        };
-        map.entry(attached.to_vec())
+    fn insert(&mut self, name: &str, attached: &[String], effects: Option<EffectsHandlers>) {
+        self.entries
+            .entry(attached.to_vec())
             .or_default()
             .insert(name.to_string(), effects);
     }
@@ -130,17 +118,12 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         })
     }
 
-    fn resolve_effects(
-        &mut self,
-        name: &str,
-        attached: &[String],
-        lazy: bool,
-    ) -> Option<EffectsHandlers> {
-        if let Some(effects) = self.cache.get(name, attached, lazy) {
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+        if let Some(effects) = self.cache.get(name, attached) {
             return effects;
         }
-        let effects = self.resolve_effects_uncached(name, attached, lazy);
-        self.cache.insert(name, attached, lazy, effects);
+        let effects = self.resolve_effects_uncached(name, attached);
+        self.cache.insert(name, attached, effects);
         effects
     }
 }
@@ -172,17 +155,13 @@ impl<'db> SalsaImportsResolver<'db> {
     /// exports, so the extra shadow detection it would buy is degraded
     /// anyway).
     ///
-    /// So a collation successor can neither shadow an effect we recognize nor
-    /// supply one we miss, and nothing flags either case. Breaking the cycle
-    /// would mean asking a sibling for its top-level names syntactically,
-    /// rather than for its `exports`.
-    /// TODO(diagnostics): Lint the miss, or narrow the query.
-    fn resolve_effects_uncached(
-        &self,
-        name: &str,
-        attached: &[String],
-        _lazy: bool,
-    ) -> Option<EffectsHandlers> {
+    /// A later sibling that shadows a lazy NSE call is missed here, and nothing
+    /// flags it.
+    ///
+    /// TODO(diagnostics): Detect it in the post-index diagnostics query, where
+    /// reading a successor's `exports` doesn't cycle. Unlike the ambiguities the
+    /// builder records, this one can't be seen from inside the file.
+    fn resolve_effects_uncached(&self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
         let layers = self.file.cross_file_layers(self.db, CollationView::Eager);
 
         // The file's own attaches slot between the definition/namespace band

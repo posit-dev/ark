@@ -48,19 +48,12 @@ pub trait ImportsResolver {
     /// Returns `None` when the target can't be located.
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution>;
 
-    /// Resolve a bare callee `name` to its effects. The builder state is passed
-    /// in because the resolver can't query our own semantic index without
-    /// creating a cycle:
-    ///
-    /// - `attached`: packages attached at this point, in flow order.
-    /// - `lazy`: whether the callee sits in a lazy context like a function.
-    fn resolve_effects(
-        &mut self,
-        name: &str,
-        attached: &[String],
-        lazy: bool,
-    ) -> Option<EffectsHandlers> {
-        let _ = (name, attached, lazy);
+    /// Resolve a bare callee `name` to its effects. `attached` is the packages
+    /// attached at this point, in flow order. The builder passes it in because
+    /// the resolver can't query our own semantic index without creating a
+    /// cycle.
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+        let _ = (name, attached);
         None
     }
 

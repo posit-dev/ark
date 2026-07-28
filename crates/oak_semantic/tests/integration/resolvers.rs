@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -22,9 +21,6 @@ pub struct TestImportsResolver {
     /// Count of `resolve_effects` consultations, so tests can assert the front
     /// gate keeps unannotated names off the resolver.
     consultations: Rc<Cell<usize>>,
-    /// Per-consultation `(name, lazy)` records, so tests can pin the `lazy` flag
-    /// the builder derives from the callee's context.
-    consultation_log: Rc<RefCell<Vec<(String, bool)>>>,
     /// `source()` paths this resolver knows, mapped to the names they export.
     sources: HashMap<String, SourceResolution>,
 }
@@ -45,7 +41,6 @@ impl TestImportsResolver {
         Self {
             always_attached,
             consultations: Rc::new(Cell::new(0)),
-            consultation_log: Rc::new(RefCell::new(Vec::new())),
             sources: HashMap::new(),
         }
     }
@@ -67,12 +62,6 @@ impl TestImportsResolver {
     pub fn consultations(&self) -> Rc<Cell<usize>> {
         Rc::clone(&self.consultations)
     }
-
-    /// A handle to the per-consultation `(name, lazy)` log. Clone it before
-    /// moving the resolver into `build_index`, then read it after the build.
-    pub fn consultation_log(&self) -> Rc<RefCell<Vec<(String, bool)>>> {
-        Rc::clone(&self.consultation_log)
-    }
 }
 
 impl ImportsResolver for TestImportsResolver {
@@ -80,16 +69,8 @@ impl ImportsResolver for TestImportsResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(
-        &mut self,
-        name: &str,
-        attached: &[String],
-        lazy: bool,
-    ) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
         self.consultations.set(self.consultations.get() + 1);
-        self.consultation_log
-            .borrow_mut()
-            .push((name.to_string(), lazy));
         attached
             .iter()
             .rev()

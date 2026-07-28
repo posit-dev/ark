@@ -67,7 +67,7 @@ impl ImportsResolver for ConstResolver {
         Some(self.0.clone())
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         // `source()` recognition runs on the resolve path, so a source-only
         // resolver still has to resolve base effects for `source` to be seen.
         effects::lookup("base", name).copied()
@@ -82,7 +82,7 @@ impl ImportsResolver for MapResolver {
         self.0.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         effects::lookup("base", name).copied()
     }
 }
@@ -98,7 +98,7 @@ impl ImportsResolver for MultiFileResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "source" {
             return Some(EffectsHandlers {
                 arguments: None,
@@ -122,7 +122,7 @@ impl ImportsResolver for PositionResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "source" {
             return Some(EffectsHandlers {
                 arguments: None,
@@ -142,7 +142,7 @@ impl ImportsResolver for MultiAssignResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "assign" {
             return Some(EffectsHandlers {
                 arguments: None,
@@ -2557,63 +2557,6 @@ local({
         index.symbols(inner_local).get("y").unwrap().flags(),
         SymbolFlags::IS_BOUND
     );
-}
-
-#[test]
-fn test_nse_descent_lazy_flag_eager_vs_lazy_context() {
-    // An eager callee at file scope consults with `lazy = false`; the same
-    // callee inside a function body consults with `lazy = true`.
-    let resolver = TestImportsResolver::with_base();
-    let log = resolver.consultation_log();
-
-    build_with(
-        "\
-local({ x <- 1 })
-f <- function() {
-    local({ y <- 1 })
-}
-",
-        resolver,
-    );
-
-    let records = log.borrow();
-    let local_lazy: Vec<bool> = records
-        .iter()
-        .filter(|(name, _lazy)| name == "local")
-        .map(|(_name, lazy)| *lazy)
-        .collect();
-    assert_eq!(local_lazy, vec![false, true]);
-}
-
-#[test]
-fn test_nse_descent_eager_in_eager_in_function_stays_lazy() {
-    // An eager `local` nested inside another eager `local` inside a function
-    // still consults with `lazy = true`. Laziness is a property of the enclosing
-    // scan unit (the function), which the descent preserves by keeping
-    // `current_scope` on the function while it scans both eager bodies inline. If
-    // the inner `local` were resolved against its immediate eager scope instead,
-    // `is_lazy()` would read `false` and the flag would regress.
-    let resolver = TestImportsResolver::with_base();
-    let log = resolver.consultation_log();
-
-    build_with(
-        "\
-f <- function() {
-    local({
-        local({ x <- 1 })
-    })
-}
-",
-        resolver,
-    );
-
-    let records = log.borrow();
-    let local_lazy: Vec<bool> = records
-        .iter()
-        .filter(|(name, _lazy)| name == "local")
-        .map(|(_name, lazy)| *lazy)
-        .collect();
-    assert_eq!(local_lazy, vec![true, true]);
 }
 
 // --- Attach tracking ---
