@@ -416,6 +416,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         if let Some(package) = attach {
             let call_range = call.syntax().text_trimmed_range();
+            if !self.resolver.package_exists(&package) {
+                self.record_uninstalled_package(package.clone(), call_range);
+            }
             self.scan
                 .call_resolutions
                 .entry(call_range)
@@ -576,6 +579,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .entry(call.syntax().text_trimmed_range())
             .or_default()
             .arguments = Some(arg_effects);
+    }
+
+    /// Flag a `library()`/`require()` attach whose package doesn't resolve.
+    /// Its NSE annotations, if it has any, can't be looked up, so effect
+    /// ambiguity diagnostics for calls it would have annotated go silent
+    /// instead of firing; this stands in for that missing signal.
+    fn record_uninstalled_package(&mut self, package: String, call_range: TextRange) {
+        self.diagnostics
+            .push(SemanticDiagnostic::UninstalledPackage {
+                package,
+                range: call_range,
+            });
     }
 
     /// Flag an NSE call whose scope only exists on some branches, because a

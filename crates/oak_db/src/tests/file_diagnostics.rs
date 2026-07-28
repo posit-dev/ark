@@ -19,6 +19,27 @@ fn new_file(db: &TestDb, name: &str, contents: &str) -> File {
 }
 
 #[test]
+fn test_diagnostic_ambiguous_attach_order() {
+    // The arms attach the same two packages in opposite orders, so which one
+    // masks the other after the `if` depends on the branch taken. Flagged
+    // even though `cli` and `rlang` share no names today.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli", "rlang"]);
+    let source = "\
+if (cond) {
+    library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
 fn test_diagnostic_argument_matching_no_scope_silent() {
     // Correct by design, silent. `test_that(1)` has no second argument at
     // all, so there's no `code` block to scope on either path. The
@@ -204,6 +225,18 @@ test_that({ x <- 1 }, desc = \"d\")
 }
 
 #[test]
+fn test_diagnostic_installed_package_silent() {
+    // Correct by design, silent. `shiny` is registered as installed, so the
+    // attach resolves and there's nothing to report about it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let source = "library(shiny)\n";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
 fn test_diagnostic_lazy_shadow_interleaved() {
     // `f`'s body calls both `with()` and a nested `local()`, and both
     // symbols are reassigned afterwards at file scope, so each call is
@@ -258,12 +291,13 @@ reactive({ x <- 1 })
 }
 
 #[test]
-fn test_diagnostic_unresolved_package_silent() {
+fn test_diagnostic_uninstalled_package_conditional() {
     // Same source as the conditional-attach-at-a-branch-join case, but this
     // time `shiny` is never registered as an installed package, deliberately.
-    // Without a resolvable package, `reactive` never gets an NSE annotation
-    // in the first place, so there's no attach to be conditional about, and
-    // the diagnostic stays silent.
+    // Without a resolvable package, `reactive` never gets an NSE annotation in
+    // the first place, so there's no attach to be conditional about, and the
+    // ambiguity diagnostic can't fire. We report the uninstalled package
+    // instead, so the user still gets a signal that analysis is degraded here.
     let db = TestDb::new();
     let source = "\
 if (cond) library(shiny)
@@ -277,30 +311,10 @@ reactive({
 }
 
 #[test]
-fn test_diagnostics_lowers_ambiguous_attach_order() {
-    let source = "\
-if (cond) {
-    library(cli)
-    library(rlang)
-} else {
-    library(rlang)
-    library(cli)
-}
-";
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["cli", "rlang"]);
-    let file = new_file(&mut db, "a.R", source);
+fn test_diagnostic_uninstalled_package_unconditional() {
+    let db = TestDb::new();
+    let source = "library(shiny)\n";
+    let file = new_file(&db, "a.R", source);
 
-    let diagnostics = file.diagnostics(&db);
-    assert_eq!(diagnostics.len(), 1);
-    let diagnostic = &diagnostics[0];
-
-    assert_eq!(diagnostic.kind(), DiagnosticKind::AmbiguousAttachOrder);
-    assert_eq!(
-        diagnostic.message(),
-        "Ambiguous attach order. The branches attach `rlang`, `cli` in different orders, \
-         so which package masks the other depends on the branch taken."
-    );
-    assert_eq!(diagnostic.range(), range_of(source, source.trim_end()));
-    assert!(diagnostic.annotations().is_empty());
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
 }

@@ -31,7 +31,7 @@ pub struct SourceResolution {
 ///   for isolated indexing (CLI tools, unit tests).
 /// - `oak_db::SalsaImportsResolver`: salsa-backed lookup against the source graph.
 ///
-/// The trait has three queries:
+/// The trait has four queries:
 ///
 /// - [`resolve_source`](ImportsResolver::resolve_source) is the bulk
 ///   query, "enumerate every name this `source("path")` brings in," used
@@ -40,6 +40,8 @@ pub struct SourceResolution {
 ///   callee against imports, e.g. the search path, and returns known effects.
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
 ///   resolves the effects of a `pkg::fn` (or `:::) callee against a named package.
+/// - [`package_exists`](ImportsResolver::package_exists) tells whether a
+///   `library()`/`require()` target resolves to an installed package.
 pub trait ImportsResolver {
     /// Resolve a `source("path")` call to the target file's exported names
     /// and transitive `library()` attachments. The path is the literal
@@ -61,6 +63,14 @@ pub trait ImportsResolver {
     /// `:::`) to its effects.
     fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<EffectsHandlers> {
         effects::lookup(package, name).copied()
+    }
+
+    /// Whether `package` resolves to an installed package. Defaults to
+    /// `true`: a resolver that can't answer this must not produce false
+    /// "not installed" diagnostics.
+    fn package_exists(&mut self, package: &str) -> bool {
+        let _ = package;
+        true
     }
 }
 

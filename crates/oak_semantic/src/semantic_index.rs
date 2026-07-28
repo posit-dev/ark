@@ -938,6 +938,9 @@ pub enum SemanticDiagnostic {
         packages: Vec<String>,
         range: TextRange,
     },
+    /// A `library()`/`require()` attach whose package doesn't resolve. `range`
+    /// points at the attach call.
+    UninstalledPackage { package: String, range: TextRange },
 }
 
 /// What made an [`EffectAmbiguity`](SemanticDiagnostic::EffectAmbiguity)

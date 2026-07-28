@@ -126,6 +126,10 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         self.cache.insert(name, attached, effects);
         effects
     }
+
+    fn package_exists(&mut self, package: &str) -> bool {
+        self.db.package_by_name(package).is_some()
+    }
 }
 
 /// What a package layer contributes for `name` as the walk reaches it.

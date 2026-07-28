@@ -56,6 +56,7 @@ pub struct Annotation {
 pub enum DiagnosticKind {
     EffectAmbiguity,
     AmbiguousAttachOrder,
+    UninstalledPackage,
 }
 
 impl DiagnosticKind {
@@ -64,6 +65,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::EffectAmbiguity => "effect-ambiguity",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
+            DiagnosticKind::UninstalledPackage => "uninstalled-package",
         }
     }
 
@@ -71,6 +73,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::EffectAmbiguity => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
+            DiagnosticKind::UninstalledPackage => Severity::Warning,
         }
     }
 
@@ -81,6 +84,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::EffectAmbiguity => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
+            DiagnosticKind::UninstalledPackage => true,
         }
     }
 }
@@ -93,7 +97,7 @@ pub enum Severity {
     Hint,
 }
 
-/// Lower one of `oak_semantic`'s raw ambiguity records into a `Diagnostic`.
+/// Lower one of `oak_semantic`'s raw diagnostic records into a `Diagnostic`.
 pub(crate) fn lower_semantic_diagnostic(diagnostic: &SemanticDiagnostic) -> Diagnostic {
     match diagnostic {
         SemanticDiagnostic::EffectAmbiguity {
@@ -103,6 +107,9 @@ pub(crate) fn lower_semantic_diagnostic(diagnostic: &SemanticDiagnostic) -> Diag
         } => lower_effect_ambiguity(name, *call_range, reason),
         SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
             lower_ambiguous_attach_order(packages, *range)
+        },
+        SemanticDiagnostic::UninstalledPackage { package, range } => {
+            lower_uninstalled_package(package, *range)
         },
     }
 }
@@ -171,6 +178,15 @@ fn lower_ambiguous_attach_order(packages: &[String], range: TextRange) -> Diagno
     Diagnostic::new(
         DiagnosticKind::AmbiguousAttachOrder,
         message,
+        range,
+        Vec::new(),
+    )
+}
+
+fn lower_uninstalled_package(package: &str, range: TextRange) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::UninstalledPackage,
+        format!("Package `{package}` is not installed. Language analysis will be incomplete."),
         range,
         Vec::new(),
     )
