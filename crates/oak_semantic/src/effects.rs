@@ -27,11 +27,17 @@ mod contrib;
 /// for a name carried by several packages (e.g. `defer()` in both withr and
 /// rlang) are kept in registry order, so `lookup` breaks a tie the same way a
 /// scan of `REGISTRY` would.
-static INDEX: LazyLock<FxHashMap<&'static str, Vec<&'static contrib::Entry>>> =
+static INDEX: LazyLock<FxHashMap<&'static str, Vec<(&'static str, &'static EffectsHandlers)>>> =
     LazyLock::new(|| {
-        let mut index: FxHashMap<&'static str, Vec<&'static contrib::Entry>> = FxHashMap::default();
-        for entry in contrib::REGISTRY.iter().flat_map(|entries| entries.iter()) {
-            index.entry(entry.function).or_default().push(entry);
+        let mut index: FxHashMap<&'static str, Vec<(&'static str, &'static EffectsHandlers)>> =
+            FxHashMap::default();
+        for package in contrib::REGISTRY {
+            for entry in package.functions {
+                index
+                    .entry(entry.function)
+                    .or_default()
+                    .push((package.name, &entry.effects));
+            }
         }
         index
     });
@@ -83,8 +89,8 @@ pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers>
     INDEX
         .get(function)?
         .iter()
-        .find(|entry| entry.package == package)
-        .map(|entry| &entry.effects)
+        .find(|(entry_package, _)| *entry_package == package)
+        .map(|(_, effects)| *effects)
 }
 
 /// Whether any registry entry annotates `name`. This is the bare-callee front

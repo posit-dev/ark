@@ -19,22 +19,21 @@ use crate::semantic_index::EvalTiming::Lazy;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     // base NSE
-    nse!("base", "evalq", ("expr", 0, Current, Eager)),
+    nse!("evalq", ("expr", 0, Current, Eager)),
     // `on.exit(expr)` captures `expr` and runs it in the current function's
     // frame when the function exits. Bindings land in that frame (`Current`) at
     // an unknown later time (`Lazy`), the same shape as `rlang::on_load()`.
-    nse!("base", "on.exit", ("expr", 0, Current, Lazy)),
-    nse!("base", "local", ("expr", 0, Nested, Eager)),
-    nse!("base", "with", ("expr", 1, Nested, Eager)),
-    nse!("base", "with.default", ("expr", 1, Nested, Eager)),
-    nse!("base", "within", ("expr", 1, Nested, Eager)),
-    nse!("base", "within.data.frame", ("expr", 1, Nested, Eager)),
+    nse!("on.exit", ("expr", 0, Current, Lazy)),
+    nse!("local", ("expr", 0, Nested, Eager)),
+    nse!("with", ("expr", 1, Nested, Eager)),
+    nse!("with.default", ("expr", 1, Nested, Eager)),
+    nse!("within", ("expr", 1, Nested, Eager)),
+    nse!("within.data.frame", ("expr", 1, Nested, Eager)),
     // base quote
-    quoted!("base", "quote", ("expr", 0)),
+    quoted!("quote", ("expr", 0)),
     // `bquote` quotes `expr` too, but its `.()` holes escape to evaluation, so
     // it needs a handler rather than a static per-argument effect.
     Entry {
-        package: "base",
         function: "bquote",
         effects: EffectsHandlers {
             arguments: Some(&BquoteHandler),
@@ -47,7 +46,6 @@ pub(crate) static ENTRIES: &[Entry] = &[
     // binds, so it needs a handler that queries the scope rather than a static
     // per-argument effect.
     Entry {
-        package: "base",
         function: "substitute",
         effects: EffectsHandlers {
             arguments: Some(&SubstituteHandler),
@@ -60,16 +58,15 @@ pub(crate) static ENTRIES: &[Entry] = &[
     attach_entry("library"),
     attach_entry("require"),
     // base source
-    source!("base", "source", 0),
+    source!("source", 0),
     // base assign
-    assign!("base", "assign", 0),
-    assign!("base", "delayedAssign", 0),
+    assign!("assign", 0),
+    assign!("delayedAssign", 0),
 ];
 
 /// Build the attach [`Entry`] for a base function served by [`LibraryHandler`].
 const fn attach_entry(function: &'static str) -> Entry {
     Entry {
-        package: "base",
         function,
         effects: EffectsHandlers {
             arguments: None,
