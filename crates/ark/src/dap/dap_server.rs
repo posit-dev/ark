@@ -55,6 +55,7 @@ use crate::request::DebugRequest;
 use crate::request::RRequest;
 use crate::timeout::eval_timeout;
 use crate::timeout::with_timeout;
+use crate::timeout::TimeoutResult;
 
 /// Sentinel expression sent by the frontend to notify the kernel that the user
 /// selected a different stack frame in the debugger UI. Subsequent console
@@ -726,11 +727,10 @@ impl DapHandler {
 
         // Run under `with_timeout()` so a long-running or inflooping Watch Pane
         // expression is interrupted instead of freezing the kernel.
-        let (res, timed_out) = with_timeout(eval_timeout(), || Dap::evaluate(expr, env, capture));
-
-        if timed_out {
-            return EvaluateOutcome::TimedOut;
-        }
+        let res = match with_timeout(eval_timeout(), || Dap::evaluate(expr, env, capture)) {
+            TimeoutResult::TimedOut => return EvaluateOutcome::TimedOut,
+            TimeoutResult::Completed(res) => res,
+        };
 
         let variable = match res {
             Ok(Ok(variable)) => variable,

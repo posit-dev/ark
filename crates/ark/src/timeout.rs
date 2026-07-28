@@ -63,6 +63,19 @@ thread_local! {
     static TIMED_OUT: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Outcome of [`with_timeout()`].
+///
+/// A separate `TimedOut` variant, rather than a `(harp::Result<T>, bool)` pair,
+/// makes it impossible for a caller to read `T` after a timeout. That
+/// matters because `f` can itself catch the cancellation interrupt (see
+/// `with_timeout()`'s docs) and return normally, so a completed `harp::Result`
+/// can exist even though the deadline passed; callers should never treat that
+/// value as meaningful.
+pub(crate) enum TimeoutResult<T> {
+    Completed(harp::Result<T>),
+    TimedOut,
+}
+
 /// Run `f` on the R thread, interrupting it if it outlasts `timeout`.
 ///
 /// `f` runs in `try_catch()` with interrupts re-enabled so the interrupt that
@@ -77,11 +90,8 @@ thread_local! {
 /// for code inside `f` to try and recover from Rust errors
 /// (`harp::Error::TopLevelExecError`) caused by the cancellation interrupt.
 ///
-/// Returns `f`'s value wrapped in the `try_catch()` result and a boolean
-/// indicating whether the timeout fired.
-///
 /// Must run on the R thread.
-pub(crate) fn with_timeout<F, T>(timeout: Duration, f: F) -> (harp::Result<T>, bool)
+pub(crate) fn with_timeout<F, T>(timeout: Duration, f: F) -> TimeoutResult<T>
 where
     F: FnOnce() -> T,
 {
@@ -103,7 +113,11 @@ where
     DEADLINE.set(old_deadline);
     TIMED_OUT.set(old_timed_out);
 
-    (res, timed_out)
+    if timed_out {
+        TimeoutResult::TimedOut
+    } else {
+        TimeoutResult::Completed(res)
+    }
 }
 
 /// Called from the polled-events handler at R's interrupt check points. If the
