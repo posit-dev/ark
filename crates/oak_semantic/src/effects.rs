@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
@@ -11,6 +13,7 @@ use biome_rowan::AstSeparatedList;
 pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
+use rustc_hash::FxHashMap;
 
 use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
@@ -18,6 +21,20 @@ use crate::semantic_index::EvalTiming;
 /// Per-package tables of which functions carry effects. Private data behind the
 /// `lookup`/`annotates` query API below.
 mod contrib;
+
+/// Registry entries keyed by function name so they can be queried by `lookup()`
+/// (package plus function) and `annotates()` (function only) probe on. Entries
+/// for a name carried by several packages (e.g. `defer()` in both withr and
+/// rlang) are kept in registry order, so `lookup` breaks a tie the same way a
+/// scan of `REGISTRY` would.
+static INDEX: LazyLock<FxHashMap<&'static str, Vec<&'static contrib::Entry>>> =
+    LazyLock::new(|| {
+        let mut index: FxHashMap<&'static str, Vec<&'static contrib::Entry>> = FxHashMap::default();
+        for entry in contrib::REGISTRY.iter().flat_map(|entries| entries.iter()) {
+            index.entry(entry.function).or_default().push(entry);
+        }
+        index
+    });
 
 /// Effects of a call, resolved against the call site.
 #[derive(Debug, Clone, Default)]
@@ -63,10 +80,10 @@ pub struct EffectsHandlers {
 
 /// Look up the effect handlers of a `(package, function)` pair.
 pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers> {
-    contrib::REGISTRY
+    INDEX
+        .get(function)?
         .iter()
-        .flat_map(|entries| entries.iter())
-        .find(|entry| entry.package == package && entry.function == function)
+        .find(|entry| entry.package == package)
         .map(|entry| &entry.effects)
 }
 
@@ -74,10 +91,7 @@ pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers>
 /// gate: an unannotated name can't resolve to an effect no matter which provider
 /// wins, so recognition skips resolution entirely.
 pub fn annotates(name: &str) -> bool {
-    contrib::REGISTRY
-        .iter()
-        .flat_map(|entries| entries.iter())
-        .any(|entry| entry.function == name)
+    INDEX.contains_key(name)
 }
 
 /// Resolver for an effect of a call.
