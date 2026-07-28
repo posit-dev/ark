@@ -56,17 +56,14 @@ pub(crate) struct CrossFileLayers {
 }
 
 impl CrossFileLayers {
-    /// Flatten to a single lookup-ordered layer list, splicing the file's own
+    /// The layers as a single lookup-ordered list, splicing the file's own
     /// `library()` attaches into the band between the definition/namespace
     /// layers (which outrank them) and the rest of the search path.
-    pub(crate) fn splice_own_attaches(&self, own: Vec<ImportLayer>) -> Vec<ImportLayer> {
-        let mut out = Vec::with_capacity(self.above.len() + own.len() + self.below.len());
-
-        out.extend(self.above.iter().cloned());
-        out.extend(own);
-        out.extend(self.below.iter().cloned());
-
-        out
+    pub(crate) fn lookup_order<'a>(
+        &'a self,
+        own: &'a [ImportLayer],
+    ) -> impl Iterator<Item = &'a ImportLayer> {
+        self.above.iter().chain(own).chain(self.below.iter())
     }
 }
 
@@ -169,7 +166,7 @@ impl File {
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let layers = self.cross_file_layers(db, CollationView::Lazy);
         let own = self.attach_layers(db, AttachView::Anywhere);
-        layers.splice_own_attaches(own)
+        layers.lookup_order(&own).cloned().collect()
     }
 
     /// Import layers visible at an `offset` in a file:
@@ -212,7 +209,7 @@ impl File {
 
         let layers = self.cross_file_layers(db, collation);
         let own = self.attach_layers(db, attaches);
-        layers.splice_own_attaches(own)
+        layers.lookup_order(&own).cloned().collect()
     }
 
     /// This file's own `library()` / `require()` attaches as `Package` layers,
