@@ -333,6 +333,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f211a51805bc641f3ad5b7664c77d2547af685cc33b4cd8d31964027a46f13f1"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width 0.2.2",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2549,11 +2560,13 @@ dependencies = [
  "aether_path",
  "air_r_parser",
  "air_r_syntax",
+ "annotate-snippets",
  "biome_line_index",
  "biome_rowan",
  "camino",
  "compact_str",
  "filetime",
+ "insta",
  "log",
  "oak_core",
  "oak_package_metadata",

@@ -140,7 +140,7 @@ fn lower_effect_ambiguity(
             attach_range,
         } => (
             format!(
-                "Ambiguous reading of `{name}()`. The conditionally attached `{package}` does not import `{name}` \
+                "Ambiguous reading of `{name}()`. The package `{package}` is conditionally attached and does not import `{name}` \
                  across all paths."
             ),
             Annotation {

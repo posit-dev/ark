@@ -31,6 +31,7 @@ aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_par
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_path = { path = "crates/aether_path" }
 amalthea = { path = "crates/amalthea" }
+annotate-snippets = "0.12.16"
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
 ark_macros = { path = "crates/ark_macros" }
