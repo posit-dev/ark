@@ -58,6 +58,7 @@ use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
+use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::url::ExtUrl;
@@ -383,8 +384,9 @@ impl GlobalState {
         // resolved definitions), so any handler that writes to oak invalidates
         // them. Rather than have each write site remember to refresh, we watch
         // the oak revision across the whole tick: if a handler advanced it,
-        // refresh centrally. Config and console state live outside oak, so
-        // handlers that mutate those still refresh explicitly.
+        // refresh centrally. Config and console state live outside oak, so the
+        // handlers that mutate those advance the revision synthetically (see
+        // `WorldState::bump_revision`) to route through this same path.
         let old_revision = salsa::plumbing::current_revision(&self.world.db);
 
         match event {
@@ -556,7 +558,7 @@ impl GlobalState {
                 // and the diagnostics passes they trigger force the same
                 // memos.
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
-                    warm_workspace_index(self.world.db.clone());
+                    warm_workspace_index(self.world.snapshot());
                 }
             },
 
@@ -996,7 +998,7 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 pub(crate) struct RefreshDiagnosticsTask {
     /// Snapshot carrying the live oak plus the session context the diagnostics
     /// walk reads. See [`WorldState::diagnostics_snapshot`].
-    state: WorldState,
+    state: WorldStateSnapshot,
     /// The file to diagnose, built against the live oak at enqueue time.
     file: OpenFile,
 }
@@ -1020,15 +1022,12 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 /// Tasks are batched and deduplicated per URL (only the last task per URL is
 /// processed), so stale-version diagnostics get superseded within a batch.
 ///
-/// Batches triggered by an oak write can't publish out of order. Each pass
-/// holds a db snapshot, and a salsa write blocks until all snapshots drop, so
-/// by the time the write completes and the newer batch is enqueued, any older
-/// pass has either unwound with `Cancelled` or already produced its result.
-///
-/// FIXME: Batches triggered without an oak write (console inputs, diagnostics
-/// config) have no such barrier. An older pass can run concurrently with the
-/// newer one and publish last, leaving diagnostics computed from the older
-/// console scopes or config until the next refresh.
+/// Batches can't publish out of order. Each pass holds a db snapshot, and a
+/// salsa write blocks until all snapshots drop, so by the time the write
+/// completes and the newer batch is enqueued, any older pass has either unwound
+/// with `Cancelled` or already produced its result. Changes to state that lives
+/// outside oak (console inputs, diagnostics config) get the same barrier by
+/// advancing the revision synthetically (see [`WorldState::bump_revision`]).
 async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
     while let Some(task) = rx.recv().await {
         let mut batch = vec![task];
@@ -1135,11 +1134,11 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
 /// cancelled (`spawn_blocking()` swallows the unwind). A cancelling write can
 /// only come from an editor buffer, so a document is open, and the diagnostics
 /// passes spawned by that same write force the same memos and finish the job.
-fn warm_workspace_index(db: OakDatabase) {
+fn warm_workspace_index(state: WorldStateSnapshot) {
     spawn_blocking(move || {
         let now = std::time::Instant::now();
         lsp::log_info!("Starting workspace index warmup");
-        indexer::warm(&db);
+        indexer::warm(state.db());
         lsp::log_info!("Finished workspace index warmup ({:.0?})", now.elapsed());
         Ok(None)
     })
@@ -1149,7 +1148,6 @@ fn warm_workspace_index(db: OakDatabase) {
 mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
-    use salsa::Database;
     use tower_lsp::jsonrpc;
     use url::Url;
 
@@ -1183,7 +1181,7 @@ mod tests {
 
         let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
-        snapshot.db.cancellation_token().cancel();
+        snapshot.cancellation_token().cancel();
 
         let task = RefreshDiagnosticsTask {
             file,
@@ -1207,13 +1205,13 @@ mod tests {
 
         let file = state.open_file(&uri).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
-        snapshot.db.cancellation_token().cancel();
+        snapshot.cancellation_token().cancel();
 
         let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
         respond(
             response_tx,
             || {
-                let _ = file.tree_sitter(&snapshot.db);
+                let _ = file.tree_sitter(snapshot.db());
                 Ok(LspResponse::Hover(None))
             },
             |response| response,
@@ -1239,6 +1237,18 @@ mod tests {
             FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
             "x <- 1".to_string(),
         );
+        let after = salsa::plumbing::current_revision(&state.db);
+        assert_ne!(before, after);
+    }
+
+    /// Console-scope and config changes live outside oak, so they lean on
+    /// `bump_revision` to advance the revision and trigger the same central
+    /// refresh. This pins that the synthetic write actually moves the revision.
+    #[test]
+    fn test_bump_revision_advances_revision() {
+        let mut state = WorldState::default();
+        let before = salsa::plumbing::current_revision(&state.db);
+        state.bump_revision();
         let after = salsa::plumbing::current_revision(&state.db);
         assert_ne!(before, after);
     }

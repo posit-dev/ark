@@ -252,7 +252,7 @@ mod tests {
             let (text, point) = point_from_cursor("@");
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
 
             assert!(context.document_context.node.is_program());
@@ -270,7 +270,7 @@ mod tests {
             let (text, point) = point_from_cursor(code);
             let doc = TestDocument::new(&text);
             let document_context = doc.context(point);
-            let state = WorldState::default();
+            let state = WorldState::default().snapshot();
             let context = CompletionContext::new(&document_context, &state);
 
             assert!(context.document_context.node.is_program());

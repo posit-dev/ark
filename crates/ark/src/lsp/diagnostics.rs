@@ -14,7 +14,6 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
-use oak_db::Db;
 use oak_db::File;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
@@ -30,7 +29,7 @@ use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-use crate::lsp::state::WorldState;
+use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
@@ -134,7 +133,7 @@ impl<'a> DiagnosticContext<'a> {
 
 pub(crate) fn generate_diagnostics(
     file: File,
-    state: WorldState,
+    state: WorldStateSnapshot,
     testthat: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -143,7 +142,7 @@ pub(crate) fn generate_diagnostics(
         return diagnostics;
     }
 
-    let db = &state.db;
+    let db = state.db();
 
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
@@ -173,7 +172,7 @@ pub(crate) fn generate_diagnostics(
 
     // If this is a package, add imported symbols to workspace
     if let Some(package) = file.package(db) {
-        let namespace = package.namespace(&state.db);
+        let namespace = package.namespace(db);
 
         // Add symbols from `importFrom()` directives
         for import in &namespace.imports {
@@ -182,8 +181,8 @@ pub(crate) fn generate_diagnostics(
 
         // Add symbols from `import()` directives
         for package_import in &namespace.package_imports {
-            if let Some(pkg) = state.db.package_by_name(package_import) {
-                for export in &pkg.namespace(&state.db).exports {
+            if let Some(pkg) = db.package_by_name(package_import) {
+                for export in &pkg.namespace(db).exports {
                     context.workspace_symbols.insert(export.clone());
                 }
             }
@@ -199,8 +198,8 @@ pub(crate) fn generate_diagnostics(
     // want to provide a mechanism for test packages to declare this sort of
     // test files setup.
     if testthat {
-        if let Some(pkg) = state.db.package_by_name("testthat") {
-            for export in &pkg.namespace(&state.db).exports {
+        if let Some(pkg) = db.package_by_name("testthat") {
+            for export in &pkg.namespace(db).exports {
                 context.workspace_symbols.insert(export.clone());
             }
         }
@@ -1192,7 +1191,7 @@ mod tests {
             Some(code.to_string()),
             None,
         );
-        super::generate_diagnostics(file, state, false)
+        super::generate_diagnostics(file, state.snapshot(), false)
     }
 
     fn current_state() -> WorldState {
