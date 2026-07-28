@@ -236,7 +236,7 @@ pub(crate) fn handle_completion(
     // Snapshot so the closure captures by value. `r_task()` sends the closure
     // across threads, and `&WorldState` isn't `Send` because `OakDatabase`'s
     // salsa storage keeps thread-local query state. `snapshot()` hands the
-    // reader a `WorldSnapshot`, so the background thread can query oak but
+    // reader a `WorldStateSnapshot`, so the background thread can query oak but
     // can't call a setter.
     // TODO(oak/completions): We don't really need a snapshot here since
     // completions are serviced from the main loop, it's only needed for the

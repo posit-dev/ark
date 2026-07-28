@@ -7,7 +7,7 @@ use oak_db::OakDatabase;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
-use crate::lsp::db::Analysis;
+use crate::lsp::db::ArkDb;
 use crate::lsp::open_file::OpenFile;
 
 #[derive(Clone, Default, Debug)]
@@ -16,11 +16,10 @@ use crate::lsp::open_file::OpenFile;
 /// structure. It can be cloned and safely sent to other threads.
 ///
 /// The main loop owns and mutates this. Background readers get a
-/// [`WorldSnapshot`] instead, which holds a read-only [`Analysis`] in place of
-/// the writable `OakDatabase`. This prevents background threads from reaching a
-/// Salsa input setter. See [`Self::diagnostics_snapshot`] and
-/// [`Self::snapshot`]. This split mirrors rust-analyzer's `GlobalState`  and
-/// `GlobalStateSnapshot`.
+/// [`WorldStateSnapshot`] instead, which only lends its database out as
+/// `&dyn ArkDb`. This prevents background threads from reaching a Salsa input
+/// setter. See [`Self::diagnostics_snapshot`] and [`Self::snapshot`]. This split
+/// mirrors rust-analyzer's `GlobalState` and `GlobalStateSnapshot`.
 pub(crate) struct WorldState {
     /// Salsa input tree for Oak queries.
     pub(crate) db: OakDatabase,
@@ -79,12 +78,12 @@ impl WorldState {
         }
     }
 
-    /// Full read-only snapshot for a background reader that needs the whole
-    /// world (completions read `open_files` and the workspace). Same shape as
-    /// `self.clone()`, but the db becomes a read-only [`Analysis`].
-    pub(crate) fn snapshot(&self) -> WorldSnapshot {
-        WorldSnapshot {
-            db: Analysis::new(self.db.clone()),
+    /// Full read-only snapshot for a background reader that needs more than the
+    /// db, e.g. completions read `open_files` and the workspace. Same shape as
+    /// `self.clone()`, but the db is only reachable as `&dyn ArkDb`.
+    pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
+        WorldStateSnapshot {
+            db: self.db.clone(),
             console_scopes: self.console_scopes.clone(),
             installed_packages: self.installed_packages.clone(),
             config: self.config.clone(),
@@ -96,9 +95,9 @@ impl WorldState {
     /// Trimmed read-only snapshot for the diagnostics worker, which runs off
     /// the main loop and queries oak. Drops the open-file / workspace maps the
     /// diagnostics pass doesn't read.
-    pub(crate) fn diagnostics_snapshot(&self) -> WorldSnapshot {
-        WorldSnapshot {
-            db: Analysis::new(self.db.clone()),
+    pub(crate) fn diagnostics_snapshot(&self) -> WorldStateSnapshot {
+        WorldStateSnapshot {
+            db: self.db.clone(),
             console_scopes: self.console_scopes.clone(),
             installed_packages: self.installed_packages.clone(),
             config: self.config.clone(),
@@ -106,6 +105,7 @@ impl WorldState {
             workspace: Workspace::default(),
         }
     }
+
     pub(crate) fn open_file_mut(&mut self, uri: &Url) -> anyhow::Result<&mut OpenFile> {
         let key = FilePath::from_url(uri);
         if let Some(open_file) = self.open_files.get_mut(&key) {
@@ -150,13 +150,13 @@ impl WorldState {
 }
 
 /// Read-only snapshot of [`WorldState`] handed to background readers (e.g.
-/// diagnostics). Holds a read-only [`Analysis`] in place of the writable
-/// `OakDatabase`, so a reader thread can't reach Salsa input setters. Carries
-/// only the fields readers actually use. Mirrors rust-analyzer's
+/// diagnostics), so a reader thread can't reach Salsa input setters. Carries only
+/// the fields readers actually use. Mirrors rust-analyzer's
 /// `GlobalStateSnapshot`.
 #[derive(Clone, Debug)]
-pub(crate) struct WorldSnapshot {
-    pub(crate) db: Analysis,
+pub(crate) struct WorldStateSnapshot {
+    /// Private so readers can only reach it through [`Self::db`].
+    db: OakDatabase,
     pub(crate) open_files: HashMap<FilePath, OpenFile>,
     pub(crate) workspace: Workspace,
     pub(crate) console_scopes: Vec<Vec<String>>,
@@ -164,11 +164,25 @@ pub(crate) struct WorldSnapshot {
     pub(crate) config: LspConfig,
 }
 
-impl WorldSnapshot {
-    /// URL to put on the wire for `file`. Same rule as [`WorldState::wire_url`],
-    /// reading through the [`Analysis`] handle.
+impl WorldStateSnapshot {
+    /// Read-only access to the database. Returns `&dyn ArkDb` rather than
+    /// `&OakDatabase` because `dyn ArkDb` is unsized, so a reader can't
+    /// `.clone()` its way to an owned database and call setters on it.
+    pub(crate) fn db(&self) -> &dyn ArkDb {
+        &self.db
+    }
+
+    /// The database's salsa cancellation token. Read-side only: it observes and
+    /// arms cancellation, it doesn't mutate any input. Only cancellation tests
+    /// arm it by hand.
+    #[cfg(test)]
+    pub(crate) fn cancellation_token(&self) -> salsa::CancellationToken {
+        salsa::Database::cancellation_token(&self.db)
+    }
+
+    /// URL to put on the wire for `file`. Same rule as [`WorldState::wire_url`].
     pub(crate) fn wire_url(&self, file: File) -> Url {
-        let path = file.path(self.db.read());
+        let path = file.path(self.db());
         self.open_files
             .get(path)
             .map(|open_file| open_file.wire_url().clone())

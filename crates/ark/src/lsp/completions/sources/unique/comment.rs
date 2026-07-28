@@ -42,7 +42,7 @@ impl CompletionSource for CommentSource {
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_comment(
             completion_context.document_context,
-            completion_context.state.db.read(),
+            completion_context.state.db(),
         )
     }
 }

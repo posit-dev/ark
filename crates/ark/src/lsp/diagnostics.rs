@@ -29,7 +29,7 @@ use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-use crate::lsp::state::WorldSnapshot;
+use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
@@ -133,7 +133,7 @@ impl<'a> DiagnosticContext<'a> {
 
 pub(crate) fn generate_diagnostics(
     file: File,
-    state: WorldSnapshot,
+    state: WorldStateSnapshot,
     testthat: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -142,7 +142,7 @@ pub(crate) fn generate_diagnostics(
         return diagnostics;
     }
 
-    let db = state.db.read();
+    let db = state.db();
 
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
