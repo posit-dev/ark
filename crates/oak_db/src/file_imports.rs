@@ -174,9 +174,10 @@ impl File {
     ///   body must precede the cursor, and conditional attaches remain limited to
     ///   the arm that attaches them.
     ///
-    /// - **Top-level cursor (script)**: only `library()` calls that
-    ///   have occurred before `offset`. Most recently attached comes
-    ///   first.
+    /// - **Top-level cursor (script)**: `library()` calls before `offset`,
+    ///   most recently attached first. A script in an `R/` directory also
+    ///   sees its collation predecessors, most recently sourced first, the
+    ///   same convention as a package file and as with `shiny.autoload.r`.
     ///
     /// - **Top-level cursor (package)**: only collation predecessors
     ///   of this file. Most recently sourced predecessor comes
@@ -252,6 +253,9 @@ impl File {
             Some(package) if self.is_package_source(db, package) => {
                 package_load_layers(self, db, package, view)
             },
+            // A non-package script in an `R/` directory: collated
+            // alphabetically, exactly like a package `R/` with no `Collate:`.
+            None if in_r_directory(self, db) => script_collation_layers(self, db, view),
             // A standalone script, or a file with a package back-pointer that
             // isn't a loadable `R/` file (`data-raw/`, `inst/`, a non-collated
             // `R/` file): lives in the package but isn't loaded with it, so it
@@ -271,6 +275,37 @@ impl File {
     fn is_package_source(self, db: &dyn Db, package: Package) -> bool {
         package.files(db).contains(&self)
     }
+
+    /// The collation members of `self`'s own `R/` directory, in load order:
+    /// sorted by basename, ASCII case-insensitively, the same order a
+    /// package `R/` with no `Collate:` gets from
+    /// `oak_scan::packages::order_alphabetically`.
+    ///
+    /// Path-based only. The scan-time resolver
+    /// ([`SalsaImportsResolver`](crate::imports::SalsaImportsResolver)) calls
+    /// `cross_file_layers` while `self`'s own semantic index is still being
+    /// built. The query can't recurse into the index.
+    ///
+    /// Gathers candidates from workspace roots only (`root.scripts(db)` for
+    /// each). `OrphanRoot`, library roots, and `StaleRoot` don't contribute
+    /// collation siblings.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn collation_siblings(self, db: &dyn Db) -> Vec<File> {
+        let Some(dir) = self.path(db).as_path().and_then(Utf8Path::parent) else {
+            return Vec::new();
+        };
+
+        let mut siblings: Vec<File> = db
+            .workspace_roots()
+            .roots(db)
+            .iter()
+            .flat_map(|root| root.scripts(db).iter().copied())
+            .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
+            .collect();
+
+        siblings.sort_by_cached_key(|file| collation_basename_key(*file, db));
+        siblings
+    }
 }
 
 fn package_load_layers(
@@ -281,41 +316,87 @@ fn package_load_layers(
 ) -> CrossFileLayers {
     let files = package.files(db);
 
-    // The sibling `R/` files visible to this one, in LIFO order (latest-sourced
-    // first): a name defined late in the collation shadows the same name defined
-    // earlier. Self is excluded, its own top-level bindings come from `exports`,
-    // and including it here would cycle in `resolve` for unbound names.
-    let def_files: Vec<File> = match view {
-        CollationView::Lazy => files.iter().rev().copied().filter(|f| *f != file).collect(),
-        CollationView::Eager => match files.iter().position(|f| *f == file) {
-            Some(pos) => files[..pos].iter().rev().copied().collect(),
-            None => {
-                // File claims membership but isn't in the package's `files`.
-                // Shouldn't happen.
-                log::warn!(
-                    "File {file} has package back-pointer to {package} but is not in its files",
-                    file = file.path(db),
-                    package = package.name(db),
-                );
-                files.iter().rev().copied().filter(|f| *f != file).collect()
-            },
-        },
-    };
+    // `Collate:` order isn't derivable from file names.
+    let prefix_len = files.iter().position(|sibling| *sibling == file);
+    if prefix_len.is_none() && matches!(view, CollationView::Eager) {
+        // File claims package membership but isn't in `package.files()`.
+        // Shouldn't happen; see the placement invariant on `File.package`.
+        log::warn!(
+            "File {file} has package back-pointer to {package} but is not in its files",
+            file = file.path(db),
+            package = package.name(db),
+        );
+    }
+    let siblings = visible_siblings(file, files, view, prefix_len);
 
-    let mut above: Vec<ImportLayer> = def_files.iter().copied().map(ImportLayer::File).collect();
+    let mut above: Vec<ImportLayer> = siblings.iter().copied().map(ImportLayer::File).collect();
     let namespace = package.namespace(db);
     extend_with_namespace_imports(package, namespace, &mut above);
     extend_with_namespace_package_imports(db, namespace, &mut above);
 
-    // Every def file's attaches go on the search path below the file's own.
+    // Every sibling's attaches go on the search path below the file's own.
     // For the `Lazy` view that includes successors, whose `library()` calls
     // actually run after this file's at load time and so outrank the file's own
     // attaches at runtime. We rank them below instead. Only matters when a
     // successor re-attaches a package that shadows one of this file's own
     // attaches, which is rare, and the direction we lose is the safe one.
-    let mut below = predecessor_attach_layers(db, &def_files);
+    let mut below = predecessor_attach_layers(db, &siblings);
     below.extend(base_layer(db));
     CrossFileLayers { above, below }
+}
+
+/// Load-time layers for a non-package script collated by the `R/` directory
+/// convention (see `File::cross_file_layers`). Mirrors `package_load_layers`,
+/// with `below` ending in the whole default search path rather than just `base`.
+fn script_collation_layers(file: File, db: &dyn Db, view: CollationView) -> CrossFileLayers {
+    let files = file.collation_siblings(db);
+
+    // `file` is missing from its own sibling list until the scanner moves it out
+    // of `OrphanRoot`. Cut on the sort key instead.
+    let own_key = collation_basename_key(file, db);
+    let prefix_len =
+        files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key);
+    let siblings = visible_siblings(file, files, view, Some(prefix_len));
+
+    let above: Vec<ImportLayer> = siblings.iter().copied().map(ImportLayer::File).collect();
+
+    let mut below = predecessor_attach_layers(db, &siblings);
+    below.extend(default_search_path_layers(db));
+    CrossFileLayers { above, below }
+}
+
+/// The sibling files visible to `file`, in LIFO order (latest-sourced first):
+/// a name defined late in the collation shadows the same name defined earlier.
+/// Self is excluded, its own top-level bindings come from `exports`, and
+/// including it here would cycle in `resolve` for unbound names.
+///
+/// `prefix_len` is how many of `collation` load before `file`, which is all the
+/// `Eager` view keeps. `None` means the caller couldn't place `file` in the
+/// collation at all, so it falls back to the full LIFO view, over-approximating
+/// in the safe direction.
+fn visible_siblings(
+    file: File,
+    collation: &[File],
+    view: CollationView,
+    prefix_len: Option<usize>,
+) -> Vec<File> {
+    match view {
+        CollationView::Lazy => collation
+            .iter()
+            .rev()
+            .copied()
+            .filter(|sibling| *sibling != file)
+            .collect(),
+        CollationView::Eager => match prefix_len {
+            Some(len) => collation[..len].iter().rev().copied().collect(),
+            None => collation
+                .iter()
+                .rev()
+                .copied()
+                .filter(|sibling| *sibling != file)
+                .collect(),
+        },
+    }
 }
 
 /// Load-time layers visible to a `tests/testthat/` file, in R's LIFO priority
@@ -413,6 +494,17 @@ fn in_testthat_dir(path: &Utf8Path) -> bool {
         parent.parent().and_then(Utf8Path::file_name) == Some("tests")
 }
 
+/// True when `file` sits directly in an `R/` directory, the convention that
+/// triggers script collation for a non-package file (see the match in
+/// `File::cross_file_layers`). Case-sensitive: that's the convention on every
+/// platform, and what the package scanner looks for.
+fn in_r_directory(file: File, db: &dyn Db) -> bool {
+    let Some(path) = file.path(db).as_path() else {
+        return false;
+    };
+    path.parent().and_then(Utf8Path::file_name) == Some("R")
+}
+
 /// testthat sources `helper*.R` and `setup*.R` from `tests/testthat/` into the
 /// test environment before running any test file, so their top-level bindings
 /// are visible to every test. testthat matches `^helper.*\.[rR]$` and
@@ -437,6 +529,16 @@ fn is_testthat_support_file(file: File, db: &dyn Db) -> bool {
 /// the testthat side.
 fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
     file.path(db).file_name().unwrap_or_default()
+}
+
+/// Case-insensitive basename sort key for `collation_siblings`, matching
+/// `oak_scan::packages::order_alphabetically`'s `basename_key` so a
+/// non-package `R/` collates the same way as a package `R/` with no
+/// `Collate:`.
+fn collation_basename_key(file: File, db: &dyn Db) -> Option<String> {
+    file.path(db)
+        .file_name()
+        .map(|name| name.to_ascii_lowercase())
 }
 
 /// Push the `From` layer if `package`'s namespace has any `importFrom` entries.
