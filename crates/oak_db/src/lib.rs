@@ -1,5 +1,6 @@
 mod db;
 mod definition;
+mod diagnostic;
 mod file;
 mod file_exports;
 mod file_imports;
@@ -25,6 +26,10 @@ pub use db::workspace_files;
 pub use db::Db;
 pub use db::DbInputs;
 pub use definition::Definition;
+pub use diagnostic::Annotation;
+pub use diagnostic::Diagnostic;
+pub use diagnostic::DiagnosticKind;
+pub use diagnostic::Severity;
 pub use file::warm_file;
 pub use file::File;
 pub use file_exports::ExportEntry;

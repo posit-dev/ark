@@ -1,5 +1,6 @@
 mod db;
 mod file;
+mod file_diagnostics;
 mod file_exports;
 mod file_imports;
 mod file_imports_at;

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
@@ -16,9 +17,14 @@ use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
 use oak_db::File;
 use oak_db::RootKind;
+use oak_db::Severity as OakSeverity;
 use stdext::*;
 use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::DiagnosticRelatedInformation;
 use tower_lsp_server::ls_types::DiagnosticSeverity;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::NumberOrString;
+use tower_lsp_server::ls_types::Uri;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
@@ -41,6 +47,10 @@ use crate::treesitter::UnaryOperatorType;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticsConfig {
     pub enable: bool,
+
+    /// Whether to publish diagnostics whose `DiagnosticKind::is_experimental()`
+    /// is `true`.
+    pub experimental: bool,
 }
 
 #[derive(Clone)]
@@ -48,6 +58,7 @@ pub struct DiagnosticContext<'a> {
     pub(crate) db: &'a dyn ArkDb,
     pub(crate) file: File,
     pub(crate) encoding: PositionEncoding,
+    pub(crate) uri: &'a Uri,
 
     /// The symbols currently defined and available in the session.
     pub session_symbols: HashSet<String>,
@@ -75,7 +86,10 @@ pub struct DiagnosticContext<'a> {
 
 impl Default for DiagnosticsConfig {
     fn default() -> Self {
-        Self { enable: true }
+        Self {
+            enable: true,
+            experimental: false,
+        }
     }
 }
 
@@ -84,11 +98,17 @@ impl<'a> DiagnosticContext<'a> {
         self.file.source_text(self.db).as_str()
     }
 
-    pub(crate) fn new(db: &'a dyn ArkDb, file: File, encoding: PositionEncoding) -> Self {
+    pub(crate) fn new(
+        db: &'a dyn ArkDb,
+        file: File,
+        encoding: PositionEncoding,
+        uri: &'a Uri,
+    ) -> Self {
         Self {
             file,
             encoding,
             db,
+            uri,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
@@ -136,6 +156,7 @@ pub(crate) fn generate_diagnostics(
     file: File,
     state: WorldStateSnapshot,
     testthat: bool,
+    uri: &Uri,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
@@ -165,7 +186,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     let encoding = state.config.position_encoding;
-    let mut context = DiagnosticContext::new(db, file, encoding);
+    let mut context = DiagnosticContext::new(db, file, encoding, uri);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -251,7 +272,86 @@ pub(crate) fn generate_diagnostics(
         Err(err) => log::error!("Error while generating semantic diagnostics: {err:?}"),
     }
 
+    // Collect diagnostics from `oak_db`'s semantic index
+    match oak_diagnostics(&context, state.config.diagnostics.experimental) {
+        Ok(mut oak_diagnostics) => diagnostics.append(&mut oak_diagnostics),
+        Err(err) => log::error!("Error while generating oak diagnostics: {err:?}"),
+    }
+
     diagnostics
+}
+
+/// Convert `oak_db`'s file-level diagnostics into LSP diagnostics.
+///
+/// `experimental` gates the ones whose `DiagnosticKind::is_experimental()` is
+/// `true`, following rust-analyzer's
+/// `rust-analyzer.diagnostics.experimental.enable`. The gate is per diagnostic,
+/// so a stable oak lint would publish even with the setting off.
+fn oak_diagnostics(
+    context: &DiagnosticContext,
+    experimental: bool,
+) -> anyhow::Result<Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+
+    for diagnostic in context.file.diagnostics(context.db) {
+        if diagnostic.kind().is_experimental() && !experimental {
+            continue;
+        }
+
+        let range = to_proto::range(
+            diagnostic.range(),
+            context.file.line_index(context.db),
+            context.encoding,
+        )?;
+
+        let related_information = if diagnostic.annotations().is_empty() {
+            None
+        } else {
+            Some(
+                diagnostic
+                    .annotations()
+                    .iter()
+                    .map(|annotation| {
+                        let range = to_proto::range(
+                            annotation.range,
+                            context.file.line_index(context.db),
+                            context.encoding,
+                        )?;
+                        Ok(DiagnosticRelatedInformation {
+                            location: Location {
+                                uri: context.uri.clone(),
+                                range,
+                            },
+                            message: annotation.message.clone(),
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            )
+        };
+
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(oak_severity_to_lsp(diagnostic.kind().severity())),
+            code: Some(NumberOrString::String(
+                diagnostic.kind().as_str().to_string(),
+            )),
+            source: Some("ark".to_string()),
+            message: diagnostic.message().to_string(),
+            related_information,
+            ..Default::default()
+        });
+    }
+
+    Ok(diagnostics)
+}
+
+fn oak_severity_to_lsp(severity: OakSeverity) -> DiagnosticSeverity {
+    match severity {
+        OakSeverity::Error => DiagnosticSeverity::ERROR,
+        OakSeverity::Warning => DiagnosticSeverity::WARNING,
+        OakSeverity::Info => DiagnosticSeverity::INFORMATION,
+        OakSeverity::Hint => DiagnosticSeverity::HINT,
+    }
 }
 
 fn semantic_diagnostics(
@@ -1192,10 +1292,12 @@ mod tests {
 
     use crate::console::console_inputs;
     use crate::lsp::state::WorldState;
+    use crate::lsp::traits::url::UrlExt;
     use crate::r_task;
 
     fn generate_diagnostics(code: &str, state: &WorldState) -> Vec<lsp_types::Diagnostic> {
         let url = url::Url::parse("file:///test.R").unwrap();
+        let uri = url.to_uri().unwrap();
         let file = oak_db::File::new(
             &state.db,
             FilePath::from_url(&url),
@@ -1203,7 +1305,7 @@ mod tests {
             Some(code.to_string()),
             None,
         );
-        super::generate_diagnostics(file, state.snapshot(), false)
+        super::generate_diagnostics(file, state.snapshot(), false, &uri)
     }
 
     fn current_state() -> WorldState {
@@ -1826,7 +1928,59 @@ foo
             ..Default::default()
         };
 
-        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false);
+        let url = url::Url::parse("file:///a.R").unwrap();
+        let uri = url.to_uri().unwrap();
+        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_oak_diagnostics_effect_ambiguity_experimental() {
+        r_task(|| {
+            // `local`'s NSE reading could be shadowed by the later
+            // `local <- identity` at file scope, with undetermined timing
+            // relative to `f`'s call.
+            let text = "f <- function() local({ x <- 1 })\nlocal <- identity\n";
+
+            let mut state = current_state();
+            state.config.diagnostics.experimental = true;
+            let diagnostics = generate_diagnostics(text, &state);
+
+            // This snippet doesn't trip any of the legacy tree-sitter checks:
+            // `local` and `identity` both resolve to base R.
+            assert_eq!(diagnostics.len(), 1);
+            let diagnostic = &diagnostics[0];
+
+            assert_eq!(
+                diagnostic.code,
+                Some(lsp_types::NumberOrString::String(
+                    "effect-ambiguity".to_string()
+                ))
+            );
+            assert_eq!(diagnostic.range.start, Position::new(0, 16));
+            assert_eq!(diagnostic.range.end, Position::new(0, 33));
+            assert_eq!(diagnostic.source, Some("ark".to_string()));
+            assert_eq!(
+                diagnostic.severity,
+                Some(lsp_types::DiagnosticSeverity::INFORMATION)
+            );
+
+            let related = diagnostic.related_information.as_ref().unwrap();
+            assert_eq!(related.len(), 1);
+            assert_eq!(related[0].message, "could run before the call");
+            assert_eq!(related[0].location.range.start, Position::new(1, 0));
+            assert_eq!(related[0].location.range.end, Position::new(1, 5));
+        })
+    }
+
+    #[test]
+    fn test_oak_diagnostics_effect_ambiguity_disabled_by_default() {
+        r_task(|| {
+            let text = "f <- function() local({ x <- 1 })\nlocal <- identity\n";
+
+            let diagnostics = generate_diagnostics(text, &current_state());
+
+            assert!(diagnostics.is_empty());
+        })
     }
 }
