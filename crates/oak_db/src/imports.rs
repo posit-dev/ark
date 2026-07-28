@@ -37,11 +37,10 @@ use crate::RootKind;
 ///
 /// Cycles in `source()` chains run through this resolver:
 /// `semantic_index(A)` reads `exports(B)`, which reads `semantic_index(B)`,
-/// which reads `exports(A)`, which reads `semantic_index(A)`. Each of
-/// `semantic_index()`, `exports()`, `imports()`, and `resolve()` carries its
-/// own `cycle_result`. See [`File::semantic_index`]'s doc for the asymmetric
-/// recovery behaviour (custom rebuild on `semantic_index()`, empty fallback
-/// on the narrow queries).
+/// which reads `exports(A)`, which reads `semantic_index(A)`. `semantic_index()`
+/// and `exports()` carry the `cycle_result` handlers that break it. See
+/// [`File::semantic_index`]'s doc for the recovery behaviour (custom rebuild on
+/// `semantic_index()`, empty fallback on `exports()`).
 pub(crate) struct SalsaImportsResolver<'db> {
     db: &'db dyn Db,
     /// The file currently being indexed.

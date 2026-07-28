@@ -131,6 +131,14 @@ impl AttachView {
     }
 }
 
+/// Layers that a sourcing file makes visible to the sourced file. `file` is the
+/// file holding the `source()` call.
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub(crate) struct InheritedLayers {
+    pub file: File,
+    pub layers: CrossFileLayers,
+}
+
 /// The point in a package's load at which a file views its collation siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CollationView {
@@ -162,7 +170,7 @@ impl File {
     /// of imports.
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
-        let layers = self.cross_file_layers(db, CollationView::Lazy);
+        let layers = self.resolution_layers(db, CollationView::Lazy);
         let own = self.attach_layers(db, AttachView::Anywhere);
         layers.lookup_order(&own).cloned().collect()
     }
@@ -206,9 +214,69 @@ impl File {
             })
         };
 
-        let layers = self.cross_file_layers(db, collation);
+        let layers = self.resolution_layers(db, collation);
         let own = self.attach_layers(db, attaches);
         layers.lookup_order(&own).cloned().collect()
+    }
+
+    fn resolution_layers<'db>(
+        self,
+        db: &'db dyn Db,
+        view: CollationView,
+    ) -> Cow<'db, CrossFileLayers> {
+        let inherited = self.inherited_layers(db, view);
+        if inherited.is_empty() {
+            return Cow::Borrowed(self.cross_file_layers(db, view));
+        }
+
+        let mut above = Vec::new();
+        let mut below = Vec::new();
+        for site in inherited {
+            above.extend(site.layers.above.iter().cloned());
+            below.extend(site.layers.below.iter().cloned());
+        }
+        Cow::Owned(CrossFileLayers { above, below })
+    }
+
+    /// The layers `self` inherits from each file that sources it, one entry per
+    /// file in `self.sourced_by(db)`, each recursively including what that file
+    /// itself inherits. That recursion is what makes inheritance transitive
+    /// across a `main.R -> setup.R -> helpers.R` chain.
+    ///
+    /// Empty for a file with an explicit load order.
+    ///
+    /// `cycle_result` is defensive. Resolving a source site reads the target's
+    /// `exports`, meaning that a source cycle is always also a `semantic_index`
+    /// cycle which has its own recovery.
+    #[salsa::tracked(returns(ref), cycle_result =
+    inherited_layers_cycle_result)]
+    pub(crate) fn inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> {
+        if self.has_explicit_load_order(db) {
+            return Vec::new();
+        }
+
+        self.sourced_by(db)
+            .iter()
+            .map(|&sourcing_file| build_inherited_layers(db, self, sourcing_file, view))
+            .collect()
+    }
+
+    /// Whether something other than a `source()` call fixes load order, e.g.
+    /// package or testthat collation.
+    fn has_explicit_load_order(self, db: &dyn Db) -> bool {
+        let Some(package) = self.package(db) else {
+            return false;
+        };
+        is_testthat_file(self, db) || self.is_package_source(db, package)
+    }
+
+    /// Bare [`File::imports`], without inheritance.
+    pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
+        let own = self.attach_layers(db, AttachView::Anywhere);
+        self.cross_file_layers(db, CollationView::Lazy)
+            .lookup_order(&own)
+            .cloned()
+            .collect()
     }
 
     /// This file's own `library()` / `require()` attaches as `Package` layers,
@@ -308,6 +376,75 @@ impl File {
         siblings.sort_by_cached_key(|file| collation_basename_key(*file, db));
         siblings
     }
+}
+
+fn inherited_layers_cycle_result(
+    _db: &dyn Db,
+    _id: salsa::Id,
+    _file: File,
+    _view: CollationView,
+) -> Vec<InheritedLayers> {
+    Vec::new()
+}
+
+/// What `sourcing_file` contributes to `target`, its own bands plus what it
+/// inherits in turn.
+///
+/// `sourcing_file`'s own `below` band goes last because the default search
+/// path lives at the end of it, and that has to stay at the bottom of the
+/// whole chain.
+fn build_inherited_layers(
+    db: &dyn Db,
+    file: File,
+    source_site: File,
+    view: CollationView,
+) -> InheritedLayers {
+    // `Anywhere` when nothing pins the `source()` call to a program point: the
+    // lazy view, or a sourcing file whose call we can't locate.
+    let attaches = match view {
+        CollationView::Lazy => AttachView::Anywhere,
+        CollationView::Eager => match source_offset(db, source_site, file) {
+            Some(offset) => AttachView::Eager(offset),
+            None => AttachView::Anywhere,
+        },
+    };
+    let own_cross = source_site.cross_file_layers(db, view);
+    let own_attach = source_site.attach_layers(db, attaches);
+    let grandparents = source_site.inherited_layers(db, view);
+
+    let mut above = vec![ImportLayer::File(source_site)];
+    above.extend(own_cross.above.iter().cloned());
+    above.extend(
+        grandparents
+            .iter()
+            .flat_map(|site| site.layers.above.iter().cloned()),
+    );
+
+    let mut below = own_attach;
+    below.extend(
+        grandparents
+            .iter()
+            .flat_map(|site| site.layers.below.iter().cloned()),
+    );
+    below.extend(own_cross.below.iter().cloned());
+
+    InheritedLayers {
+        file: source_site,
+        layers: CrossFileLayers { above, below },
+    }
+}
+
+/// The largest offset among `source_file`'s `source()` calls naming `file`,
+/// or `None` if none do. Several calls to the same target means the sourced
+/// code runs more than once. The latest call has the most context loaded, so
+/// taking the max over-approximates in the safe direction.
+fn source_offset(db: &dyn Db, source_file: File, file: File) -> Option<TextSize> {
+    source_file
+        .source_sites(db)
+        .iter()
+        .filter(|site| site.target() == Some(file))
+        .map(|site| site.offset())
+        .max()
 }
 
 fn package_load_layers(

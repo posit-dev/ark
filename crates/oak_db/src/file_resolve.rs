@@ -257,7 +257,7 @@ impl<'db> File {
 /// *this* file, and salsa would cycle on any unbound name. Exports-only is also
 /// what R's namespace semantics asks for, a package's namespace is the merged
 /// exports of its collation files.
-fn resolve_import_layer<'db>(
+pub(crate) fn resolve_import_layer<'db>(
     db: &'db dyn Db,
     layer: &ImportLayer,
     name: Name<'db>,

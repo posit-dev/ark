@@ -847,3 +847,65 @@ fn test_script_r_directory_unplaced_file_still_sees_only_predecessors() {
     let offset = TextSize::from(b_source.find('x').unwrap() as u32);
     assert_eq!(package_files(&b.imports_at(&db, offset)), vec![a]);
 }
+
+#[test]
+fn test_inherited_attach_is_offset_sensitive_via_source_call_position() {
+    // `main.R`'s `library(dplyr)` runs after its `source()` call, so a
+    // top-level cursor in `helpers.R` (Eager: attaches up to the source-call
+    // offset) doesn't see it, while a cursor in a function body (Lazy:
+    // end-of-file view) does.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr"]);
+    let root = workspace_root(&db, "w");
+
+    let main_source = "source(\"helpers.R\")\nlibrary(dplyr)\n";
+    let main = make_file(&mut db, "w/main.R", main_source);
+
+    let helpers_source = "top <- 1\nf <- function() {\n  body_stmt\n}\n";
+    let helpers = make_file(&mut db, "w/helpers.R", helpers_source);
+
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let top_offset = TextSize::from(helpers_source.find("top").unwrap() as u32);
+    let top_layers = helpers.imports_at(&db, top_offset);
+    assert!(!library_attaches(&db, &top_layers).contains(&"dplyr".to_string()));
+
+    let body_offset = TextSize::from(helpers_source.find("body_stmt").unwrap() as u32);
+    let body_layers = helpers.imports_at(&db, body_offset);
+    assert!(library_attaches(&db, &body_layers).contains(&"dplyr".to_string()));
+}
+
+#[test]
+fn test_attach_in_eager_scope_is_visible_to_later_top_level_code() {
+    // `library()` attaches to the global search path whatever frame it runs in,
+    // so a call inside `local()` counts for code after the block exactly like a
+    // top-level one would. It's invisible before the block, though, same
+    // narrowing as any other attach.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "before\nlocal({\n  library(cli)\n})\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let before = TextSize::from(source.find("before").unwrap() as u32);
+    assert!(!library_attaches(&db, &file.imports_at(&db, before)).contains(&"cli".to_string()));
+
+    let after = TextSize::from(source.find("after").unwrap() as u32);
+    assert!(library_attaches(&db, &file.imports_at(&db, after)).contains(&"cli".to_string()));
+}
+
+#[test]
+fn test_attach_under_a_lazy_ancestor_stays_invisible() {
+    // The `local()` here is eager, but it sits in a function body, and nothing
+    // says that function was ever called. So the whole chain out to the file
+    // scope has to be eager, not just the attach's own scope.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "f <- function() {\n  local({\n    library(cli)\n  })\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let after = TextSize::from(source.find("after").unwrap() as u32);
+    assert!(!library_attaches(&db, &file.imports_at(&db, after)).contains(&"cli".to_string()));
+}

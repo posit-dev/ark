@@ -2,6 +2,7 @@ mod db;
 mod definition;
 mod diagnostic;
 mod file;
+mod file_diagnostics;
 mod file_exports;
 mod file_imports;
 mod file_resolve;

@@ -504,12 +504,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // (sequential execution is guaranteed), but inside a function it's
         // only visible within that function and its children, since the
         // function might never be called. Same reasoning as `source()` calls.
-        let call_range = call.syntax().text_trimmed_range();
-        let region = self.attach_region(call_range.start(), &package);
+        let range = call.syntax().text_trimmed_range();
+        let region = self.attach_region(range.start(), &package);
         self.walk.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Attach { package, region },
-            range: call_range,
+            range,
             scope: self.current_scope,
+            callee: bare_callee_name(call),
         });
     }
 
@@ -544,6 +545,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn walk_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
+        let callee = bare_callee_name(call);
 
         // Read back what the scan cached: the sourced files, each with its
         // resolution. The scan is the single point that extracts the paths and
@@ -563,6 +565,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 kind: SemanticCallKind::Source { path, resolved },
                 range,
                 scope: self.current_scope,
+                callee: callee.clone(),
             });
 
             let Some(resolution) = resolution else {
@@ -601,6 +604,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
                     range,
                     scope: self.current_scope,
+                    // No callee: nothing is written at `range` under this name.
+                    // The `source()` call that forwarded these carries it, so a
+                    // consumer keying on the callee sees the site once.
+                    callee: None,
                 });
             }
         }
@@ -1004,5 +1011,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             };
             current_scope = parent;
         }
+    }
+}
+
+/// The callee of `call` when it's written as a bare identifier. `None` for
+/// anything else, including a `pkg::fn` callee: `::` names the package outright,
+/// so no binding can shadow it. Mirrors the two cases
+/// `resolve_effects_handlers` recognizes.
+fn bare_callee_name(call: &RCall) -> Option<String> {
+    match call.function().ok()? {
+        AnyRExpression::RIdentifier(ident) => Some(ident.name_text().to_string()),
+        _ => None,
     }
 }
