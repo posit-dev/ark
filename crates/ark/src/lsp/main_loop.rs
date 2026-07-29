@@ -57,6 +57,7 @@ use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
+use crate::lsp::watchdog::Watchdog;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -193,6 +194,11 @@ pub(crate) struct LspState {
     /// Threads running workspace scans. Separate from the source fetch pool so
     /// a startup scan never queues behind a package download.
     pub(crate) scan_pool: IoPool,
+
+    /// Detects a tick that arms and never disarms, usually a write parked
+    /// behind a background task that can't drop its db snapshot. See
+    /// [`crate::lsp::watchdog`].
+    pub(crate) watchdog: Watchdog,
 }
 
 impl LspState {
@@ -208,6 +214,7 @@ impl LspState {
             analysis_pool: AnalysisPool::new(),
             diagnostics: DiagnosticsState::default(),
             scan_pool: IoPool::new("oak-scan", 2),
+            watchdog: Watchdog::new(),
         }
     }
 }
@@ -375,6 +382,7 @@ impl GlobalState {
     ///   state.
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
+        let _tick = self.lsp_state.watchdog.tick(self.world.db.outstanding_holds());
 
         // Diagnostics read the oak database (workspace symbols, imports,
         // resolved definitions), so any handler that writes to oak invalidates

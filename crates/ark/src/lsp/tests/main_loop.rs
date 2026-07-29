@@ -9,7 +9,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
@@ -84,122 +83,87 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     assert_eq!(packages[0].files(db).len(), 1);
 }
 
-/// A main-loop Salsa write must never park behind tasks that can't observe
-/// cancellation. A task owning a db snapshot pins a hold from the moment it is queued,
-/// and a write waits for every hold to drop, so a queued snapshot sitting behind an
-/// unbounded source fetch turns the next edit into a deadlock. Source fetches get their
-/// own workers for that reason, and diagnostics get theirs.
-///
-/// The deadlock is a condvar park inside a salsa setter, which no `tokio::time::timeout`
-/// can see. So the script runs on its own thread and reports progress through phase
-/// markers that the test thread waits on with a deadline.
-#[test]
-fn test_main_loop_write_survives_saturated_blocking_pool() {
-    // Same caps as production: two workers, two blocking threads.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(2)
-        .max_blocking_threads(2)
-        .build()
-        .unwrap();
+/// Db-holding work (diagnostics, index warmup) and unbounded I/O (package source
+/// fetches) run on separate executors, so saturating the source pool can't stall a
+/// main-loop write: the analysis pool stays free to drain the queued diagnostics
+/// snapshot the write is waiting on. Gates five packages, one more than
+/// `MAX_ANALYSIS_THREADS`, so a regression that merged the two executors back together
+/// would leave every thread parked instead of a few free ones, and the write would park
+/// behind the pinned snapshot. If that happens, the watchdog (`crate::lsp::watchdog`)
+/// aborts the test with a diagnosis instead of hanging to the harness timeout.
+#[tokio::test]
+async fn test_main_loop_write_survives_saturated_source_pool() {
+    let _aux = init_aux_for_test();
 
-    let (donor1_gate, donor1_entered, donor1_release) = gate();
-    let (donor2_gate, donor2_entered, donor2_release) = gate();
+    // One shared "entered" sender: with five gates and a 2-thread source pool, only two
+    // can ever be inside `handle()` at once, but which two is unpredictable.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let donors = ["donor1", "donor2", "donor3", "donor4", "donor5"];
 
-    let (phase_tx, phase_rx) = std::sync::mpsc::channel::<()>();
-    let handle = rt.handle().clone();
-
-    std::thread::spawn(move || {
-        let _aux = init_aux_for_test();
-
-        let handler = Arc::new(TestSourceHandler::new(HashMap::from([
-            (String::from("donor1"), TestBehavior::Gated(donor1_gate)),
-            (String::from("donor2"), TestBehavior::Gated(donor2_gate)),
-        ])));
-
-        let lib = tempfile::tempdir().unwrap();
-        for name in ["donor1", "donor2"] {
-            DescriptionWriter::new()
-                .package(name)
-                .version("0.0.0")
-                .built("dummy")
-                .write(&lib.path().join(name));
-        }
-        let mut db = OakDatabase::new();
-        db.set_library_paths(&[lib.path().to_path_buf()]);
-
-        let mut state = GlobalState::from_parts(
-            test_client(),
-            WorldState::new(db),
-            LspState::new(
-                tokio::sync::mpsc::unbounded_channel().0,
-                SourceScheduler::new(Some(handler)),
-            ),
-        );
-
-        // A workspace package using both library packages, so the scan hands the
-        // scheduler two dependencies to fetch.
-        let workspace = tempfile::tempdir().unwrap();
-        let myproj = workspace.path().join("myproj");
-        DescriptionWriter::new()
-            .package("myproj")
-            .version("0.0.0")
-            .write(&myproj);
-        write_sources(&myproj.join("R"), &[(
-            "use.R",
-            "donor1::foo()\ndonor2::bar()\n",
-        )]);
-        let script = workspace.path().join("script.R");
-
-        handle.block_on(async move {
-            state
-                .handle_event_once(did_change_workspace_folders(workspace.path()))
-                .await;
-            state.pump_scans_to_quiescence().await;
-            phase_tx.send(()).unwrap();
-
-            // Both source workers are now parked in a fetch that salsa cancellation
-            // can't reach. Index warmup went to the analysis pool, so it isn't queued
-            // behind them.
-            donor1_entered.recv().unwrap();
-            donor2_entered.recv().unwrap();
-            phase_tx.send(()).unwrap();
-
-            // Goes through, no holds outstanding. Ends the tick by queueing a
-            // diagnostics pass, which needs a thread of its own to run on.
-            state.handle_event_once(did_open(&script, "x <- 1\n")).await;
-            phase_tx.send(()).unwrap();
-
-            // The write that has to drain that pinned hold.
-            state
-                .handle_event_once(did_change(&script, "x <- 2\n", 1))
-                .await;
-            phase_tx.send(()).unwrap();
-        });
-    });
-
-    let phases = [
-        ("workspace scans quiesced", Duration::from_secs(30)),
-        (
-            "both source fetches took a blocking thread",
-            Duration::from_secs(30),
-        ),
-        ("didOpen write completed", Duration::from_secs(30)),
-        ("didChange write completed", Duration::from_secs(10)),
-    ];
-    let stalled = phases
-        .iter()
-        .find(|(_label, timeout)| phase_rx.recv_timeout(*timeout).is_err())
-        .map(|(label, _timeout)| *label);
-
-    // Shut the runtime down before anything can panic. Dropping a `Runtime` waits for
-    // its blocking tasks, and the gated fetches only finish once we release them, so a
-    // panic while `rt` is alive would hang the test instead of failing it.
-    rt.shutdown_background();
-    drop(donor1_release);
-    drop(donor2_release);
-
-    if let Some(stalled) = stalled {
-        panic!("Main loop stalled, never reached: {stalled}");
+    let mut behavior = HashMap::new();
+    let mut releases = Vec::new();
+    for name in donors {
+        let (gate, release) = gate(entered_tx.clone());
+        behavior.insert(name.to_string(), TestBehavior::Gated(gate));
+        releases.push(release);
     }
+    let handler = Arc::new(TestSourceHandler::new(behavior));
+
+    let lib = tempfile::tempdir().unwrap();
+    for name in donors {
+        DescriptionWriter::new()
+            .package(name)
+            .version("0.0.0")
+            .built("dummy")
+            .write(&lib.path().join(name));
+    }
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler)),
+        ),
+    );
+
+    // A workspace package using all five library packages via `::`, so the scan hands
+    // the scheduler five dependencies to fetch.
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    let uses: String = donors
+        .iter()
+        .map(|name| format!("{name}::foo()\n"))
+        .collect();
+    write_sources(&myproj.join("R"), &[("use.R", &uses)]);
+    let script = workspace.path().join("script.R");
+
+    state
+        .handle_event_once(did_change_workspace_folders(workspace.path()))
+        .await;
+    state.pump_scans_to_quiescence().await;
+
+    // The source pool workers are now parked in a fetch that salsa cancellation can't
+    // reach. Index warmup went to the analysis pool, so it isn't queued behind them.
+    for _ in 0..2 {
+        entered_rx.recv().unwrap();
+    }
+
+    // Goes through, no holds outstanding. Ends the tick by queueing a diagnostics
+    // pass, which needs an analysis thread to run on.
+    state.handle_event_once(did_open(&script, "x <- 1\n")).await;
+
+    // The write that has to drain that pinned hold.
+    state
+        .handle_event_once(did_change(&script, "x <- 2\n", 1))
+        .await;
+
+    // Let the still-gated workers finish so the test process can exit cleanly.
+    drop(releases);
 }

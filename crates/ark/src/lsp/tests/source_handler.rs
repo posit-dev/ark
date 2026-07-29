@@ -39,18 +39,20 @@ pub(super) struct Gate {
     release_rx: Mutex<Receiver<()>>,
 }
 
-/// Build a gate along with its test-side ends. `entered` fires once the gated
-/// `handle()` call has started running, and the gate stays shut for as long as
-/// `release` is alive.
-pub(super) fn gate() -> (Gate, Receiver<()>, Sender<()>) {
-    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+/// Build a gate reporting through `entered_tx`, the test's single shared sender, once
+/// its `handle()` call starts running. Callers building several gates for the same test
+/// pass clones of the same sender, so the test can count entries across all of them
+/// without knowing which one got in first. Each gate still gets its own release channel:
+/// a shared release receiver would serialise the waiters instead of letting them all
+/// park at once. The gate stays shut for as long as the returned sender is alive.
+pub(super) fn gate(entered_tx: Sender<()>) -> (Gate, Sender<()>) {
     let (release_tx, release_rx) = std::sync::mpsc::channel();
 
     let gate = Gate {
         entered_tx,
         release_rx: Mutex::new(release_rx),
     };
-    (gate, entered_rx, release_tx)
+    (gate, release_tx)
 }
 
 impl Gate {

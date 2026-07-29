@@ -45,6 +45,7 @@ pub mod statement_range;
 pub mod symbols;
 pub mod traits;
 pub mod util;
+mod watchdog;
 
 #[cfg(test)]
 mod tests;
