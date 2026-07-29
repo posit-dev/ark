@@ -215,6 +215,20 @@ impl<'db> SalsaImportsResolver<'db> {
                 true => ControlFlow::Break(None),
                 false => ControlFlow::Continue(()),
             },
+            // Unreachable today: only `build_inherited_layers()` makes these,
+            // and it runs once the file's index exists, while we walk
+            // `cross_file_layers()` during the build.
+            ImportLayer::SourcingFile {
+                file,
+                exports_so_far,
+            } => {
+                let binds =
+                    exports_so_far.contains(name) && file.exports(self.db).get(name).is_some();
+                match binds {
+                    true => ControlFlow::Break(None),
+                    false => ControlFlow::Continue(()),
+                }
+            },
             ImportLayer::Package(package) => match self.package_binding(*package, name) {
                 PackageBinding::Effect(effects) => ControlFlow::Break(Some(effects)),
                 PackageBinding::Shadow => ControlFlow::Break(None),

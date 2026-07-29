@@ -13,6 +13,7 @@ use oak_core::range::Ranged;
 use oak_index_vec::define_index;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use url::Url;
 
 use crate::use_def_map::Bindings;
@@ -95,6 +96,11 @@ pub struct SemanticIndex {
     // the file's exports (see `exports()`). Only the file scope's exit state is
     // ever needed, so we keep this one copy rather than per-scope state.
     final_bindings: IndexVec<SymbolId, Bindings>,
+
+    // For each `source()` call that runs at load time (see
+    // `SemanticIndexBuilder::walk_source_call`), the file-scope names exported
+    // at that point. Pins the context inherited in sourced files.
+    exports_at_source: FxHashMap<TextSize, Arc<FxHashSet<String>>>,
 }
 
 impl SemanticIndex {
@@ -109,6 +115,7 @@ impl SemanticIndex {
         namespace_accesses: Vec<NamespaceAccess>,
         diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
+        exports_at_source: FxHashMap<TextSize, Arc<FxHashSet<String>>>,
     ) -> Self {
         Self {
             scopes,
@@ -121,6 +128,7 @@ impl SemanticIndex {
             namespace_accesses,
             diagnostics,
             final_bindings,
+            exports_at_source,
         }
     }
 
@@ -260,16 +268,14 @@ impl SemanticIndex {
     /// `test_that()` body runs at its call site. A single lazy scope anywhere
     /// in the parent chain of `scope` makes it lazy.
     pub fn is_top_level(&self, scope: ScopeId) -> bool {
-        let mut current = scope;
-        loop {
-            if self.scopes[current].kind.is_lazy() {
-                return false;
-            }
-            match self.scopes[current].parent {
-                Some(parent) => current = parent,
-                None => return true,
-            }
-        }
+        scope_is_top_level(&self.scopes, scope)
+    }
+
+    /// The file-scope names bound by the time the `source()` call at `offset`
+    /// runs, or `None` if that call sits in a lazy context (a function body),
+    /// where nothing pins down when it runs.
+    pub fn exports_at_source(&self, offset: TextSize) -> Option<&Arc<FxHashSet<String>>> {
+        self.exports_at_source.get(&offset)
     }
 
     /// Find the innermost scope containing `offset`.
@@ -440,6 +446,25 @@ impl SemanticIndex {
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
         Some((enclosing_scope, bindings))
+    }
+}
+
+/// Whether `scope` runs during a top-level evaluation of the file: no scope
+/// from `scope` out to the file root is lazy.
+///
+/// Shared by [`SemanticIndex::is_top_level`] (post-build) and the builder,
+/// which needs the same walk over its own scope arena mid-build to decide
+/// whether a `source()` call runs at load time.
+pub(crate) fn scope_is_top_level(scopes: &IndexVec<ScopeId, Scope>, scope: ScopeId) -> bool {
+    let mut current = scope;
+    loop {
+        if scopes[current].kind.is_lazy() {
+            return false;
+        }
+        match scopes[current].parent {
+            Some(parent) => current = parent,
+            None => return true,
+        }
     }
 }
 

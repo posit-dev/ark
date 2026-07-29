@@ -589,3 +589,126 @@ fn test_conditional_library_resolves_only_inside_its_branch() {
     let after = TextSize::from(source.rfind("foo").unwrap() as u32);
     assert!(script.resolve_at(&db, after).is_empty());
 }
+
+/// A workspace holding `main.R`, which sources `helpers.R`, plus whatever else
+/// the caller lists. Returns the files in the given order.
+fn setup_sourced(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {
+    let root = workspace_root(db, "w");
+    let entities: Vec<File> = files
+        .iter()
+        .map(|(path, contents)| make_file(db, path, contents))
+        .collect();
+    root.set_scripts(db).to(entities.clone());
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    entities
+}
+
+#[test]
+fn test_sourced_file_sees_definitions_before_the_source_call() {
+    let mut db = TestDb::new();
+    let helpers_source = "before\n";
+    let files = setup_sourced(&mut db, &[
+        ("w/main.R", "before <- 1\nsource(\"helpers.R\")\n"),
+        ("w/helpers.R", helpers_source),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), main);
+    assert_eq!(def.name(&db).text(&db).as_str(), "before");
+}
+
+#[test]
+fn test_sourced_file_top_level_does_not_see_definitions_after_the_source_call() {
+    // `after` hadn't run when `source()` executed, so `helpers.R`'s top level
+    // genuinely can't see it. Without narrowing this resolves, because
+    // `ImportLayer::File` goes through whole-file `exports()`.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        ("w/main.R", "source(\"helpers.R\")\nafter <- 1\n"),
+        ("w/helpers.R", "after\n"),
+    ]);
+    let helpers = files[1];
+
+    assert!(helpers.resolve_at(&db, TextSize::from(0)).is_empty());
+}
+
+#[test]
+fn test_sourced_file_function_body_still_sees_definitions_after_the_source_call() {
+    // A function defined in `helpers.R` can be called from `main.R` after
+    // `main.R` finished running, so it does see `after`. Narrowing is for the
+    // Eager view only.
+    let mut db = TestDb::new();
+    let helpers_source = "f <- function() after\n";
+    let files = setup_sourced(&mut db, &[
+        ("w/main.R", "source(\"helpers.R\")\nafter <- 1\n"),
+        ("w/helpers.R", helpers_source),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    let offset = TextSize::from(helpers_source.find("after").unwrap() as u32);
+    let def = resolve_one(&db, helpers, offset);
+    assert_eq!(def.file(&db), main);
+}
+
+#[test]
+fn test_conditional_definition_before_the_source_call_stays_visible() {
+    // `maybe` is only maybe-bound at the `source()` call. We over-approximate
+    // and keep it, so an unknown-symbol diagnostic won't fire on a name that
+    // might well be there.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        ("w/main.R", "if (cond) maybe <- 1\nsource(\"helpers.R\")\n"),
+        ("w/helpers.R", "maybe\n"),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), main);
+}
+
+#[test]
+fn test_source_call_in_a_function_body_narrows_nothing() {
+    // Nothing says when (or whether) `load()` runs, so there's no program point
+    // to narrow to. `helpers.R` falls back to whole-file exports and sees
+    // `after`.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "load <- function() source(\"helpers.R\")\nafter <- 1\n",
+        ),
+        ("w/helpers.R", "after\n"),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), main);
+}
+
+#[test]
+fn test_narrowing_applies_at_each_hop_of_a_source_chain() {
+    // `setup.R` sources `helpers.R` before binding `late_setup`, and `main.R`
+    // sources `setup.R` before binding `late_main`, so `helpers.R`'s top level
+    // sees neither. `early_main` ran before both calls, so it does show up.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "early_main <- 1\nsource(\"setup.R\")\nlate_main <- 2\n",
+        ),
+        ("w/setup.R", "source(\"helpers.R\")\nlate_setup <- 3\n"),
+        ("w/helpers.R", "early_main\n"),
+    ]);
+    let (main, helpers) = (files[0], files[2]);
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), main);
+
+    for name in ["late_main", "late_setup"] {
+        helpers
+            .set_source_text_override(&mut db)
+            .to(Some(format!("{name}\n")));
+        assert!(helpers.resolve_at(&db, TextSize::from(0)).is_empty());
+    }
+}

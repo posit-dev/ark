@@ -103,7 +103,7 @@ fn package_files(layers: &[ImportLayer]) -> Vec<File> {
     layers
         .iter()
         .filter_map(|layer| match layer {
-            ImportLayer::File(f) => Some(*f),
+            ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => Some(*file),
             _ => None,
         })
         .collect()

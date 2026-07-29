@@ -3,11 +3,13 @@ use itertools::Itertools;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::SymbolId;
+use crate::semantic_index::SymbolTable;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 
@@ -541,6 +543,20 @@ impl UseDefMapBuilder {
     /// effect once the last statement has run
     pub(crate) fn final_bindings(&self) -> &IndexVec<SymbolId, Bindings> {
         &self.symbol_states
+    }
+
+    /// Names bound at this point in the flow, same criterion as
+    /// `SemanticIndex::exports()`: a symbol counts once it has at least one
+    /// live definition, regardless of `may_be_unbound` (a conditional binding
+    /// like `if (cond) foo <- 1` already has a non-empty definition set, so it
+    /// counts too, over-approximating in the safe direction). Used to snapshot
+    /// the file scope's live bindings at a `source()` call.
+    pub(crate) fn bound_names(&self, symbols: &SymbolTable) -> FxHashSet<String> {
+        self.symbol_states
+            .iter()
+            .filter(|(_, bindings)| !bindings.definitions().is_empty())
+            .map(|(symbol_id, _)| symbols.symbol(symbol_id).name().to_owned())
+            .collect()
     }
 
     /// Finalize into an immutable [`UseDefMap`].

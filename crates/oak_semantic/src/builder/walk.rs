@@ -2,6 +2,8 @@
 //! symbols, definitions, uses, use-def maps), reusing the scan's decisions.
 //! See the module docs on [`super`] for the scan/walk split.
 
+use std::sync::Arc;
+
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
 use aether_syntax::RArgumentList;
@@ -37,6 +39,7 @@ use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::scope_is_top_level;
 use crate::semantic_index::AttachRegion;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
@@ -554,6 +557,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             Some(resolution) => resolution.source.clone(),
             None => return,
         };
+
+        // Only a call that runs at load time pins down what the sourced
+        // file's top level can see. One inside a function body might never
+        // run, or might run after the rest of this file, so we record
+        // nothing there and let the sourced file fall back to whole-file
+        // exports.
+        if scope_is_top_level(&self.scopes, self.current_scope) {
+            let file_scope = ScopeId::from(0);
+            let symbols = &self.walk.symbol_tables[file_scope];
+            let visible = self.walk.use_def_maps[file_scope].bound_names(symbols);
+            self.walk
+                .exports_at_source
+                .insert(call_offset, Arc::new(visible));
+        }
 
         for SourcedFile { path, resolution } in sourced {
             // Record every sourced file, independent of whether it resolved.

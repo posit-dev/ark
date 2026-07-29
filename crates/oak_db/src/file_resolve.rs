@@ -266,7 +266,19 @@ pub(crate) fn resolve_import_layer<'db>(
     // that package's exports. A `File` sibling is the exception, resolved
     // through its own exports chain.
     let package = match layer {
-        ImportLayer::File(target) => return target.resolve_export(db, name),
+        ImportLayer::File(file) => return file.resolve_export(db, name),
+        ImportLayer::SourcingFile {
+            file,
+            exports_so_far,
+        } => {
+            // Checking the snapshot here rather than inside `resolve_export()`
+            // prevents a `semantic_index` read. Since the index is `no_eq` this
+            // would compromise the `File::resolve` firewall.
+            if !exports_so_far.contains(name.text(db).as_str()) {
+                return Vec::new();
+            }
+            return file.resolve_export(db, name);
+        },
         ImportLayer::Package(package) => *package,
         ImportLayer::From(importer) => {
             match importer.imported_from(db).get(name.text(db).as_str()) {

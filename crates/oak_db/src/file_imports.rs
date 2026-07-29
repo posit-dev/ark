@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use biome_rowan::TextSize;
 use camino::Utf8Path;
@@ -8,6 +9,7 @@ use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
+use rustc_hash::FxHashSet;
 
 use crate::Db;
 use crate::File;
@@ -19,9 +21,17 @@ use crate::Package;
 /// package-name strings cross out of `oak_db` for resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportLayer {
-    /// A predecessor file in a package's collation, or another workspace
-    /// file. Names are resolved through `file.exports(db)`.
+    /// A file whose top level has fully run by the time this layer is read: a
+    /// collation predecessor, or a sourcing file seen from a lazy context.
+    /// Names are resolved through `file.exports(db)`.
     File(File),
+    /// A file that sources the one being resolved, seen as of its `source()`
+    /// call. The rest of `file` hadn't run by then, so only `exports_so_far`
+    /// counts.
+    SourcingFile {
+        file: File,
+        exports_so_far: Arc<FxHashSet<String>>,
+    },
     /// The package whose NAMESPACE declares `importFrom(pkg, name)` entries.
     /// [`Package::import_index`] says which entry, if any, binds a given name.
     From(Package),
@@ -399,20 +409,42 @@ fn build_inherited_layers(
     source_site: File,
     view: CollationView,
 ) -> InheritedLayers {
-    // `Anywhere` when nothing pins the `source()` call to a program point: the
-    // lazy view, or a sourcing file whose call we can't locate.
-    let attaches = match view {
-        CollationView::Lazy => AttachView::Anywhere,
-        CollationView::Eager => match source_offset(db, source_site, file) {
-            Some(offset) => AttachView::Eager(offset),
-            None => AttachView::Anywhere,
-        },
+    let offset = match view {
+        CollationView::Lazy => None,
+        CollationView::Eager => source_offset(db, source_site, file),
+    };
+
+    // `Anywhere` when nothing pins the `source()` call to a program point, i.e.
+    // the lazy view or a sourcing file whose call we can't locate.
+    let attaches = match offset {
+        Some(offset) => AttachView::Eager(offset),
+        None => AttachView::Anywhere,
     };
     let own_cross = source_site.cross_file_layers(db, view);
     let own_attach = source_site.attach_layers(db, attaches);
     let grandparents = source_site.inherited_layers(db, view);
 
-    let mut above = vec![ImportLayer::File(source_site)];
+    // For `Eager`, narrow to what `source_site` had bound by the time its
+    // `source()` call ran. `attach_layers` already reads `source_site`'s
+    // semantic index, so doing the same here doesn't cost an extra firewall.
+    let exports_so_far = offset.and_then(|offset| {
+        source_site
+            .semantic_index(db)
+            .exports_at_source(offset)
+            .cloned()
+    });
+
+    // No exports snapshot means the call sits in a lazy scope. Include the
+    // whole file (over-approximation).
+    let source_layer = match exports_so_far {
+        Some(exports_so_far) => ImportLayer::SourcingFile {
+            file: source_site,
+            exports_so_far,
+        },
+        None => ImportLayer::File(source_site),
+    };
+
+    let mut above = vec![source_layer];
     above.extend(own_cross.above.iter().cloned());
     above.extend(
         grandparents

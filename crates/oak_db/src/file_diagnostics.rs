@@ -125,10 +125,10 @@ fn sourcing_file(db: &dyn Db, file: File, layer: &ImportLayer) -> Option<String>
 
 fn describe_source(db: &dyn Db, layer: &ImportLayer) -> String {
     match layer {
-        ImportLayer::File(target) => {
+        ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
             format!(
                 "a binding in `{}`",
-                target.path(db).file_name().unwrap_or_default()
+                file.path(db).file_name().unwrap_or_default()
             )
         },
         ImportLayer::Package(package) => format!("package `{}`", package.name(db)),

@@ -1,7 +1,9 @@
+use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::file_imports::CollationView;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
@@ -186,8 +188,8 @@ fn test_package_file_emits_namespace_and_collation_layers() {
             ImportLayer::Package(p) => {
                 shape.push(format!("Package({})", p.name(&db)));
             },
-            ImportLayer::File(f) => {
-                let url = f.path(&db).to_url();
+            ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
+                let url = file.path(&db).to_url();
                 shape.push(format!(
                     "File({})",
                     url.path().rsplit('/').next().unwrap_or("?")
@@ -540,8 +542,8 @@ fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
                 format!("From({entries:?})")
             },
             ImportLayer::Package(p) => format!("Package({})", p.name(db)),
-            ImportLayer::File(f) => {
-                let url = f.path(db).to_url();
+            ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
+                let url = file.path(db).to_url();
                 format!("File({})", url.path().rsplit('/').next().unwrap_or("?"))
             },
         })
@@ -1043,6 +1045,65 @@ fn test_file_nobody_sources_keeps_its_own_cross_file_layers() {
         "Package(dplyr)".to_string(),
         "Package(base)".to_string(),
     ]);
+}
+
+#[test]
+fn test_cross_file_layers_never_carries_inherited_layers() {
+    // The scan-time resolver walks `cross_file_layers` while a file's own index
+    // is still being built, so an inherited layer there would make every file's
+    // index demand the workspace reverse map. `resolution_layers` splices
+    // inheritance in afterwards instead, which is why the read side below sees
+    // `main.R` and `cross_file_layers` doesn't.
+    //
+    // This is what makes the `SourcingFile` arm of `layer_effect` unreachable.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "w");
+
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("cfg <- 1\nsource(\"R/helpers.R\")\n".to_string()),
+        None,
+    );
+    // Collates before `helpers.R`, so the scan side has a real `File` layer to
+    // tell apart from a `SourcingFile` one.
+    let sibling = File::new(
+        &db,
+        file_path("w/R/a_sib.R"),
+        FileRevision::zero(),
+        Some("sib <- 1\n".to_string()),
+        None,
+    );
+    let helpers_source = "top <- 2\n";
+    let helpers = File::new(
+        &db,
+        file_path("w/R/helpers.R"),
+        FileRevision::zero(),
+        Some(helpers_source.to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, sibling, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // The read side narrows `main.R` to what had run by its `source()` call.
+    let offset = TextSize::from(helpers_source.find("top").unwrap() as u32);
+    assert!(helpers
+        .imports_at(&db, offset)
+        .iter()
+        .any(|layer| { matches!(layer, ImportLayer::SourcingFile { file, .. } if *file == main) }));
+
+    // The scan side has `File` layers but never a `SourcingFile`, either view.
+    for view in [CollationView::Eager, CollationView::Lazy] {
+        let scan_side = helpers.cross_file_layers(&db, view);
+        assert!(scan_side
+            .lookup_order(&[])
+            .any(|layer| matches!(layer, ImportLayer::File(file) if *file == sibling)));
+        assert!(!scan_side
+            .lookup_order(&[])
+            .any(|layer| matches!(layer, ImportLayer::SourcingFile { .. })));
+    }
 }
 
 #[test]
