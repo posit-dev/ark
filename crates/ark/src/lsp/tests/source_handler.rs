@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
 use super::utils::write_sources;
@@ -25,6 +27,42 @@ pub(super) enum TestBehavior {
     /// and return `Success(dir)`.
     Success(Vec<(&'static str, &'static str)>),
     Failure,
+    /// Park on a [`Gate`] until the test releases it, then fail. Lets a test hold a
+    /// blocking thread for as long as it wants.
+    Gated(Gate),
+}
+
+/// The handler side of a rendezvous with the test. `handle()` announces that it has
+/// started, then parks until the test lets go.
+pub(super) struct Gate {
+    entered_tx: Sender<()>,
+    release_rx: Mutex<Receiver<()>>,
+}
+
+/// Build a gate along with its test-side ends. `entered` fires once the gated
+/// `handle()` call has started running, and the gate stays shut for as long as
+/// `release` is alive.
+pub(super) fn gate() -> (Gate, Receiver<()>, Sender<()>) {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+    let gate = Gate {
+        entered_tx,
+        release_rx: Mutex::new(release_rx),
+    };
+    (gate, entered_rx, release_tx)
+}
+
+impl Gate {
+    fn wait(&self) {
+        if self.entered_tx.send(()).is_err() {
+            return;
+        }
+        match self.release_rx.lock().unwrap().recv() {
+            // `Err` means the test dropped the release end, which also lets us through
+            Ok(()) | Err(_) => (),
+        }
+    }
 }
 
 impl TestSourceHandler {
@@ -53,6 +91,10 @@ impl SourceHandler for TestSourceHandler {
                 SourceResponse::Success(dir)
             },
             Some(TestBehavior::Failure) => SourceResponse::Failure,
+            Some(TestBehavior::Gated(gate)) => {
+                gate.wait();
+                SourceResponse::Failure
+            },
             None => panic!("Unknown test package {}", request.name()),
         }
     }

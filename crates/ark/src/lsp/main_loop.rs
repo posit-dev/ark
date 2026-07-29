@@ -651,6 +651,22 @@ impl GlobalState {
         }
     }
 
+    /// Run a single `event` through the real `handle_event`, without pumping
+    /// followups. Tests that gate a subsystem need this because
+    /// `handle_event_to_quiescence` would wait for the gated work to finish.
+    pub(crate) async fn handle_event_once(&mut self, event: Event) {
+        self.handle_event(event).await.unwrap();
+    }
+
+    /// Pump events until no oak scan is pending, ignoring pending source
+    /// requests.
+    pub(crate) async fn pump_scans_to_quiescence(&mut self) {
+        while self.lsp_state.oak_scheduler.has_pending_scans() {
+            let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
     pub(crate) fn world(&self) -> &WorldState {
         &self.world
     }

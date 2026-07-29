@@ -6,6 +6,7 @@ use std::path::Path;
 
 use aether_path::FilePath;
 pub(super) use description_writer::DescriptionWriter;
+pub(super) use events::did_change;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use namespace_writer::NamespaceWriter;
