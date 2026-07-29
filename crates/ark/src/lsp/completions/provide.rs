@@ -7,11 +7,11 @@
 
 use tower_lsp_server::ls_types::CompletionItem;
 
+use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 

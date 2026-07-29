@@ -28,7 +28,7 @@ pub(super) enum TestBehavior {
     Success(Vec<(&'static str, &'static str)>),
     Failure,
     /// Park on a [`Gate`] until the test releases it, then fail. Lets a test hold a
-    /// blocking thread for as long as it wants.
+    /// source worker for as long as it wants.
     Gated(Gate),
 }
 

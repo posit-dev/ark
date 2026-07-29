@@ -5,6 +5,7 @@
 //
 //
 
+mod analysis;
 pub mod backend;
 pub mod capabilities;
 pub mod code_action;
@@ -28,6 +29,7 @@ pub mod hover;
 pub mod indent;
 pub mod indexer;
 pub mod input_boundaries;
+mod io_pool;
 pub mod main_loop;
 pub mod markdown;
 pub(crate) mod open_file;
@@ -69,4 +71,3 @@ pub(crate) use log_error;
 pub(crate) use log_info;
 pub(crate) use log_warn;
 pub(crate) use main_loop::publish_diagnostics;
-pub(crate) use main_loop::spawn_blocking;

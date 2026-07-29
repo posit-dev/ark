@@ -9,20 +9,20 @@ use salsa::Database;
 use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::config::LspConfig;
-use crate::lsp::db::ArkDb;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::url::UrlExt;
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
 /// code. This is a pure value. There is no interior mutability in this data
-/// structure. It can be cloned and safely sent to other threads.
+/// structure.
 ///
 /// The main loop owns and mutates this. Background readers get a
-/// [`WorldStateSnapshot`] instead, which only lends its database out as
-/// `&dyn ArkDb`. This prevents background threads from reaching a Salsa input
-/// setter. See [`Self::diagnostics_snapshot`] and [`Self::snapshot`]. This split
-/// mirrors rust-analyzer's `GlobalState` and `GlobalStateSnapshot`.
+/// [`crate::lsp::analysis::WorldStateSnapshot`] instead, which only lends its
+/// database out as `&dyn ArkDb`, so a background thread can't reach a Salsa
+/// input setter. Snapshots are minted in [`crate::lsp::analysis`] and nowhere
+/// else. This split mirrors rust-analyzer's `GlobalState` and
+/// `GlobalStateSnapshot`.
 pub(crate) struct WorldState {
     /// Salsa input tree for Oak queries.
     pub(crate) db: OakDatabase,
@@ -78,32 +78,6 @@ impl WorldState {
         Self {
             db,
             ..Default::default()
-        }
-    }
-
-    /// Full read-only snapshot for a background reader that needs more than the
-    /// db, e.g. completions read the workspace. Same shape as `self.clone()`,
-    /// but the db is only reachable as `&dyn ArkDb`.
-    pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
-        WorldStateSnapshot {
-            db: self.db.clone(),
-            console_scopes: self.console_scopes.clone(),
-            installed_packages: self.installed_packages.clone(),
-            config: self.config.clone(),
-            workspace: self.workspace.clone(),
-        }
-    }
-
-    /// Trimmed read-only snapshot for the diagnostics worker, which runs off
-    /// the main loop and queries oak. Drops the workspace map the diagnostics
-    /// pass doesn't read.
-    pub(crate) fn diagnostics_snapshot(&self) -> WorldStateSnapshot {
-        WorldStateSnapshot {
-            db: self.db.clone(),
-            console_scopes: self.console_scopes.clone(),
-            installed_packages: self.installed_packages.clone(),
-            config: self.config.clone(),
-            workspace: Workspace::default(),
         }
     }
 
@@ -167,37 +141,6 @@ impl WorldState {
     ) {
         let open_file = OpenFile::new(file, version, uri);
         self.open_files.insert(path, open_file);
-    }
-}
-
-/// Read-only snapshot of [`WorldState`] handed to background readers (e.g.
-/// diagnostics), so a reader thread can't reach Salsa input setters. Carries only
-/// the fields readers actually use. Mirrors rust-analyzer's
-/// `GlobalStateSnapshot`.
-#[derive(Clone, Debug)]
-pub(crate) struct WorldStateSnapshot {
-    /// Private so readers can only reach it through [`Self::db`].
-    db: OakDatabase,
-    pub(crate) workspace: Workspace,
-    pub(crate) console_scopes: Vec<Vec<String>>,
-    pub(crate) installed_packages: Vec<String>,
-    pub(crate) config: LspConfig,
-}
-
-impl WorldStateSnapshot {
-    /// Read-only access to the database. Returns `&dyn ArkDb` rather than
-    /// `&OakDatabase` because `dyn ArkDb` is unsized, so a reader can't
-    /// `.clone()` its way to an owned database and call setters on it.
-    pub(crate) fn db(&self) -> &dyn ArkDb {
-        &self.db
-    }
-
-    /// The database's salsa cancellation token. Read-side only: it observes and
-    /// arms cancellation, it doesn't mutate any input. Only cancellation tests
-    /// arm it by hand.
-    #[cfg(test)]
-    pub(crate) fn cancellation_token(&self) -> salsa::CancellationToken {
-        salsa::Database::cancellation_token(&self.db)
     }
 }
 

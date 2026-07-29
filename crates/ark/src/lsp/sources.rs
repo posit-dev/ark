@@ -11,6 +11,7 @@ use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
 use stdext::result::ResultExt;
 
+use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
 
@@ -142,6 +143,11 @@ enum SourceState {
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
+
+    /// Workers running I/O fetches, e.g. for `oak_sources`. Two threads, so we
+    /// never have more than two package downloads in flight. A fetch must not own
+    /// any db handle as this would hold up main loop writes.
+    pool: IoPool,
 }
 
 impl SourceScheduler {
@@ -149,6 +155,7 @@ impl SourceScheduler {
         Self {
             handler,
             state: HashMap::new(),
+            pool: IoPool::new("oak-io", 2),
         }
     }
 
@@ -177,10 +184,10 @@ impl SourceScheduler {
             let handler = Arc::clone(handler);
             let tx = events_tx.clone();
 
-            // Mark as `Pending` just before launching the tokio task
+            // Mark as `Pending` just before launching the job
             self.state.insert(package, SourceState::Pending);
 
-            crate::lsp::spawn_blocking(move || {
+            self.pool.submit(move || {
                 let response = handler.handle(&request);
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
@@ -188,8 +195,6 @@ impl SourceScheduler {
                     response,
                 }))
                 .log_err();
-
-                Ok(None)
             });
         }
     }

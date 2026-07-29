@@ -2,7 +2,7 @@
 //!
 //! Where the handler tests in [`super::state_handlers`] reconstruct the scan
 //! pump by hand, this one feeds an event through the production `handle_event`
-//! and lets the loop dispatch the scan, run it on a blocking task, route the
+//! and lets the loop dispatch the scan, run it on the scan pool, route the
 //! [`Event::OakScanCompleted`] back, and apply it. So it pins the main loop's
 //! own wiring: which arm calls which handler, and the apply-and-redispatch
 //! step. The scheduler's policy is unit tested without tokio in `oak_scan`.
@@ -84,10 +84,11 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     assert_eq!(packages[0].files(db).len(), 1);
 }
 
-/// A main-loop Salsa write must never park behind blocking-pool tasks that can't
-/// observe cancellation. A task owning a db snapshot pins a hold from the moment it is
-/// queued, and a write waits for every hold to drop, so a queued snapshot sitting
-/// behind an unbounded source fetch turns the next edit into a deadlock.
+/// A main-loop Salsa write must never park behind tasks that can't observe
+/// cancellation. A task owning a db snapshot pins a hold from the moment it is queued,
+/// and a write waits for every hold to drop, so a queued snapshot sitting behind an
+/// unbounded source fetch turns the next edit into a deadlock. Source fetches get their
+/// own workers for that reason, and diagnostics get theirs.
 ///
 /// The deadlock is a condvar park inside a salsa setter, which no `tokio::time::timeout`
 /// can see. So the script runs on its own thread and reports progress through phase
@@ -157,15 +158,15 @@ fn test_main_loop_write_survives_saturated_blocking_pool() {
             state.pump_scans_to_quiescence().await;
             phase_tx.send(()).unwrap();
 
-            // Both blocking threads are now parked in a fetch that salsa cancellation
-            // can't reach. Warmup was spawned before the fetches and the pool is FIFO,
-            // so its own hold has already dropped.
+            // Both source workers are now parked in a fetch that salsa cancellation
+            // can't reach. Index warmup went to the analysis pool, so it isn't queued
+            // behind them.
             donor1_entered.recv().unwrap();
             donor2_entered.recv().unwrap();
             phase_tx.send(()).unwrap();
 
             // Goes through, no holds outstanding. Ends the tick by queueing a
-            // diagnostics pass whose snapshot can never reach a thread.
+            // diagnostics pass, which needs a thread of its own to run on.
             state.handle_event_once(did_open(&script, "x <- 1\n")).await;
             phase_tx.send(()).unwrap();
 

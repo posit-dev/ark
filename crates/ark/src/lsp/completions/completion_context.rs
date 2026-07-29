@@ -9,11 +9,11 @@ use std::cell::OnceCell;
 
 use tree_sitter::Node;
 
+use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldStateSnapshot;
 use crate::treesitter::node_find_containing_call;
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,

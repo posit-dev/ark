@@ -13,7 +13,7 @@ use crate::WorkspaceRoots;
 /// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot` /
 /// `StaleRoot` inputs and lazy-initialises them on first access.
 #[salsa::db]
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
@@ -27,6 +27,26 @@ pub struct OakDatabase {
 impl OakDatabase {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A snapshot handle onto the database for a background reader.
+    ///
+    /// When the main loop needs to write to a `&mut OakDatabase`, it gets
+    /// parked by Salsa until all snapshot handles have been dropped. Only
+    /// create a snapshot for cancellable CPU-bound tasks that either query
+    /// Salsa or periodically check for cancellation.
+    ///
+    /// Keep `OakDatabase` non-`Clone`, this should be the only way to create a
+    /// Salsa handle.
+    pub fn snapshot(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            workspace_roots: Arc::clone(&self.workspace_roots),
+            library_roots: Arc::clone(&self.library_roots),
+            orphan_root: Arc::clone(&self.orphan_root),
+            stale_root: Arc::clone(&self.stale_root),
+            holds: Arc::clone(&self.holds),
+        }
     }
 
     // Number of live clones of this db (always >= 1, the caller itself). A

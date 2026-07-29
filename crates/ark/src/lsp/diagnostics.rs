@@ -23,13 +23,13 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp;
+use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
@@ -1182,7 +1182,7 @@ mod tests {
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
-    fn generate_diagnostics(code: &str, state: WorldState) -> Vec<lsp_types::Diagnostic> {
+    fn generate_diagnostics(code: &str, state: &WorldState) -> Vec<lsp_types::Diagnostic> {
         let url = url::Url::parse("file:///test.R").unwrap();
         let file = oak_db::File::new(
             &state.db,
@@ -1227,7 +1227,7 @@ mod tests {
 foo
 
 1 }";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1250,7 +1250,7 @@ foo
                 1,
                 2 # hi there
             )";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1259,7 +1259,7 @@ foo
     fn test_missing_namespace_rhs() {
         r_task(|| {
             let text = "base::";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert_eq!(diagnostics.len(), 1);
             let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
@@ -1271,7 +1271,7 @@ foo
         r_task(|| {
             let text = "..1 + ..2 + 3";
 
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
 
             assert!(diagnostics.is_empty());
         })
@@ -1290,11 +1290,11 @@ foo
             let state = current_state();
 
             let text = "x$foo";
-            let diagnostics = generate_diagnostics(text, state.clone());
+            let diagnostics = generate_diagnostics(text, &state);
             assert!(diagnostics.is_empty());
 
             let text = "x@foo";
-            let diagnostics = generate_diagnostics(text, state.clone());
+            let diagnostics = generate_diagnostics(text, &state);
             assert!(diagnostics.is_empty());
 
             // Clean up
@@ -1311,7 +1311,7 @@ foo
                 z = 3
                 y + x + z
             ";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1324,7 +1324,7 @@ foo
                 2 ->> y
                 y + x
             ";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1338,7 +1338,7 @@ foo
                 x + 1
             ";
 
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
@@ -1356,7 +1356,7 @@ foo
                 identity(foo ~ bar)
                 identity(~foo)
             ";
-            let diagnostics = generate_diagnostics(text, current_state());
+            let diagnostics = generate_diagnostics(text, &current_state());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1371,7 +1371,7 @@ foo
                 cherry
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1389,7 +1389,7 @@ foo
                 cherry
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1408,7 +1408,7 @@ foo
                 x
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1426,7 +1426,7 @@ foo
                 cherry
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.first().unwrap();
@@ -1442,7 +1442,7 @@ foo
                 apple
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1455,7 +1455,7 @@ foo
                 apple
             ";
 
-            let diagnostics = generate_diagnostics(code, current_state());
+            let diagnostics = generate_diagnostics(code, &current_state());
             assert_eq!(diagnostics.len(), 0);
         })
     }
@@ -1474,13 +1474,13 @@ foo
                 list(x <- 1)
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             let code = "
                 list({ x <- 1 })
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         });
 
         // Subset
@@ -1490,14 +1490,14 @@ foo
                 foo[x <- 1]
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             let code = "
                 foo <- list()
                 foo[{x <- 1}]
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         });
 
         // Subset2
@@ -1507,14 +1507,14 @@ foo
                 foo[[x <- 1]]
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             let code = "
                 foo <- list()
                 foo[[{x <- 1}]]
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         });
     }
 
@@ -1529,7 +1529,7 @@ foo
             let code = "
                 list(x)
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             // Important to test nested case. We have a dynamic stack of state
             // variable to keep track of whether we are in a call. The inner
@@ -1537,14 +1537,14 @@ foo
             let code = "
                 list(list(), x)
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             // `in_call_like_arguments` state variable is reset
             let code = "
                 list()
                 x
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 1);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 1);
         });
 
         // Subset
@@ -1557,7 +1557,7 @@ foo
                 data[x]
                 data[,x]
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             // Imagine this is `data.table()` (we don't necessarily have the package
             // installed in the test)
@@ -1566,7 +1566,7 @@ foo
                 data <- data.frame(x = 1)
                 data[, y := x + 1]
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         });
 
         // Subset2
@@ -1575,7 +1575,7 @@ foo
                 foo <- list()
                 foo[[x]]
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         });
     }
 
@@ -1587,7 +1587,7 @@ foo
                 x <- list(a = 1)
                 x |> _$a[1]
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             // Imagine this is a data.table
             // https://github.com/posit-dev/positron/issues/3749
@@ -1595,14 +1595,14 @@ foo
                 data <- data.frame(a = 1)
                 data |> _[1]
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
 
             // We technically disable diagnostics for this symbol everywhere, even outside
             // of pipe scope, which is probably fine
             let code = "
                 _
             ";
-            assert_eq!(generate_diagnostics(code, current_state()).len(), 0);
+            assert_eq!(generate_diagnostics(code, &current_state()).len(), 0);
         })
     }
 
@@ -1630,7 +1630,7 @@ foo
                 foo()
                 bar
             ";
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
 
         assert_eq!(diagnostics.len(), 0);
 
@@ -1641,7 +1641,7 @@ foo
                 also_undefined
             ";
 
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 2);
 
         assert!(diagnostics
@@ -1662,7 +1662,7 @@ foo
                 foo()
                 bar
             ";
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 0);
 
         // If the library call includes the `character.only` argument, we bail
@@ -1670,7 +1670,7 @@ foo
                 library(mockpkg, character.only = TRUE)
                 foo()
             "#;
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 1);
 
         // Same if passed `FALSE`, we're not trying to be smart (yet)
@@ -1678,7 +1678,7 @@ foo
                 library(mockpkg, character.only = FALSE)
                 foo()
             "#;
-        let diagnostics = generate_diagnostics(code, state);
+        let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 1);
     }
 
@@ -1714,7 +1714,7 @@ foo
                     bar           # in scope
                     baz           # in scope
                 ";
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
 
         let messages: Vec<_> = diagnostics.iter().map(|d| d.message.clone()).collect();
         assert!(messages.iter().any(|m| m.contains("No symbol named 'foo'")));
@@ -1745,7 +1745,7 @@ foo
                     bar
                     foo()
                 ";
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
         assert!(diagnostics
             .iter()
             .any(|d| d.message.contains("No symbol named 'foo'")));
@@ -1773,7 +1773,7 @@ foo
                 path_to_file
                 penguins_raw
             "#;
-        let diagnostics = generate_diagnostics(code, state.clone());
+        let diagnostics = generate_diagnostics(code, &state);
         assert!(diagnostics.is_empty());
 
         let code = r#"
@@ -1782,7 +1782,7 @@ foo
                 penguins_raw
                 library(penguins)
             "#;
-        let diagnostics = generate_diagnostics(code, state);
+        let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 3);
     }
 }

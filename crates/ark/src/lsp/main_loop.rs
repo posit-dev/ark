@@ -7,19 +7,15 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::future;
 use std::path::Path;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::RwLock;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
-use futures::StreamExt;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
@@ -28,10 +24,8 @@ use oak_scan::ScanScheduler;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 use tower_lsp_server::jsonrpc;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Diagnostic;
@@ -42,6 +36,8 @@ use tower_lsp_server::Client;
 use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
+use crate::lsp::analysis;
+use crate::lsp::analysis::AnalysisPool;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -49,20 +45,16 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::handlers;
-use crate::lsp::indexer;
-use crate::lsp::open_file::OpenFile;
+use crate::lsp::io_pool::IoPool;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
-use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
-use crate::url::FilePathExt;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -83,20 +75,6 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
 pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
-
-// This is the syntax for trait aliases until an official one is stabilised.
-// This alias is for the future of a `JoinHandle<anyhow::Result<T>>`
-trait AnyhowJoinHandleFut<T>:
-    future::Future<Output = std::result::Result<anyhow::Result<T>, tokio::task::JoinError>>
-{
-}
-impl<T, F> AnyhowJoinHandleFut<T> for F where
-    F: future::Future<Output = std::result::Result<anyhow::Result<T>, tokio::task::JoinError>>
-{
-}
-
-// Alias for a list of join handle futures
-type TaskList<T> = futures::stream::FuturesUnordered<Pin<Box<dyn AnyhowJoinHandleFut<T> + Send>>>;
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -135,7 +113,6 @@ pub(crate) struct DidCloseVirtualDocumentParams {
 pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(DiagnosticsPublication),
-    SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
     Shutdown,
 }
 
@@ -148,8 +125,8 @@ pub(crate) enum AuxiliaryEvent {
 /// construction.
 pub(crate) struct GlobalState {
     /// The global world state containing all inputs for LSP analysis lives
-    /// here. The dispatcher provides refs, exclusive refs, or snapshots
-    /// (clones) to handlers.
+    /// here. The dispatcher provides refs, exclusive refs, or snapshots to
+    /// handlers.
     world: WorldState,
 
     /// The non-cloneable, per-session LSP state. Only used in exclusive ref
@@ -183,8 +160,8 @@ pub(crate) struct LoopHandles {
 }
 
 /// Non-cloneable, per-session state mutated only by exclusive handlers.
-/// Sits alongside [`WorldState`] (which is cloneable for snapshot
-/// handlers); state that can't be cloned lives here instead.
+/// Sits alongside [`WorldState`], which the main loop owns. State that can't
+/// travel with a snapshot lives here instead.
 pub(crate) struct LspState {
     /// Capabilities negotiated with the client
     pub(crate) capabilities: Capabilities,
@@ -200,6 +177,14 @@ pub(crate) struct LspState {
     /// Scheduler of [crate::lsp::sources::SourceRequest]s. Scheduling and source
     /// consumption all happen from the main loop.
     pub(crate) source_scheduler: SourceScheduler,
+
+    /// Threads running diagnostics and index warmup. The only executor a db
+    /// snapshot is allowed on, see [`crate::lsp::analysis`].
+    pub(crate) analysis_pool: AnalysisPool,
+
+    /// Threads running workspace scans. Separate from the source fetch pool so
+    /// a startup scan never queues behind a package download.
+    pub(crate) scan_pool: IoPool,
 }
 
 impl LspState {
@@ -212,6 +197,8 @@ impl LspState {
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
             source_scheduler,
+            analysis_pool: AnalysisPool::new(),
+            scan_pool: IoPool::new("oak-scan", 2),
         }
     }
 }
@@ -224,11 +211,10 @@ impl LspState {
 ///
 /// The auxiliary loop currently handles:
 /// - Log messages.
-/// - Joining of spawned blocking tasks to relay any errors or panics to the LSP log.
+/// - Diagnostics publication.
 struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
-    tasks: TaskList<Option<AuxiliaryEvent>>,
     /// Last non-empty diagnostics published per file. A refresh re-runs every
     /// open file, but most runs produce the same result, so we skip the publish
     /// when it matches what the client already has.
@@ -376,8 +362,8 @@ impl GlobalState {
     ///   run these concurrently but we run these one handler at a time for simplicity.
     /// - When concurrent handlers are needed for performance reason (one tick
     ///   of the main loop should be as fast as possible to increase throughput)
-    ///   they are spawned on blocking threads and provided a snapshot (clone) of
-    ///   the state.
+    ///   they run on the [`crate::lsp::analysis`] pool over a snapshot of the
+    ///   state.
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
 
@@ -554,18 +540,23 @@ impl GlobalState {
                     n_holds = self.world.db.outstanding_holds(),
                 );
 
-                dispatch_scan_requests(&self.events_tx, followups);
+                dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
 
                 // Warm the workspace index once the scan settles. Editor
                 // writes don't need to re-warm: they imply an open document,
                 // and the diagnostics passes they trigger force the same
                 // memos.
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
-                    warm_workspace_index(self.world.snapshot());
+                    analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
                 }
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
+                lsp::log_info!(
+                    "Received `SourceCompleted` for package {name}",
+                    name = package.name(&self.world.db)
+                );
+
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
                     self.world.db.set_package_sources(package, &directory);
                 }
@@ -580,34 +571,13 @@ impl GlobalState {
 
         if salsa::plumbing::current_revision(&self.world.db) != old_revision {
             lsp::log_info!("World state revision advanced");
-            diagnostics_refresh_all(&self.world);
+            analysis::diagnostics_refresh_all(&self.world, &self.lsp_state.analysis_pool);
             self.lsp_state
                 .source_scheduler
                 .schedule(&self.world.db, &self.events_tx);
         }
 
         Ok(())
-    }
-
-    #[allow(dead_code)] // Currently unused
-    /// Spawn blocking thread for LSP request handler
-    ///
-    /// Use this for handlers that might take too long to handle on the main
-    /// loop and negatively affect throughput.
-    ///
-    /// The LSP protocol allows concurrent handling as long as it doesn't affect
-    /// correctness of responses. For instance handlers that only inspect the
-    /// world state could be run concurrently. On the other hand, handlers that
-    /// manipulate documents (e.g. formatting or refactoring) should not.
-    fn spawn_handler<T, Handler>(
-        response_tx: TokioUnboundedSender<RequestResponse>,
-        handler: Handler,
-        into_lsp_response: impl FnOnce(T) -> LspResponse + Send + 'static,
-    ) where
-        Handler: FnOnce() -> LspResult<T>,
-        Handler: Send + 'static,
-    {
-        lsp::spawn_blocking(move || respond(response_tx, handler, into_lsp_response).and(Ok(None)))
     }
 }
 
@@ -672,20 +642,19 @@ impl GlobalState {
     }
 }
 
-/// Spawn each [`ScanRequest`] on a blocking task. Each task runs the
-/// pure-I/O [`ScanRequest::run`] and ships the [`ScanCompleted`] back
-/// to the main loop as [`Event::OakScanCompleted`], where the scheduler
-/// then applies it.
+/// Run each [`ScanRequest`] on `pool`. Each job runs the pure-I/O
+/// [`ScanRequest::run`] and ships the [`ScanCompleted`] back to the main loop as
+/// [`Event::OakScanCompleted`], where the scheduler then applies it.
 pub(super) fn dispatch_scan_requests(
+    pool: &IoPool,
     events_tx: &TokioUnboundedSender<Event>,
     requests: Vec<ScanRequest>,
 ) {
     for req in requests {
         let tx = events_tx.clone();
-        spawn_blocking(move || {
+        pool.submit(move || {
             let scan = req.run();
             tx.send(Event::OakScanCompleted(scan)).log_err();
-            Ok(None)
         });
     }
 }
@@ -764,9 +733,6 @@ fn respond<T>(
     out
 }
 
-// Needed for spawning the loop
-unsafe impl Sync for AuxiliaryState {}
-
 impl AuxiliaryState {
     fn new(client: Client) -> Self {
         // Channels for communication with the auxiliary loop
@@ -784,22 +750,9 @@ impl AuxiliaryState {
             *tx = Some(auxiliary_event_tx);
         }
 
-        // List of pending tasks for which we manage the lifecycle (mainly relay
-        // errors and panics)
-        let tasks = futures::stream::FuturesUnordered::new();
-
-        // Prevent the stream from ever being empty so that `tasks.next()` never
-        // resolves to `None`
-        let pending =
-            tokio::task::spawn(future::pending::<anyhow::Result<Option<AuxiliaryEvent>>>());
-        let pending =
-            Box::pin(pending) as Pin<Box<dyn AnyhowJoinHandleFut<Option<AuxiliaryEvent>> + Send>>;
-        tasks.push(pending);
-
         Self {
             client,
             auxiliary_event_rx,
-            tasks,
             published_diagnostics: HashMap::new(),
         }
     }
@@ -812,7 +765,6 @@ impl AuxiliaryState {
         loop {
             match self.next_event().await {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
-                AuxiliaryEvent::SpawnedTask(handle) => self.tasks.push(Box::pin(handle)),
                 AuxiliaryEvent::PublishDiagnostics(publication) => {
                     self.publish_diagnostics(publication).await
                 },
@@ -822,30 +774,16 @@ impl AuxiliaryState {
     }
 
     async fn next_event(&mut self) -> AuxiliaryEvent {
-        loop {
-            tokio::select! {
-                event = self.auxiliary_event_rx.recv() => match event {
-                    // Because of the way we communicate with the auxiliary loop
-                    // via global state, the channel may become closed if a new
-                    // LSP session is started in the process. This normally
-                    // should not happen but for now we have to be defensive
-                    // against this situation, see:
-                    // https://github.com/posit-dev/ark/issues/622
-                    // https://github.com/posit-dev/positron/issues/5321
-                    Some(event) => return event,
-                    None => return AuxiliaryEvent::Shutdown,
-                },
-
-                handle = self.tasks.next() => match handle.unwrap() {
-                    // A joined task returned an event for us, handle it
-                    Ok(Ok(Some(event))) => return event,
-
-                    // Otherwise relay any errors and loop back into select
-                    Err(err) => self.log_error(format!("A task panicked:\n{err:?}")).await,
-                    Ok(Err(err)) => self.log_error(format!("A task failed:\n{err:?}")).await,
-                    _ => (),
-                },
-            }
+        match self.auxiliary_event_rx.recv().await {
+            // Because of the way we communicate with the auxiliary loop
+            // via global state, the channel may become closed if a new
+            // LSP session is started in the process. This normally
+            // should not happen but for now we have to be defensive
+            // against this situation, see:
+            // https://github.com/posit-dev/ark/issues/622
+            // https://github.com/posit-dev/positron/issues/5321
+            Some(event) => event,
+            None => AuxiliaryEvent::Shutdown,
         }
     }
 
@@ -884,9 +822,6 @@ impl AuxiliaryState {
 
     async fn log(&self, level: MessageType, message: String) {
         self.client.log_message(level, message).await
-    }
-    async fn log_error(&self, message: String) {
-        self.client.log_message(MessageType::ERROR, message).await
     }
 }
 
@@ -957,32 +892,6 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
     };
 }
 
-/// Spawn a blocking task
-///
-/// This runs tasks that do semantic analysis on a separate thread pool to avoid
-/// blocking the main loop.
-///
-/// Can optionally return an event for the auxiliary loop (i.e. a log message or
-/// diagnostics publication).
-///
-/// Salsa cancellation is handled here so callers don't have to. A `set_*` on
-/// the main loop cancels concurrent oak queries by unwinding with `Cancelled`.
-/// We swallow that into `Ok(None)`, so a cancelled task is a quiet no-op
-/// instead of a logged "task panicked". The write that cancelled it enqueues
-/// its own follow-up. Any other panic still surfaces on join.
-pub(crate) fn spawn_blocking<Handler>(handler: Handler)
-where
-    Handler: FnOnce() -> anyhow::Result<Option<AuxiliaryEvent>>,
-    Handler: Send + 'static,
-{
-    let handle =
-        tokio::task::spawn_blocking(move || catch_cancellation(handler).unwrap_or(Ok(None)));
-
-    // Send the join handle to the auxiliary loop so it can log any errors
-    // or panics
-    send_auxiliary(AuxiliaryEvent::SpawnedTask(handle));
-}
-
 pub(crate) fn publish_diagnostics(publication: DiagnosticsPublication) {
     send_auxiliary(AuxiliaryEvent::PublishDiagnostics(publication));
 }
@@ -1011,15 +920,6 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 }
 
 #[derive(Debug)]
-pub(crate) struct RefreshDiagnosticsTask {
-    /// Snapshot carrying the live oak plus the session context the diagnostics
-    /// walk reads. See [`WorldState::diagnostics_snapshot`].
-    state: WorldStateSnapshot,
-    /// The file to diagnose, built against the live oak at enqueue time.
-    file: OpenFile,
-}
-
-#[derive(Debug)]
 pub(crate) struct DiagnosticsPublication {
     /// Identity for the dedup cache. Two spellings of the same document
     /// have the same identity.
@@ -1030,138 +930,6 @@ pub(crate) struct DiagnosticsPublication {
     pub(crate) version: Option<i32>,
 }
 
-static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDiagnosticsTask>> =
-    LazyLock::new(|| {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(process_diagnostics_queue(rx));
-        tx
-    });
-
-/// Process diagnostics refresh tasks.
-///
-/// Tasks are batched and deduplicated per file (only the last task per file is
-/// processed), so stale-version diagnostics get superseded within a batch.
-///
-/// Batches can't publish out of order. Each pass holds a db snapshot, and a
-/// salsa write blocks until all snapshots drop, so by the time the write
-/// completes and the newer batch is enqueued, any older pass has either unwound
-/// with `Cancelled` or already produced its result. Changes to state that lives
-/// outside oak (console inputs, diagnostics config) get the same barrier by
-/// advancing the revision synthetically (see [`WorldState::bump_revision`]).
-async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagnosticsTask>) {
-    while let Some(task) = rx.recv().await {
-        let mut batch = vec![task];
-        while let Ok(task) = rx.try_recv() {
-            batch.push(task);
-        }
-        process_diagnostics_batch(batch);
-    }
-    lsp::log_warn!("process_diagnostics_queue: channel closed, task exiting");
-}
-
-fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
-    // Deduplicate tasks by keeping only the last one for each file, which is
-    // effectively a way of cancelling diagnostics tasks for outdated documents.
-    let batch: HashMap<FilePath, _> = batch
-        .into_iter()
-        .map(|task| (task.file.file().path(task.state.db()).clone(), task))
-        .collect();
-
-    tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
-    lsp::log_info!("Processing {n} diagnostic tasks", n = batch.len());
-
-    // Each file is its own blocking task. `spawn_blocking()` catches salsa
-    // cancellation, so a pass cancelled by a concurrent edit just produces no
-    // event. The publish happens via the returned [`AuxiliaryEvent`].
-    for (_path, task) in batch {
-        lsp::spawn_blocking(move || {
-            let publication = refresh_diagnostics(task);
-            Ok(Some(AuxiliaryEvent::PublishDiagnostics(publication)))
-        });
-    }
-}
-
-fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> DiagnosticsPublication {
-    let RefreshDiagnosticsTask { file, state } = task;
-    let path = file.file().path(state.db()).clone();
-    let uri = file.wire_uri().clone();
-    let version = file.version();
-    let _span = tracing::info_span!("diagnostics_refresh", uri = %uri.as_str()).entered();
-
-    // Special case testthat-specific behaviour. This is a simple stopgap
-    // approach that has some false positives (e.g. when we work on testthat
-    // itself the flag will always be true), but that shouldn't have much
-    // practical impact.
-    let testthat = path
-        .as_path()
-        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"));
-
-    let now = std::time::Instant::now();
-    lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());
-
-    let diagnostics = generate_diagnostics(file.file(), state, testthat);
-
-    lsp::log_info!(
-        "Finished diagnostics for file: {} in {:.0?}",
-        uri.as_str(),
-        now.elapsed()
-    );
-
-    DiagnosticsPublication {
-        path,
-        uri,
-        diagnostics,
-        version,
-    }
-}
-
-/// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
-fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
-    salsa::Cancelled::catch(std::panic::AssertUnwindSafe(f)).ok()
-}
-
-pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
-    tracing::trace!(
-        "Refreshing diagnostics for {n} documents",
-        n = state.open_files.len()
-    );
-
-    for file in state.open_files.values() {
-        if !file.file().path(&state.db).should_diagnose() {
-            continue;
-        }
-
-        DIAGNOSTICS_QUEUE
-            .send(RefreshDiagnosticsTask {
-                file: file.clone(),
-                state: state.diagnostics_snapshot(),
-            })
-            .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
-    }
-}
-
-/// Build the per-file workspace symbol indexes on a background thread so
-/// main-loop consumers triggered by the user (workspace symbols, workspace
-/// completions) find them already computed. The first run after a workspace
-/// scan does the real work, parsing and walking each file. Later runs only
-/// revalidate the per-file memos.
-///
-/// Mirrors rust-analyzer's cache warming: spawned when a workspace scan
-/// settles, the analogue of r-a's transitions to quiescence (initial VFS scan,
-/// workspace reload, etc). Unlike r-a we don't restart a warmup that gets
-/// cancelled (`spawn_blocking()` swallows the unwind). A cancelling write can
-/// only come from an editor buffer, so a document is open, and the diagnostics
-/// passes spawned by that same write force the same memos and finish the job.
-fn warm_workspace_index(state: WorldStateSnapshot) {
-    spawn_blocking(move || {
-        let now = std::time::Instant::now();
-        lsp::log_info!("Starting workspace index warmup");
-        indexer::warm(state.db());
-        lsp::log_info!("Finished workspace index warmup ({:.0?})", now.elapsed());
-        Ok(None)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use aether_path::FilePath;
@@ -1169,45 +937,13 @@ mod tests {
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
-    use super::catch_cancellation;
-    use super::refresh_diagnostics;
     use super::respond;
     use super::tokio_unbounded_channel;
-    use super::RefreshDiagnosticsTask;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
-
-    /// A salsa cancellation during the pass is swallowed into `None` by
-    /// `catch_cancellation`, the wrapper `spawn_blocking` applies to every task,
-    /// rather than unwinding and killing the task.
-    ///
-    /// `cancellation_token().cancel()` arms local cancellation on the snapshot's
-    /// oak, so the first salsa query in `generate_diagnostics` (the `tree_sitter`
-    /// fetch) unwinds with `salsa::Cancelled`, the same payload a concurrent
-    /// `set_*` produces. The unwind fires before any R, so no `r_task` here.
-    #[test]
-    fn test_cancelled_diagnostics_pass_is_caught() {
-        let mut state = WorldState::default();
-        let uri = Url::parse("file:///test.R").unwrap();
-        let code = "foo";
-        let file = state
-            .db
-            .upsert_editor(FilePath::from_url(&uri), code.to_string());
-        state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
-
-        let file = state.open_file(&FilePath::from_url(&uri)).unwrap().clone();
-        let snapshot = state.diagnostics_snapshot();
-        snapshot.cancellation_token().cancel();
-
-        let task = RefreshDiagnosticsTask {
-            file,
-            state: snapshot,
-        };
-        assert!(catch_cancellation(|| refresh_diagnostics(task)).is_none());
-    }
 
     /// A `salsa::Cancelled` re-raised out of a request handler (by `r_task`,
     /// after catching it on the R thread) must not crash the LSP. `respond`
@@ -1223,7 +959,7 @@ mod tests {
         state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
         let file = state.open_file(&FilePath::from_url(&uri)).unwrap().clone();
-        let snapshot = state.diagnostics_snapshot();
+        let snapshot = state.snapshot();
         snapshot.cancellation_token().cancel();
 
         let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
