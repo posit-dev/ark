@@ -38,6 +38,8 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
 use crate::lsp::analysis::AnalysisPool;
+use crate::lsp::analysis::DiagnosticsReady;
+use crate::lsp::analysis::DiagnosticsState;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -83,6 +85,7 @@ pub(crate) enum Event {
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
     SourceCompleted(SourceCompleted),
+    DiagnosticsReady(DiagnosticsReady),
 }
 
 #[derive(Debug)]
@@ -182,6 +185,11 @@ pub(crate) struct LspState {
     /// snapshot is allowed on, see [`crate::lsp::analysis`].
     pub(crate) analysis_pool: AnalysisPool,
 
+    /// Per-file generation bookkeeping the main loop uses to drop a
+    /// diagnostics result superseded by a newer refresh. See
+    /// [`crate::lsp::analysis::DiagnosticsState`].
+    pub(crate) diagnostics: DiagnosticsState,
+
     /// Threads running workspace scans. Separate from the source fetch pool so
     /// a startup scan never queues behind a package download.
     pub(crate) scan_pool: IoPool,
@@ -198,6 +206,7 @@ impl LspState {
             oak_scheduler: ScanScheduler::new(),
             source_scheduler,
             analysis_pool: AnalysisPool::new(),
+            diagnostics: DiagnosticsState::default(),
             scan_pool: IoPool::new("oak-scan", 2),
         }
     }
@@ -561,6 +570,23 @@ impl GlobalState {
                     self.world.db.set_package_sources(package, &directory);
                 }
             },
+
+            Event::DiagnosticsReady(DiagnosticsReady { generation, publication }) => {
+                lsp::log_info!(
+                    "Received `DiagnosticsReady` for {}",
+                    publication.uri.as_str()
+                );
+
+                if self.lsp_state.diagnostics.accept(&publication.path, generation) {
+                    lsp::publish_diagnostics(publication);
+                } else {
+                    let path = &publication.path;
+                    let published = self.lsp_state.diagnostics.published_generation(path);
+                    tracing::trace!(
+                        "Dropping stale diagnostics for {path}: generation {generation} is older than published generation {published:?}"
+                    );
+                }
+            },
         }
         lsp::log_info!("Finished handling event in {}ms", loop_tick.elapsed().as_millis());
 
@@ -571,7 +597,11 @@ impl GlobalState {
 
         if salsa::plumbing::current_revision(&self.world.db) != old_revision {
             lsp::log_info!("World state revision advanced");
-            analysis::diagnostics_refresh_all(&self.world, &self.lsp_state.analysis_pool);
+            self.lsp_state.diagnostics.refresh_all(
+                &self.world,
+                &self.lsp_state.analysis_pool,
+                &self.events_tx,
+            );
             self.lsp_state
                 .source_scheduler
                 .schedule(&self.world.db, &self.events_tx);

@@ -4,6 +4,7 @@
 //! Two things maintain that invariant: [`WorldStateSnapshot`] is built only in
 //! this module, and `OakDatabase` isn't `Clone`.
 
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use std::sync::MutexGuard;
 
 use aether_path::FilePath;
 use oak_db::OakDatabase;
+use stdext::result::ResultExt;
 use stdext::spawn;
 
 use crate::lsp;
@@ -22,6 +24,8 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::indexer;
 use crate::lsp::io_pool::panic_message;
 use crate::lsp::main_loop::DiagnosticsPublication;
+use crate::lsp::main_loop::Event;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
@@ -34,10 +38,11 @@ const MAX_ANALYSIS_THREADS: usize = 4;
 
 /// A fixed set of OS threads running analysis tasks over a db snapshot.
 ///
-/// Each task's snapshot is taken at enqueue time, on the main loop. That's
-/// what keeps diagnostics in order. A write waits for those snapshots to drop,
-/// so by the time we queue a newer pass the older one has already published or
-/// unwound.
+/// Each task's snapshot is taken at enqueue time on the main loop and sees
+/// the state as of that tick. A write waits for those snapshots to drop
+/// before it can proceed. This pool doesn't order results across tasks: a
+/// diagnostics result carries a generation id and [`DiagnosticsState::accept`]
+/// drops staled results.
 ///
 /// A writer never waits on this pool for longer than the one task it
 /// interrupted. Queued tasks get thrown away, and the task currently running
@@ -217,32 +222,86 @@ fn run_entry(entry: Entry) {
     }
 }
 
-/// Queue a diagnostics pass for every open file we diagnose.
+/// A diagnostics task's result on its way back to the main loop. The generation
+/// state enables [`DiagnosticsState::accept`] to distinguish a stale result
+/// from a fresh one.
+#[derive(Debug)]
+pub(crate) struct DiagnosticsReady {
+    pub(crate) generation: u64,
+    pub(crate) publication: DiagnosticsPublication,
+}
+
+/// Tracks diagnostics staleness across refresh batches, so an out-of-order
+/// result gets dropped instead of published over a newer one.
 ///
-/// Passes can't publish out of order. Each pass holds a snapshot minted here,
-/// and a salsa write blocks until all snapshots drop, so by the time the write
-/// completes and the next refresh is queued, any older pass has either unwound
-/// with `Cancelled` or already published. Changes to state that lives outside
-/// oak (console inputs, diagnostics config) get the same barrier by advancing
-/// the revision synthetically (see [`WorldState::bump_revision`]).
-pub(crate) fn diagnostics_refresh_all(state: &WorldState, pool: &AnalysisPool) {
-    let files: Vec<(&FilePath, &OpenFile)> = state
-        .open_files
-        .iter()
-        .filter(|(path, _open_file)| path.should_diagnose())
-        .collect();
+/// Mirrors rust-analyzer's generation counter in
+/// `crates/rust-analyzer/src/diagnostics.rs`.
+#[derive(Default)]
+pub(crate) struct DiagnosticsState {
+    /// Bumped once per refresh batch.
+    generation: u64,
+    /// Generation of the newest result published per file.
+    published: HashMap<FilePath, u64>,
+}
 
-    tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());
-    lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
+impl DiagnosticsState {
+    /// Queue a diagnostics pass for every open file we diagnose, all tagged
+    /// with a new generation.
+    pub(crate) fn refresh_all(
+        &mut self,
+        state: &WorldState,
+        pool: &AnalysisPool,
+        events_tx: &TokioUnboundedSender<Event>,
+    ) {
+        self.generation += 1;
+        let generation = self.generation;
 
-    for (path, open_file) in files {
-        let path = path.clone();
-        let file = open_file.clone();
+        let files: Vec<(&FilePath, &OpenFile)> = state
+            .open_files
+            .iter()
+            .filter(|(path, _open_file)| path.should_diagnose())
+            .collect();
 
-        pool.spawn_keyed(path.clone(), state.snapshot(), move |snapshot| {
-            let publication = refresh_diagnostics(path, file, snapshot);
-            lsp::publish_diagnostics(publication);
-        });
+        tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());
+        lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
+
+        for (path, open_file) in files {
+            let path = path.clone();
+            let file = open_file.clone();
+            let events_tx = events_tx.clone();
+
+            pool.spawn_keyed(path.clone(), state.snapshot(), move |snapshot| {
+                let publication = refresh_diagnostics(path, file, snapshot);
+                let ready = DiagnosticsReady {
+                    generation,
+                    publication,
+                };
+                events_tx.send(Event::DiagnosticsReady(ready)).log_err();
+            });
+        }
+    }
+
+    /// Whether a diagnostics result for `path` computed at `generation`
+    /// should be published now, or is stale and should be dropped.
+    ///
+    /// Equal generations can't legitimately arrive twice for the same file:
+    /// we spawn one task per file per batch, and keyed replacement on the
+    /// pool keeps at most one queued entry per file.
+    pub(crate) fn accept(&mut self, path: &FilePath, generation: u64) -> bool {
+        if let Some(published) = self.published.get(path) {
+            if *published > generation {
+                return false;
+            }
+        }
+
+        self.published.insert(path.clone(), generation);
+        true
+    }
+
+    /// Generation of the newest result already published for `path`, for the
+    /// main loop to log alongside a dropped stale result.
+    pub(crate) fn published_generation(&self, path: &FilePath) -> Option<u64> {
+        self.published.get(path).copied()
     }
 }
 
@@ -380,8 +439,28 @@ mod tests {
     use super::catch_cancellation;
     use super::refresh_diagnostics;
     use super::AnalysisPool;
+    use super::DiagnosticsState;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
+
+    /// `accept` is the staleness gate a refresh batch relies on: a result only
+    /// publishes if no newer generation for that file already went out. Pins
+    /// the three cases that can arrive at the main loop: a file seen for the
+    /// first time, a fresh batch superseding the last one, and a straggler
+    /// from an old batch arriving after a newer one already landed. Also pins
+    /// the deliberate choice to accept a repeat of the last generation (see
+    /// `accept`'s doc comment for why that can't happen in practice but is
+    /// still safe).
+    #[test]
+    fn test_accept_tracks_staleness_per_file() {
+        let mut diagnostics = DiagnosticsState::default();
+        let path = FilePath::from_url(&Url::parse("file:///test.R").unwrap());
+
+        assert!(diagnostics.accept(&path, 1));
+        assert!(diagnostics.accept(&path, 2));
+        assert!(!diagnostics.accept(&path, 1));
+        assert!(diagnostics.accept(&path, 2));
+    }
 
     /// A salsa cancellation during the pass is swallowed into `None` by
     /// `catch_cancellation`, the wrapper the pool applies to every task, rather
