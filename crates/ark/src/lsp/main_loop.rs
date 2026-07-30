@@ -221,7 +221,7 @@ impl LspState {
             // Stack size: `ScanRequest::run()` walks the filesystem with
             // `ignore::Walk` and `WalkDir`, both iterative, and parses
             // DESCRIPTION line by line.
-            scan_pool: IoPool::new("oak-scan", 2, stdext::SMALL_STACK_SIZE),
+            scan_pool: IoPool::new("oak-scan", 1, stdext::SMALL_STACK_SIZE),
             // Two threads, so we never have more than two package downloads in flight.
             // Full stack because a fetch runs a rustls handshake, zstd and tar
             // decoding, and an R subprocess.
