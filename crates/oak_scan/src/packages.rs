@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -219,9 +220,18 @@ pub(crate) fn read_package_sources(
     directory: &Path,
     collation: Option<&[String]>,
 ) -> (Vec<FileEntry>, Vec<FileEntry>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        log::warn!("Cannot read sources directory: {}", directory.display());
-        return (Vec::new(), Vec::new());
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        // A data-only package has no `R/`. `datasets` is always on the search
+        // path, so this is the common case, not an error.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return (Vec::new(), Vec::new()),
+        Err(err) => {
+            log::warn!(
+                "Cannot read sources directory {}: {err:?}",
+                directory.display()
+            );
+            return (Vec::new(), Vec::new());
+        },
     };
 
     let mut files: Vec<(PathBuf, FileEntry)> = Vec::new();

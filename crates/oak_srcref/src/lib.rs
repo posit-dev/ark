@@ -28,7 +28,7 @@ impl SrcrefCache {
     pub fn open(r: PathBuf) -> anyhow::Result<Self> {
         Ok(Self {
             r,
-            cache: Cache::open(&format!("srcref/{CACHE_VERSION}"))?,
+            cache: Cache::open(&Path::new("srcref").join(CACHE_VERSION))?,
         })
     }
 

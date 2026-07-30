@@ -1,3 +1,4 @@
+mod packages;
 mod scheduler;
 mod sources;
 mod stale;

@@ -14,6 +14,7 @@ mod download;
 mod extract;
 mod r;
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use oak_cache::Cache;
@@ -36,8 +37,8 @@ pub struct SourceCache {
 impl SourceCache {
     pub fn open() -> anyhow::Result<Self> {
         Ok(Self {
-            cran: Cache::open(&format!("source/{CACHE_VERSION}/cran"))?,
-            r: RCache::open(&format!("source/{CACHE_VERSION}/r"))?,
+            cran: Cache::open(&Path::new("source").join(CACHE_VERSION).join("cran"))?,
+            r: RCache::open(&Path::new("source").join(CACHE_VERSION).join("r"))?,
         })
     }
 

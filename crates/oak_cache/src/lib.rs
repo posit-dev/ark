@@ -97,7 +97,7 @@ impl Cache {
     /// Runs a best-effort [`Cache::clean`] under the exclusive root lock (skipped if
     /// another session holds the shared lock), then holds the shared root lock for the
     /// life of the returned `Cache` so handed-out paths stay valid.
-    pub fn open(root: &str) -> anyhow::Result<Self> {
+    pub fn open(root: &Path) -> anyhow::Result<Self> {
         Self::open_in(cache_dir()?.join(root))
     }
 
