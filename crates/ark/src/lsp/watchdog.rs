@@ -10,144 +10,130 @@
 //! `handle_event()` in `main_loop.rs` arms one [`TickGuard`] per tick, and the
 //! poller thread here reports a tick still armed past the deadline.
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crossbeam::channel::select;
+use crossbeam::channel::unbounded;
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
+use stdext::result::ResultExt;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
 
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
-const REPORT_INTERVAL: Duration = Duration::from_secs(30);
+const DEADLINE: Duration = Duration::from_secs(5);
 
-/// `armed_at` sentinel indicating that no tick is currently running.
-const IDLE: u64 = u64::MAX;
-
-/// A tick is allowed to run this long before we consider it stuck. Production
-/// gets more slack because a tick can legitimately await a client round-trip
-/// (`did_change_configuration` calls out to the client) or apply a large
-/// workspace scan.
-fn deadline() -> Duration {
-    if stdext::IS_TESTING {
-        Duration::from_secs(10)
-    } else {
-        Duration::from_secs(30)
-    }
+/// A tick arming or disarming, carried from `Watchdog`/`TickGuard` to the
+/// poller thread.
+enum Tick {
+    Armed {
+        tick: u64,
+        holds: usize,
+        at: Instant,
+    },
+    Disarmed,
 }
 
-/// Watches for a main-loop tick that never disarms. Owns one poller thread for
-/// the lifetime of the session; dropping the watchdog closes it down within
-/// one poll interval.
 pub(crate) struct Watchdog {
-    shared: Arc<Shared>,
-}
-
-struct Shared {
-    /// Millis since `start` when the current tick armed, or [`IDLE`].
-    armed_at: AtomicU64,
-    /// Bumped on each arm so the poller reports a given stuck tick once.
-    tick: AtomicU64,
-    /// `outstanding_holds()` as of the arm.
-    holds: AtomicUsize,
-    closed: AtomicBool,
-    start: Instant,
+    tick_tx: Sender<Tick>,
+    next_tick: u64,
+    /// Causes watchdog to shut down when dropped.
+    _close_tx: Sender<()>,
 }
 
 impl Watchdog {
     pub(crate) fn new() -> Self {
-        let shared = Arc::new(Shared {
-            armed_at: AtomicU64::new(IDLE),
-            tick: AtomicU64::new(0),
-            holds: AtomicUsize::new(0),
-            closed: AtomicBool::new(false),
-            start: Instant::now(),
-        });
+        let (tick_tx, tick_rx) = unbounded();
+        let (close_tx, close_rx) = unbounded();
 
-        let poller = Arc::clone(&shared);
-        // `poll()` sleeps, reads atomics, and on a stall formats one string and
-        // logs it.
         spawn_with_stack_size!("oak-watchdog", stdext::TINY_STACK_SIZE, move || poll(
-            poller
+            tick_rx, close_rx
         ));
 
-        Self { shared }
+        Self {
+            tick_tx,
+            _close_tx: close_tx,
+            next_tick: 0,
+        }
     }
 
     /// Arm the watchdog for one tick. Dropping the returned guard disarms it
     /// again, on every exit path out of `handle_event` including `?` early
     /// returns and panics.
-    pub(crate) fn tick(&self, holds: usize) -> TickGuard {
-        self.shared.tick.fetch_add(1, Ordering::SeqCst);
-        self.shared.holds.store(holds, Ordering::SeqCst);
-        let armed_at = self.shared.start.elapsed().as_millis() as u64;
-        self.shared.armed_at.store(armed_at, Ordering::SeqCst);
+    pub(crate) fn tick(&mut self, holds: usize) -> TickGuard {
+        self.next_tick += 1;
+        self.tick_tx
+            .send(Tick::Armed {
+                tick: self.next_tick,
+                holds,
+                at: Instant::now(),
+            })
+            .log_err();
 
         TickGuard {
-            shared: Arc::clone(&self.shared),
+            tick_tx: self.tick_tx.clone(),
         }
-    }
-}
-
-impl Drop for Watchdog {
-    fn drop(&mut self) {
-        self.shared.closed.store(true, Ordering::SeqCst);
     }
 }
 
 /// Owns the arm for one main-loop tick.
 pub(crate) struct TickGuard {
-    shared: Arc<Shared>,
+    tick_tx: Sender<Tick>,
 }
 
 impl Drop for TickGuard {
     fn drop(&mut self) {
-        self.shared.armed_at.store(IDLE, Ordering::SeqCst);
+        self.tick_tx.send(Tick::Disarmed).log_err();
     }
 }
 
-/// Poll `shared` until closed, reporting a tick that's been armed longer than
-/// [`deadline()`]. Reports a given tick once when it first crosses the
-/// deadline, then again roughly every 30s while it's still armed, so the log
-/// shows the stall is ongoing rather than a single orphaned line.
-fn poll(shared: Arc<Shared>) {
-    let deadline = deadline();
-    let mut reported_tick = 0;
-    let mut last_report_at = Duration::ZERO;
+/// Wait for the next arm, then watch it until it disarms, rearms, or
+/// `close_rx` disconnects (the watchdog was dropped).
+fn poll(tick_rx: Receiver<Tick>, close_rx: Receiver<()>) {
+    'idle: loop {
+        let msg = select! {
+            recv(tick_rx) -> msg => msg,
+            recv(close_rx) -> _ => return,
+        };
 
-    loop {
-        std::thread::sleep(POLL_INTERVAL);
-        if shared.closed.load(Ordering::SeqCst) {
-            return;
+        let Ok(Tick::Armed {
+            mut tick,
+            mut holds,
+            mut at,
+        }) = msg
+        else {
+            // A stray `Disarmed`: nothing is armed yet, keep waiting.
+            continue 'idle;
+        };
+
+        // Report once `at` crosses `DEADLINE`, then every `DEADLINE` after that.
+        loop {
+            let msg = select! {
+                recv(tick_rx) -> msg => Some(msg),
+                recv(close_rx) -> _ => return,
+                default(DEADLINE) => None,
+            };
+
+            match msg {
+                Some(Ok(Tick::Disarmed)) => continue 'idle,
+                Some(Err(_)) => return,
+                None => report(tick, at.elapsed(), holds),
+                // Two arms without a disarm between them shouldn't happen
+                // (only one tick runs at a time), but if it does, start
+                // watching the new one instead of reporting on the stale one.
+                Some(Ok(Tick::Armed {
+                    tick: new_tick,
+                    holds: new_holds,
+                    at: new_at,
+                })) => {
+                    log::warn!("Unexpected `Tick::Armed` before `Tick::Disarmed`");
+                    tick = new_tick;
+                    holds = new_holds;
+                    at = new_at;
+                },
+            }
         }
-
-        let armed_at = shared.armed_at.load(Ordering::SeqCst);
-        if armed_at == IDLE {
-            continue;
-        }
-        let armed_at = Duration::from_millis(armed_at);
-
-        // `armed_at` is a truncated offset from `start`, so it can't be later
-        // than what `elapsed()` reads now.
-        let elapsed = shared.start.elapsed() - armed_at;
-        if elapsed <= deadline {
-            continue;
-        }
-
-        let tick = shared.tick.load(Ordering::SeqCst);
-        let is_new_stall = tick != reported_tick;
-        let due_for_rereport = elapsed.saturating_sub(last_report_at) >= REPORT_INTERVAL;
-        if !is_new_stall && !due_for_rereport {
-            continue;
-        }
-
-        reported_tick = tick;
-        last_report_at = elapsed;
-        report(tick, elapsed, shared.holds.load(Ordering::SeqCst));
     }
 }
 
@@ -174,35 +160,63 @@ fn report(tick: u64, elapsed: Duration, holds: usize) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use crossbeam::channel::unbounded;
+    use crossbeam::channel::Receiver;
 
+    use super::Tick;
     use super::Watchdog;
-    use super::IDLE;
+
+    impl Watchdog {
+        /// Build a watchdog without spawning the poller thread, exposing the
+        /// tick channel so tests can assert on the messages `tick()` and
+        /// `TickGuard::drop()` send.
+        fn new_test() -> (Self, Receiver<Tick>) {
+            let (tick_tx, tick_rx) = unbounded();
+            let (close_tx, _close_rx) = unbounded();
+
+            let watchdog = Self {
+                tick_tx,
+                _close_tx: close_tx,
+                next_tick: 0,
+            };
+            (watchdog, tick_rx)
+        }
+    }
 
     #[test]
     fn test_tick_arms_and_disarms() {
-        let watchdog = Watchdog::new();
-        assert_eq!(watchdog.shared.armed_at.load(Ordering::SeqCst), IDLE);
+        let (mut watchdog, tick_rx) = Watchdog::new_test();
 
         let guard = watchdog.tick(3);
-        assert_ne!(watchdog.shared.armed_at.load(Ordering::SeqCst), IDLE);
-        assert_eq!(watchdog.shared.holds.load(Ordering::SeqCst), 3);
+        let Ok(Tick::Armed { holds, .. }) = tick_rx.try_recv() else {
+            panic!("expected `Armed`");
+        };
+        assert_eq!(holds, 3);
 
         drop(guard);
-        assert_eq!(watchdog.shared.armed_at.load(Ordering::SeqCst), IDLE);
+        assert!(matches!(tick_rx.try_recv(), Ok(Tick::Disarmed)));
     }
 
     #[test]
     fn test_consecutive_ticks_increase() {
-        let watchdog = Watchdog::new();
+        let (mut watchdog, tick_rx) = Watchdog::new_test();
 
-        let before = watchdog.shared.tick.load(Ordering::SeqCst);
         let _first = watchdog.tick(0);
-        let after_first = watchdog.shared.tick.load(Ordering::SeqCst);
-        let _second = watchdog.tick(0);
-        let after_second = watchdog.shared.tick.load(Ordering::SeqCst);
+        let Ok(Tick::Armed {
+            tick: first_tick, ..
+        }) = tick_rx.try_recv()
+        else {
+            panic!("expected `Armed`");
+        };
 
-        assert!(after_first > before);
-        assert!(after_second > after_first);
+        let _second = watchdog.tick(0);
+        let Ok(Tick::Armed {
+            tick: second_tick, ..
+        }) = tick_rx.try_recv()
+        else {
+            panic!("expected `Armed`");
+        };
+
+        assert!(second_tick > first_tick);
     }
 }
