@@ -53,6 +53,7 @@ use crate::lsp::io_pool::IoPool;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
+use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
@@ -580,8 +581,12 @@ impl GlobalState {
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
+                let outcome = match &response {
+                    SourceResponse::Success(_) => "completed",
+                    SourceResponse::Failure => "failed",
+                };
                 lsp::log_info!(
-                    "Received `SourceCompleted` for package {name}",
+                    "Source fetch for package {name} {outcome}",
                     name = package.name(&self.world.db)
                 );
 

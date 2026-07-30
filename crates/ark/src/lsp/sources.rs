@@ -11,6 +11,7 @@ use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
 use stdext::result::ResultExt;
 
+use crate::lsp;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -193,6 +194,12 @@ impl SourceScheduler {
             // Mark as `Pending` just before launching the job
             self.state.insert(package, SourceState::Pending);
 
+            lsp::log_info!(
+                "Fetching sources for package {name}, {n} pending",
+                name = request.name(),
+                n = self.pending_count(),
+            );
+
             pool.submit(move || {
                 let response = handler.handle(&request);
 
@@ -212,6 +219,14 @@ impl SourceScheduler {
             SourceResponse::Success(directory) => Some(directory),
             SourceResponse::Failure => None,
         }
+    }
+
+    /// How many source requests are in flight
+    fn pending_count(&self) -> usize {
+        self.state
+            .values()
+            .filter(|state| matches!(state, SourceState::Pending))
+            .count()
     }
 
     /// Whether any source request is in flight. Allows tests to deterministically "wait"
