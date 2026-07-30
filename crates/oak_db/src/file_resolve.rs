@@ -49,7 +49,7 @@ impl<'db> File {
     ///
     /// For the offset-aware, sequential-semantics variant, see
     /// [`File::resolve_at`].
-    #[salsa::tracked]
+    #[salsa::tracked(returns(clone))]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let exported = self.resolve_export(db, name);
         if !exported.is_empty() {
@@ -217,7 +217,7 @@ impl<'db> File {
     /// winner is still last.
     ///
     /// Cycles resolve to empty via `exports`'s `cycle_fn`.
-    #[salsa::tracked]
+    #[salsa::tracked(returns(clone))]
     pub(crate) fn resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let mut results = Vec::new();
 

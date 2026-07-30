@@ -37,7 +37,7 @@ impl<'db> Package {
     /// Returns an empty Vec when the name isn't bound anywhere in the package,
     /// or when `Exported` is requested for a name absent from
     /// `namespace.exports`.
-    #[salsa::tracked]
+    #[salsa::tracked(returns(clone))]
     pub fn resolve(
         self,
         db: &'db dyn Db,

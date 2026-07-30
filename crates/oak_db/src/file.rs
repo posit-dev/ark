@@ -55,11 +55,13 @@ use crate::Root;
 pub struct File {
     #[returns(ref)]
     pub path: FilePath,
+    #[returns(copy)]
     pub revision: FileRevision,
     #[returns(ref)]
     pub source_text_override: Option<String>,
     /// **Placement invariant.** Call this setter only through
     /// `oak_scan`'s helpers; see the type-level doc above.
+    #[returns(copy)]
     pub package: Option<Package>,
 }
 
@@ -263,7 +265,7 @@ impl File {
     ///
     /// Callers that need to distinguish workspace from library roots
     /// inspect `root.kind(db)`.
-    #[salsa::tracked]
+    #[salsa::tracked(returns(copy))]
     pub fn root(self, db: &dyn Db) -> Option<Root> {
         if let Some(pkg) = self.package(db) {
             return db.root_by_package(pkg);

@@ -4,10 +4,8 @@ updates:
   # Update Cargo dependencies
   - package-ecosystem: cargo
     directory: "/"
-    # Release weekly, a day after (potential) releases on Wednesdays
     schedule:
-      interval: weekly
-      day: thursday
+      interval: monthly
       time: "08:00"
       timezone: Europe/Brussels
     # Wait 14 days before proposing an update to limit supply-chain risk
@@ -19,7 +17,7 @@ updates:
     versioning-strategy: auto
     open-pull-requests-limit: 10
     groups:
-      # Group all crate updates into one weekly PR. Major updates get
+      # Group all crate updates into one monthly PR. Major updates get
       # their own PR so they're easy to spot.
       rust-crates:
         patterns: ["*"]
@@ -31,8 +29,7 @@ updates:
   - package-ecosystem: rust-toolchain
     directory: "/"
     schedule:
-      interval: weekly
-      day: thursday
+      interval: monthly
       time: "08:00"
       timezone: Europe/Brussels
     cooldown:

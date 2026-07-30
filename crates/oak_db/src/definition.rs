@@ -32,8 +32,10 @@ use crate::Name;
 #[salsa::tracked(debug)]
 pub struct Definition<'db> {
     /// The file containing the binding.
+    #[returns(copy)]
     pub file: File,
     /// The scope within `file` where the binding is introduced.
+    #[returns(copy)]
     pub scope: ScopeId,
     /// The interned name being bound. Stable across revisions for the
     /// same identifier text.
@@ -135,7 +137,7 @@ impl<'db> File {
 }
 
 /// Every `Definition` in a file, keyed by its definition site.
-#[derive(Debug, PartialEq, Eq, salsa::Update)]
+#[derive(Debug, PartialEq, Eq, salsa::SalsaValue)]
 struct Definitions<'db> {
     by_site: FxHashMap<DefinitionSite, Definition<'db>>,
 }
@@ -143,7 +145,7 @@ struct Definitions<'db> {
 /// Map key for [`Definitions`]: a binding's `(scope, def_id)` site.
 ///
 /// Mirrors ty's `DefinitionNodeKey`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 struct DefinitionSite {
     scope_id: ScopeId,
     def_id: DefinitionId,
