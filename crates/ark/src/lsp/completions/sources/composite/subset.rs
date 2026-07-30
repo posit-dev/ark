@@ -5,7 +5,7 @@
 //
 //
 
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;

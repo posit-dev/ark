@@ -9,21 +9,23 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_scan::DbScan;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
-use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
-use tower_lsp::lsp_types::DidCloseTextDocumentParams;
-use tower_lsp::lsp_types::FileChangeType;
-use tower_lsp::lsp_types::FileEvent;
-use tower_lsp::lsp_types::InitializeParams;
-use tower_lsp::lsp_types::TextDocumentIdentifier;
-use tower_lsp::lsp_types::WorkspaceFolder;
-use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FileEvent;
+use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::WorkspaceFolder;
+use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use crate::lsp::main_loop::dispatch_scan_requests;
@@ -36,8 +38,9 @@ use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
-use crate::lsp::state_handlers::effective_workspace_uris;
+use crate::lsp::state_handlers::effective_workspace_paths;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::lsp::traits::url::UrlExt;
 
 /// Local sync wrappers around the async-shaped scheduler API. Tests
 /// don't need the timing flexibility, so each operation kicks off
@@ -163,7 +166,7 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
 
 fn event(path: &Path, typ: FileChangeType) -> FileEvent {
     FileEvent {
-        uri: Url::from_file_path(path).unwrap(),
+        uri: Uri::from_file_path(path).unwrap(),
         typ,
     }
 }
@@ -173,7 +176,7 @@ fn workspace_state(workspace: &Path) -> WorldState {
     state
         .workspace
         .folders
-        .push(Url::from_file_path(workspace).unwrap());
+        .push(AbsPathBuf::from_path_buf(workspace.to_path_buf()).unwrap());
     set_workspace_paths(&mut state, &[workspace.to_path_buf()], &HashSet::new());
     state
 }
@@ -271,7 +274,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
-    state.insert_open_file(url.clone(), file, None);
+    state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
     // Now disk-side `Changed` fires with stale disk content.
     fs::write(&path, "disk_v3\n").unwrap();
@@ -357,7 +360,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
-    state.insert_open_file(url.clone(), file, None);
+    state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
     fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -402,51 +405,57 @@ fn test_description_deleted_demotes_package_to_scripts() {
 
 fn folder(uri: &str) -> WorkspaceFolder {
     WorkspaceFolder {
-        uri: Url::parse(uri).unwrap(),
+        uri: uri.parse().unwrap(),
         name: String::new(),
     }
 }
 
 #[test]
-fn test_effective_workspace_uris_reads_workspace_folders() {
+fn test_effective_workspace_paths_reads_workspace_folders() {
+    // Drive-letter URIs, because a folder has to survive as an `AbsPathBuf`.
+    // `file:///a` has no drive so it isn't an absolute path on Windows, and
+    // would be dropped there.
     let params = InitializeParams {
-        workspace_folders: Some(vec![folder("file:///a"), folder("file:///b")]),
+        workspace_folders: Some(vec![folder("file:///C:/a"), folder("file:///C:/b")]),
         ..Default::default()
     };
-    let uris = effective_workspace_uris(&params);
-    assert_eq!(uris.len(), 2);
-    assert_eq!(uris[0].as_str(), "file:///a");
-    assert_eq!(uris[1].as_str(), "file:///b");
+    let paths = effective_workspace_paths(&params);
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0].as_path().file_name(), Some("a"));
+    assert_eq!(paths[1].as_path().file_name(), Some("b"));
 }
 
+// `root_uri` is deprecated in the protocol, but that's the point of these tests
+#[allow(deprecated)]
 #[test]
-fn test_effective_workspace_uris_ignores_legacy_root_uri() {
+fn test_effective_workspace_paths_ignores_legacy_root_uri() {
     // We dropped the `root_uri` fallback, so a client sending only the
     // deprecated field gets single-file mode (empty), whether
     // `workspace_folders` is absent or an empty list.
     let absent = InitializeParams {
         workspace_folders: None,
-        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        root_uri: Some("file:///legacy".parse().unwrap()),
         ..Default::default()
     };
-    assert!(effective_workspace_uris(&absent).is_empty());
+    assert!(effective_workspace_paths(&absent).is_empty());
 
     let empty = InitializeParams {
         workspace_folders: Some(vec![]),
-        root_uri: Some(Url::parse("file:///legacy").unwrap()),
+        root_uri: Some("file:///legacy".parse().unwrap()),
         ..Default::default()
     };
-    assert!(effective_workspace_uris(&empty).is_empty());
+    assert!(effective_workspace_paths(&empty).is_empty());
 }
 
+#[allow(deprecated)]
 #[test]
-fn test_effective_workspace_uris_single_file_mode() {
+fn test_effective_workspace_paths_single_file_mode() {
     let params = InitializeParams {
         workspace_folders: None,
         root_uri: None,
         ..Default::default()
     };
-    assert!(effective_workspace_uris(&params).is_empty());
+    assert!(effective_workspace_paths(&params).is_empty());
 }
 
 fn folders_change(
@@ -460,7 +469,7 @@ fn folders_change(
 
 fn folder_for(path: &Path) -> WorkspaceFolder {
     WorkspaceFolder {
-        uri: Url::from_file_path(path).unwrap(),
+        uri: Uri::from_file_path(path).unwrap(),
         name: String::new(),
     }
 }
@@ -498,11 +507,11 @@ fn test_did_change_workspace_folders_removes_folder() {
     state
         .workspace
         .folders
-        .push(Url::from_file_path(first.path()).unwrap());
+        .push(AbsPathBuf::from_path_buf(first.path().to_path_buf()).unwrap());
     state
         .workspace
         .folders
-        .push(Url::from_file_path(second.path()).unwrap());
+        .push(AbsPathBuf::from_path_buf(second.path().to_path_buf()).unwrap());
     set_workspace_paths(
         &mut state,
         &[first.path().to_path_buf(), second.path().to_path_buf()],
@@ -574,7 +583,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
-    state.insert_open_file(url.clone(), file, None);
+    state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
     let file_before = state.db.file_by_path(&file_path).unwrap();
 
@@ -631,7 +640,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     let file = state
         .db
         .upsert_editor(file_path.clone(), "edited\n".to_string());
-    state.insert_open_file(url.clone(), file, None);
+    state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
     // Remove the workspace folder; file goes to orphan (editor-owned).
     did_change_workspace_folders(
@@ -649,7 +658,9 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // Now close the buffer. File should move from orphan to stale.
     let params = DidCloseTextDocumentParams {
-        text_document: TextDocumentIdentifier { uri: url.clone() },
+        text_document: TextDocumentIdentifier {
+            uri: url.to_uri().unwrap(),
+        },
     };
     did_close(params, &mut state).unwrap();
 
@@ -658,10 +669,11 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // did_close() clears diagnostics for the closed file.
     let event = aux_rx.try_recv().unwrap();
-    assert!(matches!(
-        event,
-        AuxiliaryEvent::PublishDiagnostics(u, diags, _) if u == url && diags.is_empty()
-    ));
+    let AuxiliaryEvent::PublishDiagnostics(publication) = event else {
+        panic!("expected a PublishDiagnostics event");
+    };
+    assert_eq!(publication.path, FilePath::from_url(&url));
+    assert!(publication.diagnostics.is_empty());
 }
 
 /// A console-inputs push carries no oak write, but diagnostics read the console

@@ -1,5 +1,5 @@
 use oak_db::File;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::CodeActionEdit;
@@ -182,11 +182,11 @@ fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
 #[cfg(test)]
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
-    use tower_lsp::lsp_types::CodeActionOrCommand;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types::CodeActionOrCommand;
+    use tower_lsp_server::ls_types::Position;
+    use tower_lsp_server::ls_types::Uri;
     use tree_sitter::Point;
     use tree_sitter::Range;
-    use url::Url;
 
     use super::roxygen_documentation;
     use crate::fixtures::point_and_offset_from_cursor;
@@ -344,7 +344,7 @@ f@n <- function(a, b) {}
 
     #[test]
     fn test_uses_hash_map_of_text_edits_without_document_changes_support() {
-        let uri = Url::parse("file:///test.R").unwrap();
+        let uri: Uri = "file:///test.R".parse().unwrap();
 
         // NOTE: `with_workspace_edit_document_changes(false)`
         let capabilities = Capabilities::default()

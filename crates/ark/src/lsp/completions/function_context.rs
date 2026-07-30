@@ -6,8 +6,8 @@
 //
 
 use stdext::result::ResultExt;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::Range;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;

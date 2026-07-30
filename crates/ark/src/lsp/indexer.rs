@@ -15,7 +15,7 @@ use regex::Regex;
 use stdext::result::ResultExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::Range;
+use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 
@@ -27,6 +27,7 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
+use crate::url::FilePathExt;
 
 #[derive(Clone, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub enum IndexEntryData {
@@ -157,8 +158,8 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
 }
 
 /// Visit every workspace symbol across all indexable files. Callers that need a
-/// URL for messages to the frontend can resolve it from `File` via
-/// `WorldState::wire_url`.
+/// URI for messages to the frontend can resolve it from `File` via
+/// `WorldState::wire_uri`.
 pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
     for &file in oak_db::workspace_files(db) {
         if !is_indexable(db, file) {
@@ -180,10 +181,7 @@ pub(crate) fn warm(db: &dyn ArkDb) {
 }
 
 fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
-    match file.path(db) {
-        aether_path::FilePath::File(_) => true,
-        aether_path::FilePath::Virtual(uri) => uri.as_url().scheme() != "ark",
-    }
+    !file.path(db).is_ark_virtual_doc()
 }
 
 fn index_insert(index: &mut rustc_hash::FxHashMap<String, IndexEntry>, entry: IndexEntry) {

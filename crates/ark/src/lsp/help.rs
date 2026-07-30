@@ -17,8 +17,8 @@ use scraper::Selector;
 use stdext::push;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use tower_lsp::lsp_types::MarkupContent;
-use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp_server::ls_types::MarkupContent;
+use tower_lsp_server::ls_types::MarkupKind;
 
 use crate::lsp::markdown::*;
 
@@ -371,7 +371,7 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
 
 #[cfg(test)]
 mod tests {
-    use tower_lsp::lsp_types::MarkupKind;
+    use tower_lsp_server::ls_types::MarkupKind;
 
     use crate::lsp::help::RHtmlHelp;
     use crate::lsp::help::Status;

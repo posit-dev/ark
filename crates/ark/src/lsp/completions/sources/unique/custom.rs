@@ -15,8 +15,8 @@ use libr::VECSXP;
 use libr::VECTOR_ELT;
 use stdext::unwrap;
 use stdext::IntoResult;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp;
 use crate::lsp::completions::completion_context::CompletionContext;

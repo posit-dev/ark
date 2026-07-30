@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use serde_json::Value;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -31,11 +31,13 @@ pub struct LspClient {
     next_id: i64,
     initialized: bool,
     /// Documents opened by this client, closed on drop
-    open_documents: Vec<lsp_types::Url>,
+    open_documents: Vec<lsp_types::Uri>,
     /// Server capabilities from the initialize response
     server_capabilities: Option<lsp_types::ServerCapabilities>,
     /// Buffered diagnostics notifications, keyed by document URI
-    diagnostics: std::collections::HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
+    diagnostics: std::collections::HashMap<lsp_types::Uri, Vec<lsp_types::Diagnostic>>,
+    /// Set by `disconnect_abruptly()` so `Drop` skips the graceful `shutdown`/`exit` sequence
+    killed: bool,
 }
 
 impl LspClient {
@@ -56,7 +58,21 @@ impl LspClient {
             open_documents: Vec::new(),
             server_capabilities: None,
             diagnostics: std::collections::HashMap::new(),
+            killed: false,
         })
+    }
+
+    /// Sever the connection with a TCP reset instead of a graceful close.
+    ///
+    /// A zero `SO_LINGER` makes the close abortive, so the socket sends a `RST`
+    /// rather than a `FIN`. That's what an abrupt client crash or network drop
+    /// looks like, as opposed to `shutdown()`, which closes cleanly.
+    pub fn disconnect_abruptly(mut self) {
+        self.killed = true;
+
+        socket2::SockRef::from(self.writer.get_ref())
+            .set_linger(Some(Duration::ZERO))
+            .unwrap();
     }
 
     /// Initialize the LSP session.
@@ -91,20 +107,20 @@ impl LspClient {
     }
 
     /// Returns diagnostics for a document, if any have been received.
-    pub fn diagnostics(&self, uri: &lsp_types::Url) -> Option<&Vec<lsp_types::Diagnostic>> {
+    pub fn diagnostics(&self, uri: &lsp_types::Uri) -> Option<&Vec<lsp_types::Diagnostic>> {
         self.diagnostics.get(uri)
     }
 
     /// Clears buffered diagnostics for a document.
-    pub fn clear_diagnostics(&mut self, uri: &lsp_types::Url) {
+    pub fn clear_diagnostics(&mut self, uri: &lsp_types::Uri) {
         self.diagnostics.remove(uri);
     }
 
     /// Notify the server that a document was opened.
     ///
     /// Returns the URI assigned to the document (based on the provided `name`).
-    pub fn open_document(&mut self, name: &str, text: &str) -> lsp_types::Url {
-        let uri = lsp_types::Url::parse(&format!("file:///test/{name}")).unwrap();
+    pub fn open_document(&mut self, name: &str, text: &str) -> lsp_types::Uri {
+        let uri: lsp_types::Uri = format!("file:///test/{name}").parse().unwrap();
 
         let params = lsp_types::DidOpenTextDocumentParams {
             text_document: lsp_types::TextDocumentItem {
@@ -125,7 +141,7 @@ impl LspClient {
     }
 
     /// Close a previously opened document.
-    pub fn close_document(&mut self, uri: &lsp_types::Url) {
+    pub fn close_document(&mut self, uri: &lsp_types::Uri) {
         let params = lsp_types::DidCloseTextDocumentParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
         };
@@ -141,7 +157,7 @@ impl LspClient {
     /// Request completions at the given 0-based line and character position.
     pub fn completions(
         &mut self,
-        uri: &lsp_types::Url,
+        uri: &lsp_types::Uri,
         line: u32,
         character: u32,
     ) -> Vec<lsp_types::CompletionItem> {
@@ -234,7 +250,7 @@ impl LspClient {
         }
 
         // Close any open documents first
-        let uris: Vec<lsp_types::Url> = std::mem::take(&mut self.open_documents);
+        let uris: Vec<lsp_types::Uri> = std::mem::take(&mut self.open_documents);
         for uri in &uris {
             self.close_document(uri);
         }
@@ -242,6 +258,59 @@ impl LspClient {
         let _ = self.send_request("shutdown", Value::Null);
         self.send_notification("exit", Value::Null);
         self.initialized = false;
+    }
+
+    /// Assert the server closes its end of the connection within `timeout`.
+    ///
+    /// Meant to be called right after `shutdown()`. Some clients never close
+    /// their own socket after sending `exit`
+    /// (<https://github.com/ebkalderon/tower-lsp/issues/399>), so the server
+    /// must hang up on its own rather than waiting forever for more input.
+    ///
+    /// Tolerates benign notifications (e.g. `window/logMessage`) the server
+    /// may still emit while winding down.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an unexpected request/response, or if `timeout` elapses
+    /// without the connection closing.
+    #[track_caller]
+    pub fn expect_server_closes_connection(&mut self, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("Server did not close the connection within {timeout:?} after `exit`");
+            }
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .unwrap();
+
+            match self.recv_message() {
+                Ok(message) if message.contains_key("id") => {
+                    panic!("Unexpected message while waiting for connection to close: {message:?}")
+                },
+                // A benign notification, e.g. `window/logMessage`; keep waiting for the close.
+                Ok(_) => continue,
+                Err(err) => {
+                    let timed_out = err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
+                        matches!(
+                            io_err.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        )
+                    });
+                    if timed_out {
+                        panic!(
+                            "Server did not close the connection within {timeout:?} after `exit`"
+                        );
+                    }
+                    // Any other error here (e.g. clean EOF) means the server hung up, as expected.
+                    return;
+                },
+            }
+        }
     }
 
     fn send_raw(&mut self, message: &Value) {
@@ -471,7 +540,7 @@ impl LspClient {
 
 impl Drop for LspClient {
     fn drop(&mut self) {
-        if std::thread::panicking() {
+        if self.killed || std::thread::panicking() {
             return;
         }
         self.shutdown();

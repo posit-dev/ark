@@ -7,7 +7,7 @@
 
 use aether_lsp_utils::proto::PositionEncoding;
 use oak_db::File;
-use tower_lsp::lsp_types;
+use tower_lsp_server::ls_types as lsp_types;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
@@ -18,7 +18,7 @@ use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-/// A mirror of `tower_lsp::lsp_types::SelectionRange`, but using tree-sitter ranges
+/// A mirror of `tower_lsp_server::ls_types::SelectionRange`, but using tree-sitter ranges
 pub struct SelectionRange {
     pub range: Range,
     pub parent: Option<Box<SelectionRange>>,

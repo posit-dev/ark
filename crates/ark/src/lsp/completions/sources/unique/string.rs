@@ -5,7 +5,7 @@
 //
 //
 
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use super::file_path::completions_from_string_file_path;
 use crate::lsp::completions::completion_context::CompletionContext;

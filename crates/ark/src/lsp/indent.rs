@@ -278,7 +278,7 @@ mod tests {
     use oak_db::OakDatabase;
     use salsa::Setter;
     use stdext::assert_match;
-    use tower_lsp::lsp_types::TextEdit;
+    use tower_lsp_server::ls_types::TextEdit;
 
     use crate::lsp::config::IndentStyle;
     use crate::lsp::config::IndentationConfig;

@@ -6,13 +6,13 @@
 //
 
 use stdext::unwrap;
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::CompletionItemKind;
-use tower_lsp::lsp_types::CompletionItemLabelDetails;
-use tower_lsp::lsp_types::Documentation;
-use tower_lsp::lsp_types::InsertTextFormat;
-use tower_lsp::lsp_types::MarkupContent;
-use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItemKind;
+use tower_lsp_server::ls_types::CompletionItemLabelDetails;
+use tower_lsp_server::ls_types::Documentation;
+use tower_lsp_server::ls_types::InsertTextFormat;
+use tower_lsp_server::ls_types::MarkupContent;
+use tower_lsp_server::ls_types::MarkupKind;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
@@ -175,8 +175,8 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
 
 #[cfg(test)]
 mod tests {
-    use tower_lsp::lsp_types::CompletionItemLabelDetails;
-    use tower_lsp::lsp_types::{self};
+    use tower_lsp_server::ls_types as lsp_types;
+    use tower_lsp_server::ls_types::CompletionItemLabelDetails;
 
     #[test]
     fn test_presence_bare_keywords() {

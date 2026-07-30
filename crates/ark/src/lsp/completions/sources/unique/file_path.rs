@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use harp::utils::r_is_string;
 use harp::utils::r_normalize_path;
 use stdext::unwrap;
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_direntry;

@@ -11,11 +11,11 @@ use std::sync::LazyLock;
 use oak_db::OakDatabase;
 use oak_db::RootKind;
 use regex::Regex;
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::Documentation;
-use tower_lsp::lsp_types::InsertTextFormat;
-use tower_lsp::lsp_types::MarkupContent;
-use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::Documentation;
+use tower_lsp_server::ls_types::InsertTextFormat;
+use tower_lsp_server::ls_types::MarkupContent;
+use tower_lsp_server::ls_types::MarkupKind;
 use yaml_rust2::YamlLoader;
 
 use crate::lsp::completions::completion_context::CompletionContext;

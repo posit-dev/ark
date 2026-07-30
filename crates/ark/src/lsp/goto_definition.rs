@@ -1,26 +1,31 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use aether_path::FilePath;
 use oak_db::Db;
 use oak_ide::NavigationTarget;
-use tower_lsp::lsp_types::GotoDefinitionParams;
-use tower_lsp::lsp_types::GotoDefinitionResponse;
-use tower_lsp::lsp_types::LocationLink;
+use stdext::result::ResultExt;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::LocationLink;
 
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
 
 pub(crate) fn goto_definition(
     params: GotoDefinitionParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
-    let uri = &params.text_document_position_params.text_document.uri;
+    let path = params
+        .text_document_position_params
+        .text_document
+        .uri
+        .to_document_path()?;
     let position = params.text_document_position_params.position;
 
     let db = &state.db;
     let encoding = state.config.position_encoding;
 
-    let Some(file) = db.file_by_path(&FilePath::from_url(uri)) else {
+    let Some(file) = db.file_by_path(&path) else {
         return Ok(None);
     };
 
@@ -32,11 +37,17 @@ pub(crate) fn goto_definition(
     }
 
     // An ambiguous name (e.g. defined on both arms of an `if`/`else`) resolves
-    // to several bindings; the client offers all of them.
-    let links = targets
+    // to several bindings. A target we can't convert is dropped rather than
+    // failing the whole request, so the user can see the definitions we did
+    // resolve.
+    let links: Vec<LocationLink> = targets
         .iter()
-        .map(|target| nav_target_to_link(state, encoding, target))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .filter_map(|target| nav_target_to_link(state, encoding, target).log_err())
+        .collect();
+
+    if links.is_empty() {
+        return Ok(None);
+    }
 
     Ok(Some(GotoDefinitionResponse::Link(links)))
 }
@@ -56,7 +67,7 @@ fn nav_target_to_link(
 
     Ok(LocationLink {
         origin_selection_range: None,
-        target_uri: state.wire_url(target.file),
+        target_uri: state.wire_uri(target.file)?,
         target_range,
         target_selection_range,
     })

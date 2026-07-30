@@ -6,7 +6,7 @@
 //
 
 use stdext::*;
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;

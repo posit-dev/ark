@@ -5,10 +5,10 @@
 //
 //
 
-use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::Documentation;
-use tower_lsp::lsp_types::MarkupContent;
-use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::Documentation;
+use tower_lsp_server::ls_types::MarkupContent;
+use tower_lsp_server::ls_types::MarkupKind;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_function;
@@ -76,7 +76,7 @@ fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
-                let uri = state.wire_url(file);
+                let path = file.path(state.db());
 
                 let fun_context = match completion_context.function_context() {
                     Ok(fun_context) => fun_context,
@@ -95,25 +95,21 @@ fn completions_from_workspace(
                 };
 
                 // Add some metadata about where the completion was found
-                let mut path = uri.as_str().to_owned();
+                let mut display_path = path.to_string();
 
-                if uri.scheme() == "file" {
-                    if let Ok(file_path) = uri.to_file_path() {
-                        for folder in &state.workspace.folders {
-                            let Ok(folder_path) = folder.to_file_path() else {
-                                continue;
-                            };
-                            if let Ok(relative_path) = file_path.strip_prefix(&folder_path) {
-                                path = relative_path.to_string_lossy().to_string();
-                                break;
-                            }
+                if let Some(abs_path) = path.as_file() {
+                    for folder in &state.workspace.folders {
+                        if let Ok(relative_path) = abs_path.as_path().strip_prefix(folder.as_path())
+                        {
+                            display_path = relative_path.to_string();
+                            break;
                         }
-                    };
+                    }
                 }
 
                 let value = format!(
                     "Defined in `{}` on line {}.",
-                    path,
+                    display_path,
                     entry.range.start.row + 1
                 );
                 let markup = MarkupContent {

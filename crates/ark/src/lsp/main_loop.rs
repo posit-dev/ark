@@ -32,12 +32,12 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tower_lsp::jsonrpc;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::Diagnostic;
-use tower_lsp::lsp_types::MessageType;
-use tower_lsp::Client;
-use url::Url;
+use tower_lsp_server::jsonrpc;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::Client;
 
 use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
@@ -61,7 +61,8 @@ use crate::lsp::state::WorldState;
 use crate::lsp::state::WorldStateSnapshot;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
-use crate::url::ExtUrl;
+use crate::lsp::traits::url::UriExt;
+use crate::url::FilePathExt;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -133,7 +134,7 @@ pub(crate) struct DidCloseVirtualDocumentParams {
 #[derive(Debug)]
 pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
-    PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
+    PublishDiagnostics(DiagnosticsPublication),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
     Shutdown,
 }
@@ -231,7 +232,7 @@ struct AuxiliaryState {
     /// Last non-empty diagnostics published per file. A refresh re-runs every
     /// open file, but most runs produce the same result, so we skip the publish
     /// when it matches what the client already has.
-    published_diagnostics: HashMap<Url, Vec<Diagnostic>>,
+    published_diagnostics: HashMap<FilePath, Vec<Diagnostic>>,
 }
 
 impl GlobalState {
@@ -484,7 +485,9 @@ impl GlobalState {
                             respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?;
                         },
                         LspRequest::OnTypeFormatting(params) => {
-                            state_handlers::did_change_formatting_options(&params.text_document_position.text_document.uri, &params.options, &mut self.world);
+                            if let Some(path) = params.text_document_position.text_document.uri.to_document_path().log_err() {
+                                state_handlers::did_change_formatting_options(&path, &params.options, &mut self.world);
+                            }
                             respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
                         },
                         LspRequest::CodeAction(params) => {
@@ -794,8 +797,8 @@ impl AuxiliaryState {
             match self.next_event().await {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
                 AuxiliaryEvent::SpawnedTask(handle) => self.tasks.push(Box::pin(handle)),
-                AuxiliaryEvent::PublishDiagnostics(uri, diagnostics, version) => {
-                    self.publish_diagnostics(uri, diagnostics, version).await
+                AuxiliaryEvent::PublishDiagnostics(publication) => {
+                    self.publish_diagnostics(publication).await
                 },
                 AuxiliaryEvent::Shutdown => break,
             }
@@ -830,19 +833,21 @@ impl AuxiliaryState {
         }
     }
 
-    /// Publish diagnostics for `uri`, skipping the client round-trip when the
-    /// set is identical to what we last sent for that file. Only non-empty
-    /// sets are remembered, and an absent entry counts as empty. So an empty
-    /// result is published only when it clears diagnostics the client is
-    /// currently showing, and the map stays bounded by the files on screen
-    /// with diagnostics.
-    async fn publish_diagnostics(
-        &mut self,
-        uri: Url,
-        diagnostics: Vec<Diagnostic>,
-        version: Option<i32>,
-    ) {
-        let unchanged = match self.published_diagnostics.get(&uri) {
+    /// Publish diagnostics, skipping the client round-trip when the set is
+    /// identical to what we last sent for that file. Only non-empty sets are
+    /// remembered, and an absent entry counts as empty. So an empty result is
+    /// published only when it clears diagnostics the client is currently
+    /// showing, and the map stays bounded by the files on screen with
+    /// diagnostics.
+    async fn publish_diagnostics(&mut self, publication: DiagnosticsPublication) {
+        let DiagnosticsPublication {
+            path,
+            uri,
+            diagnostics,
+            version,
+        } = publication;
+
+        let unchanged = match self.published_diagnostics.get(&path) {
             Some(old) => diagnostics == *old,
             None => diagnostics.is_empty(),
         };
@@ -851,10 +856,9 @@ impl AuxiliaryState {
         }
 
         if diagnostics.is_empty() {
-            self.published_diagnostics.remove(&uri);
+            self.published_diagnostics.remove(&path);
         } else {
-            self.published_diagnostics
-                .insert(uri.clone(), diagnostics.clone());
+            self.published_diagnostics.insert(path, diagnostics.clone());
         }
 
         self.client
@@ -963,12 +967,8 @@ where
     send_auxiliary(AuxiliaryEvent::SpawnedTask(handle));
 }
 
-pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, version: Option<i32>) {
-    send_auxiliary(AuxiliaryEvent::PublishDiagnostics(
-        uri,
-        diagnostics,
-        version,
-    ));
+pub(crate) fn publish_diagnostics(publication: DiagnosticsPublication) {
+    send_auxiliary(AuxiliaryEvent::PublishDiagnostics(publication));
 }
 
 impl KernelNotification {
@@ -1004,10 +1004,14 @@ pub(crate) struct RefreshDiagnosticsTask {
 }
 
 #[derive(Debug)]
-struct RefreshDiagnosticsResult {
-    uri: Url,
-    diagnostics: Vec<Diagnostic>,
-    version: Option<i32>,
+pub(crate) struct DiagnosticsPublication {
+    /// Identity for the dedup cache. Two spellings of the same document
+    /// have the same identity.
+    pub(crate) path: FilePath,
+    /// Wire information.
+    pub(crate) uri: Uri,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) version: Option<i32>,
 }
 
 static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDiagnosticsTask>> =
@@ -1019,7 +1023,7 @@ static DIAGNOSTICS_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<RefreshDia
 
 /// Process diagnostics refresh tasks.
 ///
-/// Tasks are batched and deduplicated per URL (only the last task per URL is
+/// Tasks are batched and deduplicated per file (only the last task per file is
 /// processed), so stale-version diagnostics get superseded within a batch.
 ///
 /// Batches can't publish out of order. Each pass holds a db snapshot, and a
@@ -1040,12 +1044,11 @@ async fn process_diagnostics_queue(mut rx: mpsc::UnboundedReceiver<RefreshDiagno
 }
 
 fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
-    // Deduplicate tasks by keeping only the last one for each URI. We use a
-    // `HashMap` so only the last insertion is retained. This is effectively a
-    // way of cancelling diagnostics tasks for outdated documents.
-    let batch: HashMap<_, _> = batch
+    // Deduplicate tasks by keeping only the last one for each file, which is
+    // effectively a way of cancelling diagnostics tasks for outdated documents.
+    let batch: HashMap<FilePath, _> = batch
         .into_iter()
-        .map(|task| (task.file.wire_url().clone(), task))
+        .map(|task| (task.file.file().path(task.state.db()).clone(), task))
         .collect();
 
     tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
@@ -1054,43 +1057,42 @@ fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
     // Each file is its own blocking task. `spawn_blocking()` catches salsa
     // cancellation, so a pass cancelled by a concurrent edit just produces no
     // event. The publish happens via the returned [`AuxiliaryEvent`].
-    for (_uri, task) in batch {
+    for (_path, task) in batch {
         lsp::spawn_blocking(move || {
-            let result = refresh_diagnostics(task);
-            Ok(Some(AuxiliaryEvent::PublishDiagnostics(
-                result.uri,
-                result.diagnostics,
-                result.version,
-            )))
+            let publication = refresh_diagnostics(task);
+            Ok(Some(AuxiliaryEvent::PublishDiagnostics(publication)))
         });
     }
 }
 
-fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> RefreshDiagnosticsResult {
+fn refresh_diagnostics(task: RefreshDiagnosticsTask) -> DiagnosticsPublication {
     let RefreshDiagnosticsTask { file, state } = task;
-    let uri = file.wire_url().clone();
+    let path = file.file().path(state.db()).clone();
+    let uri = file.wire_uri().clone();
     let version = file.version();
-    let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
+    let _span = tracing::info_span!("diagnostics_refresh", uri = %uri.as_str()).entered();
 
     // Special case testthat-specific behaviour. This is a simple stopgap
     // approach that has some false positives (e.g. when we work on testthat
     // itself the flag will always be true), but that shouldn't have much
     // practical impact.
-    let testthat = Path::new(uri.path())
-        .components()
-        .any(|c| c.as_os_str() == "testthat");
+    let testthat = path
+        .as_path()
+        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"));
 
     let now = std::time::Instant::now();
-    lsp::log_info!("Generating diagnostics for file: {uri}");
+    lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());
 
     let diagnostics = generate_diagnostics(file.file(), state, testthat);
 
     lsp::log_info!(
-        "Finished diagnostics for file: {uri} in {:.0?}",
+        "Finished diagnostics for file: {} in {:.0?}",
+        uri.as_str(),
         now.elapsed()
     );
 
-    RefreshDiagnosticsResult {
+    DiagnosticsPublication {
+        path,
         uri,
         diagnostics,
         version,
@@ -1109,7 +1111,7 @@ pub(crate) fn diagnostics_refresh_all(state: &WorldState) {
     );
 
     for file in state.open_files.values() {
-        if !ExtUrl::should_diagnose(file.wire_url()) {
+        if !file.file().path(&state.db).should_diagnose() {
             continue;
         }
 
@@ -1148,7 +1150,7 @@ fn warm_workspace_index(state: WorldStateSnapshot) {
 mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
-    use tower_lsp::jsonrpc;
+    use tower_lsp_server::jsonrpc;
     use url::Url;
 
     use super::catch_cancellation;
@@ -1160,6 +1162,7 @@ mod tests {
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
+    use crate::lsp::traits::url::UrlExt;
 
     /// A salsa cancellation during the pass is swallowed into `None` by
     /// `catch_cancellation`, the wrapper `spawn_blocking` applies to every task,
@@ -1177,9 +1180,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
-        state.insert_open_file(uri.clone(), file, None);
+        state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
-        let file = state.open_file(&uri).unwrap().clone();
+        let file = state.open_file(&FilePath::from_url(&uri)).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.cancellation_token().cancel();
 
@@ -1201,9 +1204,9 @@ mod tests {
         let file = state
             .db
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
-        state.insert_open_file(uri.clone(), file, None);
+        state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
-        let file = state.open_file(&uri).unwrap().clone();
+        let file = state.open_file(&FilePath::from_url(&uri)).unwrap().clone();
         let snapshot = state.diagnostics_snapshot();
         snapshot.cancellation_token().cancel();
 

@@ -4,39 +4,33 @@ use oak_db::DbInputs;
 use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::PrepareRenameResponse;
-use tower_lsp::lsp_types::RenameParams;
-use tower_lsp::lsp_types::TextDocumentPositionParams;
-use tower_lsp::lsp_types::TextEdit;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::PrepareRenameResponse;
+use tower_lsp_server::ls_types::RenameParams;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
+use tower_lsp_server::ls_types::TextEdit;
+use tower_lsp_server::ls_types::Uri;
+use url::Url;
 
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
 use crate::lsp::rename::prepare_rename;
 use crate::lsp::rename::rename;
+use crate::lsp::traits::url::UriExt;
 use crate::lsp::util::test_path;
 
-fn make_prepare_params(
-    uri: lsp_types::Url,
-    line: u32,
-    character: u32,
-) -> TextDocumentPositionParams {
+fn make_prepare_params(uri: &Uri, line: u32, character: u32) -> TextDocumentPositionParams {
     TextDocumentPositionParams {
-        text_document: lsp_types::TextDocumentIdentifier { uri },
+        text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
         position: lsp_types::Position::new(line, character),
     }
 }
 
-fn make_rename_params(
-    uri: lsp_types::Url,
-    line: u32,
-    character: u32,
-    new_name: &str,
-) -> RenameParams {
+fn make_rename_params(uri: &Uri, line: u32, character: u32, new_name: &str) -> RenameParams {
     RenameParams {
         text_document_position: TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri },
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
             position: lsp_types::Position::new(line, character),
         },
         new_name: new_name.to_string(),
@@ -47,10 +41,9 @@ fn make_rename_params(
 #[test]
 fn test_prepare_rename_returns_range_and_placeholder() {
     let code = "foo <- 1\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_prepare_params(uri, 0, 0);
+    let params = make_prepare_params(&uri, 0, 0);
     let result = prepare_rename(params, &state).unwrap().unwrap();
 
     let PrepareRenameResponse::RangeWithPlaceholder {
@@ -67,36 +60,47 @@ fn test_prepare_rename_returns_range_and_placeholder() {
 #[test]
 fn test_prepare_rename_on_namespace_access_returns_none() {
     let code = "dplyr::mutate\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_prepare_params(uri, 0, 7);
+    let params = make_prepare_params(&uri, 0, 7);
     assert!(prepare_rename(params, &state).unwrap().is_none());
 }
 
 #[test]
 fn test_edits_keyed_by_verbatim_url() {
-    // The `WorkspaceEdit` must key its changes on the buffer's verbatim URL,
+    // The `WorkspaceEdit` must key its changes on the buffer's verbatim URI,
     // not a normalised round-trip, or the editor won't match them to the file.
+    // `FilePath` normalisation would collapse the doubled slash, decode and
+    // re-encode the percent-escaped drive colon with different casing, and
+    // leave the encoded brackets raw, so a `Url` round-trip changes all three
+    // wire strings below.
     let code = "foo <- 1\nfoo\n";
-    let uri = lsp_types::Url::parse("file:///C:/proj//file.R").unwrap();
-    let state = make_state(&uri, code);
+    for wire in [
+        "file:///C:/proj//file.R",
+        "file:///c%3A/proj/file.R",
+        "file:///C:/proj/f%5B1%5D.R",
+    ] {
+        let (state, uri) = make_state(wire, code);
 
-    let params = make_rename_params(uri.clone(), 0, 0, "bar");
-    let edit = rename(params, &state).unwrap().unwrap();
+        let params = make_rename_params(&uri, 0, 0, "bar");
+        let edit = rename(params, &state).unwrap().unwrap();
 
-    let changes = edit.changes.expect("changes map");
-    assert!(changes.contains_key(&uri));
-    assert_ne!(FilePath::from_url(&uri).to_url(), uri);
+        let changes = edit.changes.expect("changes map");
+        assert!(changes.keys().any(|key| key.as_str() == wire));
+
+        // Confirm the round-trip really would have differed, so the check
+        // above bites.
+        let url = Url::parse(wire).unwrap();
+        assert_ne!(FilePath::from_url(&url).to_url(), url);
+    }
 }
 
 #[test]
 fn test_rename_emits_edits_for_def_and_uses() {
     let code = "foo <- 1\nfoo + foo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 0, 0, "bar");
+    let params = make_rename_params(&uri, 0, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let changes = edit.changes.expect("changes map");
@@ -125,16 +129,14 @@ fn test_rename_excludes_independent_binding_in_other_file() {
     // file2 has its own separate `foo` -- rename of file1's `foo` should
     // NOT touch file2's independent binding.
     let code1 = "foo <- 1\nfoo\n";
-    let uri1 = test_path("a.R");
-    let mut state = make_state(&uri1, code1);
+    let (mut state, uri1) = make_state(test_path("a.R").as_str(), code1);
 
     // file2 has its own separate `foo` -- rename of file1's `foo` should
     // NOT touch file2's independent binding.
     let code2 = "foo <- 99\nfoo\n";
-    let uri2 = test_path("b.R");
-    insert_file(&mut state, &uri2, code2);
+    let uri2 = insert_file(&mut state, test_path("b.R").as_str(), code2);
 
-    let params = make_rename_params(uri1.clone(), 0, 0, "bar");
+    let params = make_rename_params(&uri1, 0, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let changes = edit.changes.expect("changes map");
@@ -149,18 +151,16 @@ fn test_rename_cross_file_via_source() {
     // helpers.R defines `helper`; script.R sources it and uses it.
     // After registering both in a workspace root, rename spans both files.
     let code1 = "helper <- function() 1\n";
-    let uri1 = test_path("helpers.R");
-    let mut state = make_state(&uri1, code1);
+    let (mut state, uri1) = make_state(test_path("helpers.R").as_str(), code1);
 
     let code2 = "source(\"helpers.R\")\nhelper\n";
-    let uri2 = test_path("script.R");
-    insert_file(&mut state, &uri2, code2);
+    let uri2 = insert_file(&mut state, test_path("script.R").as_str(), code2);
 
     // Register both files in a workspace root whose path is the temp
     // directory. `anchor_dir` uses the root path as the anchor, so
     // `source("helpers.R")` resolves to `<tmpdir>/helpers.R`.
-    let fp1 = FilePath::from_url(&uri1);
-    let fp2 = FilePath::from_url(&uri2);
+    let fp1 = FilePath::from_url(&uri1.to_url().unwrap());
+    let fp2 = FilePath::from_url(&uri2.to_url().unwrap());
     let file1 = state.db.file_by_path(&fp1).unwrap();
     let file2 = state.db.file_by_path(&fp2).unwrap();
     let root_path = FilePath::from_path_buf(std::env::temp_dir()).unwrap();
@@ -178,7 +178,7 @@ fn test_rename_cross_file_via_source() {
         .to(vec![root]);
 
     // Cursor on `helper` use in script.R (line 1, col 0).
-    let params = make_rename_params(uri2.clone(), 1, 0, "renamed");
+    let params = make_rename_params(&uri2, 1, 0, "renamed");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let changes = edit.changes.expect("changes map");
@@ -202,10 +202,9 @@ fn test_rename_cross_file_via_source() {
 #[test]
 fn test_rename_to_reserved_word_errors() {
     let code = "foo <- 1\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri, 0, 0, "if");
+    let params = make_rename_params(&uri, 0, 0, "if");
     let err = rename(params, &state).unwrap_err();
     assert!(err.to_string().contains("reserved"));
 }
@@ -213,10 +212,9 @@ fn test_rename_to_reserved_word_errors() {
 #[test]
 fn test_rename_to_name_with_space_wraps_in_backticks() {
     let code = "foo <- 1\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 0, 0, "new name");
+    let params = make_rename_params(&uri, 0, 0, "new name");
     let edit = rename(params, &state).unwrap().unwrap();
     let edits = edit.changes.unwrap().remove(&uri).unwrap();
     assert!(edits.iter().all(|e| e.new_text == "`new name`"));
@@ -225,10 +223,9 @@ fn test_rename_to_name_with_space_wraps_in_backticks() {
 #[test]
 fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
     let code = "foo <- 1\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 0, 0, "1foo");
+    let params = make_rename_params(&uri, 0, 0, "1foo");
     let edit = rename(params, &state).unwrap().unwrap();
     let edits = edit.changes.unwrap().remove(&uri).unwrap();
     assert!(edits.iter().all(|e| e.new_text == "`1foo`"));
@@ -237,10 +234,9 @@ fn test_rename_to_name_with_starting_digit_wraps_in_backticks() {
 #[test]
 fn test_rename_to_empty_name_errors() {
     let code = "foo <- 1\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri, 0, 0, "");
+    let params = make_rename_params(&uri, 0, 0, "");
     let err = rename(params, &state).unwrap_err();
     assert!(err.to_string().contains("empty"));
 }
@@ -248,10 +244,9 @@ fn test_rename_to_empty_name_errors() {
 #[test]
 fn test_rename_to_name_with_backtick_errors() {
     let code = "foo <- 1\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri, 0, 0, "foo`bar");
+    let params = make_rename_params(&uri, 0, 0, "foo`bar");
     let err = rename(params, &state).unwrap_err();
     assert!(err.to_string().contains("backtick"));
 }

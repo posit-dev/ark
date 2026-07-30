@@ -5,7 +5,7 @@
 //
 //
 
-use tower_lsp::lsp_types::Diagnostic;
+use tower_lsp_server::ls_types::Diagnostic;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
@@ -433,8 +433,8 @@ fn new_syntax_diagnostic(
 #[cfg(test)]
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
-    use tower_lsp::lsp_types::Diagnostic;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types::Diagnostic;
+    use tower_lsp_server::ls_types::Position;
 
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;

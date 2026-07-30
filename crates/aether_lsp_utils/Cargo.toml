@@ -1,0 +1,19 @@
+[package]
+name = "aether_lsp_utils"
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+biome_line_index.workspace = true
+biome_text_size.workspace = true
+dissimilar.workspace = true
+itertools.workspace = true
+memchr.workspace = true
+tower-lsp-server.workspace = true
+
+[lints]
+workspace = true

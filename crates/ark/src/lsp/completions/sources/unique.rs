@@ -14,7 +14,7 @@ mod namespace;
 mod string;
 mod subset;
 
-use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::collect_completions;

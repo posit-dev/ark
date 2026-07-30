@@ -1,0 +1,122 @@
+// Utilites for converting internal types to LSP types
+
+use anyhow::Context;
+use biome_line_index::LineCol;
+use biome_line_index::LineIndex;
+use biome_text_size::TextRange;
+use biome_text_size::TextSize;
+use tower_lsp_server::ls_types as lsp_types;
+
+use crate::line_ending::LineEnding;
+use crate::proto::PositionEncoding;
+use crate::text_edit::Indel;
+use crate::text_edit::TextEdit;
+
+/// The function is used to convert LineCol to a LSP position.
+pub fn position_from_line_col(
+    line_col: LineCol,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+) -> anyhow::Result<lsp_types::Position> {
+    match position_encoding {
+        PositionEncoding::Utf8 => Ok(lsp_types::Position::new(line_col.line, line_col.col)),
+        PositionEncoding::Wide(enc) => {
+            let line_col = line_index
+                .to_wide(enc, line_col)
+                .with_context(|| format!("Could not convert {line_col:?} into wide line column"))?;
+            Ok(lsp_types::Position::new(line_col.line, line_col.col))
+        },
+    }
+}
+
+/// The function is used to convert TextSize to a LSP position.
+/// From `biome_lsp_converters::to_proto::position()`.
+pub fn position_from_offset(
+    offset: TextSize,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+) -> anyhow::Result<lsp_types::Position> {
+    let line_col = line_index
+        .line_col(offset)
+        .with_context(|| format!("Could not convert offset {offset:?} into a line-column index"))?;
+
+    position_from_line_col(line_col, line_index, position_encoding)
+}
+
+/// The function is used to convert TextRange to a LSP range.
+/// From `biome_lsp_converters::to_proto::range()`.
+pub fn range(
+    range: TextRange,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+) -> anyhow::Result<lsp_types::Range> {
+    let start = position_from_offset(range.start(), line_index, position_encoding)?;
+    let end = position_from_offset(range.end(), line_index, position_encoding)?;
+    Ok(lsp_types::Range::new(start, end))
+}
+
+pub fn text_edit(
+    indel: Indel,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+    endings: LineEnding,
+) -> anyhow::Result<lsp_types::TextEdit> {
+    let range = range(indel.delete, line_index, position_encoding)?;
+    let new_text = match endings {
+        LineEnding::Lf => indel.insert,
+        LineEnding::Crlf => indel.insert.replace('\n', "\r\n"),
+    };
+    Ok(lsp_types::TextEdit { range, new_text })
+}
+
+pub fn text_edit_vec(
+    text_edit: TextEdit,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+    endings: LineEnding,
+) -> anyhow::Result<Vec<lsp_types::TextEdit>> {
+    text_edit
+        .into_iter()
+        .map(|indel| self::text_edit(indel, line_index, position_encoding, endings))
+        .collect()
+}
+
+pub fn doc_edit_vec(
+    text_edit: TextEdit,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+    endings: LineEnding,
+) -> anyhow::Result<Vec<lsp_types::TextDocumentContentChangeEvent>> {
+    let edits = text_edit_vec(text_edit, line_index, position_encoding, endings)?;
+
+    Ok(edits
+        .into_iter()
+        .map(|edit| lsp_types::TextDocumentContentChangeEvent {
+            range: Some(edit.range),
+            range_length: None,
+            text: edit.new_text,
+        })
+        .collect())
+}
+
+pub fn replace_range_edit(
+    range: TextRange,
+    replace_with: String,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+    endings: LineEnding,
+) -> anyhow::Result<Vec<lsp_types::TextEdit>> {
+    let edit = TextEdit::replace(range, replace_with);
+    text_edit_vec(edit, line_index, position_encoding, endings)
+}
+
+pub fn replace_all_edit(
+    text: &str,
+    replace_with: &str,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
+    endings: LineEnding,
+) -> anyhow::Result<Vec<lsp_types::TextEdit>> {
+    let edit = crate::diff::diff(text, replace_with);
+    text_edit_vec(edit, line_index, position_encoding, endings)
+}

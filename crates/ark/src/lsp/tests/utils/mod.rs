@@ -10,12 +10,14 @@ pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_scan::DbScan;
-use tower_lsp::lsp_types;
-use tower_lsp::Client;
-use tower_lsp::LanguageServer;
-use tower_lsp::LspService;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::Client;
+use tower_lsp_server::LanguageServer;
+use tower_lsp_server::LspService;
 
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UriExt;
 
 /// Get a real `Client` without a live connection. `LspService::new` hands a
 /// `Client` to its init closure; we capture it and drop the service. The
@@ -24,15 +26,14 @@ use crate::lsp::state::WorldState;
 pub(super) fn test_client() -> Client {
     struct Dummy;
 
-    #[tower_lsp::async_trait]
     impl LanguageServer for Dummy {
         async fn initialize(
             &self,
             _: lsp_types::InitializeParams,
-        ) -> tower_lsp::jsonrpc::Result<lsp_types::InitializeResult> {
+        ) -> tower_lsp_server::jsonrpc::Result<lsp_types::InitializeResult> {
             Ok(lsp_types::InitializeResult::default())
         }
-        async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
+        async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
             Ok(())
         }
     }
@@ -57,20 +58,27 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     }
 }
 
-pub(super) fn make_state(uri: &lsp_types::Url, contents: &str) -> WorldState {
+pub(super) fn make_state(wire: &str, contents: &str) -> (WorldState, Uri) {
     let mut state = WorldState::default();
-    insert_file(&mut state, uri, contents);
-    state
+    let uri = insert_file(&mut state, wire, contents);
+    (state, uri)
 }
 
 /// Insert an editor buffer, the same as `did_open` performs, so handlers
 /// reading either `state.documents` or `state.db` (via `file_by_path`) see a
 /// consistent file.
-pub(super) fn insert_file(state: &mut WorldState, uri: &lsp_types::Url, contents: &str) {
+///
+/// Starts from `wire`, the raw bytes an editor would send, rather than a
+/// `Url`, so tests can see `Uri` -> `Url` normalisation instead of it being
+/// hidden by starting from an already-normalised `Url`.
+pub(super) fn insert_file(state: &mut WorldState, wire: &str, contents: &str) -> Uri {
+    let uri: Uri = wire.parse().unwrap();
+    let url = uri.to_url().unwrap();
     let file = state
         .db
-        .upsert_editor(FilePath::from_url(uri), contents.to_string());
-    state.insert_open_file(uri.clone(), file, None);
+        .upsert_editor(FilePath::from_url(&url), contents.to_string());
+    state.insert_open_file(uri.clone(), FilePath::from_url(&url), file, None);
+    uri
 }
 
 pub(super) fn range(start: (u32, u32), end: (u32, u32)) -> lsp_types::Range {

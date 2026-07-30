@@ -5,11 +5,11 @@
 //
 //
 
-use tower_lsp::lsp_types;
-use tower_lsp::lsp_types::CodeActionKind;
-use tower_lsp::lsp_types::CodeActionOptions;
-use tower_lsp::lsp_types::CodeActionProviderCapability;
-use tower_lsp::lsp_types::WorkDoneProgressOptions;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::CodeActionKind;
+use tower_lsp_server::ls_types::CodeActionOptions;
+use tower_lsp_server::ls_types::CodeActionProviderCapability;
+use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 
 /// Capabilities negotiated with [lsp_types::ClientCapabilities]
 #[derive(Debug, Default)]
