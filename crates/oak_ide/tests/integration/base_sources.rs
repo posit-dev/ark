@@ -42,8 +42,15 @@ const R_VERSION: &str = "4.5.2";
 
 /// R's default search path, `stats` (highest priority) through `base`
 /// (lowest), see `crate::search::DEFAULT_SEARCH_PATH_PACKAGES` in `oak_db`.
-const DEFAULT_SEARCH_PATH_PACKAGES: [&str; 7] =
-    ["stats", "graphics", "grDevices", "utils", "datasets", "methods", "base"];
+const DEFAULT_SEARCH_PATH_PACKAGES: [&str; 7] = [
+    "stats",
+    "graphics",
+    "grDevices",
+    "utils",
+    "datasets",
+    "methods",
+    "base",
+];
 
 /// Register every default-search-path package as a library package backed by
 /// its real source directory under `r_root`.
