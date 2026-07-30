@@ -21,6 +21,7 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
+use stdext::panic_message;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use tokio::runtime::Handle;
@@ -733,13 +734,7 @@ fn respond<T>(
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
 
-            let msg: String = if let Some(msg) = err.downcast_ref::<&str>() {
-                msg.to_string()
-            } else if let Some(msg) = err.downcast_ref::<String>() {
-                msg.clone()
-            } else {
-                String::from("Couldn't retrieve the message.")
-            };
+            let msg = panic_message(err.as_ref());
 
             // This creates an uninformative backtrace that is reported in the
             // LSP logs. Note that the relevant backtrace is the one created by

@@ -5,7 +5,6 @@
 //
 //
 
-use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -14,12 +13,12 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use aether_path::FilePath;
+use stdext::panic_message;
 use stdext::spawn;
 
 use super::catch_cancellation;
 use super::snapshot::WorldStateSnapshot;
 use crate::lsp;
-use crate::lsp::io_pool::panic_message;
 
 /// Enough threads that a handful of open files all get diagnosed in parallel,
 /// few enough that they don't crowd out the main loop or the R session we share

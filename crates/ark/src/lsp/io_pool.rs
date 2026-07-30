@@ -5,10 +5,10 @@
 //
 //
 
-use std::any::Any;
 use std::panic::AssertUnwindSafe;
 
 use crossbeam::channel::Sender;
+use stdext::panic_message;
 use stdext::spawn;
 
 use crate::lsp;
@@ -56,16 +56,5 @@ fn run_job(job: Job) {
             "An I/O job panicked: {msg}",
             msg = panic_message(err.as_ref())
         );
-    }
-}
-
-/// The message out of a caught panic payload, for logging.
-pub(super) fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(msg) = payload.downcast_ref::<&str>() {
-        msg.to_string()
-    } else if let Some(msg) = payload.downcast_ref::<String>() {
-        msg.clone()
-    } else {
-        String::from("Couldn't retrieve the message.")
     }
 }

@@ -23,6 +23,7 @@ use ark::traps::register_trap_handlers;
 use crossbeam::channel::unbounded;
 use harp::command::r_home_setup;
 use notify::Watcher;
+use stdext::panic_message;
 use stdext::unwrap;
 
 thread_local! {
@@ -398,14 +399,7 @@ fn main() -> anyhow::Result<()> {
             String::from("No location information:")
         };
 
-        let msg: String;
-        if let Some(s) = info.downcast_ref::<&str>() {
-            msg = s.to_string();
-        } else if let Some(s) = info.downcast_ref::<String>() {
-            msg = s.clone();
-        } else {
-            msg = String::from("No contextual information.");
-        }
+        let msg = panic_message(info);
 
         // Top-level-exec and try-catch errors already contain a backtrace
         // for the R thread so don't repeat it if we see one. Only perform

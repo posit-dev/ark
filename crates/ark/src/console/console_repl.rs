@@ -13,6 +13,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use stdext::panic_message;
 use stdext::DebugRefCell;
 
 use super::*;
@@ -750,14 +751,7 @@ impl Console {
         match result {
             Ok(result) => result,
             Err(panic) => {
-                let msg = match panic.downcast_ref::<&str>() {
-                    Some(s) => s.to_string(),
-                    None => match panic.downcast_ref::<String>() {
-                        Some(s) => s.clone(),
-                        None => String::from("(unknown payload)"),
-                    },
-                };
-
+                let msg = panic_message(panic.as_ref());
                 Err(anyhow!("Panic in Console callback: {msg}"))
             },
         }
