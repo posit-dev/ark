@@ -75,10 +75,15 @@ pub(crate) struct Workspace {
 
 impl WorldState {
     pub(crate) fn new(db: OakDatabase) -> Self {
-        Self {
+        let mut state = Self {
             db,
             ..Default::default()
-        }
+        };
+        // Resolved here too, not just in `update_config()`. This way an
+        // override holds over the window before the client's first
+        // `didChangeConfiguration`.
+        crate::lsp::config::apply_env_overrides(&mut state.config);
+        state
     }
 
     /// Advance the oak revision without changing any oak input.

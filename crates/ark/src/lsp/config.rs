@@ -3,6 +3,7 @@ use biome_line_index::WideEncoding;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use stdext::env_flag_opt;
 
 use crate::lsp::diagnostics::DiagnosticsConfig;
 
@@ -36,6 +37,14 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
         },
     },
     Setting {
+        key: "oak.enableSourceFetching",
+        set: |cfg, v| {
+            cfg.oak.enable_source_fetching = v
+                .as_bool()
+                .unwrap_or_else(|| OakConfig::default().enable_source_fetching)
+        },
+    },
+    Setting {
         key: "positron.r.symbols.includeAssignmentsInBlocks",
         set: |cfg, v| {
             cfg.symbols.include_assignments_in_blocks = v
@@ -52,6 +61,35 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
         },
     },
 ];
+
+/// Source fetching is enabled by default except on CI.
+/// This env-var opts a CI job back into source fetching.
+pub(crate) const OAK_ENABLE_SOURCE_FETCHING_ENV_VAR: &str = "OAK_ENABLE_SOURCE_FETCHING";
+
+pub struct EnvOverride<T> {
+    pub name: &'static str,
+    pub set: fn(&mut T, bool),
+}
+
+/// Environment variables that override an LSP setting. Only listed here if
+/// there is a corresponding client setting that needs resolution.
+pub static ENV_OVERRIDES: &[EnvOverride<LspConfig>] = &[EnvOverride {
+    name: OAK_ENABLE_SOURCE_FETCHING_ENV_VAR,
+    set: |cfg, on| cfg.oak.enable_source_fetching = on,
+}];
+
+/// Resolve [`ENV_OVERRIDES`] into `config`.
+///
+/// Runs after the client's settings have been applied, because an environment
+/// variable outranks them. An unset or unrecognised variable leaves the setting
+/// alone. See the precedence section of `doc/configuration-oak.md`.
+pub(crate) fn apply_env_overrides(config: &mut LspConfig) {
+    for env_override in ENV_OVERRIDES {
+        if let Some(on) = env_flag_opt(env_override.name) {
+            (env_override.set)(config, on);
+        }
+    }
+}
 
 /// These document settings are updated on a URI basis. Each document has its
 /// own value of the setting.
@@ -94,6 +132,7 @@ pub static DOCUMENT_SETTINGS: &[Setting<DocumentConfig>] = &[
 #[derive(Clone, Debug)]
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
+    pub(crate) oak: OakConfig,
     pub(crate) symbols: SymbolsConfig,
     pub(crate) workspace_symbols: WorkspaceSymbolsConfig,
 
@@ -107,9 +146,26 @@ impl Default for LspConfig {
     fn default() -> Self {
         Self {
             diagnostics: DiagnosticsConfig::default(),
+            oak: OakConfig::default(),
             symbols: SymbolsConfig::default(),
             workspace_symbols: WorkspaceSymbolsConfig::default(),
             position_encoding: PositionEncoding::Wide(WideEncoding::Utf16),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct OakConfig {
+    /// Whether to recover R sources for package dependencies. Sources are
+    /// needed for full analysis, but the LSP degrades gracefully if it doesn't
+    /// have them.
+    pub enable_source_fetching: bool,
+}
+
+impl Default for OakConfig {
+    fn default() -> Self {
+        Self {
+            enable_source_fetching: true,
         }
     }
 }

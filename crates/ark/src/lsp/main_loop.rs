@@ -50,6 +50,7 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::config::OAK_ENABLE_SOURCE_FETCHING_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sources::OakSourceHandler;
@@ -82,10 +83,6 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
 pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
-
-/// Source fetching is enabled by default except on CI.
-/// This env-var opts a CI job back into source fetching.
-const OAK_SOURCE_FETCHING_ENV_VAR: &str = "OAK_ENABLE_SOURCE_FETCHING";
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -633,6 +630,7 @@ impl GlobalState {
             );
             self.lsp_state.source_scheduler.schedule(
                 &self.world.db,
+                &self.world.config.oak,
                 &self.lsp_state.source_pool,
                 &self.events_tx,
             );
@@ -645,9 +643,9 @@ impl GlobalState {
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     // Avoid unnecessary traffic on CI
-    if is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENV_VAR) {
+    if is_ci() && !env_flag(OAK_ENABLE_SOURCE_FETCHING_ENV_VAR) {
         log::info!(
-            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENV_VAR}=1 to enable it."
+            "Source fetching is disabled on CI. Set {OAK_ENABLE_SOURCE_FETCHING_ENV_VAR}=1 to enable it."
         );
         return None;
     }

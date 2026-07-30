@@ -12,6 +12,7 @@ use oak_srcref::SrcrefCache;
 use stdext::result::ResultExt;
 
 use crate::lsp;
+use crate::lsp::config::OakConfig;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -164,9 +165,18 @@ impl SourceScheduler {
     pub(crate) fn schedule(
         &mut self,
         db: &dyn Db,
+        config: &OakConfig,
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
     ) {
+        // Checked per call rather than at construction, because the client can
+        // flip this mid-session. Turning it back on picks up every package
+        // we've seen so far. Already resolved against the environment by
+        // `apply_env_overrides()`.
+        if !config.enable_source_fetching {
+            return;
+        }
+
         let Some(handler) = &self.handler else {
             return;
         };

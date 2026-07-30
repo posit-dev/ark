@@ -51,6 +51,7 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::config::apply_env_overrides;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
@@ -436,6 +437,7 @@ async fn update_config(
 ) -> anyhow::Result<()> {
     // Keep track of existing config to detect whether it was changed
     let diagnostics_config = state.config.diagnostics.clone();
+    let oak_config = state.config.oak.clone();
 
     // Build the configuration request for global and document settings
     let mut items: Vec<_> = vec![];
@@ -503,10 +505,14 @@ async fn update_config(
         }
     }
 
-    // Refresh diagnostics if the configuration changed. The config lives
-    // outside Oak so we bump the revision manually, causing diagnostics
-    // to refresh on the next tick.
-    if state.config.diagnostics != diagnostics_config {
+    // Last, so an environment variable outranks client settings.
+    apply_env_overrides(&mut state.config);
+
+    // The config lives outside Oak, so we bump the revision manually to make the
+    // next tick act on it. That refreshes diagnostics and reruns source
+    // scheduling, which is how turning `enableSourceFetching` back on starts
+    // fetching the packages we've already seen.
+    if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
         tracing::info!("Bumping salsa revision after configuration changed");
         state.bump_revision();
     }

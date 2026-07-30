@@ -24,6 +24,7 @@ pub mod unwrap;
 
 pub use crate::cell::DebugRefCell;
 pub use crate::env::env_flag;
+pub use crate::env::env_flag_opt;
 pub use crate::env::is_ci;
 pub use crate::join::Joined;
 pub use crate::ok::Ok;

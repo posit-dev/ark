@@ -17,6 +17,9 @@ use super::utils::did_open;
 use super::utils::test_client;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
+use crate::lsp::config::apply_env_overrides;
+use crate::lsp::config::LspConfig;
+use crate::lsp::config::OAK_ENABLE_SOURCE_FETCHING_ENV_VAR;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
@@ -121,7 +124,7 @@ async fn test_source_pipeline_ingests_package_sources() {
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
 
-/// With `positron.r.oak.enableSourceFetching` off, the same workspace that
+/// With `oak.enableSourceFetching` off, the same workspace that
 /// dispatches a request in `test_source_pipeline_ingests_package_sources`
 /// dispatches nothing. The scan still runs and still finds the dependency, so
 /// this pins that the gate is on the fetch and not on the analysis around it.
@@ -174,6 +177,41 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let db = &state.world().db;
     let donor = db.package_by_name("donor").unwrap();
     assert!(donor.files(db).is_empty());
+}
+
+/// `OAK_ENABLE_SOURCE_FETCHING` beats the LSP setting in both directions,
+/// following ty and ruff: a value given at the invocation wins over one from a
+/// settings file. Unset falls through to the setting.
+#[test]
+fn test_env_var_overrides_the_setting() {
+    let name = OAK_ENABLE_SOURCE_FETCHING_ENV_VAR;
+
+    // Whether fetching is on after resolving `client_says` against the env var.
+    let resolve = |client_says: bool| {
+        let mut config = LspConfig::default();
+        config.oak.enable_source_fetching = client_says;
+        apply_env_overrides(&mut config);
+        config.oak.enable_source_fetching
+    };
+
+    unsafe { std::env::remove_var(name) };
+    assert!(resolve(true));
+    assert!(!resolve(false));
+
+    unsafe { std::env::set_var(name, "1") };
+    assert!(resolve(true));
+    assert!(resolve(false));
+
+    unsafe { std::env::set_var(name, "0") };
+    assert!(!resolve(true));
+    assert!(!resolve(false));
+
+    // Unrecognised falls through to the setting rather than forcing a value.
+    unsafe { std::env::set_var(name, "yes") };
+    assert!(resolve(true));
+    assert!(!resolve(false));
+
+    unsafe { std::env::remove_var(name) };
 }
 
 /// A `Failure` fetch is terminal! Here, a later edit advances the revision, but the
