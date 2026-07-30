@@ -30,23 +30,17 @@ impl FileArkExt for File {
 
 /// Salsa wrapper around a tree-sitter `Tree`.
 ///
-/// Salsa stores the memoized value and may overwrite it in place across
-/// revisions, so the value has to implement `salsa::Update`. `Tree` doesn't,
-/// and we can't implement a foreign trait on a foreign type, so we wrap it.
+/// Salsa needs to retain the memoized value across revisions, so the value
+/// has to implement `salsa::SalsaValue`. `Tree` doesn't, and we can't
+/// implement a foreign trait on a foreign type, so we wrap it.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 struct TreeSitterTree(tree_sitter::Tree);
 
-// SAFETY: `Tree` is fully owned, with no 'db references, so overwriting the old
-// value in place is sound. We always report "changed" because tree-sitter trees
-// aren't comparable. That pairs with `no_eq`, which already tells salsa never
-// to backdate this query.
-unsafe impl salsa::Update for TreeSitterTree {
-    unsafe fn maybe_update(old_pointer: *mut Self, new_value: Self) -> bool {
-        unsafe { *old_pointer = new_value };
-        true
-    }
-}
+// SAFETY: `Tree` is fully owned, with no 'db references, so retaining it
+// across revisions is sound. It isn't comparable, so we pair this with
+// `no_eq`, which tells salsa never to backdate this query.
+unsafe impl salsa::SalsaValue for TreeSitterTree {}
 
 /// Parse a file with tree-sitter.
 ///

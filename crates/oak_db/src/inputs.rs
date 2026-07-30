@@ -23,6 +23,7 @@ use crate::Package;
 pub struct Root {
     #[returns(ref)]
     pub path: FilePath,
+    #[returns(copy)]
     pub kind: RootKind,
     /// Top-level R scripts directly under this root. Each entry is a
     /// `File` with `package(db) == None`. Always empty for `Library`

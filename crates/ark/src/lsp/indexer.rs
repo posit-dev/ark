@@ -28,7 +28,7 @@ use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
 
-#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub enum IndexEntryData {
     Variable {
         name: String,
@@ -51,7 +51,7 @@ pub enum IndexEntryData {
 /// bytes within that row. Encoding-free, so the per-file index stays a pure
 /// salsa query. Consumers that need an LSP position convert via the file's
 /// line index and the session encoding (see `index_range_to_lsp_range`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub struct IndexPoint {
     pub row: u32,
     pub column: u32,
@@ -66,13 +66,13 @@ impl From<tree_sitter::Point> for IndexPoint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub struct IndexRange {
     pub start: IndexPoint,
     pub end: IndexPoint,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub struct IndexEntry {
     pub key: String,
     pub range: IndexRange,
@@ -112,7 +112,7 @@ pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
 /// One file's workspace symbols, keyed by symbol name. Built by [`file_index`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, salsa::Update)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub(crate) struct FileIndex {
     pub(crate) symbols: rustc_hash::FxHashMap<String, IndexEntry>,
 }

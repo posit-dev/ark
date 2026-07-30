@@ -38,11 +38,14 @@ pub struct Package {
     /// query (and the `version` / `collation` derivations on top of it), the
     /// same way `namespace_revision` drives [`Package::namespace`]. We stat
     /// `DESCRIPTION` at scan time but parse it only on demand.
+    #[returns(copy)]
     pub description_revision: FileRevision,
     /// See [Package::description_revision].
+    #[returns(copy)]
     pub namespace_revision: FileRevision,
     /// See [Package::description_revision]. [None] for workspace packages, which never
     /// have an `INDEX`.
+    #[returns(copy)]
     pub index_revision: Option<FileRevision>,
     /// In-memory `NAMESPACE`, checked by [`Package::namespace`] before it
     /// touches disk. Mirrors [`File::source_text_override`]: `None` means

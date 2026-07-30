@@ -42,7 +42,7 @@ define_index!(EnclosingSnapshotId);
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
 #[derive(Debug)]
-#[cfg_attr(feature = "salsa", derive(salsa::Update))]
+#[cfg_attr(feature = "salsa", derive(salsa::SalsaValue))]
 #[cfg_attr(feature = "testing", derive(PartialEq, Eq))]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
