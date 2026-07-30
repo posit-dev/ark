@@ -40,7 +40,7 @@ pub const TINY_STACK_SIZE: usize = 256 * 1024;
 /// backtrace runs on the panicking thread's stack. We don't go below 256kb to
 /// remain on the safe side.
 #[macro_export]
-macro_rules! spawn_with_stack {
+macro_rules! spawn_with_stack_size {
     ($name:expr, $stack_size:expr, $body:expr) => {
         std::thread::Builder::new()
             .name($name.to_string())

@@ -9,7 +9,7 @@ use std::panic::AssertUnwindSafe;
 
 use crossbeam::channel::Sender;
 use stdext::panic_message;
-use stdext::spawn_with_stack;
+use stdext::spawn_with_stack_size;
 
 use crate::lsp;
 
@@ -36,7 +36,7 @@ impl IoPool {
 
         for _ in 0..threads {
             let jobs_rx = jobs_rx.clone();
-            spawn_with_stack!(name, stack_size, move || {
+            spawn_with_stack_size!(name, stack_size, move || {
                 while let Ok(job) = jobs_rx.recv() {
                     run_job(job);
                 }

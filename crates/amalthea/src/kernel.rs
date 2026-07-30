@@ -15,7 +15,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use stdext::debug_panic;
 use stdext::spawn;
-use stdext::spawn_with_stack;
+use stdext::spawn_with_stack_size;
 use stdext::unwrap;
 
 use crate::comm::event::CommEvent;
@@ -221,7 +221,7 @@ pub fn connect(
     if stream_behavior == StreamBehavior::Capture {
         let iopub_tx_clone = channels.iopub_tx.clone();
         // `poll(2)` in a flat loop, reading into a 1 KiB stack buffer.
-        spawn_with_stack!(
+        spawn_with_stack_size!(
             format!("{name}-output-capture"),
             stdext::TINY_STACK_SIZE,
             move || { output_capture_thread(iopub_tx_clone) }
