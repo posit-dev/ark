@@ -204,10 +204,9 @@ fn test_rename_string_assignment_keeps_quotes() {
     // `"foo" <- 1` binds `foo` via a string. Renaming keeps it a string rather
     // than unquoting to `bar <- 1`, so the binding form is preserved.
     let code = "\"foo\" <- 1\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let params = make_rename_params(&uri, 1, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
@@ -230,10 +229,9 @@ fn test_rename_assign_call_keeps_quotes() {
     // `assign("foo", 1)` binds `foo` via a string argument. Unquoting it to
     // `assign(bar, 1)` would change the program, so the rename stays quoted.
     let code = "assign(\"foo\", 1)\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let params = make_rename_params(&uri, 1, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
@@ -257,11 +255,10 @@ fn test_rename_assign_call_from_definition_site() {
     // use) works too. This is what the def's own range enables: `definition_at`
     // hit-tests the name token at the definition site.
     let code = "assign(\"foo\", 1)\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
     // Cursor inside the `"foo"` literal.
-    let params = make_rename_params(uri.clone(), 0, 8, "bar");
+    let params = make_rename_params(&uri, 0, 8, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
@@ -288,10 +285,9 @@ fn test_rename_assign_call_from_definition_site() {
 #[test]
 fn test_rename_assign_call_preserves_single_quote_delimiter() {
     let code = "assign('foo', 1)\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 1, 0, "bar");
+    let params = make_rename_params(&uri, 1, 0, "bar");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let def_edit = edit
@@ -310,10 +306,9 @@ fn test_rename_string_bound_symbol_to_spaced_name_stays_a_string() {
     // A name needing backticks as an identifier is a plain string in the
     // string-form site: `"foo" <- 1` -> `"new name" <- 1`, use -> `` `new name` ``.
     let code = "\"foo\" <- 1\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 1, 0, "new name");
+    let params = make_rename_params(&uri, 1, 0, "new name");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
@@ -328,10 +323,9 @@ fn test_rename_assign_call_to_non_syntactic_name_stays_a_string() {
     // `assign("non-syntactic", 1)`, with no backticks (a string holds any name).
     // The bare-identifier use of the same symbol still gets backticks.
     let code = "assign(\"foo\", 1)\nfoo\n";
-    let uri = test_path("test.R");
-    let state = make_state(&uri, code);
+    let (state, uri) = make_state(test_path("test.R").as_str(), code);
 
-    let params = make_rename_params(uri.clone(), 1, 0, "non-syntactic");
+    let params = make_rename_params(&uri, 1, 0, "non-syntactic");
     let edit = rename(params, &state).unwrap().unwrap();
 
     let mut edits = edit.changes.unwrap().remove(&uri).unwrap();
