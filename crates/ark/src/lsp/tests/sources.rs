@@ -121,6 +121,61 @@ async fn test_source_pipeline_ingests_package_sources() {
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
 
+/// With `positron.r.oak.enableSourceFetching` off, the same workspace that
+/// dispatches a request in `test_source_pipeline_ingests_package_sources`
+/// dispatches nothing. The scan still runs and still finds the dependency, so
+/// this pins that the gate is on the fetch and not on the analysis around it.
+#[tokio::test]
+async fn test_disabled_source_fetching_dispatches_nothing() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut world = WorldState::new(db);
+    world.config.oak.enable_source_fetching = false;
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world,
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler.clone())),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    assert!(handler.calls().lock().unwrap().is_empty());
+
+    // The dependency was still discovered, so re-enabling would have something
+    // to fetch. Only the fetch is gated.
+    let db = &state.world().db;
+    let donor = db.package_by_name("donor").unwrap();
+    assert!(donor.files(db).is_empty());
+}
+
 /// A `Failure` fetch is terminal! Here, a later edit advances the revision, but the
 /// package is not dispatched again.
 #[tokio::test]

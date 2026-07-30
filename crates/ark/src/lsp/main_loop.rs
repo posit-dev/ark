@@ -21,6 +21,8 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
+use stdext::env_flag;
+use stdext::is_ci;
 use stdext::panic_message;
 use stdext::result::ResultExt;
 use stdext::spawn;
@@ -80,6 +82,10 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
 pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
+
+/// Source fetching is enabled by default except on CI.
+/// This env-var opts a CI job back into source fetching.
+const OAK_SOURCE_FETCHING_ENV_VAR: &str = "OAK_ENABLE_SOURCE_FETCHING";
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -638,6 +644,14 @@ impl GlobalState {
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
+    // Avoid unnecessary traffic on CI
+    if is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENV_VAR) {
+        log::info!(
+            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENV_VAR}=1 to enable it."
+        );
+        return None;
+    }
+
     let Some(r) = harp::command::r_executable(r_home) else {
         log::warn!(
             "Can't locate an R executable under '{}', source fetching is disabled",
