@@ -47,7 +47,7 @@ camino = "1.1"
 cc = "1.2.61"
 cfg-if = "1.0.4"
 chrono = "0.4.44"
-compact_str = "0.9"
+compact_str = "0.10"
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 ctor = "1.0.0"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }

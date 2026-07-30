@@ -921,6 +921,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "static_assertions",
+ "zmij",
+]
+
+[[package]]
 name = "console"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2569,7 +2582,7 @@ dependencies = [
  "biome_line_index",
  "biome_rowan",
  "camino",
- "compact_str",
+ "compact_str 0.10.0",
  "filetime",
  "log",
  "oak_core",
@@ -3315,7 +3328,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffbaab832e2ea754afda4a738f987dd1e8bd30c9e5d8c981ee6a3934386095e2"
 dependencies = [
  "boxcar",
- "compact_str",
+ "compact_str 0.9.1",
  "crossbeam-queue",
  "crossbeam-utils",
  "hashbrown 0.17.0",
