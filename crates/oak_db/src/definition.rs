@@ -56,7 +56,7 @@ impl<'db> Definition<'db> {
     pub fn name_range(self, db: &'db dyn crate::Db) -> Option<TextRange> {
         let parse = self.file(db).parse(db);
         let root = parse.tree().syntax().clone();
-        Some(name_node(&self.kind(db), &root)?.text_trimmed_range())
+        Some(name_node(self.kind(db), &root)?.text_trimmed_range())
     }
 }
 
