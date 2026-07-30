@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use stdext::spawn;
+use stdext::spawn_with_stack;
 
 use crate::lsp;
 
@@ -69,7 +69,11 @@ impl Watchdog {
         });
 
         let poller = Arc::clone(&shared);
-        spawn!("oak-watchdog", move || poll(poller));
+        // `poll()` sleeps, reads atomics, and on a stall formats one string and
+        // logs it.
+        spawn_with_stack!("oak-watchdog", stdext::TINY_STACK_SIZE, move || poll(
+            poller
+        ));
 
         Self { shared }
     }

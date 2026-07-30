@@ -217,9 +217,14 @@ impl LspState {
             source_scheduler,
             analysis_pool: AnalysisPool::new(),
             diagnostics: DiagnosticsState::default(),
-            scan_pool: IoPool::new("oak-scan", 2),
+            // Stack size: `ScanRequest::run()` walks the filesystem with
+            // `ignore::Walk` and `WalkDir`, both iterative, and parses
+            // DESCRIPTION line by line.
+            scan_pool: IoPool::new("oak-scan", 2, stdext::SMALL_STACK_SIZE),
             // Two threads, so we never have more than two package downloads in flight.
-            source_pool: IoPool::new("oak-source", 2),
+            // Full stack because a fetch runs a rustls handshake, zstd and tar
+            // decoding, and an R subprocess.
+            source_pool: IoPool::new("oak-source", 2, stdext::DEFAULT_STACK_SIZE),
             watchdog: Watchdog::new(),
         }
     }

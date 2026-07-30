@@ -9,7 +9,7 @@ use std::panic::AssertUnwindSafe;
 
 use crossbeam::channel::Sender;
 use stdext::panic_message;
-use stdext::spawn;
+use stdext::spawn_with_stack;
 
 use crate::lsp;
 
@@ -27,13 +27,16 @@ pub(crate) struct IoPool {
 }
 
 impl IoPool {
-    /// Start `threads` workers, each named `name`.
-    pub(crate) fn new(name: &'static str, threads: usize) -> Self {
+    /// Start `threads` workers, each named `name` and given `stack_size` bytes
+    /// of stack. Each lane picks its own size from the deepest call tree its
+    /// jobs can reach, so use [`stdext::DEFAULT_STACK_SIZE`] unless you've
+    /// bounded that.
+    pub(crate) fn new(name: &'static str, threads: usize, stack_size: usize) -> Self {
         let (jobs_tx, jobs_rx) = crossbeam::channel::unbounded::<Job>();
 
         for _ in 0..threads {
             let jobs_rx = jobs_rx.clone();
-            spawn!(name, move || {
+            spawn_with_stack!(name, stack_size, move || {
                 while let Ok(job) = jobs_rx.recv() {
                     run_job(job);
                 }
