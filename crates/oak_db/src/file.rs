@@ -333,7 +333,6 @@ const STACK_RED_ZONE: usize = 1024 * 1024;
 const STACK_GROW_BY: usize = 8 * 1024 * 1024;
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
-    log::error!("Building index for {}", file.path(db));
     #[cfg(test)]
     let _depth = recursion_depth::enter();
 
