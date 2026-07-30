@@ -27,8 +27,9 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
                 .unwrap_or_else(|| DiagnosticsConfig::default().enable)
         },
     },
+    // TODO: Move to OakConfig after rebase
     Setting {
-        key: "positron.r.diagnostics.experimental.enable",
+        key: "oak.diagnostics.experimental.enable",
         set: |cfg, v| {
             cfg.diagnostics.experimental = v
                 .as_bool()
