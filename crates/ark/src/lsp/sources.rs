@@ -143,11 +143,6 @@ enum SourceState {
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
-
-    /// Workers running I/O fetches, e.g. for `oak_sources`. Two threads, so we
-    /// never have more than two package downloads in flight. A fetch must not own
-    /// any db handle as this would hold up main loop writes.
-    pool: IoPool,
 }
 
 impl SourceScheduler {
@@ -155,11 +150,22 @@ impl SourceScheduler {
         Self {
             handler,
             state: HashMap::new(),
-            pool: IoPool::new("oak-io", 2),
         }
     }
 
-    pub(crate) fn schedule(&mut self, db: &dyn Db, events_tx: &TokioUnboundedSender<Event>) {
+    /// Run a fetch for each package we haven't seen before on `pool`, shipping
+    /// each [`SourceResponse`] back to the main loop as
+    /// [`Event::SourceCompleted`], where [`Self::finish`] then applies it.
+    ///
+    /// The job owns no db handle. A download can't be interrupted by a Salsa
+    /// cancellation, so a handle in `pool`'s queue would hold up the next
+    /// main-loop write for the whole fetch.
+    pub(crate) fn schedule(
+        &mut self,
+        db: &dyn Db,
+        pool: &IoPool,
+        events_tx: &TokioUnboundedSender<Event>,
+    ) {
         let Some(handler) = &self.handler else {
             return;
         };
@@ -187,7 +193,7 @@ impl SourceScheduler {
             // Mark as `Pending` just before launching the job
             self.state.insert(package, SourceState::Pending);
 
-            self.pool.submit(move || {
+            pool.submit(move || {
                 let response = handler.handle(&request);
 
                 tx.send(Event::SourceCompleted(SourceCompleted {

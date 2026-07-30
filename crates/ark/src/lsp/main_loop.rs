@@ -192,9 +192,12 @@ pub(crate) struct LspState {
     /// [`crate::lsp::analysis::DiagnosticsState`].
     pub(crate) diagnostics: DiagnosticsState,
 
-    /// Threads running workspace scans. Separate from the source fetch pool so
-    /// a startup scan never queues behind a package download.
+    /// Threads running workspace scans.
     pub(crate) scan_pool: IoPool,
+
+    /// Threads running package source fetches. Separate from [`Self::scan_pool`]
+    /// so a startup scan never queues behind a download.
+    pub(crate) source_pool: IoPool,
 
     /// Detects a tick that arms and never disarms, usually a write parked
     /// behind a background task that can't drop its db snapshot. See
@@ -215,6 +218,8 @@ impl LspState {
             analysis_pool: AnalysisPool::new(),
             diagnostics: DiagnosticsState::default(),
             scan_pool: IoPool::new("oak-scan", 2),
+            // Two threads, so we never have more than two package downloads in flight.
+            source_pool: IoPool::new("oak-source", 2),
             watchdog: Watchdog::new(),
         }
     }
@@ -611,9 +616,11 @@ impl GlobalState {
                 &self.lsp_state.analysis_pool,
                 &self.events_tx,
             );
-            self.lsp_state
-                .source_scheduler
-                .schedule(&self.world.db, &self.events_tx);
+            self.lsp_state.source_scheduler.schedule(
+                &self.world.db,
+                &self.lsp_state.source_pool,
+                &self.events_tx,
+            );
         }
 
         Ok(())
