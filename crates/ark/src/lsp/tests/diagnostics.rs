@@ -33,16 +33,8 @@ fn test_diagnostics_published_through_refresh_snapshot() {
             .expect("file is open in live state")
             .file();
 
-<<<<<<< HEAD
         let snapshot = state.snapshot();
         generate_diagnostics(file, snapshot, false, &uri)
-||||||| parent of ea2d5ee5f (Fix rebase conflicts)
-        let snapshot = state.diagnostics_snapshot();
-        generate_diagnostics(file, snapshot, false, &uri)
-=======
-        let snapshot = state.diagnostics_snapshot();
-        generate_diagnostics(file, snapshot, false, &uri.to_uri().unwrap())
->>>>>>> ea2d5ee5f (Fix rebase conflicts)
     });
 
     assert!(!diagnostics.is_empty());
