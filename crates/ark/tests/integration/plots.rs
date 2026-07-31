@@ -618,6 +618,76 @@ fn test_plot_with_fig_size_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
+/// Test that a lone fig-width is respected, with the height falling back to
+/// the Quarto default of 5 inches (posit-dev/positron#15259).
+#[test]
+fn test_plot_with_lone_fig_width_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            fig_width: Some(2.0),
+            // Positron sends the output width alongside the cell options;
+            // the requested fig size should win over it
+            output_width_px: Some(600.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let dpi = default_dpi();
+    // 2 inches * DPI, 5 inches (default) * DPI
+    assert_eq!(width, (2.0 * dpi).round() as u32);
+    assert_eq!(height, (5.0 * dpi).round() as u32);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a lone fig-height is respected, with the width falling back to
+/// the Quarto default of 7 inches (posit-dev/positron#15259).
+#[test]
+fn test_plot_with_lone_fig_height_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            fig_height: Some(2.0),
+            // Positron sends the output width alongside the cell options;
+            // the requested fig size should win over it
+            output_width_px: Some(600.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let dpi = default_dpi();
+    // 7 inches (default) * DPI, 2 inches * DPI
+    assert_eq!(width, (7.0 * dpi).round() as u32);
+    assert_eq!(height, (2.0 * dpi).round() as u32);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Test that plots rendered with output_width_px (but no fig dimensions)
 /// produce a PNG at the expected width with a 4:3 aspect ratio.
 #[test]
