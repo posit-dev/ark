@@ -13,6 +13,7 @@ use tree_sitter::Node;
 
 use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
@@ -56,12 +57,10 @@ fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<Co
         return Ok(None);
     };
 
-    const ENQUOTE: bool = false;
-
     Ok(Some(completions_from_object_names(
         object,
         name.as_str(),
-        ENQUOTE,
+        QuoteStyle::BacktickIfNotSyntactic,
     )?))
 }
 

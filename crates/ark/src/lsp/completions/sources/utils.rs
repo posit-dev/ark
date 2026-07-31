@@ -18,6 +18,7 @@ use tree_sitter::Point;
 
 use crate::console;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
+use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
@@ -189,7 +190,7 @@ fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodeP
 
 pub(super) fn completions_from_evaluated_object_names(
     name: &str,
-    enquote: bool,
+    quote_style: QuoteStyle,
     node_type: NodeType,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_evaluated_object_names({name:?})");
@@ -224,18 +225,18 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let completions = if harp::utils::r_is_matrix(object.sexp) {
         // Special case just for 2D arrays
-        completions_from_object_colnames(object, name, enquote)?
+        completions_from_object_colnames(object, name, quote_style)?
     } else if r_inherits(object.sexp, "data.table") {
-        // The `[` method for data.table uses NSE so we don't enquote the names
+        // The `[` method for data.table uses NSE so we don't double quote the names
         // https://github.com/posit-dev/positron/issues/3140
-        let enquote = match node_type {
-            NodeType::Subset => false,
-            NodeType::Subset2 => true,
-            _ => enquote,
+        let quote_style = if matches!(node_type, NodeType::Subset) {
+            QuoteStyle::BacktickIfNotSyntactic
+        } else {
+            quote_style
         };
-        completions_from_object_names(object, name, enquote)?
+        completions_from_object_names(object, name, quote_style)?
     } else {
-        completions_from_object_names(object, name, enquote)?
+        completions_from_object_names(object, name, quote_style)?
     };
 
     Ok(Some(completions))
@@ -244,40 +245,38 @@ pub(super) fn completions_from_evaluated_object_names(
 pub(super) fn completions_from_object_names(
     object: RObject,
     name: &str,
-    enquote: bool,
+    quote_style: QuoteStyle,
 ) -> anyhow::Result<Vec<CompletionItem>> {
-    completions_from_object_names_impl(object, name, enquote, "names")
+    completions_from_object_names_impl(object, name, quote_style, "names")
 }
 
 pub(super) fn completions_from_object_colnames(
     object: RObject,
     name: &str,
-    enquote: bool,
+    quote_style: QuoteStyle,
 ) -> anyhow::Result<Vec<CompletionItem>> {
-    completions_from_object_names_impl(object, name, enquote, "colnames")
+    completions_from_object_names_impl(object, name, quote_style, "colnames")
 }
 
 fn completions_from_object_names_impl(
     object: RObject,
     name: &str,
-    enquote: bool,
+    quote_style: QuoteStyle,
     function: &str,
 ) -> anyhow::Result<Vec<CompletionItem>> {
     log::trace!("completions_from_object_names_impl({object:?})");
 
     let mut completions = vec![];
 
-    unsafe {
-        let element_names = RFunction::new("base", function)
-            .add(object)
-            .call()?
-            .to::<Vec<String>>()?;
+    let element_names = RFunction::new("base", function)
+        .add(object)
+        .call()?
+        .to::<Vec<String>>()?;
 
-        for element_name in element_names {
-            match completion_item_from_data_variable(&element_name, name, enquote) {
-                Ok(item) => completions.push(item),
-                Err(err) => log::error!("{err:?}"),
-            }
+    for element_name in element_names {
+        match completion_item_from_data_variable(&element_name, name, quote_style) {
+            Ok(item) => completions.push(item),
+            Err(err) => log::error!("{err:?}"),
         }
     }
 
@@ -290,6 +289,7 @@ mod tests {
 
     use crate::fixtures::package_is_installed;
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::completion_item::QuoteStyle;
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
@@ -467,9 +467,10 @@ mod tests {
             parse_eval_global("x <- 1:2").unwrap();
             parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
             assert_eq!(completions.len(), 2);
             assert_eq!(completions.first().unwrap().label, String::from("a"));
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
@@ -479,9 +480,10 @@ mod tests {
             // Data frame
             parse_eval_global("x <- data.frame(a = 1, b = 2, c = 3)").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
             assert_eq!(completions.len(), 3);
             assert_eq!(completions.first().unwrap().label, String::from("a"));
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
@@ -493,9 +495,10 @@ mod tests {
             parse_eval_global("x <- array(1:2)").unwrap();
             parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
             assert_eq!(completions.len(), 2);
             assert_eq!(completions.first().unwrap().label, String::from("a"));
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
@@ -507,9 +510,10 @@ mod tests {
             parse_eval_global("rownames(x) <- 'a'").unwrap();
             parse_eval_global("colnames(x) <- 'b'").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
             assert_eq!(completions.len(), 1);
             assert_eq!(completions.first().unwrap().label, String::from("b"));
 
@@ -523,9 +527,10 @@ mod tests {
             parse_eval_global("rownames(x) <- 'a'").unwrap();
             parse_eval_global("colnames(x) <- 'b'").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
             assert!(completions.is_empty());
 
             parse_eval_global("remove(x)").unwrap();
@@ -543,9 +548,13 @@ mod tests {
             parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
 
             // Subset completions
-            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
-                .unwrap()
-                .unwrap();
+            // This is where we have an override for data.table in particular, which
+            // changes our provided `QuoteStyle::Double` to
+            // `QuoteStyle::BacktickIfNotSyntactic` due to data.table's NSE in `[`.
+            let completions =
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset)
+                    .unwrap()
+                    .unwrap();
 
             assert_eq!(completions.len(), 11);
             assert_eq!(completions.first().unwrap().label, String::from("mpg"));
@@ -553,7 +562,7 @@ mod tests {
 
             // Subset2 completions
             let completions =
-                completions_from_evaluated_object_names("x", false, NodeType::Subset2)
+                completions_from_evaluated_object_names("x", QuoteStyle::Double, NodeType::Subset2)
                     .unwrap()
                     .unwrap();
 

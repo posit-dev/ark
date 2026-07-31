@@ -19,6 +19,7 @@ use tree_sitter::Node;
 use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
+use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
@@ -137,59 +138,55 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
 fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Vec<CompletionItem>> {
     log::trace!("completions_from_extractor_object({text:?}, {fun:?})");
 
-    const ENQUOTE: bool = false;
-
     let mut completions = vec![];
 
-    unsafe {
-        let env_utils = RFunction::new("base", "asNamespace").add("utils").call()?;
-        let sym = r_symbol!(fun);
+    let env_utils = RFunction::new("base", "asNamespace").add("utils").call()?;
+    let sym = r_symbol!(fun);
 
-        if !r_env_has(*env_utils, sym) {
-            // We'd like to generate these completions, but not a new enough version of R
-            return Ok(completions);
-        }
+    if !r_env_has(*env_utils, sym) {
+        // We'd like to generate these completions, but not a new enough version of R
+        return Ok(completions);
+    }
 
-        let options = RParseEvalOptions {
-            forbid_function_calls: true,
-            env: console::selected_env(),
-        };
+    let options = RParseEvalOptions {
+        forbid_function_calls: true,
+        env: console::selected_env(),
+    };
 
-        let object = match harp::parse_eval(text, options) {
-            Ok(object) => object,
-            Err(err) => match err {
-                // LHS of the call was too complex to evaluate. This is fine, we know
-                // we are on the RHS of a `$` or `@`, so we return an empty "unique"
-                // completion list to stop the completions search.
-                Error::UnsafeEvaluationError(_) => return Ok(completions),
-                // LHS of the call evaluated to an error. Totally possible if the
-                // user is writing pseudocode. Don't want to propagate an error here.
-                _ => return Ok(completions),
-            },
-        };
+    let object = match harp::parse_eval(text, options) {
+        Ok(object) => object,
+        Err(err) => match err {
+            // LHS of the call was too complex to evaluate. This is fine, we know
+            // we are on the RHS of a `$` or `@`, so we return an empty "unique"
+            // completion list to stop the completions search.
+            Error::UnsafeEvaluationError(_) => return Ok(completions),
+            // LHS of the call evaluated to an error. Totally possible if the
+            // user is writing pseudocode. Don't want to propagate an error here.
+            _ => return Ok(completions),
+        },
+    };
 
-        // Both `.DollarNames` and `.AtNames` have the same signature. Also, neither
-        // provide a default value for `pattern` in the generic, but do provide a default
-        // value of `pattern = ""` in the default S3 method. We manually pass through
-        // `pattern = ""` in case we hit an S3 method which forgot to provide a default
-        // value for `pattern` (like R6, posit-dev/positron#6699).
-        let names = RFunction::new("utils", fun)
-            .param("x", object)
-            .param("pattern", "")
-            .call()?;
+    // Both `.DollarNames` and `.AtNames` have the same signature. Also, neither
+    // provide a default value for `pattern` in the generic, but do provide a default
+    // value of `pattern = ""` in the default S3 method. We manually pass through
+    // `pattern = ""` in case we hit an S3 method which forgot to provide a default
+    // value for `pattern` (like R6, posit-dev/positron#6699).
+    let names = RFunction::new("utils", fun)
+        .param("x", object)
+        .param("pattern", "")
+        .call()?;
 
-        if r_typeof(*names) != STRSXP {
-            // Could come from a malformed user supplied S3 method
-            return Ok(completions);
-        }
+    if r_typeof(*names) != STRSXP {
+        // Could come from a malformed user supplied S3 method
+        return Ok(completions);
+    }
 
-        let names = names.to::<Vec<String>>()?;
+    let names = names.to::<Vec<String>>()?;
 
-        for name in names {
-            match completion_item_from_data_variable(&name, text, ENQUOTE) {
-                Ok(item) => completions.push(item),
-                Err(err) => log::error!("{err:?}"),
-            }
+    for name in names {
+        match completion_item_from_data_variable(&name, text, QuoteStyle::BacktickIfNotSyntactic) {
+            Ok(item) => completions.push(item),
+            Err(err) => log::error!("{err:?}"),
         }
     }
 
