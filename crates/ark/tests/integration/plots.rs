@@ -688,6 +688,49 @@ fn test_plot_with_lone_fig_height_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
+/// Test that plots rendered with a high device pixel ratio report their
+/// logical size in the display_data metadata, so frontends don't display them
+/// at their physical pixel size (posit-dev/positron#15261).
+#[test]
+fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            fig_width: Some(4.0),
+            fig_height: Some(3.0),
+            output_pixel_ratio: Some(2.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let dpi = default_dpi();
+    let logical_width = (4.0 * dpi).round() as u32;
+    let logical_height = (3.0 * dpi).round() as u32;
+
+    // The PNG itself is rendered at 2x the logical size
+    assert_eq!(width, logical_width * 2);
+    assert_eq!(height, logical_height * 2);
+
+    // The metadata reports the logical size
+    let image_metadata = &display.metadata["image/png"];
+    assert_eq!(image_metadata["width"], logical_width);
+    assert_eq!(image_metadata["height"], logical_height);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Test that plots rendered with output_width_px (but no fig dimensions)
 /// produce a PNG at the expected width with a 4:3 aspect ratio.
 #[test]
