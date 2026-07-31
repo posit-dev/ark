@@ -294,6 +294,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         Some(scope)
     }
 
+    /// The scan unit that controls when code in `scope` runs: that scope itself
+    /// when lazy, otherwise its nearest lazy ancestor. `None` means the code
+    /// runs while the file loads.
+    ///
+    /// Mid-build twin of [`SemanticIndex::enclosing_lazy_scope`], reading the
+    /// arena the walk is still filling in.
+    fn enclosing_lazy_scope(&self, scope: ScopeId) -> Option<ScopeId> {
+        let mut current = scope;
+        while !self.scopes[current].kind.is_lazy() {
+            current = self.scopes[current].parent?;
+        }
+        Some(current)
+    }
+
     /// Whether `scope` binds `name` anywhere, regardless of flow position: an
     /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.

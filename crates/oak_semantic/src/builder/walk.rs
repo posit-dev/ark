@@ -39,7 +39,6 @@ use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
-use crate::semantic_index::scope_is_top_level;
 use crate::semantic_index::AttachRegion;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
@@ -563,7 +562,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // run, or might run after the rest of this file, so we record
         // nothing there and let the sourced file fall back to whole-file
         // exports.
-        if scope_is_top_level(&self.scopes, self.current_scope) {
+        if self.enclosing_lazy_scope(self.current_scope).is_none() {
             let file_scope = ScopeId::from(0);
             let symbols = &self.walk.symbol_tables[file_scope];
             let visible = self.walk.use_def_maps[file_scope].bound_names(symbols);

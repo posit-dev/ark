@@ -105,15 +105,14 @@ impl<'db> File {
         }
 
         // Nothing local reaches the use, so resolve across files.
-        let file_scope = ScopeId::from(0);
-        if use_scope != file_scope {
-            // Function body: the lazy / end-of-file view the body sees at run time.
+        if !index.scope_is_eager(use_scope) {
+            // Lazy body: the end-of-file view it sees when it actually runs.
             return self.resolve(db, name);
         }
 
-        // Top level: collation predecessors / other visible files (exports-only
-        // chase, same as `resolve`'s per-context walk). Avoids the sibling
-        // cycle and matches R's namespace semantics.
+        // Eager scope: collation predecessors / other visible files
+        // (exports-only chase, same as `resolve`'s per-context walk). Avoids
+        // the sibling cycle and matches R's namespace semantics.
         resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
     }
 

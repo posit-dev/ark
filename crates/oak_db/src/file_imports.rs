@@ -283,7 +283,10 @@ impl File {
         let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
             (CollationView::Eager, AttachView::Eager(offset))
         } else {
-            (CollationView::Lazy, AttachView::Lazy(offset))
+            (CollationView::Lazy, AttachView::Lazy {
+                offset,
+                scope_id: cursor_scope,
+            })
         };
 
         let own = self.attach_layers(db, attaches);

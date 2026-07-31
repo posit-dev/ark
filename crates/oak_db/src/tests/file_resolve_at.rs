@@ -590,6 +590,44 @@ fn test_conditional_library_resolves_only_inside_its_branch() {
     assert!(script.resolve_at(&db, after).is_empty());
 }
 
+#[test]
+fn test_local_block_does_not_see_a_library_call_after_it() {
+    // `local()` runs at its call site, so a cursor inside it sees the search
+    // path as of that point: `library(mypkg)` hasn't run yet, so `foo` isn't
+    // attached.
+    let mut db = TestDb::new();
+    install_library_package(&mut db, "mypkg", &["foo"], &[(
+        "library/mypkg/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+
+    let (_ws_root, files) = setup_workspace_scripts(&mut db, "ws", &[(
+        "ws/script.R",
+        "local({\n  foo\n})\nlibrary(mypkg)\n",
+    )]);
+    let script = files[0];
+    let source = script.source_text(&db).clone();
+
+    let offset = TextSize::from(source.find("  foo").unwrap() as u32 + 2);
+    assert!(script.resolve_at(&db, offset).is_empty());
+}
+
+#[test]
+fn test_local_block_sees_a_file_scope_binding_before_it() {
+    // A binding made before the block is already in place by the time
+    // `local()` runs, same as for a use at file scope.
+    let mut db = TestDb::new();
+    let source = "x <- 1\nlocal({\n  x\n})\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.rfind('x').unwrap() as u32);
+    let def = resolve_one(&db, file, offset);
+
+    assert_eq!(def.file(&db), file);
+    let range = def.name_range(&db).expect("local has a name range");
+    assert_eq!(usize::from(range.start()), 0);
+}
+
 /// A workspace holding `main.R`, which sources `helpers.R`, plus whatever else
 /// the caller lists. Returns the files in the given order.
 fn setup_sourced(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {

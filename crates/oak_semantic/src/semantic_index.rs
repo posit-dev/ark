@@ -229,7 +229,8 @@ impl SemanticIndex {
     }
 
     /// Whether `scope` runs during the file's own top-level execution, i.e. no
-    /// enclosing scope is lazy.
+    /// enclosing scope is lazy. Wider than "is the file scope", since a
+    /// `local()` or `test_that()` body runs at its call site.
     pub fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
         self.enclosing_lazy_scope(scope_id).is_none()
     }
@@ -260,15 +261,6 @@ impl SemanticIndex {
     /// into user-facing diagnostics.
     pub fn diagnostics(&self) -> &[SemanticDiagnostic] {
         &self.diagnostics
-    }
-
-    /// Whether code in `scope` runs during a top-level evaluation of the file.
-    ///
-    /// Wider than "is the file scope": an eager scope like `local()` or
-    /// `test_that()` body runs at its call site. A single lazy scope anywhere
-    /// in the parent chain of `scope` makes it lazy.
-    pub fn is_top_level(&self, scope: ScopeId) -> bool {
-        scope_is_top_level(&self.scopes, scope)
     }
 
     /// The file-scope names bound by the time the `source()` call at `offset`
@@ -446,25 +438,6 @@ impl SemanticIndex {
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
         Some((enclosing_scope, bindings))
-    }
-}
-
-/// Whether `scope` runs during a top-level evaluation of the file: no scope
-/// from `scope` out to the file root is lazy.
-///
-/// Shared by [`SemanticIndex::is_top_level`] (post-build) and the builder,
-/// which needs the same walk over its own scope arena mid-build to decide
-/// whether a `source()` call runs at load time.
-pub(crate) fn scope_is_top_level(scopes: &IndexVec<ScopeId, Scope>, scope: ScopeId) -> bool {
-    let mut current = scope;
-    loop {
-        if scopes[current].kind.is_lazy() {
-            return false;
-        }
-        match scopes[current].parent {
-            Some(parent) => current = parent,
-            None => return true,
-        }
     }
 }
 
