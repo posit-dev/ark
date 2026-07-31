@@ -115,6 +115,7 @@ pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
         source: Some(&SourceAnnotation {
             position: 0,
             target: SourceTarget::Dir,
+            default_path: None,
         }),
         assign: None,
     })
@@ -401,10 +402,11 @@ pub struct SourcePath {
 pub enum SourceTarget {
     /// A single file, as base `source()` takes.
     File,
-    /// A directory, every R file in it. The resolver expands the path into one
-    /// target per file, since listing it needs workspace knowledge a handler
-    /// doesn't have.
+    /// All R files in a directory (recursively).
     Dir,
+    /// Either. Whereas `source()` only supports files, `targets::tar_source()`
+    /// supports both.
+    FileOrDir,
 }
 
 /// Declares how a source function (`source()`) names what it reads, and serves
@@ -417,6 +419,9 @@ pub struct SourceAnnotation {
     pub position: usize,
     /// Whether that argument names a file or a directory.
     pub target: SourceTarget,
+    /// Default path if no argument is suppolied (`tar_source()` defaults to
+    /// `files = "R"`).
+    pub default_path: Option<&'static str>,
 }
 
 impl EffectHandler for SourceAnnotation {
@@ -424,6 +429,15 @@ impl EffectHandler for SourceAnnotation {
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
         let args = call.arguments().ok()?;
+
+        if args.items().iter().next().is_none() {
+            return self.default_path.map(|path| {
+                vec![SourcePath {
+                    path: path.to_string(),
+                    target: self.target,
+                }]
+            });
+        }
 
         // The path is matched positionally among unnamed arguments rather than
         // through [`CallContext::match_arguments`], for two reasons. We need to

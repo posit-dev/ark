@@ -11,6 +11,7 @@ use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 
+use crate::db::workspace_scripts;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -797,20 +798,31 @@ fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
 /// The workspace files sitting directly in `dir`, in load order: sorted by
 /// basename, ASCII case-insensitively, the same order a package `R/` with no
 /// `Collate:` gets from `oak_scan::packages::order_alphabetically`.
-///
-/// Gathers from workspace roots only (`root.scripts(db)` for each).
-/// `OrphanRoot`, library roots, and `StaleRoot` don't contribute.
 pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
-    let mut files: Vec<File> = db
-        .workspace_roots()
-        .roots(db)
+    let mut files: Vec<File> = workspace_scripts(db)
         .iter()
-        .flat_map(|root| root.scripts(db).iter().copied())
+        .copied()
         .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
         .collect();
 
     files.sort_by_cached_key(|file| collation_basename_key(*file, db));
     files
+}
+
+/// The workspace files anywhere under `dir`, approximating the order returned by
+/// `list.files(dir, recursive = TRUE)`.
+pub(crate) fn files_in_directory_recursive(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
+    let mut keyed: Vec<(String, File)> = workspace_scripts(db)
+        .iter()
+        .copied()
+        .filter_map(|file| {
+            let relative = file.path(db).as_path()?.strip_prefix(dir).ok()?;
+            Some((relative.as_str().to_ascii_lowercase(), file))
+        })
+        .collect();
+
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    keyed.into_iter().map(|(_, file)| file).collect()
 }
 
 /// Case-insensitive basename sort key for [`files_in_directory`], matching

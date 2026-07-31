@@ -784,6 +784,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .into_iter()
                 .collect(),
             SourceTarget::Dir => self.resolver.resolve_source_dir(&sourced.path),
+            // A file has precedence over a directory of the same name.
+            SourceTarget::FileOrDir => match self.resolver.resolve_source(&sourced.path) {
+                Some(resolution) => vec![resolution],
+                None => self.resolver.resolve_source_dir(&sourced.path),
+            },
         };
 
         for resolution in &resolutions {

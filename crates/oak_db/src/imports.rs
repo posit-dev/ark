@@ -11,7 +11,7 @@ use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
 use url::Url;
 
-use crate::file_imports::files_in_directory;
+use crate::file_imports::files_in_directory_recursive;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::Db;
@@ -58,6 +58,8 @@ impl<'db> SalsaImportsResolver<'db> {
         }
     }
 
+    /// What sourcing `file` brings in. The two reads this makes are the ones
+    /// described on [`SalsaImportsResolver`].
     fn source_resolution(&self, file: File) -> SourceResolution {
         let names: Vec<String> = file
             .exports(self.db)
@@ -77,14 +79,31 @@ impl<'db> SalsaImportsResolver<'db> {
             packages,
         }
     }
+}
 
-    /// The workspace files a `SourceTarget::Dir` path names, in load order.
-    /// `None` when the path doesn't anchor.
-    fn files_in_source_dir(&self, path: &str) -> Option<Vec<File>> {
-        let anchor = anchor_dir(self.db, self.file)?;
-        let target_path = resolve_relative_to(&anchor, path)?;
-        Some(files_in_directory(self.db, target_path.as_path()?))
-    }
+/// The workspace files a `SourceTarget::Dir` path names, in load order. Empty
+/// when the path doesn't anchor.
+///
+/// Tracked to give the directory listing a backdating point, the role
+/// [`File::collation_siblings`] plays for the `R/` convention. The listing
+/// filters every root's scripts, so without a memo here a file appearing
+/// anywhere in the workspace would re-run the whole `semantic_index` of every
+/// file holding a directory source, `_targets.R` being the one that hurts.
+///
+/// Reads only inputs, so it's safe to call while `file`'s own index is being
+/// built.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn source_dir_scripts(db: &dyn Db, file: File, path: String) -> Vec<File> {
+    let Some(anchor) = anchor_dir(db, file) else {
+        return Vec::new();
+    };
+    let Some(target_path) = resolve_relative_to(&anchor, &path) else {
+        return Vec::new();
+    };
+    let Some(dir) = target_path.as_path() else {
+        return Vec::new();
+    };
+    files_in_directory_recursive(db, dir)
 }
 
 /// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
@@ -130,9 +149,9 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     }
 
     fn resolve_source_dir(&mut self, path: &str) -> Vec<SourceResolution> {
-        self.files_in_source_dir(path)
-            .unwrap_or_default()
-            .into_iter()
+        source_dir_scripts(self.db, self.file, path.to_string())
+            .iter()
+            .copied()
             // Exclude sourcing file
             .filter(|file| *file != self.file)
             .map(|file| self.source_resolution(file))

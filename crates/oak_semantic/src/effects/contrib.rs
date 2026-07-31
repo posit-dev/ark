@@ -5,6 +5,7 @@ mod magrittr;
 mod rlang;
 mod s7;
 mod shiny;
+mod targets;
 mod testthat;
 mod withr;
 
@@ -71,10 +72,16 @@ macro_rules! quoted {
 }
 pub(crate) use quoted;
 
-/// A source entry: `(path-argument position)`. The function reads and evaluates
-/// another file, injecting its top-level names into the caller.
+/// A source entry: `(path-argument position)`, optionally what that argument
+/// names (a [`SourceTarget`] variant, `File` by default) and what the function
+/// reads when called with no arguments.
+///
+/// [`SourceTarget`]: crate::effects::SourceTarget
 macro_rules! source {
     ($func:literal, $pos:literal) => {
+        $crate::effects::contrib::source!($func, $pos, File, None)
+    };
+    ($func:literal, $pos:literal, $target:ident, $default:expr) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
@@ -82,7 +89,8 @@ macro_rules! source {
                 attach: None,
                 source: Some(&$crate::effects::SourceAnnotation {
                     position: $pos,
-                    target: $crate::effects::SourceTarget::File,
+                    target: $crate::effects::SourceTarget::$target,
+                    default_path: $default,
                 }),
                 assign: None,
             },
@@ -148,6 +156,10 @@ pub(super) static REGISTRY: &[PackageEntries] = &[
     PackageEntries {
         name: "shiny",
         functions: shiny::ENTRIES,
+    },
+    PackageEntries {
+        name: "targets",
+        functions: targets::ENTRIES,
     },
     PackageEntries {
         name: "testthat",

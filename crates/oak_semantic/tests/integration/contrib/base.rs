@@ -135,6 +135,7 @@ struct PositionResolver;
 static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation {
     position: 1,
     target: SourceTarget::File,
+    default_path: None,
 };
 
 impl ImportsResolver for PositionResolver {
