@@ -1,5 +1,9 @@
 //! Tests that drive the source request pipeline through the real [`GlobalState`]
 //! event loop.
+//!
+//! Each test pins `source_fetching_enabled` rather than taking the default,
+//! since `WorldState::new()` reads `OAK_SOURCE_FETCHING_ENABLED` and an exported
+//! value would otherwise decide what these tests exercise.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -83,9 +87,12 @@ async fn test_source_pipeline_ingests_package_sources() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let mut world = WorldState::new(db);
+    world.config.oak.source_fetching_enabled = true;
+
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world,
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -234,9 +241,12 @@ async fn test_failed_source_is_not_retried() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let mut world = WorldState::new(db);
+    world.config.oak.source_fetching_enabled = true;
+
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world,
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -309,9 +319,12 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.path().to_path_buf()]);
 
+    let mut world = WorldState::new(db);
+    world.config.oak.source_fetching_enabled = true;
+
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world,
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),
