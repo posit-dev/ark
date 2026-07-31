@@ -440,6 +440,14 @@ impl File {
             // A non-package script in an `R/` directory: collated
             // alphabetically, exactly like a package `R/` with no `Collate:`.
             None if in_r_directory(self, db) => script_collation_layers(self, db, view),
+            // A Shiny entry point: `runApp()` evaluates `global.R` and an
+            // adjacent `R/` folder.
+            //
+            // Shiny arms are gated on `None` to exclude golem-style `inst/app/app.R`.
+            None if self.shiny_autoload(db).is_some() => shiny_app_layers(self, db),
+            // A Shiny app's `global.R`: evaluated first, into the global
+            // environment, so it sees none of what the app defines.
+            None if is_shiny_global_file(self, db) => shiny_global_layers(db),
             // A standalone script, or a file with a package back-pointer that
             // isn't a loadable `R/` file (`data-raw/`, `inst/`, a non-collated
             // `R/` file): lives in the package but isn't loaded with it, so it
@@ -472,6 +480,50 @@ impl File {
             return Vec::new();
         };
         files_in_directory(db, dir)
+    }
+
+    /// Predecessor files loaded by Shiny's `loadSupport()`, in load order.
+    /// `None` if not a Shiny app file at all: neither a confirmed entry
+    /// point nor an `R/` file `loadSupport()` actually sources. See
+    /// https://shiny.posit.co/r/reference/shiny/1.7.5/loadsupport.html
+    ///
+    /// - `loadSupport()` unconditionally calls `require(shiny)`, even with
+    ///   neither `global.R` nor `R/` present
+    /// - `R/` files are evaluated in a child of the global env by default
+    /// - `global.R` is evaluated directly in the global env by default
+    ///
+    /// `Some(vec![])` is not empty: an entry point (or `R/` file) with no
+    /// `global.R` beside it does not inherit from other files but still runs
+    /// with shiny attached.
+    ///
+    /// Tracked for the same reason as `collation_siblings()`: it reads every
+    /// workspace root's scripts, so without a memo here a file appearing
+    /// anywhere in the workspace would re-run every consumer's
+    /// `cross_file_layers()`. Unlike `collation_siblings()` it isn't purely
+    /// path-based: it reads the content of the app's entry file through
+    /// [`is_shiny_entry_file`], itself tracked so that dependency backdates
+    /// on its own rather than forcing every file in the app to re-execute
+    /// this query whenever the entry file's body changes.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn shiny_autoload(self, db: &dyn Db) -> Option<Vec<File>> {
+        // A confirmed entry point always gets `require(shiny)`, whether or not
+        // it has any support files to inherit.
+        if let Some(app_dir) = shiny_app_dir(self, db) {
+            return Some(shiny_support_files(db, app_dir));
+        }
+
+        // An autoloaded file sees `global.R` only. Its `R/` siblings already
+        // reach it through the collation. `_disable_autoload.R` means
+        // `loadSupport()` never sources this file at all, so it gets no Shiny
+        // layers, not even the implicit attach.
+        if !in_r_directory(self, db) {
+            return None;
+        }
+        let app_dir = self.path(db).as_path()?.parent()?.parent()?;
+        if !is_shiny_dir(db, app_dir) || r_autoload_disabled(db, app_dir) {
+            return None;
+        }
+        Some(shiny_global_file(db, app_dir).into_iter().collect())
     }
 }
 
@@ -659,11 +711,22 @@ fn script_collation_layers(file: File, db: &dyn Db, view: CollationView) -> Cros
     let own_key = collation_basename_key(file, db);
     let prefix_len =
         files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key);
-    let siblings = visible_siblings(file, files, view, Some(prefix_len));
+    let mut siblings = visible_siblings(file, files, view, Some(prefix_len));
+
+    // Under Shiny autoload, `loadSupport()` evaluates `global.R` into the
+    // enclosing environment before any of the `R/` files. Last in LIFO order,
+    // so every sibling shadows it.
+    let autoload = file.shiny_autoload(db);
+    siblings.extend(autoload.iter().flatten().copied());
 
     let above: Vec<ImportLayer> = siblings.iter().copied().map(ImportLayer::File).collect();
 
     let mut below = predecessor_attach_layers(db, &siblings);
+    // `loadSupport()` opens with `require(shiny)`, so an autoloaded file has
+    // shiny attached whether or not the app itself ever calls `library(shiny)`.
+    if autoload.is_some() {
+        below.extend(shiny_layer(db));
+    }
     below.extend(default_search_path_layers(db));
     CrossFileLayers { above, below }
 }
@@ -700,6 +763,136 @@ fn visible_siblings(
                 .collect(),
         },
     }
+}
+
+/// Load-time layers for a Shiny entry point, the files `runApp()` evaluates
+/// after `loadSupport()` has run: `global.R`, then the adjacent `R/`.
+///
+/// View-independent, unlike [`script_collation_layers`]. A collation cuts at
+/// the file's own position because the file is a member of the sequence. An
+/// entry point isn't, and the whole support set has loaded before its first
+/// line.
+fn shiny_app_layers(file: File, db: &dyn Db) -> CrossFileLayers {
+    // LIFO, and the `R/` files evaluate into a child of the environment holding
+    // `global.R`, so they shadow it on both counts.
+    let support: Vec<File> = file
+        .shiny_autoload(db)
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .rev()
+        .copied()
+        .filter(|support| *support != file)
+        .collect();
+
+    let above: Vec<ImportLayer> = support.iter().copied().map(ImportLayer::File).collect();
+
+    let mut below = predecessor_attach_layers(db, &support);
+    below.extend(shiny_layer(db));
+    below.extend(default_search_path_layers(db));
+    CrossFileLayers { above, below }
+}
+
+/// The files Shiny evaluates as an app, each paired with the call RStudio's
+/// own `getShinyFileType()` requires in its content before treating the
+/// filename as significant (`SessionRUtil.cpp`). `global.R` is deliberately
+/// not one: it runs before autoload, so it belongs to the support set rather
+/// than to the files consuming it.
+///
+/// A text search rather than a parse: matching a substring in a comment or a
+/// string literal is the same false-positive RStudio accepts, and reading
+/// `source_text` instead of `semantic_index` keeps this callable on `self`
+/// while `self`'s own index is still being built (see `shiny_autoload`).
+const SHINY_ENTRY_FILES: [(&str, &str); 3] = [
+    ("app.R", "shinyApp"),
+    ("ui.R", "shinyUI"),
+    ("server.R", "shinyServer"),
+];
+
+/// Files injected by `loadSupport()`, in load order.
+fn shiny_support_files(db: &dyn Db, app_dir: &Utf8Path) -> Vec<File> {
+    let mut files: Vec<File> = shiny_global_file(db, app_dir).into_iter().collect();
+
+    // `_disable_autoload.R` opts out from `R/` files but keeps `global.R`.
+    if r_autoload_disabled(db, app_dir) {
+        return files;
+    }
+
+    files.extend(files_in_directory(db, &app_dir.join("R")));
+    files
+}
+
+/// Whether `_disable_autoload.R` sits in `app_dir`'s `R/`, opting the whole
+/// directory out of `loadSupport()`'s autoload. Shared between the entry
+/// point's own support list and an individual `R/` file's `shiny_autoload`:
+/// neither should treat those files as Shiny-governed, since `loadSupport()`
+/// never sources them.
+fn r_autoload_disabled(db: &dyn Db, app_dir: &Utf8Path) -> bool {
+    files_in_directory(db, &app_dir.join("R"))
+        .iter()
+        .any(|file| is_named(*file, db, "_disable_autoload.R"))
+}
+
+/// Whether `file` is the `global.R` of a Shiny app. `loadSupport()` always
+/// includes it even in the presence of a `_disable_autoload.R` file.
+fn is_shiny_global_file(file: File, db: &dyn Db) -> bool {
+    if !is_named(file, db, "global.R") {
+        return false;
+    }
+    let Some(dir) = file.path(db).as_path().and_then(Utf8Path::parent) else {
+        return false;
+    };
+    is_shiny_dir(db, dir)
+}
+
+/// Load-time layers for a Shiny app's `global.R`: the implicit `shiny` attach
+/// and the default search path.
+fn shiny_global_layers(db: &dyn Db) -> CrossFileLayers {
+    let mut below: Vec<ImportLayer> = shiny_layer(db).into_iter().collect();
+    below.extend(default_search_path_layers(db));
+    CrossFileLayers {
+        above: Vec::new(),
+        below,
+    }
+}
+
+/// The app directory of a Shiny entry point. `None` for any other file.
+fn shiny_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
+    if !is_shiny_entry_file(db, file) {
+        return None;
+    }
+    file.path(db).as_path()?.parent()
+}
+
+/// Whether `dir` holds one of the files `runApp()` evaluates, which is what
+/// makes an adjacent `R/` an autoloaded one.
+fn is_shiny_dir(db: &dyn Db, dir: &Utf8Path) -> bool {
+    files_in_directory(db, dir)
+        .iter()
+        .any(|file| is_shiny_entry_file(db, *file))
+}
+
+/// Whether `file`'s name and content mark it as a Shiny entry point.
+#[salsa::tracked(returns(copy))]
+fn is_shiny_entry_file(db: &dyn Db, file: File) -> bool {
+    SHINY_ENTRY_FILES
+        .iter()
+        .any(|(name, marker)| is_named(file, db, name) && file.source_text(db).contains(marker))
+}
+
+fn shiny_global_file(db: &dyn Db, app_dir: &Utf8Path) -> Option<File> {
+    files_in_directory(db, app_dir)
+        .into_iter()
+        .find(|file| is_named(*file, db, "global.R"))
+}
+
+/// Case-insensitive basename match. Shiny reaches for these files through
+/// `file.path.ci()` and `ignore.case=TRUE`, so `Global.R` is a `global.R`.
+/// Deliberately unlike [`in_r_directory`], which matches `R/` exactly.
+fn is_named(file: File, db: &dyn Db, name: &str) -> bool {
+    file.path(db)
+        .file_name()
+        .is_some_and(|basename| basename.eq_ignore_ascii_case(name))
 }
 
 /// Load-time layers visible to a `tests/testthat/` file, in R's LIFO priority
@@ -920,6 +1113,12 @@ fn extend_with_namespace_package_imports(
 /// any root (the R system library is normally on `.libPaths()`, so it is).
 fn base_layer(db: &dyn Db) -> Option<ImportLayer> {
     db.package_by_name("base").map(ImportLayer::Package)
+}
+
+/// `shiny`, attached by `loadSupport()`'s own `require(shiny)` before an app's
+/// first line runs. `None` when it isn't scanned into any root.
+fn shiny_layer(db: &dyn Db) -> Option<ImportLayer> {
+    db.package_by_name("shiny").map(ImportLayer::Package)
 }
 
 /// The default startup search path as `Package` layers, `stats` first through

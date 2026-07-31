@@ -846,3 +846,50 @@ fn test_sourced_script_still_resolves_its_collation_siblings() {
     let def = resolve_one(&db, files[1], "helper");
     assert_eq!(def.file(&db), files[2]);
 }
+
+#[test]
+fn test_shiny_global_resolves_reactive_but_not_r_directory_definitions() {
+    // `loadSupport()` calls `require(shiny)` before sourcing anything, so an
+    // unqualified `reactive()` in `global.R` resolves to shiny's own binding.
+    // It runs before the `R/` files and into a different (parent)
+    // environment, so it must not see what they define.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let shiny_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["reactive".to_string()]),
+        ..Default::default()
+    };
+    let (shiny_pkg, shiny_files) = make_package(&mut db, "shiny", shiny_ns, &[(
+        "ws/shinypkg/R/reactive.R",
+        "reactive <- function(x) x\n",
+    )]);
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let global = File::new(
+        &db,
+        file_path("ws/global.R"),
+        FileRevision::zero(),
+        Some("x <- reactive(1)\n".to_string()),
+        None,
+    );
+    let helper = File::new(
+        &db,
+        file_path("ws/R/helper.R"),
+        FileRevision::zero(),
+        Some("helper_val <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, global, helper]);
+    root.set_packages(&mut db).to(vec![shiny_pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let def = resolve_one(&db, global, "reactive");
+    assert_eq!(def.file(&db), shiny_files[0]);
+
+    assert!(global.resolve(&db, name(&db, "helper_val")).is_empty());
+}

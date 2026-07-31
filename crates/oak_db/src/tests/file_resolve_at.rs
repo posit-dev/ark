@@ -1063,3 +1063,17 @@ fn test_dir_sourced_twice_still_sees_the_files_loaded_earlier_in_each_call() {
     let def = resolve_one(&db, b, TextSize::from(7));
     assert_eq!(def.file(&db), a);
 }
+
+#[test]
+fn test_shiny_entry_top_level_sees_the_whole_autoload_set() {
+    // `loadSupport()` has run before `app.R`'s first line, so unlike a
+    // collation there's no prefix to cut at the cursor.
+    let mut db = TestDb::new();
+    let (_, files) = setup_workspace_scripts(&mut db, "w", &[
+        ("w/app.R", "mod_ui()\nshinyApp(ui, server)\n"),
+        ("w/R/mod.R", "mod_ui <- function() NULL\n"),
+    ]);
+
+    let def = resolve_one(&db, files[0], TextSize::from(0));
+    assert_eq!(def.file(&db), files[1]);
+}
