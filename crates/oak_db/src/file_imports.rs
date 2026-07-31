@@ -512,7 +512,18 @@ fn build_inherited_layers(
         None => ImportLayer::File(source_site),
     };
 
-    let mut above = vec![source_layer];
+    // One Source effect can load several files (`sourceDir()`, `tar_source()`).
+    // Keep track of already sourced files, since their eager top-level context
+    // can see what's already been sourced.
+    let mut above: Vec<ImportLayer> = match offsets.as_deref() {
+        Some(offsets) => loaded_before(db, source_site, file, offsets)
+            .into_iter()
+            .map(ImportLayer::File)
+            .collect(),
+        None => Vec::new(),
+    };
+
+    above.push(source_layer);
     above.extend(own_cross.above.iter().cloned());
     above.extend(
         grandparents
@@ -558,6 +569,36 @@ fn source_offsets(db: &dyn Db, sourcing_file: File, file: File) -> Option<Vec<Te
         true => None,
         false => Some(offsets),
     }
+}
+
+/// The files the calls at `offsets` loaded before `file`, latest first.
+///
+/// One Source effect can expand to several targets (`sourceDir()`), which share
+/// the call's offset. Only the targets ahead of `file` in its own group have run
+/// by the time `file` does.
+fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize]) -> Vec<File> {
+    let sites = source_file.source_sites(db);
+    let mut loaded: Vec<File> = Vec::new();
+
+    // Descending, so the latest call's targets rank first.
+    for &offset in offsets.iter().rev() {
+        let targets: Vec<File> = sites
+            .iter()
+            .filter(|site| site.offset() == offset)
+            .filter_map(|site| site.target())
+            .collect();
+        let Some(own) = targets.iter().position(|target| *target == file) else {
+            continue;
+        };
+
+        for &target in targets[..own].iter().rev() {
+            if !loaded.contains(&target) {
+                loaded.push(target);
+            }
+        }
+    }
+
+    loaded
 }
 
 fn package_load_layers(
