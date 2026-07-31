@@ -632,13 +632,9 @@ impl GlobalState {
             );
 
             // Re-warm the oak semantic indexes on every revision, counting on
-            // idempotence (warm files are salsa cache hits). Runs on a snapshot,
-            // so a concurrent write just cancels the in-flight warm and the next
-            // revision re-runs it. This is what carries warmup through the
-            // startup write-storm (each source/edit cancels the previous warm,
-            // and the revision after the storm settles completes it), and it
-            // means a freshly-typed `pkg::` dependency is warmed as soon as its
-            // sources land and bump the revision.
+            // idempotence (warm files are salsa cache hits). Takes care of
+            // warmin up the initial workspace as well as any new dependency
+            // introduced by user edits.
             analysis::warm_semantic_indexes(&self.world, &self.lsp_state.analysis_pool);
         }
 
