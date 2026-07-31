@@ -989,9 +989,6 @@ const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
     72.0
 };
 
-/// Default aspect ratio (width:height) used when only output_width_px is provided.
-const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
-
 /// Default figure size in inches, matching Quarto's base/HTML format
 /// defaults (`fig-width: 7`, `fig-height: 5`). Other formats differ (e.g.
 /// pdf is 5.5 x 3.5), but Positron doesn't know the target format.
@@ -1032,8 +1029,10 @@ impl FromExecuteRequest for PlotRenderSettings {
     /// with size in logical pixels (inches * DPI). Either dimension may be set
     /// alone; the missing one falls back to the Quarto default.
     ///
-    /// Otherwise if `output_width_px` is set, returns settings at that width
-    /// with a 4:3 aspect ratio.
+    /// Otherwise, if the request describes the output area (`output_width_px`
+    /// or `output_pixel_ratio`), returns settings at the default figure size,
+    /// so that plots keep a predictable size rather than scaling with the
+    /// viewport.
     ///
     /// Sizes are in CSS/logical pixels. The R rendering layer handles physical
     /// pixel scaling via the separate `pixel_ratio` parameter.
@@ -1051,17 +1050,19 @@ impl FromExecuteRequest for PlotRenderSettings {
             });
         }
 
-        if let Some(width_px) = req.output_width_px {
-            if width_px > 0.0 {
-                return Some(Self {
-                    size: PlotSize {
-                        width: width_px.round() as i64,
-                        height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
-                    },
-                    pixel_ratio,
-                    format: PlotRenderFormat::Png,
-                });
-            }
+        // The frontend describes a sized output area (notebook or inline
+        // output) but the cell didn't request a figure size. Render at the
+        // default figure size rather than sizing to the output area width
+        // (posit-dev/positron#15260).
+        if req.output_width_px.is_some() || req.output_pixel_ratio.is_some() {
+            return Some(Self {
+                size: PlotSize {
+                    width: (DEFAULT_FIG_WIDTH * DEFAULT_DPI).round() as i64,
+                    height: (DEFAULT_FIG_HEIGHT * DEFAULT_DPI).round() as i64,
+                },
+                pixel_ratio,
+                format: PlotRenderFormat::Png,
+            });
         }
 
         None

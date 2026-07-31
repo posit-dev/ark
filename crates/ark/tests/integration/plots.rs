@@ -731,7 +731,8 @@ fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
 }
 
 /// Test that plots rendered with output_width_px (but no fig dimensions)
-/// produce a PNG at the expected width with a 4:3 aspect ratio.
+/// produce a PNG at the default figure size, not sized to the output area
+/// (posit-dev/positron#15260).
 #[test]
 fn test_plot_with_output_width_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -753,9 +754,10 @@ fn test_plot_with_output_width_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    // 600px wide, 600 / (4/3) = 450px tall
-    assert_eq!(width, 600);
-    assert_eq!(height, 450);
+    let dpi = default_dpi();
+    // 7 inches (default) * DPI, 5 inches (default) * DPI
+    assert_eq!(width, (7.0 * dpi).round() as u32);
+    assert_eq!(height, (5.0 * dpi).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
