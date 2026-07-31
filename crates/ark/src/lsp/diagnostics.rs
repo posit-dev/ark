@@ -15,6 +15,7 @@ use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
 use oak_db::File;
+use oak_db::RootKind;
 use stdext::*;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::DiagnosticSeverity;
@@ -143,6 +144,16 @@ pub(crate) fn generate_diagnostics(
     }
 
     let db = state.db();
+
+    // Library files are foreign code the user can't fix (installed packages,
+    // fetched CRAN/base sources), so diagnostics don't apply (even though
+    // symbol navigation works).
+    if file
+        .root(db)
+        .is_some_and(|root| root.kind(db) == RootKind::Library)
+    {
+        return diagnostics;
+    }
 
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
@@ -1172,6 +1183,7 @@ mod tests {
 
     use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
+    use oak_db::Db;
     use oak_db::OakDatabase;
     use oak_scan::DbScan;
     use tempfile::TempDir;
@@ -1784,5 +1796,37 @@ foo
             "#;
         let diagnostics = generate_diagnostics(code, &state);
         assert_eq!(diagnostics.len(), 3);
+    }
+
+    #[test]
+    fn test_no_diagnostics_for_library_files() {
+        // Library files are foreign code the user can't fix, so we don't
+        // diagnose them even though `undefined_symbol` is unresolved.
+        let library = TempDir::new().unwrap();
+        let pkg_dir = library.path().join("mockpkg");
+        std::fs::create_dir_all(pkg_dir.join("R")).unwrap();
+        std::fs::write(
+            pkg_dir.join("DESCRIPTION"),
+            "Package: mockpkg\nVersion: 1.0.0\n",
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join("R").join("a.R"), "undefined_symbol\n").unwrap();
+
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
+
+        let package = db.package_by_name("mockpkg").unwrap();
+        // The scanner registers installed packages without reading their
+        // sources; simulate the Oak cache's `set_package_sources` ingestion.
+        db.set_package_sources(package, &pkg_dir.join("R"));
+        let file = *package.files(&db).first().unwrap();
+
+        let state = WorldState {
+            db,
+            ..Default::default()
+        };
+
+        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false);
+        assert!(diagnostics.is_empty());
     }
 }
