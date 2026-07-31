@@ -51,9 +51,9 @@ pub struct Effects {
     pub arguments: Option<ResolvedArgumentEffects>,
     /// Attach a package
     pub attach: Option<String>,
-    /// Source one or more files. A vector so a collation-style callee can name
+    /// Source one or more paths. A vector so a collation-style callee can name
     /// several; base `source` resolves to one.
-    pub source: Option<Vec<String>>,
+    pub source: Option<Vec<SourcePath>>,
     /// Bind one or more names in the current scope (`assign("x", value)`). A
     /// vector so a multi-binding callee stays expressible; base `assign` and
     /// `delayedAssign` resolve to one.
@@ -80,7 +80,7 @@ pub struct AssignBinding {
 pub struct EffectsHandlers {
     pub arguments: Option<&'static dyn EffectHandler<Output = ResolvedArgumentEffects>>,
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
-    pub source: Option<&'static dyn EffectHandler<Output = Vec<String>>>,
+    pub source: Option<&'static dyn EffectHandler<Output = Vec<SourcePath>>>,
     pub assign: Option<&'static dyn AssignHandler>,
 }
 
@@ -369,21 +369,40 @@ impl EffectHandler for ArgumentsAnnotation {
     }
 }
 
-/// Declares how a source function (`source()`) names the file it reads, and
-/// serves as the default [`EffectHandler`] for it by pulling that path out of a
-/// call.
+/// A path a source call names, and what that path points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePath {
+    pub path: String,
+    pub target: SourceTarget,
+}
+
+/// What a source function's path argument points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceTarget {
+    /// A single file, as base `source()` takes.
+    File,
+    /// A directory, every R file in it. The resolver expands the path into one
+    /// target per file, since listing it needs workspace knowledge a handler
+    /// doesn't have.
+    Dir,
+}
+
+/// Declares how a source function (`source()`) names what it reads, and serves
+/// as the default [`EffectHandler`] for it by pulling that path out of a call.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceAnnotation {
     /// Which positional argument holds the path, counting only unnamed
     /// arguments (0 for base `source`). Other source-like functions may put the
     /// path elsewhere, so it's configured per entry rather than assumed.
     pub position: usize,
+    /// Whether that argument names a file or a directory.
+    pub target: SourceTarget,
 }
 
 impl EffectHandler for SourceAnnotation {
-    type Output = Vec<String>;
+    type Output = Vec<SourcePath>;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<String>> {
+    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
         let args = call.arguments().ok()?;
 
         // The path is matched positionally among unnamed arguments rather than
@@ -433,7 +452,12 @@ impl EffectHandler for SourceAnnotation {
             positional += 1;
         }
 
-        path.map(|resolved| vec![resolved])
+        path.map(|path| {
+            vec![SourcePath {
+                path,
+                target: self.target,
+            }]
+        })
     }
 }
 

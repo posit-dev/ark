@@ -4,6 +4,7 @@ use biome_rowan::AstNode;
 use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::SourceAnnotation;
+use oak_semantic::effects::SourceTarget;
 use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::AttachRegion;
 use oak_semantic::semantic_index::DefinitionId;
@@ -115,7 +116,10 @@ impl ImportsResolver for MultiFileResolver {
 /// positional slot, exercising the configurable `position`.
 struct PositionResolver;
 
-static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation { position: 1 };
+static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation {
+    position: 1,
+    target: SourceTarget::File,
+};
 
 impl ImportsResolver for PositionResolver {
     fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {

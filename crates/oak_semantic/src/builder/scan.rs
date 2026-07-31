@@ -446,14 +446,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // can see them.
         if let Some(paths) = source {
             let range = call.syntax().text_trimmed_range();
-            for path in paths {
-                let resolution = self.scan_source_call(&path, range);
+            for sourced in paths {
+                let resolution = self.scan_source_call(&sourced.path, range);
                 self.scan
                     .call_resolutions
                     .entry(range)
                     .or_default()
                     .source
-                    .push(SourcedFile { path, resolution });
+                    .push(SourcedFile {
+                        path: sourced.path,
+                        resolution,
+                    });
             }
         }
 

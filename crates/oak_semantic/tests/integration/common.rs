@@ -9,6 +9,8 @@ use oak_semantic::effects::CallContext;
 use oak_semantic::effects::EffectHandler;
 use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::RangedAstPtr;
+use oak_semantic::effects::SourcePath;
+use oak_semantic::effects::SourceTarget;
 use oak_semantic::effects::TargetAccess;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
@@ -73,10 +75,19 @@ pub(crate) struct CollationHandler;
 pub(crate) static COLLATION_HANDLER: CollationHandler = CollationHandler;
 
 impl EffectHandler for CollationHandler {
-    type Output = Vec<String>;
+    type Output = Vec<SourcePath>;
 
-    fn resolve(&self, _call: &RCall, _ctx: &CallContext<'_>) -> Option<Vec<String>> {
-        Some(vec!["a.R".into(), "b.R".into()])
+    fn resolve(&self, _call: &RCall, _ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
+        Some(vec![
+            SourcePath {
+                path: "a.R".into(),
+                target: SourceTarget::File,
+            },
+            SourcePath {
+                path: "b.R".into(),
+                target: SourceTarget::File,
+            },
+        ])
     }
 }
 

@@ -80,7 +80,10 @@ macro_rules! source {
             effects: $crate::effects::EffectsHandlers {
                 arguments: None,
                 attach: None,
-                source: Some(&$crate::effects::SourceAnnotation { position: $pos }),
+                source: Some(&$crate::effects::SourceAnnotation {
+                    position: $pos,
+                    target: $crate::effects::SourceTarget::File,
+                }),
                 assign: None,
             },
         }
