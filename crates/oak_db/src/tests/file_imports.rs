@@ -982,11 +982,11 @@ fn test_multiple_sourcing_files_appear_ordered_by_path() {
 }
 
 #[test]
-fn test_inheritance_replaces_collation_instead_of_adding_to_it() {
-    // `a.R` and `b.R` would collate together as a non-package `R/` directory
-    // (see `test_script_r_directory_siblings_see_each_other`). Once `main.R`
-    // explicitly sources `a.R`, `b.R` may never load, so it must drop out of
-    // `a.R`'s imports entirely rather than sit alongside the inherited band.
+fn test_inheritance_adds_to_collation_instead_of_replacing_it() {
+    // `a.R` and `b.R` collate together as a non-package `R/` directory (see
+    // `test_script_r_directory_siblings_see_each_other`). `main.R` sourcing
+    // `a.R` is a second plausible execution, not a replacement for the first,
+    // so `b.R` stays alongside the inherited band.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
     let a = File::new(
@@ -1013,7 +1013,10 @@ fn test_inheritance_replaces_collation_instead_of_adding_to_it() {
     root.set_scripts(&mut db).to(vec![a, b, main]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    assert_eq!(shape(&db, a.imports(&db)), vec!["File(main.R)".to_string()]);
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+    ]);
 }
 
 #[test]
@@ -1128,10 +1131,52 @@ fn test_inherited_default_search_path_is_not_duplicated() {
     root.set_scripts(&mut db).to(vec![main, helpers]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    // `base` comes once from `main.R`'s own `below` band, never duplicated by
-    // `helpers.R`'s own (replaced) `cross_file_layers`.
+    // Both `helpers.R`'s own context and the one inherited from `main.R` end
+    // their `below` band in the default search path. The union carries it once.
     assert_eq!(shape(&db, helpers.imports(&db)), vec![
         "File(main.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_collation_attach_outranks_the_search_path_under_inheritance() {
+    // `dplyr` reaches `a.R` through its collation sibling, `tibble` through the
+    // file that sources it. Both contexts end in the default search path, so
+    // hoisting it to the tail of the union is what keeps `tibble` off the far
+    // side of `base`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(dplyr)".to_string(),
+        "Package(tibble)".to_string(),
         "Package(base)".to_string(),
     ]);
 }

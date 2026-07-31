@@ -831,3 +831,18 @@ fn test_resolve_namespace_import_beats_attached_package() {
     let def = resolve_one(&db, files[0], "foo");
     assert_eq!(def.file(&db), dep_a_files[0]);
 }
+
+#[test]
+fn test_sourced_script_still_resolves_its_collation_siblings() {
+    // `main.R` sourcing `R/a.R` adds a context, it doesn't take away the one
+    // the `R/` directory already gave it, so `helper()` still lands in `b.R`.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/main.R", "source(\"R/a.R\")\n"),
+        ("w/R/a.R", "f <- function() helper()\n"),
+        ("w/R/b.R", "helper <- function() 1\n"),
+    ]);
+
+    let def = resolve_one(&db, files[1], "helper");
+    assert_eq!(def.file(&db), files[2]);
+}

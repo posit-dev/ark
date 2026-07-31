@@ -30,9 +30,9 @@ impl<'db> File {
     ///    `source()`-forwarded entries. `ExportEntry::Import` is chased
     ///    through `exports(target)` until it lands on a `Local`. Cycles in
     ///    `source()` resolve to empty exports via `exports`'s `cycle_fn`.
-    /// 2. **`imports_by_sourcing_file()` walk**: one context per file that
-    ///    sources this one, each checked in priority order and the results
-    ///    unioned across contexts. `File` siblings are checked via their
+    /// 2. **`imports_by_sourcing_file()` walk**: the file's own context plus
+    ///    one per file that sources it, each checked in priority order and the
+    ///    results unioned across contexts. `File` siblings are checked via their
     ///    exports chain only (not their full `resolve`), to avoid the cycle
     ///    that recursing would create. `Package` and `From` layers call
     ///    [`Package::resolve`] with `Exported` visibility.

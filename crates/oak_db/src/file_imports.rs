@@ -262,6 +262,8 @@ impl File {
         layers.lookup_order(&own).cloned().collect()
     }
 
+    /// The file's own context and its inherited context from the files that
+    /// source it, flattened into one lookup order.
     fn resolution_layers<'db>(
         self,
         db: &'db dyn Db,
@@ -272,22 +274,29 @@ impl File {
             return Cow::Borrowed(self.cross_file_layers(db, view));
         }
 
-        let mut above = Vec::new();
-        let mut below = Vec::new();
+        let own = self.cross_file_layers(db, view);
+        let mut above = own.above.clone();
+        let mut below = own.below.clone();
         for site in inherited {
             above.extend(site.layers.above.iter().cloned());
             below.extend(site.layers.below.iter().cloned());
         }
+
+        // Every context's `below` ends in the default search path. Hoist it out
+        // and append it once, or the next context's attaches land under `base`.
+        let search_path = default_search_path_layers(db);
+        below.retain(|layer| !search_path.contains(layer));
+        below.extend(search_path);
+
         Cow::Owned(CrossFileLayers { above, below })
     }
 
-    /// The lookup-ordered layers this file's lazy / end-of-file view sees, one
-    /// context per file that sources this one (see [`File::inherited_layers`]),
-    /// or a single context of [`File::cross_file_layers`] if no inheritance.
+    /// The lookup-ordered layers this file's lazy / end-of-file view sees: the
+    /// file's own [`File::cross_file_layers`], then one context per file that
+    /// sources it (see [`File::inherited_layers`]).
     ///
-    /// The contexts of sourcing files are resolved as alternatives not as a
-    /// priority order. Symbols resolve in each context and are returned as a
-    /// union of results.
+    /// The contexts are resolved as alternatives not as a priority order.
+    /// Symbols resolve in each context and are returned as a union of results.
     ///
     /// Tracked query, firewall between `resolve()` and the `no_eq`
     /// `semantic_index` read by `attach_layers()`.
@@ -332,14 +341,15 @@ impl File {
             .collect()
     }
 
-    /// One context per file that sources this one, or a single context when
-    /// nothing does.
+    /// The file's own context, plus one per file that sources it.
     fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
-        let inherited = self.inherited_layers(db, view);
-        if inherited.is_empty() {
-            return vec![self.cross_file_layers(db, view)];
-        }
-        inherited.iter().map(|site| &site.layers).collect()
+        let mut contexts = vec![self.cross_file_layers(db, view)];
+        contexts.extend(
+            self.inherited_layers(db, view)
+                .iter()
+                .map(|site| &site.layers),
+        );
+        contexts
     }
 
     /// The layers `self` inherits from each file that sources it, one entry per
