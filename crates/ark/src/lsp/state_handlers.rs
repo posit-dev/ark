@@ -104,7 +104,7 @@ pub(crate) fn initialize(
         &to_std_paths(&state.workspace.folders),
         &editor_owned,
     );
-    dispatch_scan_requests(events_tx, requests);
+    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     let result = InitializeResult {
         server_info: Some(ServerInfo {
@@ -313,7 +313,7 @@ pub(crate) fn did_change_watched_files(
         lsp_state
             .oak_scheduler
             .apply_watcher_events(&mut state.db, events, &editor_owned);
-    dispatch_scan_requests(events_tx, requests);
+    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     Ok(())
 }
@@ -368,7 +368,7 @@ pub(crate) fn did_change_workspace_folders(
         &to_std_paths(&state.workspace.folders),
         &editor_owned,
     );
-    dispatch_scan_requests(events_tx, requests);
+    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
     Ok(())
 }
 

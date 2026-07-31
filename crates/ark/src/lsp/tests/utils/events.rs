@@ -1,9 +1,12 @@
 use std::path::Path;
 
+use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
+use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
@@ -21,6 +24,24 @@ pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
                 }],
                 removed: vec![],
             },
+        }),
+    ))
+}
+
+/// A whole-document change at `version`, which must be greater than the version the
+/// file was opened at.
+pub(crate) fn did_change(path: &Path, contents: &str, version: i32) -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidChangeTextDocument(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: Uri::from_file_path(path).unwrap(),
+                version,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: contents.to_string(),
+            }],
         }),
     ))
 }

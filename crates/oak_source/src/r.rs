@@ -49,7 +49,7 @@ pub(crate) struct RCache {
 }
 
 impl RCache {
-    pub(crate) fn open(root: &str) -> anyhow::Result<Self> {
+    pub(crate) fn open(root: &Path) -> anyhow::Result<Self> {
         Ok(Self {
             cache: Cache::open(root)?,
         })

@@ -11,6 +11,8 @@ use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
 use stdext::result::ResultExt;
 
+use crate::lsp;
+use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
 
@@ -152,7 +154,19 @@ impl SourceScheduler {
         }
     }
 
-    pub(crate) fn schedule(&mut self, db: &dyn Db, events_tx: &TokioUnboundedSender<Event>) {
+    /// Run a fetch for each package we haven't seen before on `pool`, shipping
+    /// each [`SourceResponse`] back to the main loop as
+    /// [`Event::SourceCompleted`], where [`Self::finish`] then applies it.
+    ///
+    /// The job owns no db handle. A download can't be interrupted by a Salsa
+    /// cancellation, so a handle in `pool`'s queue would hold up the next
+    /// main-loop write for the whole fetch.
+    pub(crate) fn schedule(
+        &mut self,
+        db: &dyn Db,
+        pool: &IoPool,
+        events_tx: &TokioUnboundedSender<Event>,
+    ) {
         let Some(handler) = &self.handler else {
             return;
         };
@@ -177,10 +191,16 @@ impl SourceScheduler {
             let handler = Arc::clone(handler);
             let tx = events_tx.clone();
 
-            // Mark as `Pending` just before launching the tokio task
+            // Mark as `Pending` just before launching the job
             self.state.insert(package, SourceState::Pending);
 
-            crate::lsp::spawn_blocking(move || {
+            lsp::log_info!(
+                "Fetching sources for package {name}, {n} pending",
+                name = request.name(),
+                n = self.pending_count(),
+            );
+
+            pool.submit(move || {
                 let response = handler.handle(&request);
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
@@ -188,8 +208,6 @@ impl SourceScheduler {
                     response,
                 }))
                 .log_err();
-
-                Ok(None)
             });
         }
     }
@@ -201,6 +219,14 @@ impl SourceScheduler {
             SourceResponse::Success(directory) => Some(directory),
             SourceResponse::Failure => None,
         }
+    }
+
+    /// How many source requests are in flight
+    fn pending_count(&self) -> usize {
+        self.state
+            .values()
+            .filter(|state| matches!(state, SourceState::Pending))
+            .count()
     }
 
     /// Whether any source request is in flight. Allows tests to deterministically "wait"

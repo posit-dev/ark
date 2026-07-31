@@ -24,15 +24,15 @@ fn test_diagnostics_published_through_refresh_snapshot() {
             .upsert_editor(FilePath::from_url(&uri), code.to_string());
         state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
-        // Mirror `diagnostics_refresh_all`: fetch the `File` from the live
-        // state, then hand the worker the `diagnostics_snapshot`. The snapshot's
-        // oak must still serve that file.
+        // Mirror `DiagnosticsState::refresh_all`: fetch the `File` from the
+        // live state, then hand the worker a snapshot. The snapshot's oak must
+        // still serve that file.
         let file = state
             .open_file(&FilePath::from_url(&uri))
             .expect("file is open in live state")
             .file();
 
-        let snapshot = state.diagnostics_snapshot();
+        let snapshot = state.snapshot();
         generate_diagnostics(file, snapshot, false)
     });
 

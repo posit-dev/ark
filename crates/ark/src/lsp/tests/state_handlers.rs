@@ -95,9 +95,9 @@ fn did_change_workspace_folders(
 /// Drive a production handler that dispatches its scans through `events_tx`,
 /// then pump the resulting `OakScanCompleted` events to quiescence on a local
 /// runtime. Production does this pumping in the main loop's event handler;
-/// the tests have to stand up the same machinery (tokio runtime so
-/// `spawn_blocking` works, aux channel so `send_auxiliary` doesn't panic, an
-/// events channel to receive completions).
+/// the tests have to stand up the same machinery (tokio runtime to await the
+/// completions, aux channel so `send_auxiliary` doesn't panic, an events channel
+/// to receive completions).
 fn run_handler_to_quiescence<F>(
     state: &mut WorldState,
     lsp_state: &mut LspState,
@@ -123,7 +123,7 @@ where
                 lsp_state
                     .oak_scheduler
                     .apply_scan_completed(&mut state.db, scan, &editor_owned);
-            dispatch_scan_requests(&events_tx, followups);
+            dispatch_scan_requests(&lsp_state.scan_pool, &events_tx, followups);
         }
         Ok(())
     })
@@ -653,7 +653,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
 
     // Init the aux channel here, after the workspace-folders churn: the
     // handler wrapper resets the channel each call (it stands up its own to
-    // satisfy `spawn_blocking`), so grab the receiver only once that's done.
+    // satisfy `send_auxiliary`), so grab the receiver only once that's done.
     let mut aux_rx = init_aux_for_test();
 
     // Now close the buffer. File should move from orphan to stale.
