@@ -687,6 +687,83 @@ fn test_source_call_in_a_function_body_narrows_nothing() {
 }
 
 #[test]
+fn test_both_sourcing_files_contribute_definitions() {
+    // Two files source the same target. Each is a separate possible runtime
+    // (in `a.R`'s run `foo` comes from `a.R`, in `b.R`'s run from `b.R`), so
+    // both bindings are visible from the sourced file, not just the
+    // alphabetically-first sourcing file.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        ("w/a.R", "foo <- 1\nsource(\"helpers.R\")\n"),
+        ("w/b.R", "foo <- 2\nsource(\"helpers.R\")\n"),
+        ("w/helpers.R", "foo\n"),
+    ]);
+    let (a, b, helpers) = (files[0], files[1], files[2]);
+
+    let defs = helpers.resolve_at(&db, TextSize::from(0));
+    let def_files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert_eq!(def_files, vec![a, b]);
+}
+
+#[test]
+fn test_offset_narrowing_applies_independently_per_sourcing_site() {
+    // `a.R` binds `foo` before its `source()` call, `b.R` only after. The
+    // union across sourcing files doesn't defeat the per-site narrowing: only
+    // `a.R`'s binding had run by the time `helpers.R`'s top level executed in
+    // `b.R`'s chain, so `b.R` contributes nothing.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        ("w/a.R", "foo <- 1\nsource(\"helpers.R\")\n"),
+        ("w/b.R", "source(\"helpers.R\")\nfoo <- 2\n"),
+        ("w/helpers.R", "foo\n"),
+    ]);
+    let a = files[0];
+    let helpers = files[2];
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), a);
+}
+
+#[test]
+fn test_lazy_view_sees_both_sourcing_files() {
+    // A function body runs after the whole file, so unlike the offset-narrowed
+    // top-level case, it sees both sourcing files' bindings regardless of
+    // where each `source()` call sits in its own file. Exercises the tracked
+    // `imports_by_sourcing_file` path (via `File::resolve`), not the `_at` one.
+    let mut db = TestDb::new();
+    let helpers_source = "f <- function() foo\n";
+    let files = setup_sourced(&mut db, &[
+        ("w/a.R", "foo <- 1\nsource(\"helpers.R\")\n"),
+        ("w/b.R", "foo <- 2\nsource(\"helpers.R\")\n"),
+        ("w/helpers.R", helpers_source),
+    ]);
+    let (a, b, helpers) = (files[0], files[1], files[2]);
+
+    let offset = TextSize::from(helpers_source.find("foo").unwrap() as u32);
+    let defs = helpers.resolve_at(&db, offset);
+    let def_files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert_eq!(def_files, vec![a, b]);
+}
+
+#[test]
+fn test_convergent_chains_dedupe_to_one_definition() {
+    // `a.R` and `b.R` both source `defs.R` before `helpers.R`, so both chains
+    // reach the same `foo` binding. The union must not report it twice.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        ("w/defs.R", "foo <- 1\n"),
+        ("w/a.R", "source(\"defs.R\")\nsource(\"helpers.R\")\n"),
+        ("w/b.R", "source(\"defs.R\")\nsource(\"helpers.R\")\n"),
+        ("w/helpers.R", "foo\n"),
+    ]);
+    let defs = files[0];
+    let helpers = files[3];
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), defs);
+}
+
+#[test]
 fn test_narrowing_applies_at_each_hop_of_a_source_chain() {
     // `setup.R` sources `helpers.R` before binding `late_setup`, and `main.R`
     // sources `setup.R` before binding `late_main`, so `helpers.R`'s top level

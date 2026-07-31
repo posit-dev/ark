@@ -18,6 +18,7 @@ use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
 use crate::support::offset;
 use crate::support::pairs;
+use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::ranges;
 use crate::support::upsert;
@@ -401,6 +402,35 @@ fn test_locally_scoped_stays_in_file() {
     assert_eq!(pairs(&refs), vec![
         (file1, range(14, 15)),
         (file1, range(21, 22)),
+    ]);
+}
+
+#[test]
+fn test_cross_file_references_span_both_sourcing_files() {
+    // `a.R` and `b.R` each define their own `foo`, source `helpers.R`, and use
+    // `foo` again. Both sourcing files are separate possible runtimes of
+    // `helpers.R`, so a references search from `helpers.R`'s `foo` must cover
+    // both, not just the alphabetically-first one.
+    let mut db = OakDatabase::new();
+    let a_source = "foo <- 1\nsource(\"helpers.R\")\nfoo\n";
+    let b_source = "foo <- 2\nsource(\"helpers.R\")\nfoo\n";
+    let a = upsert(&mut db, "a.R", a_source);
+    let b = upsert(&mut db, "b.R", b_source);
+    let helpers = upsert(&mut db, "helpers.R", "foo\n");
+    place_in_workspace_scripts(&mut db, vec![a, b, helpers]);
+
+    let a_use = a_source.rfind("foo").unwrap() as u32;
+    let b_use = b_source.rfind("foo").unwrap() as u32;
+
+    let refs = find_references(&db, helpers, offset(0), true);
+    // helpers.R (cursor's file) first, then a.R and b.R alphabetically by
+    // path, def before use within each sourcing file.
+    assert_eq!(pairs(&refs), vec![
+        (helpers, range(0, 3)),
+        (a, range(0, 3)),
+        (a, range(a_use, a_use + 3)),
+        (b, range(0, 3)),
+        (b, range(b_use, b_use + 3)),
     ]);
 }
 

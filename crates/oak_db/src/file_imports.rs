@@ -248,6 +248,61 @@ impl File {
         Cow::Owned(CrossFileLayers { above, below })
     }
 
+    /// The lookup-ordered layers this file's lazy / end-of-file view sees, one
+    /// context per file that sources this one (see [`File::inherited_layers`]),
+    /// or a single context of [`File::cross_file_layers`] if no inheritance.
+    ///
+    /// The contexts of sourcing files are resolved as alternatives not as a
+    /// priority order. Symbols resolve in each context and are returned as a
+    /// union of results.
+    ///
+    /// Tracked query, firewall between `resolve()` and the `no_eq`
+    /// `semantic_index` read by `attach_layers()`.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> {
+        let own = self.attach_layers(db, AttachView::Anywhere);
+        self.layers_by_sourcing_file(db, CollationView::Lazy)
+            .into_iter()
+            .map(|context| context.lookup_order(&own).cloned().collect())
+            .collect()
+    }
+
+    /// [`File::imports_by_sourcing_file`], narrowed to `offset` the way
+    /// [`File::imports_at`] narrows [`File::imports`].
+    ///
+    /// Not tracked because keying a cache on `(self, offset)` would add an entry
+    /// per cursor position.
+    pub(crate) fn imports_by_sourcing_file_at(
+        self,
+        db: &dyn Db,
+        offset: TextSize,
+    ) -> Vec<Vec<ImportLayer>> {
+        let index = self.semantic_index(db);
+        let (cursor_scope, _) = index.scope_at(offset);
+
+        let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
+            (CollationView::Eager, AttachView::Eager(offset))
+        } else {
+            (CollationView::Lazy, AttachView::Lazy(offset))
+        };
+
+        let own = self.attach_layers(db, attaches);
+        self.layers_by_sourcing_file(db, collation)
+            .into_iter()
+            .map(|context| context.lookup_order(&own).cloned().collect())
+            .collect()
+    }
+
+    /// One context per file that sources this one, or a single context when
+    /// nothing does.
+    fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
+        let inherited = self.inherited_layers(db, view);
+        if inherited.is_empty() {
+            return vec![self.cross_file_layers(db, view)];
+        }
+        inherited.iter().map(|site| &site.layers).collect()
+    }
+
     /// The layers `self` inherits from each file that sources it, one entry per
     /// file in `self.sourced_by(db)`, each recursively including what that file
     /// itself inherits. That recursion is what makes inheritance transitive

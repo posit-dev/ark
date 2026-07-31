@@ -109,6 +109,31 @@ fn package_files(layers: &[ImportLayer]) -> Vec<File> {
         .collect()
 }
 
+/// Layer identities, sorted and deduped, for comparing two views that cover the
+/// same layers in different orders.
+fn layer_keys(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
+    let mut keys: Vec<String> = layers.iter().map(|layer| layer_key(db, layer)).collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn layer_key(db: &TestDb, layer: &ImportLayer) -> String {
+    match layer {
+        ImportLayer::File(file) => format!("File({})", file.path(db)),
+        ImportLayer::SourcingFile {
+            file,
+            exports_so_far,
+        } => {
+            let mut names: Vec<&str> = exports_so_far.iter().map(String::as_str).collect();
+            names.sort();
+            format!("SourcingFile({}, {names:?})", file.path(db))
+        },
+        ImportLayer::Package(package) => format!("Package({})", package.name(db)),
+        ImportLayer::From(package) => format!("From({})", package.name(db)),
+    }
+}
+
 #[test]
 fn test_script_cursor_before_any_attach_sees_no_attached_packages() {
     let mut db = TestDb::new();
@@ -893,6 +918,41 @@ fn test_attach_in_eager_scope_is_visible_to_later_top_level_code() {
 
     let after = TextSize::from(source.find("after").unwrap() as u32);
     assert!(library_attaches(&db, &file.imports_at(&db, after)).contains(&"cli".to_string()));
+}
+
+#[test]
+fn test_imports_at_covers_the_same_layers_as_the_per_sourcing_file_view() {
+    // Both views narrow to `offset` by the same rule and cover the same layers,
+    // grouped differently. `imports_at` is band-major, every sourcing file's
+    // `above` band, then own attaches, then every sourcing file's `below` band.
+    // The per-sourcing-file view is context-major, one file's `above` / own /
+    // `below` in full before the next file's. So the comparison below is over
+    // layer sets, not order.
+    //
+    // Nothing in production reads `imports_at` today (`resolve_at` moved to the
+    // per-sourcing-file view, completions will want the flat one), so this pins
+    // the two together against drift in the narrowing.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "rlang"]);
+    let root = workspace_root(&db, "w");
+
+    // `a.R` attaches a package and `b.R` doesn't, so the two contexts differ
+    // and band-major genuinely reorders against context-major. `helpers.R`'s
+    // own attach sits after the cursor, so an own-attach view that stopped
+    // narrowing would show up as an extra `rlang` layer on one side.
+    let a = make_file(&mut db, "w/a.R", "library(dplyr)\nsource(\"helpers.R\")\n");
+    let b = make_file(&mut db, "w/b.R", "foo <- 1\nsource(\"helpers.R\")\n");
+    let helpers = make_file(&mut db, "w/helpers.R", "foo\nlibrary(rlang)\n");
+    root.set_scripts(&mut db).to(vec![a, b, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let offset = TextSize::from(0);
+    let contexts = helpers.imports_by_sourcing_file_at(&db, offset);
+    assert_eq!(contexts.len(), 2);
+
+    let flat = helpers.imports_at(&db, offset);
+    let grouped: Vec<ImportLayer> = contexts.into_iter().flatten().collect();
+    assert_eq!(layer_keys(&db, &flat), layer_keys(&db, &grouped));
 }
 
 #[test]
