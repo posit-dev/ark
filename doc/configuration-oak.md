@@ -16,7 +16,7 @@ Environment variables read `1` and `true` as on, `0` and `false` as off, case-in
 
 # LSP settings
 
-## `oak.enableSourceFetching`
+## `oak.sourceFetching.enabled`
 
 A boolean, default `TRUE`.
 
@@ -24,9 +24,9 @@ Whether to recover the R sources of the packages your workspace uses, so analysi
 
 Takes effect immediately. Turning it back on fetches sources for the packages Oak has already seen, without needing a restart.
 
-Overridden by the `OAK_ENABLE_SOURCE_FETCHING` environment variable.
+Overridden by the `OAK_SOURCE_FETCHING_ENABLED` environment variable.
 
-To avoid unnecessary traffic on CI, source fetching is disabled when the `CI` environment variable is set. Set `OAK_ENABLE_SOURCE_FETCHING=1` to opt back into fetching sources in a CI job.
+To avoid unnecessary traffic on CI, source fetching is disabled when the `CI` environment variable is set. Set `OAK_SOURCE_FETCHING_ENABLED=1` to opt back into fetching sources in a CI job.
 
 # Package sources
 

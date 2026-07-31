@@ -510,7 +510,7 @@ async fn update_config(
 
     // The config lives outside Oak, so we bump the revision manually to make the
     // next tick act on it. That refreshes diagnostics and reruns source
-    // scheduling, which is how turning `enableSourceFetching` back on starts
+    // scheduling, which is how turning `sourceFetching.enabled` back on starts
     // fetching the packages we've already seen.
     if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
         tracing::info!("Bumping salsa revision after configuration changed");

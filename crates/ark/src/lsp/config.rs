@@ -37,11 +37,11 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
         },
     },
     Setting {
-        key: "oak.enableSourceFetching",
+        key: "oak.sourceFetching.enabled",
         set: |cfg, v| {
-            cfg.oak.enable_source_fetching = v
+            cfg.oak.source_fetching_enabled = v
                 .as_bool()
-                .unwrap_or_else(|| OakConfig::default().enable_source_fetching)
+                .unwrap_or_else(|| OakConfig::default().source_fetching_enabled)
         },
     },
     Setting {
@@ -64,7 +64,7 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
 
 /// Source fetching is enabled by default except on CI.
 /// This env-var opts a CI job back into source fetching.
-pub(crate) const OAK_ENABLE_SOURCE_FETCHING_ENV_VAR: &str = "OAK_ENABLE_SOURCE_FETCHING";
+pub(crate) const OAK_SOURCE_FETCHING_ENABLED_ENV_VAR: &str = "OAK_SOURCE_FETCHING_ENABLED";
 
 pub struct EnvOverride<T> {
     pub name: &'static str,
@@ -74,8 +74,8 @@ pub struct EnvOverride<T> {
 /// Environment variables that override an LSP setting. Only listed here if
 /// there is a corresponding client setting that needs resolution.
 pub static ENV_OVERRIDES: &[EnvOverride<LspConfig>] = &[EnvOverride {
-    name: OAK_ENABLE_SOURCE_FETCHING_ENV_VAR,
-    set: |cfg, on| cfg.oak.enable_source_fetching = on,
+    name: OAK_SOURCE_FETCHING_ENABLED_ENV_VAR,
+    set: |cfg, on| cfg.oak.source_fetching_enabled = on,
 }];
 
 /// Resolve [`ENV_OVERRIDES`] into `config`.
@@ -159,13 +159,13 @@ pub struct OakConfig {
     /// Whether to recover R sources for package dependencies. Sources are
     /// needed for full analysis, but the LSP degrades gracefully if it doesn't
     /// have them.
-    pub enable_source_fetching: bool,
+    pub source_fetching_enabled: bool,
 }
 
 impl Default for OakConfig {
     fn default() -> Self {
         Self {
-            enable_source_fetching: true,
+            source_fetching_enabled: true,
         }
     }
 }

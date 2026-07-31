@@ -50,7 +50,7 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::config::OAK_ENABLE_SOURCE_FETCHING_ENV_VAR;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sources::OakSourceHandler;
@@ -643,9 +643,9 @@ impl GlobalState {
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     // Avoid unnecessary traffic on CI
-    if is_ci() && !env_flag(OAK_ENABLE_SOURCE_FETCHING_ENV_VAR) {
+    if is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) {
         log::info!(
-            "Source fetching is disabled on CI. Set {OAK_ENABLE_SOURCE_FETCHING_ENV_VAR}=1 to enable it."
+            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."
         );
         return None;
     }

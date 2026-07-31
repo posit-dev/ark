@@ -173,7 +173,7 @@ impl SourceScheduler {
         // flip this mid-session. Turning it back on picks up every package
         // we've seen so far. Already resolved against the environment by
         // `apply_env_overrides()`.
-        if !config.enable_source_fetching {
+        if !config.source_fetching_enabled {
             return;
         }
 
