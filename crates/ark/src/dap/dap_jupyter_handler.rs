@@ -32,6 +32,7 @@ use stdext::result::ResultExt;
 use crate::dap::dap_notebook;
 use crate::dap::dap_server::DapConsoleEvent;
 use crate::dap::dap_server::DapHandler;
+use crate::dap::dap_server::EvaluateOutcome;
 use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
@@ -138,24 +139,41 @@ impl DapJupyterHandler {
         let expression = args.expression;
         let frame_id = args.frame_id;
 
-        // This only returns `Some()` if R is idle. Even though we stopped at
-        // some point, causing the Evaluate request, R could be busy evaluating
-        // the next expression already.
-        let result = r_task::try_idle_task(move |capture| {
+        // This runs only if R is idle. Even though we stopped at some point,
+        // causing the Evaluate request, R could be busy evaluating the next
+        // expression already, in which case `try_idle_task()` returns `None`.
+        // `DapHandler::evaluate()` runs the eval under a timeout so a runaway
+        // expression is interrupted and doesn't freeze the kernel.
+        let outcome = r_task::try_idle_task(move |capture| {
             DapHandler::evaluate(&state, &expression, frame_id, capture)
         });
 
-        match result {
-            None => Ok(self.error_response(seq, "evaluate", "R is busy")),
-            // The task raised an R error, caught by the sandbox on the R thread.
-            Some(Err(err)) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
-            Some(Ok(Ok(body))) => {
-                let ResponseBody::Evaluate(eval) = body else {
-                    return Err(anyhow::anyhow!("Unexpected response body from evaluate"));
-                };
+        let Some(outcome) = outcome else {
+            return Ok(self.error_response(seq, "evaluate", "R is busy"));
+        };
+
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                // `DapHandler::evaluate()` doesn't touch R outside of `with_timeout()`,
+                // which already converts any escaping error into `EvaluateOutcome::Error`
+                // (see `DapHandler::evaluate()`). So this shouldn't be reachable.
+                log::error!("Jupyter DAP: Unexpected error from `try_idle_task`: {err:?}");
+                return Ok(self.error_response(seq, "evaluate", &err.to_string()));
+            },
+        };
+
+        match outcome {
+            EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
                 Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
             },
-            Some(Ok(Err(err))) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
+            EvaluateOutcome::Ok(_) => {
+                Err(anyhow::anyhow!("Unexpected response body from evaluate"))
+            },
+            EvaluateOutcome::TimedOut => {
+                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
+            },
+            EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
         }
     }
 

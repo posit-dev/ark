@@ -44,6 +44,7 @@ pub mod startup;
 pub mod strings;
 pub mod sys;
 pub mod thread;
+pub mod timeout;
 pub mod traps;
 pub mod treesitter;
 pub mod ui;

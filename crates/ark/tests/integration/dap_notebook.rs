@@ -1182,6 +1182,177 @@ fn test_notebook_evaluate_error() {
     assert_eq!(reply["body"]["result"], "2");
 }
 
+/// A runaway expression in the watch pane must not freeze the kernel. The
+/// evaluation runs on the R main thread, so a `with_timeout()` deadline
+/// interrupts it and reports an error rather than blocking forever. The
+/// follow-up evaluate checks the interrupt left no stray pending interrupt
+/// behind.
+/// https://github.com/posit-dev/positron/issues/14481
+#[test]
+fn test_notebook_evaluate_timeout() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // `repeat 1` never returns. The kernel must interrupt it after the timeout.
+    let reply = notebook_evaluate(&frontend, 1, "repeat 1");
+    assert_eq!(reply["success"], false);
+    let message = reply["message"].as_str().unwrap();
+    assert!(message.contains("timed out"), "got: {message}");
+
+    // The kernel is still responsive and not stuck on a leftover interrupt.
+    let reply = notebook_evaluate(&frontend, 2, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+}
+
+/// The watch pane evaluates expressions while stopped in a frame. A runaway
+/// expression there (the canonical bug: `repeat 1`) must time out and leave the
+/// debug session intact rather than freezing the kernel: the stopped frame stays
+/// usable and execution can still be continued.
+/// https://github.com/posit-dev/positron/issues/14481
+#[test]
+fn test_notebook_watch_pane_infloop_times_out() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let fn_code = "fn_watch <- function() {\n  x <- 42\n  x\n}";
+
+    // Dump the cell and set a breakpoint on the return expression (line 3).
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": fn_code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 3 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Attach so the breakpoint fires.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_debug_event(); // thread started
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Define the function.
+    frontend.send_execute_request_with_metadata(
+        fn_code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "watch-def" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call it: stops at the breakpoint, kernel stays busy.
+    frontend.send_execute_request_with_metadata(
+        "fn_watch()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "watch-call" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // The frame we're stopped in (what the watch pane targets).
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "stackTrace",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_iopub_busy();
+    let stack_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let frame_id = stack_reply["body"]["stackFrames"][0]["id"]
+        .as_i64()
+        .unwrap();
+
+    // The watch pane evaluates `repeat 1` in the stopped frame. It never returns,
+    // so the kernel must interrupt it after the timeout.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "evaluate",
+        "arguments": { "expression": "repeat 1", "frameId": frame_id }
+    }));
+    frontend.recv_iopub_busy();
+    let eval_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    assert_eq!(eval_reply["success"], false);
+    let message = eval_reply["message"].as_str().unwrap();
+    assert!(message.contains("timed out"), "got: {message}");
+
+    // The session survived the interrupt: a normal watch expression in the same
+    // frame still resolves.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 6,
+        "command": "evaluate",
+        "arguments": { "expression": "x", "frameId": frame_id }
+    }));
+    frontend.recv_iopub_busy();
+    let eval_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    assert_eq!(eval_reply["success"], true);
+    assert_eq!(eval_reply["body"]["result"], "42");
+
+    // And execution can still be continued to completion.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 7,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_shell_execute_reply();
+    let msgs = frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[
+            IopubExpectation::DebugEvent,
+            IopubExpectation::ExecuteResult,
+            IopubExpectation::IdleShell,
+        ],
+    ]);
+    find_debug_event(&msgs, "continued");
+
+    // Disconnect to reset is_connected for other tests.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 8,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+}
+
 /// A print method that raises an R error longjumps out of `Rf_PrintValue`. The
 /// evaluation must surface that as an error and leave both the try-idle
 /// handshake and the `Dap` state intact, so a follow-up evaluate still succeeds.
