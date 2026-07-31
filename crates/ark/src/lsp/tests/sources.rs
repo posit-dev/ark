@@ -1,9 +1,5 @@
 //! Tests that drive the source request pipeline through the real [`GlobalState`]
 //! event loop.
-//!
-//! Each test pins `source_fetching_enabled` rather than taking the default,
-//! since `WorldState::new()` reads `OAK_SOURCE_FETCHING_ENABLED` and an exported
-//! value would otherwise decide what these tests exercise.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,6 +15,7 @@ use super::source_handler::TestSourceHandler;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
 use super::utils::test_client;
+use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use crate::lsp::config::apply_env_overrides;
@@ -87,12 +84,9 @@ async fn test_source_pipeline_ingests_package_sources() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = true;
-
     let mut state = GlobalState::from_parts(
         test_client(),
-        world,
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -241,12 +235,9 @@ async fn test_failed_source_is_not_retried() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = true;
-
     let mut state = GlobalState::from_parts(
         test_client(),
-        world,
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -319,12 +310,9 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.path().to_path_buf()]);
 
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = true;
-
     let mut state = GlobalState::from_parts(
         test_client(),
-        world,
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),

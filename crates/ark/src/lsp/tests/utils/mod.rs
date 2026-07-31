@@ -10,6 +10,7 @@ pub(super) use events::did_change;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use namespace_writer::NamespaceWriter;
+use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
@@ -57,6 +58,18 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     for (basename, contents) in files {
         std::fs::write(dir.join(basename), contents).unwrap();
     }
+}
+
+/// A [`WorldState`] with source fetching pinned on.
+///
+/// `WorldState::new()` resolves `OAK_SOURCE_FETCHING_ENABLED`, so a test that
+/// drives a fetch pins the setting instead of inheriting the default. Otherwise
+/// exporting the variable to save bandwidth locally would decide what these
+/// tests exercise.
+pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
+    let mut world = WorldState::new(db);
+    world.config.oak.source_fetching_enabled = true;
+    world
 }
 
 pub(super) fn make_state(wire: &str, contents: &str) -> (WorldState, Uri) {

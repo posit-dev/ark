@@ -19,6 +19,7 @@ use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
 use super::utils::test_client;
+use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::NamespaceWriter;
@@ -281,7 +282,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),
@@ -347,7 +348,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),
@@ -417,7 +418,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        WorldState::new(db),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler)),
