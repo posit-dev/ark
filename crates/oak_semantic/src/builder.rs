@@ -35,6 +35,7 @@ use aether_syntax::RRoot;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
@@ -44,6 +45,7 @@ use scan::BindingSites;
 use scan::BodyScan;
 use scan::CallResolution;
 use scan::DeferredBody;
+use scan::FlowAttaches;
 use scan::FlowState;
 use scan::OpenScope;
 
@@ -139,7 +141,14 @@ struct ScanState {
     // prefix during the file scan. A lazy callee reads the end-of-file value
     // during the walk, paired with `attached_inherited` for what was live where
     // that body was defined.
-    attached_so_far: Vec<String>,
+    attached_so_far: FlowAttaches,
+    // Where a conditional attach stops holding, keyed by the attaching call's
+    // offset, holding the (package, end) pairs recorded at that offset (almost
+    // always one; a `source()` forwarding several packages can produce
+    // several). Written when a branch or loop join drops the attach from
+    // `attached_so_far`, and read by the walk onto the `SemanticCall` so an
+    // offset-based consumer narrows the same way the scan does.
+    attach_effect_ends: FxHashMap<TextSize, Vec<(String, TextSize)>>,
     // Attaches that were live where the current scan unit was defined, cleared
     // and reseeded by `begin_scan()`. A lazy body inherits them, e.g. in
     // `if (cond) { library(shiny); f <- function() reactive({ ... }) }`. Empty
@@ -213,7 +222,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 call_resolutions: FxHashMap::default(),
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
-                attached_so_far: Vec::new(),
+                attached_so_far: FlowAttaches::default(),
+                attach_effect_ends: FxHashMap::default(),
                 attached_inherited: Vec::new(),
                 attached_anywhere: Vec::new(),
                 open_scopes: Vec::new(),

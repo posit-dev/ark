@@ -189,7 +189,7 @@ impl SemanticIndex {
             .iter()
             .filter(|call| self.scope_is_eager(call.scope))
             .filter_map(|call| match &call.kind {
-                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
                 SemanticCallKind::Source { .. } => None,
             })
             .collect()
@@ -206,7 +206,7 @@ impl SemanticIndex {
         self.semantic_calls
             .iter()
             .filter_map(|call| match &call.kind {
-                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
                 SemanticCallKind::Source { .. } => None,
             })
             .collect()
@@ -214,7 +214,7 @@ impl SemanticIndex {
 
     /// Whether `scope` runs during the file's own top-level execution, i.e. no
     /// enclosing scope is lazy.
-    fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
+    pub fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
         let mut ancestor_id = Some(scope_id);
 
         while let Some(id) = ancestor_id {
@@ -799,11 +799,42 @@ pub struct SemanticCall {
     pub(crate) scope: ScopeId,
 }
 
+/// Where an attach is known to hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachRegion {
+    /// From the call to the end of its scope, since the attach ran on every
+    /// path.
+    Unconditional,
+    /// From the call to `end` only, the close of the arm or loop body that
+    /// made it. Nothing outside is known, in either direction.
+    ///
+    /// The start isn't a field: it's always the call's own offset, so
+    /// [`contains`](Self::contains) takes the `call` rather than storing a
+    /// redundant start that could disagree with it.
+    Conditional { end: TextSize },
+}
+
+impl AttachRegion {
+    /// Whether `offset` falls inside the region of the attach `call` made.
+    ///
+    /// The lower bound is strict, since at the call's own offset it hasn't run.
+    pub fn contains(&self, call: &SemanticCall, offset: TextSize) -> bool {
+        call.offset() < offset &&
+            match self {
+                AttachRegion::Unconditional => true,
+                AttachRegion::Conditional { end } => offset <= *end,
+            }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticCallKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the
     /// search path. Contributes a fallback layer for unbound symbols.
-    Attach { package: String },
+    Attach {
+        package: String,
+        region: AttachRegion,
+    },
     /// `source("path")`: injects the sourced file's top-level
     /// bindings into the current scope. Local-scope semantics, not
     /// search-path semantics.

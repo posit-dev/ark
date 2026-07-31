@@ -20,6 +20,7 @@ use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
@@ -36,6 +37,7 @@ use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::AttachRegion;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotKey;
@@ -194,20 +196,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&condition);
                 }
 
-                self.walk_branch(
-                    |this| {
-                        if let Ok(consequence) = stmt.consequence() {
-                            this.walk_expression(&consequence);
-                        }
-                    },
-                    |this| {
-                        if let Some(else_clause) = stmt.else_clause() {
-                            if let Ok(alternative) = else_clause.alternative() {
-                                this.walk_expression(&alternative);
-                            }
-                        }
-                    },
-                );
+                let alternative = stmt
+                    .else_clause()
+                    .and_then(|else_clause| else_clause.alternative().ok());
+                self.walk_branch(stmt.consequence().ok(), alternative);
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -250,17 +242,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     fn walk_branch(
         &mut self,
-        consequence: impl FnOnce(&mut Self),
-        alternative: impl FnOnce(&mut Self),
+        consequence: Option<AnyRExpression>,
+        alternative: Option<AnyRExpression>,
     ) {
         let pre = self.walk.use_def_maps[self.current_scope].snapshot();
 
-        consequence(self);
+        if let Some(consequence) = consequence {
+            self.walk_expression(&consequence);
+        }
 
         let post = self.walk.use_def_maps[self.current_scope].snapshot();
         self.walk.use_def_maps[self.current_scope].restore(pre);
 
-        alternative(self);
+        if let Some(alternative) = alternative {
+            self.walk_expression(&alternative);
+        }
 
         self.walk.use_def_maps[self.current_scope].merge(post);
     }
@@ -503,11 +499,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // only visible within that function and its children, since the
         // function might never be called. Same reasoning as `source()` calls.
         let call_offset = call.syntax().text_trimmed_range().start();
+        let region = self.attach_region(call_offset, &package);
         self.walk.semantic_calls.push(SemanticCall {
-            kind: SemanticCallKind::Attach { package },
+            kind: SemanticCallKind::Attach { package, region },
             offset: call_offset,
             scope: self.current_scope,
         });
+    }
+
+    /// Where the attach of `package` at `offset` holds, as the scan recorded
+    /// it at a branch or loop join. `Unconditional` for an attach on every path.
+    fn attach_region(&self, offset: TextSize, package: &str) -> AttachRegion {
+        let end = self.scan.attach_effect_ends.get(&offset).and_then(|ends| {
+            ends.iter()
+                .find_map(|(site_package, end)| (site_package == package).then_some(*end))
+        });
+
+        match end {
+            Some(end) => AttachRegion::Conditional { end },
+            None => AttachRegion::Unconditional,
+        }
     }
 
     // `source("file.R")` creates `DefinitionKind::Import` forwarding
@@ -578,8 +589,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // to this `source()`'s offset so scope-layer composition treats
             // them identically to local `library()` calls.
             for pkg in resolution.packages {
+                let region = self.attach_region(call_offset, &pkg);
                 self.walk.semantic_calls.push(SemanticCall {
-                    kind: SemanticCallKind::Attach { package: pkg },
+                    kind: SemanticCallKind::Attach {
+                        package: pkg,
+                        region,
+                    },
                     offset: call_offset,
                     scope: self.current_scope,
                 });

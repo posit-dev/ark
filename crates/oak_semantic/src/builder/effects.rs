@@ -116,8 +116,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Now check imports since the symbol is locally unbound
         let lazy = self.scan_is_lazy();
-        let attached =
-            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far);
+        let attached = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
         let effects = self.resolver.resolve_effects(sym, &attached, lazy);
 
         let Some(effects) = effects else {
@@ -289,8 +291,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ) {
         // A package in `attached_anywhere` but off the search path means it was
         // dropped at a branch or loop join
-        let search_path =
-            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far);
+        let search_path = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
         let dropped: Vec<(String, TextRange)> = self
             .scan
             .attached_anywhere

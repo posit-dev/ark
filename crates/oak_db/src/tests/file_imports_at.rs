@@ -321,3 +321,164 @@ fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     assert!(at("source").contains(&"dplyr".to_string()));
     assert!(!at("after").contains(&"dplyr".to_string()));
 }
+
+/// The attaches visible at each `needle` in `source`, one entry per needle.
+fn attaches_at(db: &TestDb, file: File, source: &str, needles: &[&str]) -> Vec<Vec<String>> {
+    needles
+        .iter()
+        .map(|needle| {
+            let offset = TextSize::from(source.find(needle).unwrap() as u32);
+            library_attaches(db, &file.imports_at(db, offset))
+        })
+        .collect()
+}
+
+#[test]
+fn test_conditional_attach_holds_only_inside_its_branch() {
+    // `library(cli)` runs only when `cond` is true, so past the branch nothing
+    // says cli is attached. It covers its own arm and stops at the closing
+    // brace, the same narrowing the scan applies to `attached_so_far`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "before\nif (cond) {\n  library(cli)\n  inside\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let no_attach: Vec<String> = Vec::new();
+    assert_eq!(
+        attaches_at(&db, file, source, &["before", "inside", "after"]),
+        vec![no_attach.clone(), vec!["cli".to_string()], no_attach]
+    );
+}
+
+#[test]
+fn test_conditional_attach_does_not_reach_the_sibling_branch() {
+    // The arm that attaches ends before the `else` starts, so the alternative
+    // resolves against the search path as it was before the `if`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "if (cond) {\n  library(cli)\n  taken\n} else {\n  other\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["taken", "other"]), vec![
+        vec!["cli".to_string()],
+        Vec::<String>::new()
+    ]);
+}
+
+#[test]
+fn test_attach_on_both_branches_holds_after_the_if() {
+    // Whichever arm runs, cli ends up attached, so the join keeps it. This is
+    // the case that separates the effect-region rule from "anything inside an
+    // `if` is conditional".
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "if (cond) {\n  library(cli)\n} else {\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["after"]), vec![vec![
+        "cli".to_string(),
+        "cli".to_string()
+    ]]);
+}
+
+#[test]
+fn test_attach_in_loop_body_does_not_hold_after_the_loop() {
+    // An empty sequence means the body never runs, so the attach doesn't
+    // survive the loop even though no branch is involved.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "for (i in xs) {\n  library(cli)\n  inside\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside", "after"]), vec![
+        vec!["cli".to_string()],
+        Vec::<String>::new()
+    ]);
+}
+
+#[test]
+fn test_attach_on_both_branches_inside_a_loop_drops_at_the_loop_join() {
+    // The `if` join keeps cli, then the loop join drops it. Both arms' calls
+    // have to carry an effect end for this to hold: keeping only one would
+    // leave the other looking unconditional.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "while (cond) {\n  if (x) library(cli) else library(cli)\n  inside\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside", "after"]), vec![
+        vec!["cli".to_string(), "cli".to_string()],
+        Vec::<String>::new()
+    ]);
+}
+
+#[test]
+fn test_conditional_attach_reaches_only_a_body_defined_in_its_branch() {
+    // A lazy body ignores source order, so it sees a file-scope attach wherever
+    // that attach sits. A conditional one is different: only a body defined
+    // inside the arm is guaranteed to run with the package attached.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source =
+        "if (cond) {\n  library(cli)\n  f <- function() guarded\n}\ng <- function() unguarded\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(
+        attaches_at(&db, file, source, &["guarded", "unguarded"]),
+        vec![vec!["cli".to_string()], Vec::<String>::new()]
+    );
+}
+
+#[test]
+fn test_cursor_in_local_narrows_to_calls_that_have_run() {
+    // `local()` runs at its call site, so a cursor inside it sees the search
+    // path as of that point, not the end-of-file view a function body gets.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "local({\n  inside\n})\nlibrary(cli)\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![Vec::<
+        String,
+    >::new(
+    )]);
+}
+
+#[test]
+fn test_attach_in_local_is_visible_after_the_local() {
+    // The block runs during the file's own top-level execution, so its
+    // `library()` is on the search path afterwards, the same as one written
+    // directly at top level.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "local({\n  library(cli)\n})\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["after"]), vec![vec![
+        "cli".to_string()
+    ]]);
+}
+
+#[test]
+fn test_attach_in_function_body_is_not_visible_after_it() {
+    // The body may never run, so its `library()` stays out of the top-level
+    // view. Guards the eager-scope widening against swallowing lazy scopes.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "f <- function() {\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["after"]), vec![Vec::<
+        String,
+    >::new(
+    )]);
+}

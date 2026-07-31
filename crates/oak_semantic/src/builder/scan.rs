@@ -14,6 +14,7 @@ use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 use rustc_hash::FxHashMap;
@@ -202,17 +203,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&sequence);
                 }
 
-                // Since the body may not run (empty sequence), a binding or
-                // `library()` created in the body isn't on every path, so it
-                // doesn't persist past the loop. The snapshot/merge intersects
-                // bindings away, and the mark truncates the body's attaches.
-                let attach_mark = self.scan.attached_so_far.len();
-                let pre_body = self.scan.bound_so_far.snapshot();
-                if let Ok(body) = stmt.body() {
-                    self.scan_expression(&body);
-                }
-                self.scan.bound_so_far.merge(pre_body);
-                self.scan.attached_so_far.truncate(attach_mark);
+                self.scan_loop_body(stmt.body().ok());
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -220,20 +211,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                self.scan_branch(
-                    |this| {
-                        if let Ok(consequence) = stmt.consequence() {
-                            this.scan_expression(&consequence);
-                        }
-                    },
-                    |this| {
-                        if let Some(else_clause) = stmt.else_clause() {
-                            if let Ok(alternative) = else_clause.alternative() {
-                                this.scan_expression(&alternative);
-                            }
-                        }
-                    },
-                );
+                let alternative = stmt
+                    .else_clause()
+                    .and_then(|else_clause| else_clause.alternative().ok());
+                self.scan_branch(stmt.consequence().ok(), alternative);
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -241,17 +222,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                // Since the body may not run (condition false on entry), a
-                // binding or `library()` created in the body isn't on every
-                // path, so it doesn't persist. The snapshot/merge intersects
-                // bindings away, and the mark truncates the body's attaches.
-                let attach_mark = self.scan.attached_so_far.len();
-                let pre_body = self.scan.bound_so_far.snapshot();
-                if let Ok(body) = stmt.body() {
-                    self.scan_expression(&body);
-                }
-                self.scan.bound_so_far.merge(pre_body);
-                self.scan.attached_so_far.truncate(attach_mark);
+                self.scan_loop_body(stmt.body().ok());
             },
 
             // `repeat` loops, subsets, extractions, parentheses, unary ops, and
@@ -267,33 +238,106 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     fn scan_branch(
         &mut self,
-        consequence: impl FnOnce(&mut Self),
-        alternative: impl FnOnce(&mut Self),
+        consequence: Option<AnyRExpression>,
+        alternative: Option<AnyRExpression>,
     ) {
         let pre = self.scan.bound_so_far.snapshot();
         // A `library()` in one branch must not be visible in the sibling
         // branch, so peel each side's attaches off at this mark and re-add only
         // what survives the join.
-        let attach_mark = self.scan.attached_so_far.len();
+        let attach_watermark = self.scan.attached_so_far.len();
 
-        consequence(self);
+        let consequence_end = self.scan_conditional(consequence.as_ref());
 
         let post = self.scan.bound_so_far.snapshot();
-        let consequence_attaches = self.scan.attached_so_far.split_off(attach_mark);
+        let consequence_attaches = self.scan.attached_so_far.split_off(attach_watermark);
         self.scan.bound_so_far.restore(pre);
 
-        alternative(self);
+        let alternative_end = self.scan_conditional(alternative.as_ref());
 
         self.scan.bound_so_far.merge(post);
+        let alternative_attaches = self.scan.attached_so_far.split_off(attach_watermark);
 
-        // A package attached on only one branch isn't attached on every path, so
-        // it drops at the join, the same as a one-branch binding dropping from
-        // `bound_so_far`. Only packages attached on both branches survive.
-        let alternative_attaches = self.scan.attached_so_far.split_off(attach_mark);
-        for package in consequence_attaches {
-            if alternative_attaches.contains(&package) {
-                self.scan.attached_so_far.push(package);
-            }
+        self.join_attaches(
+            consequence_attaches,
+            consequence_end,
+            alternative_attaches,
+            alternative_end,
+        );
+    }
+
+    /// Scan a loop body, which may not run at all (an empty `for` sequence, a
+    /// `while` condition false on entry). Effects in the body like a binding or
+    /// `library()` call don't persist past the loop.
+    fn scan_loop_body(&mut self, body: Option<AnyRExpression>) {
+        let attach_watermark = self.scan.attached_so_far.len();
+        let pre_body = self.scan.bound_so_far.snapshot();
+
+        let body_end = self.scan_conditional(body.as_ref());
+
+        self.scan.bound_so_far.merge(pre_body);
+        let dropped = self.scan.attached_so_far.split_off(attach_watermark);
+        self.end_attach_effects(dropped, body_end);
+    }
+
+    /// Scan a region that may not run (a branch arm, a loop body) and return
+    /// where it ends, the point past which its effects like attaches no longer hold.
+    fn scan_conditional(&mut self, region: Option<&AnyRExpression>) -> Option<TextSize> {
+        let region = region?;
+        self.scan_expression(region);
+        Some(region.syntax().text_trimmed_range().end())
+    }
+
+    /// Rejoin the two arms' attaches. A package attached on only one arm isn't
+    /// attached on every path, so it drops here the same way a one-arm binding
+    /// drops from `bound_so_far`, and its effect ends at the close of its arm.
+    /// A package attached on both arms carries past the `if`.
+    fn join_attaches(
+        &mut self,
+        consequence: Vec<AttachSite>,
+        consequence_end: Option<TextSize>,
+        alternative: Vec<AttachSite>,
+        alternative_end: Option<TextSize>,
+    ) {
+        if consequence.is_empty() && alternative.is_empty() {
+            return;
+        }
+
+        let attaches =
+            |sites: &[AttachSite], package: &str| sites.iter().any(|site| site.package == package);
+
+        let (kept_consequence, dropped_consequence): (Vec<_>, Vec<_>) = consequence
+            .iter()
+            .cloned()
+            .partition(|site| attaches(&alternative, &site.package));
+        let (kept_alternative, dropped_alternative): (Vec<_>, Vec<_>) = alternative
+            .iter()
+            .cloned()
+            .partition(|site| attaches(&consequence, &site.package));
+
+        self.end_attach_effects(dropped_consequence, consequence_end);
+        self.end_attach_effects(dropped_alternative, alternative_end);
+
+        // Both arms' calls go back on the search path, not just one of them. An
+        // enclosing loop join has to be able to end the effect of each.
+        for site in kept_consequence.into_iter().chain(kept_alternative) {
+            self.scan.attached_so_far.push(site.package, site.offset);
+        }
+    }
+
+    /// End the effect of each attach in `dropped` at `end`, the close of the
+    /// branch arm or loop body that made it. `end` is `None` only for an absent
+    /// arm, which attaches nothing.
+    fn end_attach_effects(&mut self, dropped: Vec<AttachSite>, end: Option<TextSize>) {
+        let Some(end) = end else {
+            return;
+        };
+        for site in dropped {
+            self.scan
+                .attach_effect_ends
+                .entry(site.offset)
+                .or_default()
+                .push((site.package, end));
         }
     }
 
@@ -348,7 +392,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.scan
                     .attached_anywhere
                     .push((package.clone(), call_range));
-                self.scan.attached_so_far.push(package);
+                self.scan.attached_so_far.push(package, call_range.start());
             }
         }
 
@@ -432,7 +476,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     (EvalEnv::Current, EvalTiming::Lazy) => {
                         let attached_inherited = attach_search_path(
                             &self.scan.attached_inherited,
-                            &self.scan.attached_so_far,
+                            self.scan.attached_so_far.packages(),
                         )
                         .into_owned();
                         self.scan.deferred_bodies.push(DeferredBody {
@@ -683,7 +727,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.scan
                     .attached_anywhere
                     .push((pkg.clone(), source_range));
-                self.scan.attached_so_far.push(pkg.clone());
+                self.scan
+                    .attached_so_far
+                    .push(pkg.clone(), source_range.start());
             }
         }
 
@@ -750,9 +796,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// body inherits a branch-local attach through however many levels of
     /// definition sit between them.
     fn record_enclosing_flow(&mut self, range: TextRange) {
-        let attached_inherited =
-            attach_search_path(&self.scan.attached_inherited, &self.scan.attached_so_far)
-                .into_owned();
+        let attached_inherited = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        )
+        .into_owned();
         self.scan.body_scans.insert(range, BodyScan::Deferred {
             bound_so_far: self.scan.bound_so_far.snapshot(),
             attached_inherited,
@@ -831,6 +879,57 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
 
     fn is_global(&self) -> bool {
         self.builder.scan_scope_is_global()
+    }
+}
+
+/// One package attached by a `library()` / `require()` call, or forwarded by a
+/// `source()` one. `offset` is the attaching call's start, which pairs with
+/// `package` to identify the [`SemanticCall`] the walk emits for it.
+///
+/// [`SemanticCall`]: crate::semantic_index::SemanticCall
+#[derive(Clone)]
+pub(super) struct AttachSite {
+    pub(super) package: String,
+    pub(super) offset: TextSize,
+}
+
+/// The packages attached on every path reaching the current point, each with
+/// its call site. The attach analog of [`FlowState`].
+///
+/// The packages sit in their own `Vec` so [`attach_search_path`] can hand the
+/// resolver a `&[String]` without rebuilding the search path at every effect
+/// resolution. The offsets ride alongside so a branch or loop join can name the
+/// attaches it drops.
+#[derive(Default)]
+pub(super) struct FlowAttaches {
+    packages: Vec<String>,
+    offsets: Vec<TextSize>,
+}
+
+impl FlowAttaches {
+    /// The attached packages in attach order, the search path at this point.
+    pub(super) fn packages(&self) -> &[String] {
+        &self.packages
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.packages.len()
+    }
+
+    pub(super) fn push(&mut self, package: String, offset: TextSize) {
+        self.packages.push(package);
+        self.offsets.push(offset);
+    }
+
+    /// Remove and return everything attached since `mark`, in attach order.
+    pub(super) fn split_off(&mut self, watermark: usize) -> Vec<AttachSite> {
+        let offsets = self.offsets.split_off(watermark);
+        self.packages
+            .split_off(watermark)
+            .into_iter()
+            .zip(offsets)
+            .map(|(package, offset)| AttachSite { package, offset })
+            .collect()
     }
 }
 

@@ -5,6 +5,7 @@ use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::semantic_index::AmbiguityReason;
+use oak_semantic::semantic_index::AttachRegion;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -474,7 +475,8 @@ fn test_quote_suppresses_assign_effect() {
 fn test_directive_library_identifier() {
     let index = index_with_base("library(dplyr)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -482,7 +484,8 @@ fn test_directive_library_identifier() {
 fn test_directive_library_string() {
     let index = index_with_base("library(\"tidyr\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "tidyr".into()
+        package: "tidyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -490,7 +493,8 @@ fn test_directive_library_string() {
 fn test_directive_library_single_quoted_string() {
     let index = index_with_base("library('ggplot2')");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "ggplot2".into()
+        package: "ggplot2".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -498,7 +502,8 @@ fn test_directive_library_single_quoted_string() {
 fn test_directive_require() {
     let index = index_with_base("require(data.table)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "data.table".into()
+        package: "data.table".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -507,13 +512,16 @@ fn test_directive_multiple_libraries() {
     let index = index_with_base("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Attach {
-            package: "tidyr".into()
+            package: "tidyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Attach {
-            package: "ggplot2".into()
+            package: "ggplot2".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -523,7 +531,8 @@ fn test_directive_named_argument() {
     // The package binds the `package` formal by name.
     let index = index_with_base("library(package = dplyr)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -533,7 +542,8 @@ fn test_directive_multiple_arguments() {
     // no formal we track.
     let index = index_with_base("library(dplyr, warn.conflicts = FALSE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -543,7 +553,8 @@ fn test_directive_character_only_string() {
     // A string literal resolves to its text.
     let index = index_with_base("library(\"dplyr\", character.only = TRUE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -562,7 +573,8 @@ fn test_directive_character_only_false_is_quoted() {
     // text is the package name.
     let index = index_with_base("library(dplyr, character.only = FALSE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -577,7 +589,8 @@ fn test_directive_library_in_function_scope() {
     // library() in a function body now records a scoped directive
     let index = index_with_base("f <- function() { library(dplyr) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
     let semantic_calls = index.semantic_calls();
     assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
@@ -688,14 +701,16 @@ fn test_source_and_library_calls_coexist() {
     let index = index_with_base("library(dplyr)\nsource(\"helpers.R\")\nrequire(tidyr)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "helpers.R".into(),
             resolved: None,
         },
         &SemanticCallKind::Attach {
-            package: "tidyr".into()
+            package: "tidyr".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -875,7 +890,8 @@ fn test_fixme_directive_declare_library_transparent() {
     // FIXME: We should declare `declare()` as a quoting function.
     let index = index_with_base("declare(library(dplyr))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -905,7 +921,8 @@ fn test_directive_declare_mixed_with_bare() {
         index_with_base("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "helpers.R".into(),
@@ -1047,7 +1064,8 @@ fn test_source_resolver_packages_become_attach_calls() {
             resolved: Some(Url::parse("file:///test/helpers.R").unwrap()),
         },
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -1202,7 +1220,8 @@ fn test_source_resolver_multiple_files_each_emitted_and_injected() {
             resolved: Some(Url::parse("file:///a.R").unwrap()),
         },
         &SemanticCallKind::Attach {
-            package: "pkgA".into()
+            package: "pkgA".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "b.R".into(),

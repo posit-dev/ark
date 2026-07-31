@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use biome_rowan::TextSize;
 use camino::Utf8Path;
 use oak_package_metadata::namespace::Namespace;
+use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
-use oak_semantic::ScopeId;
+use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::Db;
 use crate::File;
@@ -67,6 +69,40 @@ impl CrossFileLayers {
     }
 }
 
+/// Which of a file's own `library()` attaches a caller sees.
+#[derive(Clone, Copy)]
+enum AttachView {
+    /// Every attach in the file.
+    ///
+    /// Over-approximates on two axes. An attach in a function body counts even
+    /// though the body may never run, and a conditional one counts even though
+    /// its branch may not have been taken.
+    Anywhere,
+    /// The attaches in effect at `offset` in a lazy scope. Source order doesn't
+    /// constrain a body that runs later, so an attach anywhere in the file
+    /// counts, but a conditional one still only covers its own arm.
+    Lazy(TextSize),
+    /// The attaches that have run and still hold at `offset` in an eagerly
+    /// evaluated scope. Calls reached only by running a lazy body are dropped,
+    /// as are calls after the offset.
+    Eager(TextSize),
+}
+
+impl AttachView {
+    fn sees(&self, index: &SemanticIndex, call: &SemanticCall, region: &AttachRegion) -> bool {
+        match *self {
+            AttachView::Anywhere => true,
+            AttachView::Lazy(offset) => match region {
+                AttachRegion::Unconditional => true,
+                AttachRegion::Conditional { .. } => region.contains(call, offset),
+            },
+            AttachView::Eager(offset) => {
+                index.scope_is_eager(call.scope()) && region.contains(call, offset)
+            },
+        }
+    }
+}
+
 /// The point in a package's load at which a file views its collation siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CollationView {
@@ -80,10 +116,12 @@ pub(crate) enum CollationView {
 
 #[salsa::tracked]
 impl File {
-    /// The import layers visible to this file at end-of-file, in R's lookup
-    /// (LIFO) priority order. Symbols that don't have local bindings (are
-    /// unbound in the file's semantic index) can be resolved against these
-    /// imports.
+    /// Every import layer this file could see, in R's lookup (LIFO) priority
+    /// order. Symbols that don't have local bindings (are unbound in the file's
+    /// semantic index) can be resolved against these imports.
+    ///
+    /// Over-approximates: every attach in the file contributes a layer,
+    /// including ones in a function body or in a branch that wasn't taken.
     ///
     /// `library()` calls further down the file come earlier in the returned
     /// `Vec`, and collation files later in the package come earlier too. The
@@ -97,17 +135,18 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let layers = self.cross_file_layers(db, CollationView::Lazy);
-        let own = self.attach_layers(db, None);
+        let own = self.attach_layers(db, AttachView::Anywhere);
         layers.splice_own_attaches(own)
     }
 
     /// Import layers visible at an `offset` in a file:
     ///
-    /// - **Cursor in lazy context**: returns the full lazy view. Lazy
-    ///   contexts like functions are treated as if they run after the
-    ///   file is fully sourced (over-approximation). Any `library()` /
-    ///   collation entry is potentially visible regardless of where it
-    ///   appears relative to the cursor.
+    /// - **Cursor in lazy context**: the end-of-file view. Lazy contexts like
+    ///   functions are treated as if they run after the file is fully sourced
+    ///   (over-approximation), so any `library()` / collation entry is
+    ///   potentially visible regardless of where it appears relative to the
+    ///   cursor. A conditional attach is the exception: it only covers the arm
+    ///   that made it, so a body defined outside that arm doesn't see it.
     ///
     /// - **Top-level cursor (script)**: only `library()` calls that
     ///   have occurred before `offset`. Most recently attached comes
@@ -120,54 +159,48 @@ impl File {
     /// Plain method rather than `#[salsa::tracked]`. Tracking would key the
     /// cache on `(self, offset)`, creating one entry per cursor position.
     /// Skipping the cache is fine because the body just reads already-cached
-    /// subqueries (`imports`, `semantic_index`) and applies an O(n) filter.
+    /// subqueries (`cross_file_layers`, `semantic_index`) and applies an O(n)
+    /// filter.
     pub fn imports_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
         let index = self.semantic_index(db);
-        let file_scope = ScopeId::from(0);
         let (cursor_scope, _) = index.scope_at(offset);
 
-        // Cursor in lazy context. EOF view, same as `imports()`.
-        if cursor_scope != file_scope {
-            return self.imports(db).clone();
-        }
+        // An eager scope runs during the file's own top-level execution, so a
+        // cursor in a `local()` block sees the search path as of that point,
+        // the same as one at file scope.
+        let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
+            // Predecessors only, and own attaches narrowed to the calls that
+            // have run by `offset`.
+            (CollationView::Eager, AttachView::Eager(offset))
+        } else {
+            (CollationView::Lazy, AttachView::Lazy(offset))
+        };
 
-        // Top-level cursor: predecessors only, and own attaches narrowed to the
-        // calls that have run by `offset`.
-        let layers = self.cross_file_layers(db, CollationView::Eager);
-        let own = self.attach_layers(db, Some(offset));
+        let layers = self.cross_file_layers(db, collation);
+        let own = self.attach_layers(db, attaches);
         layers.splice_own_attaches(own)
     }
 
     /// This file's own `library()` / `require()` attaches as `Package` layers,
-    /// in LIFO order (latest-attached first). Reads the file's own semantic
-    /// index. `before` selects which calls to include:
-    ///
-    /// - `None`: every attach. The end-of-file view, used for lazy contexts.
-    /// - `Some(offset)`: only top-level (file-scope) calls that have run by
-    ///   `offset`. Calls nested in a block (e.g. inside `test_that({})`) are
-    ///   dropped, as are calls after the offset.
+    /// in LIFO order (latest-attached first), narrowed to what `view` admits.
+    /// Reads the file's own semantic index.
     ///
     /// An attach to a package absent from every root is dropped (no entity).
-    fn attach_layers(self, db: &dyn Db, before: Option<TextSize>) -> Vec<ImportLayer> {
+    fn attach_layers(self, db: &dyn Db, view: AttachView) -> Vec<ImportLayer> {
         let index = self.semantic_index(db);
-        let file_scope = ScopeId::from(0);
         index
             .semantic_calls()
             .iter()
             .rev()
-            .filter(|call| match before {
-                Some(offset) => call.scope() == file_scope && call.offset() < offset,
-                None => true,
-            })
             .filter_map(|call| match call.kind() {
-                SemanticCallKind::Attach { package } => {
-                    db.package_by_name(package).map(ImportLayer::Package)
-                },
+                SemanticCallKind::Attach { package, region } => Some((call, package, region)),
                 // A `library()` inside the sourced file is forwarded separately
                 // by the semantic index builder as its own `Attach`, scoped to
                 // this `source()`.
                 SemanticCallKind::Source { .. } => None,
             })
+            .filter(|(call, _, region)| view.sees(index, call, region))
+            .filter_map(|(_, package, _)| db.package_by_name(package).map(ImportLayer::Package))
             .collect()
     }
 
