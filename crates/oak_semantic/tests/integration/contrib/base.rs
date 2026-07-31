@@ -88,6 +88,22 @@ impl ImportsResolver for MapResolver {
     }
 }
 
+/// Expands any directory to `files`, standing in for the workspace listing.
+/// Needs no `resolve_effects`: `sourceDir` is matched on its name.
+struct DirResolver {
+    files: Vec<SourceResolution>,
+}
+
+impl ImportsResolver for DirResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_source_dir(&mut self, _path: &str) -> Vec<SourceResolution> {
+        self.files.clone()
+    }
+}
+
 /// Resolves `source` to the multi-file [`CollationHandler`] and maps the
 /// collated paths through `sources`.
 struct MultiFileResolver {
@@ -1243,6 +1259,87 @@ fn test_source_resolver_multiple_files_each_emitted_and_injected() {
         let def = &index.definitions(file)[bindings.definitions()[0]];
         assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
     }
+}
+
+#[test]
+fn test_source_dir_expands_to_one_call_per_file() {
+    // A `SourceTarget::Dir` path routes to `resolve_source_dir` and expands to
+    // one `Source` call per file, in the order the resolver lists them, each
+    // followed by its own forwarded packages. Every call keeps the directory
+    // path as written, since no per-file path appears in the source text.
+    let files = vec![
+        SourceResolution {
+            url: Url::parse("file:///R/a.R").unwrap(),
+            names: vec!["a_name".into()],
+            packages: vec!["pkgA".into()],
+        },
+        SourceResolution {
+            url: Url::parse("file:///R/b.R").unwrap(),
+            names: vec!["b_name".into()],
+            packages: vec![],
+        },
+    ];
+    let code = "sourceDir(\"R\")\na_name\nb_name\n";
+    let index = build_test_index(code, DirResolver { files });
+
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Source {
+            path: "R".into(),
+            resolved: Some(Url::parse("file:///R/a.R").unwrap()),
+        },
+        &SemanticCallKind::Attach {
+            package: "pkgA".into(),
+            region: AttachRegion::Unconditional,
+        },
+        &SemanticCallKind::Source {
+            path: "R".into(),
+            resolved: Some(Url::parse("file:///R/b.R").unwrap()),
+        },
+    ]);
+
+    // Both files' names are injected and resolve at their uses.
+    // Uses: sourceDir(0), a_name(1), b_name(2)
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+    for use_index in [1, 2] {
+        let bindings = map.bindings_at_use(UseId::from(use_index));
+        assert_eq!(bindings.definitions().len(), 1);
+        let def = &index.definitions(file)[bindings.definitions()[0]];
+        assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    }
+}
+
+#[test]
+fn test_source_dir_recognized_despite_a_local_definition() {
+    // `sourceDir` is the worked example in `?source`, so the caller has pasted
+    // the definition into their own file. Ordinary resolution reads that as a
+    // shadowing local binding and drops the effect, which is why the name is
+    // matched syntactically.
+    let files = vec![SourceResolution {
+        url: Url::parse("file:///R/a.R").unwrap(),
+        names: vec!["a_name".into()],
+        packages: vec![],
+    }];
+    let code = "sourceDir <- function(path) NULL\nsourceDir(\"R\")\na_name\n";
+    let index = build_test_index(code, DirResolver { files });
+
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "R".into(),
+        resolved: Some(Url::parse("file:///R/a.R").unwrap()),
+    }]);
+}
+
+#[test]
+fn test_source_dir_with_no_files_records_the_path_unresolved() {
+    // A directory the resolver expands to nothing still records the path the
+    // user wrote, so a consumer can report it. Same shape as a file path that
+    // didn't resolve.
+    let index = build_test_index("sourceDir(\"R\")\n", DirResolver { files: vec![] });
+
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "R".into(),
+        resolved: None,
+    }]);
 }
 
 #[test]

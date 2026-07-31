@@ -11,6 +11,7 @@ use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
 use url::Url;
 
+use crate::file_imports::files_in_directory;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::Db;
@@ -56,6 +57,34 @@ impl<'db> SalsaImportsResolver<'db> {
             cache: EffectsCache::default(),
         }
     }
+
+    fn source_resolution(&self, file: File) -> SourceResolution {
+        let names: Vec<String> = file
+            .exports(self.db)
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        let packages: Vec<String> = file
+            .attached_packages(self.db)
+            .iter()
+            .map(|name| name.text(self.db).to_string())
+            .collect();
+
+        SourceResolution {
+            url: file.path(self.db).to_url(),
+            names,
+            packages,
+        }
+    }
+
+    /// The workspace files a `SourceTarget::Dir` path names, in load order.
+    /// `None` when the path doesn't anchor.
+    fn files_in_source_dir(&self, path: &str) -> Option<Vec<File>> {
+        let anchor = anchor_dir(self.db, self.file)?;
+        let target_path = resolve_relative_to(&anchor, path)?;
+        Some(files_in_directory(self.db, target_path.as_path()?))
+    }
 }
 
 /// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
@@ -97,24 +126,17 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         // TODO(diagnostics): Until we support out-of-workspace sourced files,
         // should we at least lint so user knows that we can't analyse the file?
         let file = self.db.file_by_path(&target_path)?;
+        Some(self.source_resolution(file))
+    }
 
-        let names: Vec<String> = file
-            .exports(self.db)
-            .iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-
-        let packages: Vec<String> = file
-            .attached_packages(self.db)
-            .iter()
-            .map(|name| name.text(self.db).to_string())
-            .collect();
-
-        Some(SourceResolution {
-            url: target_path.to_url(),
-            names,
-            packages,
-        })
+    fn resolve_source_dir(&mut self, path: &str) -> Vec<SourceResolution> {
+        self.files_in_source_dir(path)
+            .unwrap_or_default()
+            .into_iter()
+            // Exclude sourcing file
+            .filter(|file| *file != self.file)
+            .map(|file| self.source_resolution(file))
+            .collect()
     }
 
     fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {

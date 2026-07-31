@@ -449,35 +449,18 @@ impl File {
         package.files(db).contains(&self)
     }
 
-    /// The collation members of `self`'s own `R/` directory, in load order:
-    /// sorted by basename, ASCII case-insensitively, the same order a
-    /// package `R/` with no `Collate:` gets from
-    /// `oak_scan::packages::order_alphabetically`.
+    /// The collation members of `self`'s own `R/` directory, in load order.
     ///
     /// Path-based only. The scan-time resolver
     /// ([`SalsaImportsResolver`](crate::imports::SalsaImportsResolver)) calls
     /// `cross_file_layers` while `self`'s own semantic index is still being
     /// built. The query can't recurse into the index.
-    ///
-    /// Gathers candidates from workspace roots only (`root.scripts(db)` for
-    /// each). `OrphanRoot`, library roots, and `StaleRoot` don't contribute
-    /// collation siblings.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn collation_siblings(self, db: &dyn Db) -> Vec<File> {
         let Some(dir) = self.path(db).as_path().and_then(Utf8Path::parent) else {
             return Vec::new();
         };
-
-        let mut siblings: Vec<File> = db
-            .workspace_roots()
-            .roots(db)
-            .iter()
-            .flat_map(|root| root.scripts(db).iter().copied())
-            .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
-            .collect();
-
-        siblings.sort_by_cached_key(|file| collation_basename_key(*file, db));
-        siblings
+        files_in_directory(db, dir)
     }
 }
 
@@ -811,7 +794,26 @@ fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
     file.path(db).file_name().unwrap_or_default()
 }
 
-/// Case-insensitive basename sort key for `collation_siblings`, matching
+/// The workspace files sitting directly in `dir`, in load order: sorted by
+/// basename, ASCII case-insensitively, the same order a package `R/` with no
+/// `Collate:` gets from `oak_scan::packages::order_alphabetically`.
+///
+/// Gathers from workspace roots only (`root.scripts(db)` for each).
+/// `OrphanRoot`, library roots, and `StaleRoot` don't contribute.
+pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
+    let mut files: Vec<File> = db
+        .workspace_roots()
+        .roots(db)
+        .iter()
+        .flat_map(|root| root.scripts(db).iter().copied())
+        .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
+        .collect();
+
+    files.sort_by_cached_key(|file| collation_basename_key(*file, db));
+    files
+}
+
+/// Case-insensitive basename sort key for [`files_in_directory`], matching
 /// `oak_scan::packages::order_alphabetically`'s `basename_key` so a
 /// non-package `R/` collates the same way as a package `R/` with no
 /// `Collate:`.

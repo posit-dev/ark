@@ -100,6 +100,26 @@ pub fn annotates(name: &str) -> bool {
     INDEX.contains_key(name)
 }
 
+/// HACK: This matches a `sourceDir()` call syntactically. See `?source` for the
+/// definition of `sourceDir()` that people copy around:
+/// https://github.com/search?q=sourceDir+language%3AR&type=code
+/// This is a stopgap workaround until we can infer source effects around a
+/// `list.files()` loop.
+pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
+    if name != "sourceDir" {
+        return None;
+    }
+    Some(&EffectsHandlers {
+        arguments: None,
+        attach: None,
+        source: Some(&SourceAnnotation {
+            position: 0,
+            target: SourceTarget::Dir,
+        }),
+        assign: None,
+    })
+}
+
 /// Resolver for an effect of a call.
 ///
 /// The single interface behind every effect kind (NSE, attach, source).

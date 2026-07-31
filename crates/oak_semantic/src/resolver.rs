@@ -50,6 +50,16 @@ pub trait ImportsResolver {
     /// Returns `None` when the target can't be located.
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution>;
 
+    /// Resolve a directory path to one resolution per R file in it, in the
+    /// order they load. `path` is anchored the same way [`resolve_source`]
+    /// anchors a file path.
+    ///
+    /// [`resolve_source`]: ImportsResolver::resolve_source
+    fn resolve_source_dir(&mut self, path: &str) -> Vec<SourceResolution> {
+        let _ = path;
+        Vec::new()
+    }
+
     /// Resolve a bare callee `name` to its effects. `attached` is the packages
     /// attached at this point, in flow order. The builder passes it in because
     /// the resolver can't query our own semantic index without creating a
