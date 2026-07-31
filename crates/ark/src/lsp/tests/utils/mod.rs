@@ -9,6 +9,7 @@ pub(super) use description_writer::DescriptionWriter;
 pub(super) use events::did_change;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
+pub(super) use events::initialize;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;

@@ -52,6 +52,7 @@ use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::apply_env_overrides;
+use crate::lsp::config::apply_initialization_options;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
@@ -95,6 +96,11 @@ pub(crate) fn initialize(
 ) -> LspResult<InitializeResult> {
     let workspace_paths = effective_workspace_paths(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
+
+    if let Some(options) = &params.initialization_options {
+        apply_initialization_options(&mut state.config, options);
+    }
+    apply_env_overrides(&mut state.config);
 
     state.workspace.folders = workspace_paths;
 

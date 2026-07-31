@@ -1,8 +1,10 @@
 use std::path::Path;
 
+use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
+use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
@@ -12,7 +14,32 @@ use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
+use crate::lsp::backend::LspRequest;
+use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::Event;
+
+/// An `initialize` request opening `path` as the sole workspace folder, with
+/// `initialization_options` passed through verbatim.
+///
+/// Hand back the response receiver along with the event. The caller has to hold
+/// it for the duration of the test: dropping it early makes `respond()`'s send
+/// fail, which nextest then reports as a leak.
+pub(crate) fn initialize(
+    path: &Path,
+    initialization_options: Option<serde_json::Value>,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    let params = InitializeParams {
+        workspace_folders: Some(vec![WorkspaceFolder {
+            uri: Uri::from_file_path(path).unwrap(),
+            name: String::new(),
+        }]),
+        initialization_options,
+        ..Default::default()
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let event = Event::Lsp(LspMessage::Request(LspRequest::Initialize(params), tx));
+    (event, rx)
+}
 
 pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
     Event::Lsp(LspMessage::Notification(

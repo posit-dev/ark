@@ -62,6 +62,27 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
     },
 ];
 
+/// Resolve global settings from the client's `initializationOptions`.
+///
+/// Keys are the dotted paths from [`GLOBAL_SETTINGS`], looked up through nested
+/// objects, so `oak.sourceFetching.enabled` reads `{oak: {sourceFetching:
+/// {enabled: ...}}}`.
+pub(crate) fn apply_initialization_options(config: &mut LspConfig, options: &Value) {
+    for setting in GLOBAL_SETTINGS {
+        if let Some(value) = nested_setting(options, setting.key) {
+            (setting.set)(config, value.clone());
+        }
+    }
+}
+
+fn nested_setting<'options>(options: &'options Value, key: &str) -> Option<&'options Value> {
+    let mut value = options;
+    for segment in key.split('.') {
+        value = value.get(segment)?;
+    }
+    Some(value)
+}
+
 /// Source fetching is enabled by default except on CI.
 /// This env-var opts a CI job back into source fetching.
 pub(crate) const OAK_SOURCE_FETCHING_ENABLED_ENV_VAR: &str = "OAK_SOURCE_FETCHING_ENABLED";

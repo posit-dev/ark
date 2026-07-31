@@ -79,9 +79,8 @@ impl WorldState {
             db,
             ..Default::default()
         };
-        // Resolved here too, not just in `update_config()`. This way an
-        // override holds over the window before the client's first
-        // `didChangeConfiguration`.
+        // Resolved here as well as in `initialize()` and `update_config()`, so
+        // an override holds at all times.
         crate::lsp::config::apply_env_overrides(&mut state.config);
         state
     }

@@ -14,11 +14,13 @@ use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::initialize;
 use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use crate::lsp::config::apply_env_overrides;
+use crate::lsp::config::apply_initialization_options;
 use crate::lsp::config::LspConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::main_loop::init_aux_for_test;
@@ -178,6 +180,139 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let db = &state.world().db;
     let donor = db.package_by_name("donor").unwrap();
     assert!(donor.files(db).is_empty());
+}
+
+/// `initializationOptions` reaches the config early enough to stop the very
+/// first dispatch. `initialize()` advances the revision itself, so the tick it
+/// runs in already schedules fetches: a setting that only arrived over
+/// `workspace/configuration` would land after the packages were on their way.
+#[tokio::test]
+async fn test_initialization_options_gate_the_first_dispatch() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler.clone())),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    let options = serde_json::json!({
+        "oak": { "sourceFetching": { "enabled": false } }
+    });
+    let (event, _response_rx) = initialize(workspace.path(), Some(options));
+    state.handle_event_to_quiescence(event).await;
+
+    assert!(handler.calls().lock().unwrap().is_empty());
+}
+
+/// The same `initialize` without `initializationOptions` fetches, so the test
+/// above pins the setting rather than some other reason the dispatch was
+/// skipped.
+#[tokio::test]
+async fn test_initialize_without_options_fetches() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler.clone())),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    let (event, _response_rx) = initialize(workspace.path(), None);
+    state.handle_event_to_quiescence(event).await;
+
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
+}
+
+/// The env var outranks `initializationOptions` too, in the same order
+/// `initialize()` resolves them.
+#[test]
+fn test_env_var_beats_initialization_options() {
+    let name = OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+    let options = serde_json::json!({ "oak": { "sourceFetching": { "enabled": false } } });
+
+    let resolve = || {
+        let mut config = LspConfig::default();
+        apply_initialization_options(&mut config, &options);
+        apply_env_overrides(&mut config);
+        config.oak.source_fetching_enabled
+    };
+
+    unsafe { std::env::remove_var(name) };
+    assert!(!resolve());
+
+    unsafe { std::env::set_var(name, "1") };
+    assert!(resolve());
+
+    unsafe { std::env::remove_var(name) };
+}
+
+/// Only nested objects are read. A key the client omits, or spells as a flat
+/// dotted string, leaves the setting where it was instead of resetting it.
+#[test]
+fn test_initialization_options_read_nested_objects_only() {
+    for options in [
+        serde_json::json!({}),
+        serde_json::json!({ "oak": {} }),
+        serde_json::json!({ "oak": { "sourceFetching": {} } }),
+        serde_json::json!({ "oak.sourceFetching.enabled": true }),
+        serde_json::json!({ "oak": { "sourceFetching": "not-an-object" } }),
+    ] {
+        let mut config = LspConfig::default();
+        config.oak.source_fetching_enabled = false;
+        apply_initialization_options(&mut config, &options);
+        assert!(!config.oak.source_fetching_enabled);
+    }
 }
 
 /// `OAK_SOURCE_FETCHING_ENABLED` beats the LSP setting in both directions,
