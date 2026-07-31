@@ -29,6 +29,10 @@ fn test_execute_request_error_multiple_expressions() {
 
     assert!(frontend.recv_iopub_execute_error().contains("foobar"));
 
+    // The intermediate expression evaluated before the error still streams
+    // its visible value
+    frontend.assert_stream_stdout_contains("[1] 1");
+
     frontend.recv_iopub_idle();
 
     assert_eq!(
@@ -48,13 +52,58 @@ fn test_notebook_execute_request_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // Unlike console mode, we don't get intermediate results in notebooks
+    // As in console mode, intermediate results are streamed on stdout and
+    // only the last expression becomes the execute result. Note that
+    // `print()` returns invisibly.
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
 
-    // Printed output
+    // Intermediate autoprint and printed output
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.assert_stream_stdout_contains("[1] 2");
 
     frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_notebook_execute_request_intermediate_autoprint() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "1\n2\n3";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // The last expression's value is the execute result
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+
+    // The intermediate expressions' values are streamed on stdout, and the
+    // last expression's value is not duplicated there
+    let streams = frontend.recv_iopub_idle_and_flush();
+    assert_eq!(streams.stdout(), "[1] 1\n[1] 2\n");
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_notebook_execute_request_invisible_intermediate_expression() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "invisible(1)\n2";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 2");
+
+    // The invisible intermediate expression produces no stream output
+    let streams = frontend.recv_iopub_idle_and_flush();
+    assert_eq!(streams.stdout(), "");
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
@@ -195,7 +244,7 @@ fn test_notebook_stdin_followed_by_an_expression_on_the_next_line() {
         ..Default::default()
     };
 
-    // Note, `1` is an intermediate output and is not emitted in notebooks
+    // Note, `1` is an intermediate expression whose value is streamed on stdout
     let code = "1\nval <- readline('prompt>')\npaste0(val,'-there')";
     frontend.send_execute_request(code, options);
     frontend.recv_iopub_busy();
@@ -209,6 +258,8 @@ fn test_notebook_stdin_followed_by_an_expression_on_the_next_line() {
     frontend.send_stdin_input_reply(String::from("hi"));
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi-there\"");
+
+    frontend.assert_stream_stdout_contains("[1] 1");
 
     frontend.recv_iopub_idle();
 

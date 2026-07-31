@@ -2,6 +2,11 @@
 
 # 0.1.9000
 
+## 2026-07
+
+- Jupyter: In notebook mode, visible values of intermediate expressions in a cell are now emitted on stdout, matching console mode, the R REPL, RStudio, and IRkernel. Previously a cell like `1\n2\n3` only showed `3` (posit-dev/positron#11227).
+
+
 ## 2026-03
 
 - Jupyter: `kernel_info_reply` now includes the mandatory `implementation` and `implementation_version` fields, which should allow ark to run in Zed (#1094).

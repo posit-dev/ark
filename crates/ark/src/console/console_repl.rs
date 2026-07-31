@@ -2392,13 +2392,12 @@ impl Console {
             // lines of input pending. In that case, that means we are on an
             // intermediate expression.
             //
-            // Note that we implement this behaviour (streaming autoprint results of
-            // intermediate expressions) specifically for Positron, and specifically
-            // for versions that send multiple expressions selected by the user in
-            // one request. Other Jupyter frontends do not want to see output for
-            // these intermediate expressions. And future versions of Positron will
-            // never send multiple expressions in one request
-            // (https://github.com/posit-dev/positron/issues/1326).
+            // Streaming intermediate autoprint applies in all session modes. R
+            // users expect every visible top-level value to be printed, as in
+            // the R console, RStudio, and IRkernel, unlike IPython's
+            // last-expression-only convention. Notebook mode used to suppress
+            // intermediate autoprint, which made notebook cells like `1\n2\n3`
+            // show only `3` (https://github.com/posit-dev/positron/issues/11227).
             //
             // Note that warnings emitted lazily on stdout will appear to be part of
             // autoprint. We currently emit them on stderr, which allows us to
@@ -2415,14 +2414,8 @@ impl Console {
                 return;
             }
 
-            // In notebooks, we don't emit results of intermediate expressions
-            if console.session_mode == SessionMode::Notebook {
-                return;
-            }
-
-            // In Positron, fall through if we have pending input. This allows
-            // autoprint output for intermediate expressions to be emitted on
-            // IOPub.
+            // Fall through if we have pending input. This allows autoprint
+            // output for intermediate expressions to be emitted on IOPub.
         }
 
         if stream == Stream::Stderr {
