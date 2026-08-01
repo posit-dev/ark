@@ -1,8 +1,7 @@
 use anyhow::anyhow;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_core::identifier::quote_name;
-use oak_core::identifier::to_identifier_text;
+use oak_core::identifier::RName;
 use oak_db::Db;
 use oak_db::Definition;
 use oak_db::File;
@@ -51,10 +50,7 @@ pub fn rename(
         return Err(anyhow!("Can't rename identifier at cursor."));
     };
 
-    // Normalize to canonical R identifier syntax (backtick-wrapped if needed) up
-    // front, so an invalid name fails before we produce any edits, uniformly for
-    // every symbol regardless of how its sites are spelled.
-    let identifier_text = to_identifier_text(new_name)?;
+    let new_name = RName::parse(new_name)?;
 
     let sites = find_references(db, file, offset, true);
     if sites.is_empty() {
@@ -66,7 +62,7 @@ pub fn rename(
     let edits = sites
         .into_iter()
         .map(|site| {
-            let new_text = render_at_site(db, &site, new_name, &identifier_text);
+            let new_text = render_at_site(db, &site, &new_name);
             RenameEdit {
                 file: site.file,
                 range: site.range,
@@ -77,16 +73,13 @@ pub fn rename(
     Ok(edits)
 }
 
-/// Render the replacement text for one site. A site spelled as a quoted string
-/// (`assign("x", ..)`, `"x" <- ..`) stays a string, keeping its delimiter,
-/// because dropping the quotes would turn the name into a variable reference and
-/// change the program. Every other site is a bare identifier, rendered as the
-/// already-validated `identifier_text`.
-fn render_at_site(db: &dyn Db, site: &FileRange, new_name: &str, identifier_text: &str) -> String {
+/// Preserve quoted sites because removing their quotes changes a binding name
+/// into a variable reference.
+fn render_at_site(db: &dyn Db, site: &FileRange, new_name: &RName) -> String {
     let source = site.file.source_text(db);
     match string_delimiter(&source[..], site.range) {
-        Some(delimiter) => quote_name(new_name, delimiter),
-        None => identifier_text.to_string(),
+        Some(delimiter) => new_name.quoted(delimiter),
+        None => new_name.identifier().to_string(),
     }
 }
 

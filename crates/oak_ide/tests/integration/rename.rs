@@ -198,6 +198,30 @@ fn test_rename_to_non_syntactic_name_quotes_string_site_backticks_use() {
     ]);
 }
 
+#[test]
+fn test_rename_to_pre_wrapped_name_agrees_across_sites() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign(\"foo\", 1)\nfoo\n");
+
+    let edits = rename(&db, file, offset(17), "`bar`").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(7, 12), "\"bar\""),
+        (range(17, 20), "bar"),
+    ]);
+}
+
+#[test]
+fn test_rename_to_pre_wrapped_non_syntactic_name_agrees_across_sites() {
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "\"foo\" <- 1\nfoo\n");
+
+    let edits = rename(&db, file, offset(11), "`foo bar`").unwrap();
+    assert_eq!(rendered(&edits), vec![
+        (range(0, 5), "\"foo bar\""),
+        (range(11, 14), "`foo bar`"),
+    ]);
+}
+
 // --- rename: cross-file workspace scripts ---
 
 #[test]

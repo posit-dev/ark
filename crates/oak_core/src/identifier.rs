@@ -6,59 +6,86 @@
 
 use anyhow::anyhow;
 
-/// Convert a semantic name into its canonical R source form.
+/// A validated R name with semantic and source forms.
 ///
-/// A name that parses as a plain R identifier (and isn't a reserved
-/// word) returns as-is. A name already wrapped in backticks (e.g.
-/// `` `foo bar` ``) is accepted as-is too. Anything else gets wrapped
-/// in backticks. Empty names, reserved words, and names with stray
-/// backticks return `Err` (a backtick can't appear inside a
-/// backtick-quoted identifier).
-pub fn to_identifier_text(name: &str) -> anyhow::Result<String> {
-    if name.is_empty() {
-        return Err(anyhow!("Identifier cannot be empty"));
-    }
-    if is_reserved(name) {
-        return Err(anyhow!("`{name}` is a reserved word in R"));
-    }
-    if is_valid_identifier(name) {
-        return Ok(name.to_string());
-    }
-
-    // User pre-wrapped the name in backticks (e.g. `foo bar`)? Normalize:
-    // strip unnecessary backticks when the inside is already a valid bare
-    // identifier; otherwise keep the backticks (they're load-bearing for
-    // names with spaces, leading digits, reserved words, etc.).
-    if let Some(inner) = name.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        if !inner.is_empty() && !inner.contains('`') {
-            if is_valid_identifier(inner) && !is_reserved(inner) {
-                return Ok(inner.to_string());
-            } else {
-                return Ok(name.to_string());
-            }
-        }
-    }
-
-    if name.contains('`') {
-        return Err(anyhow!("Identifier cannot contain a backtick"));
-    }
-
-    Ok(format!("`{name}`"))
+/// Parsing once keeps string-form and identifier sites consistent.
+#[derive(Debug)]
+pub struct RName {
+    semantic: String,
+    identifier: String,
 }
 
-/// Render `name` as a quoted R string literal using `delimiter` (`"` or `'`).
-///
-/// Counterpart to [`to_identifier_text`] for a site that binds a name in string
-/// form (`assign("x", ..)`, `"x" <- ..`). The rename edit there must stay a
-/// string, or dropping the quotes would turn the name into a variable reference
-/// and change the program. Backslash and the delimiter are escaped so an unusual
-/// name can't break out of the string. Mostly defensive, identifiers never
-/// contain either.
-pub fn quote_name(name: &str, delimiter: char) -> String {
-    let escaped = name
-        .replace('\\', "\\\\")
-        .replace(delimiter, &format!("\\{delimiter}"));
-    format!("{delimiter}{escaped}{delimiter}")
+impl RName {
+    /// Parse a bare or backtick-wrapped R name.
+    ///
+    /// Wrapped reserved words are valid. Empty names, bare reserved words, and
+    /// stray backticks return `Err`.
+    pub fn parse(name: &str) -> anyhow::Result<Self> {
+        if name.is_empty() {
+            return Err(anyhow!("Identifier cannot be empty"));
+        }
+
+        if let Some(inner) = name
+            .strip_prefix('`')
+            .and_then(|rest| rest.strip_suffix('`'))
+        {
+            return Self::from_wrapped(inner);
+        }
+        if name.contains('`') {
+            return Err(anyhow!("Identifier cannot contain a backtick"));
+        }
+        if is_reserved(name) {
+            return Err(anyhow!("`{name}` is a reserved word in R"));
+        }
+
+        Ok(Self::from_semantic(name))
+    }
+
+    /// The source spelling for this binding, backtick-wrapped when necessary.
+    pub fn identifier(&self) -> &str {
+        &self.identifier
+    }
+
+    /// Render the semantic name as an R string literal using `delimiter`.
+    ///
+    /// String-form binding sites store the semantic name, not its backticked
+    /// source spelling.
+    pub fn quoted(&self, delimiter: char) -> String {
+        let escaped = self
+            .semantic
+            .replace('\\', "\\\\")
+            .replace(delimiter, &format!("\\{delimiter}"));
+        format!("{delimiter}{escaped}{delimiter}")
+    }
+
+    fn from_wrapped(inner: &str) -> anyhow::Result<Self> {
+        if inner.is_empty() {
+            return Err(anyhow!("Identifier cannot be empty"));
+        }
+        if inner.contains('`') {
+            return Err(anyhow!("Identifier cannot contain a backtick"));
+        }
+        if is_reserved(inner) {
+            return Ok(Self {
+                semantic: inner.to_string(),
+                identifier: format!("`{inner}`"),
+            });
+        }
+
+        Ok(Self::from_semantic(inner))
+    }
+
+    fn from_semantic(name: &str) -> Self {
+        let identifier = if is_valid_identifier(name) {
+            name.to_string()
+        } else {
+            format!("`{name}`")
+        };
+        Self {
+            semantic: name.to_string(),
+            identifier,
+        }
+    }
 }
 
 /// Whether `name` is a valid bare R identifier (no backticks needed).
@@ -159,9 +186,8 @@ mod tests {
         assert!(is_valid_identifier("foo_μ"));
         assert!(is_valid_identifier("μ2"));
         assert!(is_valid_identifier(".μ"));
-        // `to_identifier_text` should keep these as-is, not wrap them.
-        assert_eq!(to_identifier_text("μ").unwrap(), "μ");
-        assert_eq!(to_identifier_text("αβ").unwrap(), "αβ");
+        assert_eq!(identifier_text("μ"), "μ");
+        assert_eq!(identifier_text("αβ"), "αβ");
     }
 
     #[test]
@@ -192,72 +218,79 @@ mod tests {
         assert!(!is_reserved(".1"));
     }
 
-    #[test]
-    fn test_to_identifier_text_plain() {
-        assert_eq!(to_identifier_text("foo").unwrap(), "foo");
+    fn identifier_text(name: &str) -> String {
+        RName::parse(name).unwrap().identifier().to_string()
     }
 
     #[test]
-    fn test_to_identifier_text_wraps_non_identifier() {
-        assert_eq!(to_identifier_text("foo bar").unwrap(), "`foo bar`");
-        assert_eq!(to_identifier_text("1foo").unwrap(), "`1foo`");
+    fn test_rname_plain() {
+        assert_eq!(identifier_text("foo"), "foo");
     }
 
     #[test]
-    fn test_to_identifier_text_rejects_empty() {
-        assert!(to_identifier_text("").is_err());
+    fn test_rname_wraps_non_identifier() {
+        assert_eq!(identifier_text("foo bar"), "`foo bar`");
+        assert_eq!(identifier_text("1foo"), "`1foo`");
     }
 
     #[test]
-    fn test_to_identifier_text_rejects_reserved() {
-        assert!(to_identifier_text("if").is_err());
+    fn test_rname_rejects_empty() {
+        assert!(RName::parse("").is_err());
     }
 
     #[test]
-    fn test_to_identifier_text_rejects_backtick() {
-        assert!(to_identifier_text("foo`bar").is_err());
+    fn test_rname_rejects_reserved() {
+        assert!(RName::parse("if").is_err());
     }
 
     #[test]
-    fn test_to_identifier_text_keeps_necessary_backticks() {
-        // Names that need backticks stay wrapped as-is.
-        assert_eq!(to_identifier_text("`foo bar`").unwrap(), "`foo bar`");
-        // Reserved-looking word in backticks is fine; the backticks make
-        // it a valid identifier in R.
-        assert_eq!(to_identifier_text("`if`").unwrap(), "`if`");
+    fn test_rname_rejects_backtick() {
+        assert!(RName::parse("foo`bar").is_err());
     }
 
     #[test]
-    fn test_to_identifier_text_strips_unnecessary_backticks() {
-        // Pre-wrapped name whose inside is already a valid bare identifier:
-        // canonicalize by dropping the backticks.
-        assert_eq!(to_identifier_text("`bar`").unwrap(), "bar");
-        assert_eq!(to_identifier_text("`foo.bar`").unwrap(), "foo.bar");
+    fn test_rname_keeps_necessary_backticks() {
+        assert_eq!(identifier_text("`foo bar`"), "`foo bar`");
+        // Backticks make reserved words valid R identifiers.
+        assert_eq!(identifier_text("`if`"), "`if`");
     }
 
     #[test]
-    fn test_to_identifier_text_rejects_pre_wrapped_edge_cases() {
-        // Single backtick.
-        assert!(to_identifier_text("`").is_err());
-        // Empty-inside ``.
-        assert!(to_identifier_text("``").is_err());
-        // Stray backtick inside the pre-wrapped name.
-        assert!(to_identifier_text("`foo`bar`").is_err());
+    fn test_rname_strips_unnecessary_backticks() {
+        assert_eq!(identifier_text("`bar`"), "bar");
+        assert_eq!(identifier_text("`foo.bar`"), "foo.bar");
     }
 
     #[test]
-    fn test_quote_name_wraps_in_delimiter() {
-        assert_eq!(quote_name("bar", '"'), "\"bar\"");
-        assert_eq!(quote_name("bar", '\''), "'bar'");
+    fn test_rname_rejects_pre_wrapped_edge_cases() {
+        assert!(RName::parse("`").is_err());
+        assert!(RName::parse("``").is_err());
+        assert!(RName::parse("`foo`bar`").is_err());
     }
 
     #[test]
-    fn test_quote_name_escapes_delimiter_and_backslash() {
+    fn test_rname_quoted_wraps_in_delimiter() {
+        assert_eq!(RName::parse("bar").unwrap().quoted('"'), "\"bar\"");
+        assert_eq!(RName::parse("bar").unwrap().quoted('\''), "'bar'");
+    }
+
+    #[test]
+    fn test_rname_quoted_drops_backticks() {
+        assert_eq!(RName::parse("`bar`").unwrap().quoted('"'), "\"bar\"");
+        assert_eq!(
+            RName::parse("`foo bar`").unwrap().quoted('"'),
+            "\"foo bar\""
+        );
+        assert_eq!(RName::parse("`if`").unwrap().quoted('"'), "\"if\"");
+    }
+
+    #[test]
+    fn test_rname_quoted_escapes_delimiter_and_backslash() {
         // Defensive: a real identifier never contains these, but if a name did,
         // it stays inside the string rather than breaking out of it.
-        assert_eq!(quote_name("a\"b", '"'), "\"a\\\"b\"");
-        assert_eq!(quote_name("a\\b", '"'), "\"a\\\\b\"");
+        assert_eq!(RName::parse("a\"b").unwrap().quoted('"'), "\"a\\\"b\"");
+        assert_eq!(RName::parse("a\\b").unwrap().quoted('"'), "\"a\\\\b\"");
         // The other delimiter isn't escaped: a `'` inside a `"`-string is literal.
-        assert_eq!(quote_name("a'b", '"'), "\"a'b\"");
+        assert_eq!(RName::parse("a'b").unwrap().quoted('"'), "\"a'b\"");
     }
 }
