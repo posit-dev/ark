@@ -180,6 +180,146 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     assert!(donor.files(db).is_empty());
 }
 
+/// Turning the setting back on fetches the packages Oak saw while it was off,
+/// which is what `doc/configuration-oak.md` promises. This works because both
+/// early returns in `schedule()` come before the loop that records a package,
+/// so a declined package stays unseen rather than being marked `Finished`.
+///
+/// In production `update_config()` bumps the revision itself, so the fetch
+/// starts on the config change alone. The `did_open()` here stands in for that
+/// bump, which a test can't reach without a client that answers
+/// `workspace/configuration`.
+#[tokio::test]
+async fn test_reenabling_fetches_packages_seen_while_off() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut world = WorldState::new(db);
+    world.config.oak.source_fetching_enabled = false;
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world,
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler.clone()),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+    assert!(handler.calls().lock().unwrap().is_empty());
+
+    state.world_mut().config.oak.source_fetching_enabled = true;
+    state
+        .handle_event_to_quiescence(did_open(&workspace.path().join("other.R"), "1 + 1\n"))
+        .await;
+
+    // `donor` was declined while off, so it is still on offer and gets fetched
+    // now, sources and all.
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
+    let db = &state.world().db;
+    let donor = db.package_by_name("donor").unwrap();
+    let files = donor.files(db).clone();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].source_text(db).contains("foo <- function()"));
+}
+
+/// Turning the setting off mid-session stops fetching for a dependency that
+/// turns up afterwards, without disturbing the one already fetched.
+#[tokio::test]
+async fn test_disabling_stops_fetching_new_packages() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([
+        (
+            String::from("donor1"),
+            TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+        ),
+        (
+            String::from("donor2"),
+            TestBehavior::Success(vec![("bar.R", "bar <- function() 2\n")]),
+        ),
+    ])));
+
+    let lib = tempfile::tempdir().unwrap();
+    for name in ["donor1", "donor2"] {
+        DescriptionWriter::new()
+            .package(name)
+            .version("0.0.0")
+            .built("dummy")
+            .write(&lib.path().join(name));
+    }
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler.clone()),
+        ),
+    );
+
+    // Two workspace folders, each depending on a different library package, so
+    // the second dependency only appears once the second folder is added.
+    let first = tempfile::tempdir().unwrap();
+    let proj1 = first.path().join("proj1");
+    DescriptionWriter::new()
+        .package("proj1")
+        .version("0.0.0")
+        .write(&proj1);
+    write_sources(&proj1.join("R"), &[("use.R", "donor1::foo()\n")]);
+
+    let second = tempfile::tempdir().unwrap();
+    let proj2 = second.path().join("proj2");
+    DescriptionWriter::new()
+        .package("proj2")
+        .version("0.0.0")
+        .write(&proj2);
+    write_sources(&proj2.join("R"), &[("use.R", "donor2::bar()\n")]);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(first.path()))
+        .await;
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor1"]);
+
+    state.world_mut().config.oak.source_fetching_enabled = false;
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(second.path()))
+        .await;
+
+    // `donor2` was discovered by the second scan but never dispatched, and
+    // `donor1` keeps the sources it already has.
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor1"]);
+    let db = &state.world().db;
+    assert!(db.package_by_name("donor2").unwrap().files(db).is_empty());
+    assert_eq!(db.package_by_name("donor1").unwrap().files(db).len(), 1);
+}
+
 /// Do not fetch packages found during `initialize()` before attempting client configuration.
 /// Release the startup gate after a failed configuration request.
 #[tokio::test]
