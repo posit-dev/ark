@@ -8,10 +8,10 @@ use camino::Utf8Path;
 
 use crate::directory::files_in_directory;
 use crate::file_imports::CollationView;
-use crate::file_load_context::collation_visible_files;
-use crate::file_load_context::in_r_directory;
-use crate::file_load_context::LoadContext;
-use crate::file_load_context::SearchPathTail;
+use crate::load_context::collation_visible_files;
+use crate::load_context::in_r_directory;
+use crate::load_context::LoadContext;
+use crate::load_context::SearchPathTail;
 use crate::Db;
 use crate::File;
 
@@ -19,11 +19,7 @@ use crate::File;
 /// `None` means Shiny does not load it, including `R/` files disabled by
 /// `_disable_autoload.R`. Checking `R/` membership first keeps `R/app.R` in its
 /// enclosing app's collation rather than treating it as an app root.
-pub(crate) fn shiny_load_context(
-    db: &dyn Db,
-    file: File,
-    view: CollationView,
-) -> Option<LoadContext> {
+pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
     if in_r_directory(file, db) {
         let autoload = shiny_autoload(db, file).as_deref()?;
         return Some(autoload_context(db, file, view, autoload));
@@ -54,6 +50,7 @@ fn autoload_context(
         namespace_owner: None,
         implicit_attaches: vec!["shiny"],
         search_path_tail: SearchPathTail::Default,
+        fixed_load_order: false,
     }
 }
 
@@ -72,6 +69,7 @@ fn entry_context(file: File, autoload: &[File]) -> LoadContext {
         namespace_owner: None,
         implicit_attaches: vec!["shiny"],
         search_path_tail: SearchPathTail::Default,
+        fixed_load_order: false,
     }
 }
 
@@ -81,6 +79,7 @@ fn global_context() -> LoadContext {
         namespace_owner: None,
         implicit_attaches: vec!["shiny"],
         search_path_tail: SearchPathTail::Default,
+        fixed_load_order: false,
     }
 }
 

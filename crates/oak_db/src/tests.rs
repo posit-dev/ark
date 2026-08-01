@@ -1,3 +1,4 @@
+mod contrib;
 mod db;
 mod diagnostic_render;
 mod file;
@@ -8,7 +9,6 @@ mod file_imports_at;
 mod file_resolve;
 mod file_resolve_at;
 mod file_root;
-mod file_shiny;
 mod file_source_site;
 mod identifier;
 mod inputs;

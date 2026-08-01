@@ -1,15 +1,15 @@
 //! Determines a file's loader and the layers that loader makes visible.
 //!
+
 //! Does not read the file's semantic index, so [`File::cross_file_layers()`]
 //! can call it while building that index.
 
-use std::borrow::Cow;
+pub(crate) mod contrib;
 
 use camino::Utf8Path;
 
 use crate::directory::collation_basename_key;
 use crate::file_imports::CollationView;
-use crate::file_shiny::shiny_load_context;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -30,6 +30,9 @@ pub(crate) struct LoadContext {
     pub implicit_attaches: Vec<&'static str>,
 
     pub search_path_tail: SearchPathTail,
+
+    /// Omit source-site inheritance when the loader fixes this file's runtime load order.
+    pub fixed_load_order: bool,
 }
 
 pub(crate) enum SearchPathTail {
@@ -43,7 +46,7 @@ pub(crate) enum SearchPathTail {
 /// precedes package loading and package ownership precedes directory
 /// conventions.
 pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> LoadContext {
-    if let Some(context) = testthat_load_context(db, file, view) {
+    if let Some(context) = contrib::testthat::load_context(db, file, view) {
         return context;
     }
     if let Some(context) = package_load_context(db, file, view) {
@@ -52,7 +55,7 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Load
 
     // Shiny follows directory layout, so package ownership does not exclude an
     // app under `inst/app/`.
-    if let Some(context) = shiny_load_context(db, file, view) {
+    if let Some(context) = contrib::shiny::load_context(db, file, view) {
         return context;
     }
 
@@ -65,46 +68,6 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Load
     }
 
     standalone_load_context()
-}
-
-/// A `tests/testthat/` file. It runs with the package loaded and `testthat`
-/// attached, after testthat has sourced the package's `helper*.R` and
-/// `setup*.R` files into the test environment.
-///
-/// Support files form their own collation. An `Eager` view keeps only
-/// source-order predecessors, while a `Lazy` view keeps every support file.
-/// Every `R/` file remains visible because package loading finishes first.
-fn testthat_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    let package = file.package(db)?;
-    if !is_testthat_file(file, db) {
-        return None;
-    }
-
-    let mut support: Vec<File> = package
-        .scripts(db)
-        .iter()
-        .copied()
-        .filter(|script| is_testthat_support_file(*script, db))
-        .collect();
-    support.sort_by_cached_key(|script| testthat_support_key(*script, db));
-
-    // Test files run after every support file, so they use the full support prefix.
-    let prefix_len = support
-        .iter()
-        .position(|script| *script == file)
-        .unwrap_or(support.len());
-    let mut visible_files = visible_siblings(file, &support, view, prefix_len);
-
-    // Package files load before helpers and are reversed so later collation
-    // bindings win.
-    visible_files.extend(package.files(db).iter().rev().copied());
-
-    Some(LoadContext {
-        visible_files,
-        namespace_owner: Some(package),
-        implicit_attaches: vec!["testthat"],
-        search_path_tail: SearchPathTail::Base,
-    })
 }
 
 /// A loadable `R/` file of a package, one of the files in `package.files()`.
@@ -123,6 +86,7 @@ fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<
         namespace_owner: Some(package),
         implicit_attaches: Vec::new(),
         search_path_tail: SearchPathTail::Base,
+        fixed_load_order: true,
     })
 }
 
@@ -137,6 +101,7 @@ fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<L
         namespace_owner: None,
         implicit_attaches: Vec::new(),
         search_path_tail: SearchPathTail::Default,
+        fixed_load_order: false,
     })
 }
 
@@ -147,6 +112,7 @@ fn standalone_load_context() -> LoadContext {
         namespace_owner: None,
         implicit_attaches: Vec::new(),
         search_path_tail: SearchPathTail::Default,
+        fixed_load_order: false,
     }
 }
 
@@ -166,7 +132,7 @@ pub(crate) fn collation_visible_files(db: &dyn Db, file: File, view: CollationVi
 /// Siblings visible to `file`, in reverse load order so later bindings shadow
 /// earlier ones. Excludes `file` to prevent `resolve()` from cycling through its
 /// semantic index. `Eager` keeps only its predecessors.
-fn visible_siblings(
+pub(crate) fn visible_siblings(
     file: File,
     collation: &[File],
     view: CollationView,
@@ -183,24 +149,6 @@ fn visible_siblings(
     }
 }
 
-/// True when `file` sits directly in a `tests/testthat/` directory, the
-/// layout testthat sources and runs files from. This is what separates a
-/// test file from an ordinary package script under e.g. `tests/` or `inst/`.
-pub(crate) fn is_testthat_file(file: File, db: &dyn Db) -> bool {
-    match file.path(db).as_file() {
-        Some(path) => in_testthat_dir(path.as_path()),
-        None => false,
-    }
-}
-
-fn in_testthat_dir(path: &Utf8Path) -> bool {
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    parent.file_name() == Some("testthat") &&
-        parent.parent().and_then(Utf8Path::file_name) == Some("tests")
-}
-
 /// Whether `file` sits directly in an `R/` directory, which triggers collation
 /// for non-package scripts. The directory name is case-sensitive to match
 /// [`load_context()`] and the package scanner.
@@ -209,21 +157,4 @@ pub(crate) fn in_r_directory(file: File, db: &dyn Db) -> bool {
         return false;
     };
     path.parent().and_then(Utf8Path::file_name) == Some("R")
-}
-
-/// `testthat` loads `helper*.R` and `setup*.R` before tests, so their bindings
-/// are visible. Teardown files run afterward and are excluded.
-fn is_testthat_support_file(file: File, db: &dyn Db) -> bool {
-    if !is_testthat_file(file, db) {
-        return false;
-    }
-    match file.path(db).file_name() {
-        Some(name) => name.starts_with("helper") || name.starts_with("setup"),
-        None => false,
-    }
-}
-
-/// Byte-wise basename sort key keeps support-file precedence platform-stable.
-fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
-    file.path(db).file_name().unwrap_or_default()
 }

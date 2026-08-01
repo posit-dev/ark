@@ -12,10 +12,9 @@ use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::directory::files_in_directory;
-use crate::file_load_context::is_testthat_file;
-use crate::file_load_context::load_context;
-use crate::file_load_context::LoadContext;
-use crate::file_load_context::SearchPathTail;
+use crate::load_context::load_context;
+use crate::load_context::LoadContext;
+use crate::load_context::SearchPathTail;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -369,7 +368,7 @@ impl File {
     #[salsa::tracked(returns(ref), cycle_result =
     inherited_layers_cycle_result)]
     pub(crate) fn inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> {
-        if self.has_explicit_load_order(db) {
+        if load_context(db, self, view).fixed_load_order {
             return Vec::new();
         }
 
@@ -377,15 +376,6 @@ impl File {
             .iter()
             .map(|&sourcing_file| build_inherited_layers(db, self, sourcing_file, view))
             .collect()
-    }
-
-    /// Whether something other than a `source()` call fixes load order, e.g.
-    /// package or testthat collation.
-    fn has_explicit_load_order(self, db: &dyn Db) -> bool {
-        let Some(package) = self.package(db) else {
-            return false;
-        };
-        is_testthat_file(self, db) || self.is_package_source(db, package)
     }
 
     /// Bare [`File::imports`], without inheritance.
@@ -431,15 +421,6 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
         lower_load_context(db, load_context(db, self, view))
-    }
-
-    /// Whether this file is one of `package`'s loadable `R/` files, the ones in
-    /// `package.files()`. A file can carry a package back-pointer without being
-    /// loadable: `data-raw/`, `inst/`, and `R/` files left out of a `Collate:`
-    /// directive all land in `package.scripts()` instead and resolve as
-    /// standalone scripts.
-    fn is_package_source(self, db: &dyn Db, package: Package) -> bool {
-        package.files(db).contains(&self)
     }
 
     /// The collation members of `self`'s own `R/` directory, in load order.
@@ -602,6 +583,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         namespace_owner,
         implicit_attaches,
         search_path_tail,
+        fixed_load_order: _,
     } = context;
 
     let mut above: Vec<ImportLayer> = visible_files
