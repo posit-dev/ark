@@ -11,7 +11,11 @@ use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 
-use crate::db::workspace_scripts;
+use crate::directory::files_in_directory;
+use crate::file_load_context::is_testthat_file;
+use crate::file_load_context::load_context;
+use crate::file_load_context::LoadContext;
+use crate::file_load_context::SearchPathTail;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -48,7 +52,7 @@ pub enum ImportLayer {
 /// `above` outranks the file's own attaches. It holds sibling and predecessor
 /// definitions plus the NAMESPACE imports, the parts R searches before the
 /// attached search path. `below` is the rest of the search path: predecessor
-/// attaches, the test runner's implicit attaches, and `base`.
+/// attaches, the loader's implicit attaches, and `base`.
 ///
 /// The file's own attaches are deliberately left out, so building this never
 /// reads the file's own semantic index. That's what lets the resolver call it
@@ -188,35 +192,6 @@ pub(crate) enum CollationView {
     /// In load order (a top-level statement): only siblings sourced before this
     /// point have loaded, so a name defined later in the collation isn't visible.
     Eager,
-}
-
-/// The files, namespace imports, and attached packages supplied by a file's
-/// loader.
-///
-/// Source inheritance is assembled separately by [`build_inherited_layers`]
-/// because it can contribute an offset-narrowed [`ImportLayer::SourcingFile`].
-///
-/// Discovering a context must not read the file's own semantic index. This
-/// keeps [`File::cross_file_layers`] callable while that index is being built.
-struct LoadContext {
-    /// Visible files in lookup order, highest priority first. Excludes the file
-    /// itself.
-    visible_files: Vec<File>,
-
-    namespace_owner: Option<Package>,
-
-    /// Packages attached by the loader. Packages absent from every root are
-    /// dropped during lowering.
-    implicit_attaches: Vec<&'static str>,
-
-    search_path_tail: SearchPathTail,
-}
-
-enum SearchPathTail {
-    /// Only `base`. Package dependencies are supplied by the NAMESPACE.
-    Base,
-
-    Default,
 }
 
 #[salsa::tracked]
@@ -480,50 +455,6 @@ impl File {
         };
         files_in_directory(db, dir)
     }
-
-    /// Predecessor files loaded by Shiny's `loadSupport()`, in load order.
-    /// `None` if not a Shiny app file at all: neither a confirmed entry
-    /// point nor an `R/` file `loadSupport()` actually sources. See
-    /// https://shiny.posit.co/r/reference/shiny/1.7.5/loadsupport.html
-    ///
-    /// - `loadSupport()` unconditionally calls `require(shiny)`, even with
-    ///   neither `global.R` nor `R/` present
-    /// - `R/` files are evaluated in a child of the global env by default
-    /// - `global.R` is evaluated directly in the global env by default
-    ///
-    /// `Some(vec![])` is not empty: an entry point (or `R/` file) with no
-    /// `global.R` beside it does not inherit from other files but still runs
-    /// with shiny attached.
-    ///
-    /// Tracked for the same reason as `collation_siblings()`: it reads every
-    /// workspace root's scripts, so without a memo here a file appearing
-    /// anywhere in the workspace would re-run every consumer's
-    /// `cross_file_layers()`. Unlike `collation_siblings()` it isn't purely
-    /// path-based: it reads the content of the app's entry file through
-    /// [`is_shiny_entry_file`], itself tracked so that dependency backdates
-    /// on its own rather than forcing every file in the app to re-execute
-    /// this query whenever the entry file's body changes.
-    #[salsa::tracked(returns(ref))]
-    pub(crate) fn shiny_autoload(self, db: &dyn Db) -> Option<Vec<File>> {
-        // A confirmed entry point always gets `require(shiny)`, whether or not
-        // it has any support files to inherit.
-        if let Some(app_dir) = shiny_app_dir(self, db) {
-            return Some(shiny_support_files(db, app_dir));
-        }
-
-        // An autoloaded file sees `global.R` only. Its `R/` siblings already
-        // reach it through the collation. `_disable_autoload.R` means
-        // `loadSupport()` never sources this file at all, so it gets no Shiny
-        // layers, not even the implicit attach.
-        if !in_r_directory(self, db) {
-            return None;
-        }
-        let app_dir = self.path(db).as_path()?.parent()?.parent()?;
-        if !is_shiny_dir(db, app_dir) || r_autoload_disabled(db, app_dir) {
-            return None;
-        }
-        Some(shiny_global_file(db, app_dir).into_iter().collect())
-    }
 }
 
 fn inherited_layers_cycle_result(
@@ -662,219 +593,10 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
     loaded
 }
 
-/// Selects the first matching loader. Classifications overlap, so `testthat`
-/// precedes package loading and package ownership precedes directory
-/// conventions.
-fn load_context(db: &dyn Db, file: File, view: CollationView) -> LoadContext {
-    if let Some(context) = testthat_load_context(db, file, view) {
-        return context;
-    }
-    if let Some(context) = package_load_context(db, file, view) {
-        return context;
-    }
-
-    // Package ownership blocks directory inference, keeping `inst/app/app.R`
-    // on the standalone path instead of inferring e.g. a `runApp()` context.
-    if file.package(db).is_none() {
-        if let Some(context) = shiny_load_context(db, file, view) {
-            return context;
-        }
-        if let Some(context) = script_load_context(db, file, view) {
-            return context;
-        }
-    }
-
-    standalone_load_context()
-}
-
-/// A `tests/testthat/` file runs with the package loaded and `testthat` attached
-/// after `helper*.R` and `setup*.R` are sourced into the test environment.
-///
-/// Support files form their own collation. An `Eager` view keeps only
-/// source-order predecessors, while a `Lazy` view keeps every support file.
-/// Every `R/` file remains visible because package loading finishes first.
-fn testthat_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    let package = file.package(db)?;
-    if !is_testthat_file(file, db) {
-        return None;
-    }
-
-    // `testthat` sources support files in sorted order.
-    let mut support: Vec<File> = package
-        .scripts(db)
-        .iter()
-        .copied()
-        .filter(|script| is_testthat_support_file(*script, db))
-        .collect();
-    support.sort_by_cached_key(|script| testthat_support_key(*script, db));
-
-    // Test files run after every support file, so they use the full support prefix.
-    let prefix_len = support
-        .iter()
-        .position(|script| *script == file)
-        .unwrap_or(support.len());
-    let mut visible_files = visible_siblings(file, &support, view, prefix_len);
-
-    // Support files shadow package code in the test environment. Package files
-    // therefore follow them in reverse collation order.
-    visible_files.extend(package.files(db).iter().rev().copied());
-
-    Some(LoadContext {
-        visible_files,
-        namespace_owner: Some(package),
-        implicit_attaches: vec!["testthat"],
-        search_path_tail: SearchPathTail::Base,
-    })
-}
-
-/// A package `R/` file that participates in the `Package::files()` collation.
-/// A package back-pointer alone does not make a script loadable.
-fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    let package = file.package(db)?;
-    let files = package.files(db);
-
-    // The position lookup establishes membership and preserves `Collate:`
-    // order, which cannot be derived from file names.
-    let prefix_len = files.iter().position(|sibling| *sibling == file)?;
-
-    Some(LoadContext {
-        visible_files: visible_siblings(file, files, view, prefix_len),
-        namespace_owner: Some(package),
-        implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Base,
-    })
-}
-
-/// A file loaded by `shiny::runApp()`. Returns `None` for an `R/` file excluded
-/// by `_disable_autoload.R`.
-///
-/// Testing `R/` membership first keeps a module named `R/app.R` in its
-/// collation instead of treating it as an entry point.
-fn shiny_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    if in_r_directory(file, db) {
-        let autoload = file.shiny_autoload(db).as_deref()?;
-        return Some(shiny_autoload_load_context(db, file, view, autoload));
-    }
-    if let Some(autoload) = file.shiny_autoload(db).as_deref() {
-        return Some(shiny_entry_load_context(file, autoload));
-    }
-    // `global.R` runs first in the global environment, so it cannot see
-    // definitions supplied by the app.
-    is_shiny_global_file(file, db).then(shiny_global_load_context)
-}
-
-/// An `R/` file sourced by `loadSupport()` sees its collation plus files loaded
-/// before the directory.
-fn shiny_autoload_load_context(
-    db: &dyn Db,
-    file: File,
-    view: CollationView,
-    autoload: &[File],
-) -> LoadContext {
-    let mut visible_files = collation_visible_files(db, file, view);
-
-    // `loadSupport()` evaluates `global.R` before the `R/` files. Appending it
-    // after the reversed collation keeps it below every sibling.
-    visible_files.extend(autoload);
-
-    LoadContext {
-        visible_files,
-        namespace_owner: None,
-        implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-    }
-}
-
-/// A Shiny entry point sees the entire support set because `loadSupport()`
-/// finishes before `runApp()` evaluates its first line. Unlike a collation
-/// member, it does not cut visibility at its own position.
-fn shiny_entry_load_context(file: File, autoload: &[File]) -> LoadContext {
-    LoadContext {
-        // The `R/` files shadow `global.R` through both LIFO order and
-        // evaluation in a child environment.
-        visible_files: autoload
-            .iter()
-            .rev()
-            .copied()
-            .filter(|support| *support != file)
-            .collect(),
-        namespace_owner: None,
-        implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-    }
-}
-
-fn shiny_global_load_context() -> LoadContext {
-    LoadContext {
-        visible_files: Vec::new(),
-        namespace_owner: None,
-        implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-    }
-}
-
-/// A non-package script in an `R/` directory, collated alphabetically, exactly
-/// like a package `R/` with no `Collate:`.
-fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    if !in_r_directory(file, db) {
-        return None;
-    }
-    Some(LoadContext {
-        visible_files: collation_visible_files(db, file, view),
-        namespace_owner: None,
-        implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Default,
-    })
-}
-
-fn standalone_load_context() -> LoadContext {
-    LoadContext {
-        visible_files: Vec::new(),
-        namespace_owner: None,
-        implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Default,
-    }
-}
-
-/// The `R/`-directory collation members visible to `file`, in LIFO order.
-fn collation_visible_files(db: &dyn Db, file: File, view: CollationView) -> Vec<File> {
-    let files = file.collation_siblings(db);
-
-    // `file` is missing from its own sibling list until the scanner moves it out
-    // of `OrphanRoot`. Cut on the sort key instead.
-    let own_key = collation_basename_key(file, db);
-    let prefix_len =
-        files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key);
-
-    visible_siblings(file, files, view, prefix_len)
-}
-
-/// Returns siblings in LIFO order. `CollationView::Eager` keeps only the first
-/// `prefix_len` files.
-///
-/// Excluding `file` avoids re-entering its semantic index while resolving an
-/// unbound name.
-fn visible_siblings(
-    file: File,
-    collation: &[File],
-    view: CollationView,
-    prefix_len: usize,
-) -> Vec<File> {
-    match view {
-        CollationView::Lazy => collation
-            .iter()
-            .rev()
-            .copied()
-            .filter(|sibling| *sibling != file)
-            .collect(),
-        CollationView::Eager => collation[..prefix_len].iter().rev().copied().collect(),
-    }
-}
-
 /// Lowers a context while preserving resolver precedence. Visible definitions
 /// and NAMESPACE imports rank above the file's attaches, and loader-provided
 /// search-path layers rank below them.
-fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
+pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
     let LoadContext {
         visible_files,
         namespace_owner,
@@ -910,97 +632,6 @@ fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
     CrossFileLayers { above, below }
 }
 
-/// The files Shiny evaluates as an app, each paired with the call RStudio's
-/// own `getShinyFileType()` requires in its content before treating the
-/// filename as significant (`SessionRUtil.cpp`). `global.R` is deliberately
-/// not one: it runs before autoload, so it belongs to the support set rather
-/// than to the files consuming it.
-///
-/// A text search rather than a parse: matching a substring in a comment or a
-/// string literal is the same false-positive RStudio accepts, and reading
-/// `source_text` instead of `semantic_index` keeps this callable on `self`
-/// while `self`'s own index is still being built (see `shiny_autoload`).
-const SHINY_ENTRY_FILES: [(&str, &str); 3] = [
-    ("app.R", "shinyApp"),
-    ("ui.R", "shinyUI"),
-    ("server.R", "shinyServer"),
-];
-
-/// Files injected by `loadSupport()`, in load order.
-fn shiny_support_files(db: &dyn Db, app_dir: &Utf8Path) -> Vec<File> {
-    let mut files: Vec<File> = shiny_global_file(db, app_dir).into_iter().collect();
-
-    // `_disable_autoload.R` opts out from `R/` files but keeps `global.R`.
-    if r_autoload_disabled(db, app_dir) {
-        return files;
-    }
-
-    files.extend(files_in_directory(db, &app_dir.join("R")));
-    files
-}
-
-/// Whether `_disable_autoload.R` sits in `app_dir`'s `R/`, opting the whole
-/// directory out of `loadSupport()`'s autoload. Shared between the entry
-/// point's own support list and an individual `R/` file's `shiny_autoload`:
-/// neither should treat those files as Shiny-governed, since `loadSupport()`
-/// never sources them.
-fn r_autoload_disabled(db: &dyn Db, app_dir: &Utf8Path) -> bool {
-    files_in_directory(db, &app_dir.join("R"))
-        .iter()
-        .any(|file| is_named(*file, db, "_disable_autoload.R"))
-}
-
-/// Whether `file` is the `global.R` of a Shiny app. `loadSupport()` always
-/// includes it even in the presence of a `_disable_autoload.R` file.
-fn is_shiny_global_file(file: File, db: &dyn Db) -> bool {
-    if !is_named(file, db, "global.R") {
-        return false;
-    }
-    let Some(dir) = file.path(db).as_path().and_then(Utf8Path::parent) else {
-        return false;
-    };
-    is_shiny_dir(db, dir)
-}
-
-/// The app directory of a Shiny entry point. `None` for any other file.
-fn shiny_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
-    if !is_shiny_entry_file(db, file) {
-        return None;
-    }
-    file.path(db).as_path()?.parent()
-}
-
-/// Whether `dir` holds one of the files `runApp()` evaluates, which is what
-/// makes an adjacent `R/` an autoloaded one.
-fn is_shiny_dir(db: &dyn Db, dir: &Utf8Path) -> bool {
-    files_in_directory(db, dir)
-        .iter()
-        .any(|file| is_shiny_entry_file(db, *file))
-}
-
-/// Whether `file`'s name and content mark it as a Shiny entry point.
-#[salsa::tracked(returns(copy))]
-fn is_shiny_entry_file(db: &dyn Db, file: File) -> bool {
-    SHINY_ENTRY_FILES
-        .iter()
-        .any(|(name, marker)| is_named(file, db, name) && file.source_text(db).contains(marker))
-}
-
-fn shiny_global_file(db: &dyn Db, app_dir: &Utf8Path) -> Option<File> {
-    files_in_directory(db, app_dir)
-        .into_iter()
-        .find(|file| is_named(*file, db, "global.R"))
-}
-
-/// Case-insensitive basename match. Shiny reaches for these files through
-/// `file.path.ci()` and `ignore.case=TRUE`, so `Global.R` is a `global.R`.
-/// Deliberately unlike [`in_r_directory`], which matches `R/` exactly.
-fn is_named(file: File, db: &dyn Db, name: &str) -> bool {
-    file.path(db)
-        .file_name()
-        .is_some_and(|basename| basename.eq_ignore_ascii_case(name))
-}
-
 /// The search-path attaches contributed by a set of load-order files, latest
 /// file first (the slice is already LIFO), each file's own attaches latest
 /// first. Reads each file's `attached_packages`, never the caller's own index.
@@ -1025,105 +656,6 @@ fn predecessor_attach_layers(db: &dyn Db, files: &[File]) -> Vec<ImportLayer> {
                 .filter_map(|name| db.package_by_name(name.text(db)).map(ImportLayer::Package))
         })
         .collect()
-}
-
-/// True when `file` sits directly in a `tests/testthat/` directory, the
-/// layout testthat sources and runs files from. This is what separates a
-/// test file from an ordinary package script under e.g. `tests/` or `inst/`.
-fn is_testthat_file(file: File, db: &dyn Db) -> bool {
-    match file.path(db).as_file() {
-        Some(path) => in_testthat_dir(path.as_path()),
-        None => false,
-    }
-}
-
-fn in_testthat_dir(path: &Utf8Path) -> bool {
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    parent.file_name() == Some("testthat") &&
-        parent.parent().and_then(Utf8Path::file_name) == Some("tests")
-}
-
-/// True when `file` sits directly in an `R/` directory, the convention that
-/// triggers script collation for a non-package file (see the match in
-/// `File::cross_file_layers`). Case-sensitive: that's the convention on every
-/// platform, and what the package scanner looks for.
-fn in_r_directory(file: File, db: &dyn Db) -> bool {
-    let Some(path) = file.path(db).as_path() else {
-        return false;
-    };
-    path.parent().and_then(Utf8Path::file_name) == Some("R")
-}
-
-/// testthat sources `helper*.R` and `setup*.R` from `tests/testthat/` into the
-/// test environment before running any test file, so their top-level bindings
-/// are visible to every test. testthat matches `^helper.*\.[rR]$` and
-/// `^setup.*\.[rR]$`; only the basename prefix matters here, since
-/// `package.scripts` already holds nothing but `.R` files. Teardown files are
-/// sourced after tests and rarely define names tests reference, so they're left
-/// out.
-fn is_testthat_support_file(file: File, db: &dyn Db) -> bool {
-    if !is_testthat_file(file, db) {
-        return false;
-    }
-    match file.path(db).file_name() {
-        Some(name) => name.starts_with("helper") || name.starts_with("setup"),
-        None => false,
-    }
-}
-
-/// Sort key for support files, matching testthat's `sort(dir(...))` order.
-/// We sort by raw basename (byte order = C locale for ASCII): case-sensitive
-/// like testthat, and platform-stable. This is a bit different to testthat
-/// which currently sorts based on locale, but arguably this should be fixed on
-/// the testthat side.
-fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
-    file.path(db).file_name().unwrap_or_default()
-}
-
-/// Returns workspace scripts directly under `dir`, in `list.files()` load order.
-///
-/// `sourceDir()`, Shiny's `loadSupport()`, and non-package `R/` collation use
-/// this order. [`collation_basename_key()`] mirrors their session-locale sort.
-pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
-    let mut files: Vec<File> = workspace_scripts(db)
-        .iter()
-        .copied()
-        .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
-        .collect();
-
-    files.sort_by_cached_key(|file| collation_basename_key(*file, db));
-    files
-}
-
-/// Returns workspace scripts below `dir` in `targets::tar_source()` load order.
-///
-/// `list.files(recursive = TRUE)` sorts nested scripts by relative path. Case
-/// folding matches [`collation_basename_key()`].
-pub(crate) fn files_in_directory_recursive(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
-    let mut keyed: Vec<(String, File)> = workspace_scripts(db)
-        .iter()
-        .copied()
-        .filter_map(|file| {
-            let relative = file.path(db).as_path()?.strip_prefix(dir).ok()?;
-            Some((relative.as_str().to_ascii_lowercase(), file))
-        })
-        .collect();
-
-    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
-    keyed.into_iter().map(|(_, file)| file).collect()
-}
-
-/// ASCII-case-folded basename key approximating `list.files()` session-locale
-/// ordering.
-///
-/// Package installation instead forces `LC_COLLATE=C`, where raw byte order
-/// determines collation.
-fn collation_basename_key(file: File, db: &dyn Db) -> Option<String> {
-    file.path(db)
-        .file_name()
-        .map(|name| name.to_ascii_lowercase())
 }
 
 /// Push the `From` layer if `package`'s namespace has any `importFrom` entries.

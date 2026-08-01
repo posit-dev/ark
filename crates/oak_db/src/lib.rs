@@ -1,12 +1,15 @@
 mod db;
 mod definition;
 mod diagnostic;
+mod directory;
 mod file;
 mod file_diagnostics;
 mod file_exports;
 mod file_imports;
+mod file_load_context;
 mod file_resolve;
 mod file_revision;
+mod file_shiny;
 mod file_source_site;
 mod identifier;
 mod imports;

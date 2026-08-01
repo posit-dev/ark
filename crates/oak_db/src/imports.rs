@@ -12,8 +12,8 @@ use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
 use url::Url;
 
-use crate::file_imports::files_in_directory;
-use crate::file_imports::files_in_directory_recursive;
+use crate::directory::files_in_directory;
+use crate::directory::files_in_directory_recursive;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::Db;
