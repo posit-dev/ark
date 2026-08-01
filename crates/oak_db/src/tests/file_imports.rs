@@ -743,11 +743,8 @@ fn test_script_r_directory_predecessor_attach_reaches_sibling() {
 
 #[test]
 fn test_script_r_directory_below_uses_full_default_search_path() {
-    // Guards against reusing `package_load_layers`'s `base_layer` for the
-    // script path: a non-package script sees R's whole startup search path
-    // (stats, graphics, ..., base), not just `base`. `package_load_layers`
-    // uses `base_layer` because NAMESPACE supplies the rest for a package
-    // file; a script has no NAMESPACE.
+    // `SearchPathTail::Base` is for package code whose dependencies come from
+    // the NAMESPACE. A script needs the complete default search path.
     let mut db = TestDb::new();
     install_packages(&mut db, &[
         "stats",

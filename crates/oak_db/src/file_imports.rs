@@ -190,6 +190,35 @@ pub(crate) enum CollationView {
     Eager,
 }
 
+/// The files, namespace imports, and attached packages supplied by a file's
+/// loader.
+///
+/// Source inheritance is assembled separately by [`build_inherited_layers`]
+/// because it can contribute an offset-narrowed [`ImportLayer::SourcingFile`].
+///
+/// Discovering a context must not read the file's own semantic index. This
+/// keeps [`File::cross_file_layers`] callable while that index is being built.
+struct LoadContext {
+    /// Visible files in lookup order, highest priority first. Excludes the file
+    /// itself.
+    visible_files: Vec<File>,
+
+    namespace_owner: Option<Package>,
+
+    /// Packages attached by the loader. Packages absent from every root are
+    /// dropped during lowering.
+    implicit_attaches: Vec<&'static str>,
+
+    search_path_tail: SearchPathTail,
+}
+
+enum SearchPathTail {
+    /// Only `base`. Package dependencies are supplied by the NAMESPACE.
+    Base,
+
+    Default,
+}
+
 #[salsa::tracked]
 impl File {
     /// Every import layer this file could see, in R's lookup (LIFO) priority
@@ -262,7 +291,7 @@ impl File {
         layers.lookup_order(&own).cloned().collect()
     }
 
-    /// The file's own context and its inherited context from the files that
+    /// The file's own layers and the layers it inherits from the files that
     /// source it, flattened into one lookup order.
     fn resolution_layers<'db>(
         self,
@@ -282,8 +311,8 @@ impl File {
             below.extend(site.layers.below.iter().cloned());
         }
 
-        // Every context's `below` ends in the default search path. Hoist it out
-        // and append it once, or the next context's attaches land under `base`.
+        // Every alternative's `below` ends in the default search path. Hoist it
+        // out and append it once, or the next one's attaches land under `base`.
         let search_path = default_search_path_layers(db);
         below.retain(|layer| !search_path.contains(layer));
         below.extend(search_path);
@@ -292,11 +321,11 @@ impl File {
     }
 
     /// The lookup-ordered layers this file's lazy / end-of-file view sees: the
-    /// file's own [`File::cross_file_layers`], then one context per file that
-    /// sources it (see [`File::inherited_layers`]).
+    /// file's own [`File::cross_file_layers`], then one alternative per file
+    /// that sources it (see [`File::inherited_layers`]).
     ///
-    /// The contexts are resolved as alternatives not as a priority order.
-    /// Symbols resolve in each context and are returned as a union of results.
+    /// The alternatives are resolved independently, not as a priority order.
+    /// Symbols resolve in each and are returned as a union of results.
     ///
     /// Tracked query, firewall between `resolve()` and the `no_eq`
     /// `semantic_index` read by `attach_layers()`.
@@ -305,7 +334,7 @@ impl File {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.layers_by_sourcing_file(db, CollationView::Lazy)
             .into_iter()
-            .map(|context| context.lookup_order(&own).cloned().collect())
+            .map(|layers| layers.lookup_order(&own).cloned().collect())
             .collect()
     }
 
@@ -337,19 +366,19 @@ impl File {
         let own = self.attach_layers(db, attaches);
         self.layers_by_sourcing_file(db, collation)
             .into_iter()
-            .map(|context| context.lookup_order(&own).cloned().collect())
+            .map(|layers| layers.lookup_order(&own).cloned().collect())
             .collect()
     }
 
-    /// The file's own context, plus one per file that sources it.
+    /// The file's own layers, plus one alternative per file that sources it.
     fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
-        let mut contexts = vec![self.cross_file_layers(db, view)];
-        contexts.extend(
+        let mut alternatives = vec![self.cross_file_layers(db, view)];
+        alternatives.extend(
             self.inherited_layers(db, view)
                 .iter()
                 .map(|site| &site.layers),
         );
-        contexts
+        alternatives
     }
 
     /// The layers `self` inherits from each file that sources it, one entry per
@@ -426,37 +455,7 @@ impl File {
     /// O(predecessors) each time.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
-        match self.package(db) {
-            // A `tests/testthat/` file: sees the whole package plus sourced
-            // helpers, with testthat attached.
-            Some(package) if is_testthat_file(self, db) => {
-                testthat_load_layers(self, db, package, view)
-            },
-            // A loadable `R/` file: sees collation siblings and the package
-            // NAMESPACE.
-            Some(package) if self.is_package_source(db, package) => {
-                package_load_layers(self, db, package, view)
-            },
-            // A non-package script in an `R/` directory: collated
-            // alphabetically, exactly like a package `R/` with no `Collate:`.
-            None if in_r_directory(self, db) => script_collation_layers(self, db, view),
-            // A Shiny entry point: `runApp()` evaluates `global.R` and an
-            // adjacent `R/` folder.
-            //
-            // Shiny arms are gated on `None` to exclude golem-style `inst/app/app.R`.
-            None if self.shiny_autoload(db).is_some() => shiny_app_layers(self, db),
-            // A Shiny app's `global.R`: evaluated first, into the global
-            // environment, so it sees none of what the app defines.
-            None if is_shiny_global_file(self, db) => shiny_global_layers(db),
-            // A standalone script, or a file with a package back-pointer that
-            // isn't a loadable `R/` file (`data-raw/`, `inst/`, a non-collated
-            // `R/` file): lives in the package but isn't loaded with it, so it
-            // sees only its own attaches and the default search path.
-            _ => CrossFileLayers {
-                above: Vec::new(),
-                below: default_search_path_layers(db),
-            },
-        }
+        lower_load_context(db, load_context(db, self, view))
     }
 
     /// Whether this file is one of `package`'s loadable `R/` files, the ones in
@@ -663,47 +662,182 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
     loaded
 }
 
-fn package_load_layers(
-    file: File,
-    db: &dyn Db,
-    package: Package,
-    view: CollationView,
-) -> CrossFileLayers {
-    let files = package.files(db);
-
-    // `Collate:` order isn't derivable from file names.
-    let prefix_len = files.iter().position(|sibling| *sibling == file);
-    if prefix_len.is_none() && matches!(view, CollationView::Eager) {
-        // File claims package membership but isn't in `package.files()`.
-        // Shouldn't happen; see the placement invariant on `File.package`.
-        log::warn!(
-            "File {file} has package back-pointer to {package} but is not in its files",
-            file = file.path(db),
-            package = package.name(db),
-        );
+/// Selects the first matching loader. Classifications overlap, so `testthat`
+/// precedes package loading and package ownership precedes directory
+/// conventions.
+fn load_context(db: &dyn Db, file: File, view: CollationView) -> LoadContext {
+    if let Some(context) = testthat_load_context(db, file, view) {
+        return context;
     }
-    let siblings = visible_siblings(file, files, view, prefix_len);
+    if let Some(context) = package_load_context(db, file, view) {
+        return context;
+    }
 
-    let mut above: Vec<ImportLayer> = siblings.iter().copied().map(ImportLayer::File).collect();
-    let namespace = package.namespace(db);
-    extend_with_namespace_imports(package, namespace, &mut above);
-    extend_with_namespace_package_imports(db, namespace, &mut above);
+    // Package ownership blocks directory inference, keeping `inst/app/app.R`
+    // on the standalone path instead of inferring e.g. a `runApp()` context.
+    if file.package(db).is_none() {
+        if let Some(context) = shiny_load_context(db, file, view) {
+            return context;
+        }
+        if let Some(context) = script_load_context(db, file, view) {
+            return context;
+        }
+    }
 
-    // Every sibling's attaches go on the search path below the file's own.
-    // For the `Lazy` view that includes successors, whose `library()` calls
-    // actually run after this file's at load time and so outrank the file's own
-    // attaches at runtime. We rank them below instead. Only matters when a
-    // successor re-attaches a package that shadows one of this file's own
-    // attaches, which is rare, and the direction we lose is the safe one.
-    let mut below = predecessor_attach_layers(db, &siblings);
-    below.extend(base_layer(db));
-    CrossFileLayers { above, below }
+    standalone_load_context()
 }
 
-/// Load-time layers for a non-package script collated by the `R/` directory
-/// convention (see `File::cross_file_layers`). Mirrors `package_load_layers`,
-/// with `below` ending in the whole default search path rather than just `base`.
-fn script_collation_layers(file: File, db: &dyn Db, view: CollationView) -> CrossFileLayers {
+/// A `tests/testthat/` file runs with the package loaded and `testthat` attached
+/// after `helper*.R` and `setup*.R` are sourced into the test environment.
+///
+/// Support files form their own collation. An `Eager` view keeps only
+/// source-order predecessors, while a `Lazy` view keeps every support file.
+/// Every `R/` file remains visible because package loading finishes first.
+fn testthat_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+    let package = file.package(db)?;
+    if !is_testthat_file(file, db) {
+        return None;
+    }
+
+    // `testthat` sources support files in sorted order.
+    let mut support: Vec<File> = package
+        .scripts(db)
+        .iter()
+        .copied()
+        .filter(|script| is_testthat_support_file(*script, db))
+        .collect();
+    support.sort_by_cached_key(|script| testthat_support_key(*script, db));
+
+    // Test files run after every support file, so they use the full support prefix.
+    let prefix_len = support
+        .iter()
+        .position(|script| *script == file)
+        .unwrap_or(support.len());
+    let mut visible_files = visible_siblings(file, &support, view, prefix_len);
+
+    // Support files shadow package code in the test environment. Package files
+    // therefore follow them in reverse collation order.
+    visible_files.extend(package.files(db).iter().rev().copied());
+
+    Some(LoadContext {
+        visible_files,
+        namespace_owner: Some(package),
+        implicit_attaches: vec!["testthat"],
+        search_path_tail: SearchPathTail::Base,
+    })
+}
+
+/// A package `R/` file that participates in the `Package::files()` collation.
+/// A package back-pointer alone does not make a script loadable.
+fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+    let package = file.package(db)?;
+    let files = package.files(db);
+
+    // The position lookup establishes membership and preserves `Collate:`
+    // order, which cannot be derived from file names.
+    let prefix_len = files.iter().position(|sibling| *sibling == file)?;
+
+    Some(LoadContext {
+        visible_files: visible_siblings(file, files, view, prefix_len),
+        namespace_owner: Some(package),
+        implicit_attaches: Vec::new(),
+        search_path_tail: SearchPathTail::Base,
+    })
+}
+
+/// A file loaded by `shiny::runApp()`. Returns `None` for an `R/` file excluded
+/// by `_disable_autoload.R`.
+///
+/// Testing `R/` membership first keeps a module named `R/app.R` in its
+/// collation instead of treating it as an entry point.
+fn shiny_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+    if in_r_directory(file, db) {
+        let autoload = file.shiny_autoload(db).as_deref()?;
+        return Some(shiny_autoload_load_context(db, file, view, autoload));
+    }
+    if let Some(autoload) = file.shiny_autoload(db).as_deref() {
+        return Some(shiny_entry_load_context(file, autoload));
+    }
+    // `global.R` runs first in the global environment, so it cannot see
+    // definitions supplied by the app.
+    is_shiny_global_file(file, db).then(shiny_global_load_context)
+}
+
+/// An `R/` file sourced by `loadSupport()` sees its collation plus files loaded
+/// before the directory.
+fn shiny_autoload_load_context(
+    db: &dyn Db,
+    file: File,
+    view: CollationView,
+    autoload: &[File],
+) -> LoadContext {
+    let mut visible_files = collation_visible_files(db, file, view);
+
+    // `loadSupport()` evaluates `global.R` before the `R/` files. Appending it
+    // after the reversed collation keeps it below every sibling.
+    visible_files.extend(autoload);
+
+    LoadContext {
+        visible_files,
+        namespace_owner: None,
+        implicit_attaches: vec!["shiny"],
+        search_path_tail: SearchPathTail::Default,
+    }
+}
+
+/// A Shiny entry point sees the entire support set because `loadSupport()`
+/// finishes before `runApp()` evaluates its first line. Unlike a collation
+/// member, it does not cut visibility at its own position.
+fn shiny_entry_load_context(file: File, autoload: &[File]) -> LoadContext {
+    LoadContext {
+        // The `R/` files shadow `global.R` through both LIFO order and
+        // evaluation in a child environment.
+        visible_files: autoload
+            .iter()
+            .rev()
+            .copied()
+            .filter(|support| *support != file)
+            .collect(),
+        namespace_owner: None,
+        implicit_attaches: vec!["shiny"],
+        search_path_tail: SearchPathTail::Default,
+    }
+}
+
+fn shiny_global_load_context() -> LoadContext {
+    LoadContext {
+        visible_files: Vec::new(),
+        namespace_owner: None,
+        implicit_attaches: vec!["shiny"],
+        search_path_tail: SearchPathTail::Default,
+    }
+}
+
+/// A non-package script in an `R/` directory, collated alphabetically, exactly
+/// like a package `R/` with no `Collate:`.
+fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+    if !in_r_directory(file, db) {
+        return None;
+    }
+    Some(LoadContext {
+        visible_files: collation_visible_files(db, file, view),
+        namespace_owner: None,
+        implicit_attaches: Vec::new(),
+        search_path_tail: SearchPathTail::Default,
+    })
+}
+
+fn standalone_load_context() -> LoadContext {
+    LoadContext {
+        visible_files: Vec::new(),
+        namespace_owner: None,
+        implicit_attaches: Vec::new(),
+        search_path_tail: SearchPathTail::Default,
+    }
+}
+
+/// The `R/`-directory collation members visible to `file`, in LIFO order.
+fn collation_visible_files(db: &dyn Db, file: File, view: CollationView) -> Vec<File> {
     let files = file.collation_siblings(db);
 
     // `file` is missing from its own sibling list until the scanner moves it out
@@ -711,40 +845,20 @@ fn script_collation_layers(file: File, db: &dyn Db, view: CollationView) -> Cros
     let own_key = collation_basename_key(file, db);
     let prefix_len =
         files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key);
-    let mut siblings = visible_siblings(file, files, view, Some(prefix_len));
 
-    // Under Shiny autoload, `loadSupport()` evaluates `global.R` into the
-    // enclosing environment before any of the `R/` files. Last in LIFO order,
-    // so every sibling shadows it.
-    let autoload = file.shiny_autoload(db);
-    siblings.extend(autoload.iter().flatten().copied());
-
-    let above: Vec<ImportLayer> = siblings.iter().copied().map(ImportLayer::File).collect();
-
-    let mut below = predecessor_attach_layers(db, &siblings);
-    // `loadSupport()` opens with `require(shiny)`, so an autoloaded file has
-    // shiny attached whether or not the app itself ever calls `library(shiny)`.
-    if autoload.is_some() {
-        below.extend(shiny_layer(db));
-    }
-    below.extend(default_search_path_layers(db));
-    CrossFileLayers { above, below }
+    visible_siblings(file, files, view, prefix_len)
 }
 
-/// Files visible to `file`, ordered for LIFO lookup. A later-loaded collation
-/// sibling shadows names from an earlier sibling.
+/// Returns siblings in LIFO order. `CollationView::Eager` keeps only the first
+/// `prefix_len` files.
 ///
-/// Excludes `file` because its top-level bindings come from `exports()`.
-/// Including it would make `resolve()` cycle for unbound names.
-///
-/// `prefix_len` counts collation files loaded before `file`, which an `Eager`
-/// view retains. `None` means `file` is absent from the collation, so every
-/// non-self sibling is returned in LIFO order to over-approximate visibility.
+/// Excluding `file` avoids re-entering its semantic index while resolving an
+/// unbound name.
 fn visible_siblings(
     file: File,
     collation: &[File],
     view: CollationView,
-    prefix_len: Option<usize>,
+    prefix_len: usize,
 ) -> Vec<File> {
     match view {
         CollationView::Lazy => collation
@@ -753,43 +867,46 @@ fn visible_siblings(
             .copied()
             .filter(|sibling| *sibling != file)
             .collect(),
-        CollationView::Eager => match prefix_len {
-            Some(len) => collation[..len].iter().rev().copied().collect(),
-            None => collation
-                .iter()
-                .rev()
-                .copied()
-                .filter(|sibling| *sibling != file)
-                .collect(),
-        },
+        CollationView::Eager => collation[..prefix_len].iter().rev().copied().collect(),
     }
 }
 
-/// Load-time layers for a Shiny entry point, the files `runApp()` evaluates
-/// after `loadSupport()` has run: `global.R`, then the adjacent `R/`.
-///
-/// View-independent, unlike [`script_collation_layers`]. A collation cuts at
-/// the file's own position because the file is a member of the sequence. An
-/// entry point isn't, and the whole support set has loaded before its first
-/// line.
-fn shiny_app_layers(file: File, db: &dyn Db) -> CrossFileLayers {
-    // LIFO, and the `R/` files evaluate into a child of the environment holding
-    // `global.R`, so they shadow it on both counts.
-    let support: Vec<File> = file
-        .shiny_autoload(db)
-        .as_deref()
-        .unwrap_or_default()
+/// Lowers a context while preserving resolver precedence. Visible definitions
+/// and NAMESPACE imports rank above the file's attaches, and loader-provided
+/// search-path layers rank below them.
+fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
+    let LoadContext {
+        visible_files,
+        namespace_owner,
+        implicit_attaches,
+        search_path_tail,
+    } = context;
+
+    let mut above: Vec<ImportLayer> = visible_files
         .iter()
-        .rev()
         .copied()
-        .filter(|support| *support != file)
+        .map(ImportLayer::File)
         .collect();
+    if let Some(package) = namespace_owner {
+        let namespace = package.namespace(db);
+        extend_with_namespace_imports(package, namespace, &mut above);
+        extend_with_namespace_package_imports(db, namespace, &mut above);
+    }
 
-    let above: Vec<ImportLayer> = support.iter().copied().map(ImportLayer::File).collect();
+    // `Lazy` includes successor attaches that run later and should outrank this
+    // file's own. Ranking them below loses only names shadowed by a package a
+    // successor reattaches.
+    let mut below = predecessor_attach_layers(db, &visible_files);
+    below.extend(
+        implicit_attaches
+            .iter()
+            .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package)),
+    );
+    match search_path_tail {
+        SearchPathTail::Base => below.extend(base_layer(db)),
+        SearchPathTail::Default => below.extend(default_search_path_layers(db)),
+    }
 
-    let mut below = predecessor_attach_layers(db, &support);
-    below.extend(shiny_layer(db));
-    below.extend(default_search_path_layers(db));
     CrossFileLayers { above, below }
 }
 
@@ -845,17 +962,6 @@ fn is_shiny_global_file(file: File, db: &dyn Db) -> bool {
     is_shiny_dir(db, dir)
 }
 
-/// Load-time layers for a Shiny app's `global.R`: the implicit `shiny` attach
-/// and the default search path.
-fn shiny_global_layers(db: &dyn Db) -> CrossFileLayers {
-    let mut below: Vec<ImportLayer> = shiny_layer(db).into_iter().collect();
-    below.extend(default_search_path_layers(db));
-    CrossFileLayers {
-        above: Vec::new(),
-        below,
-    }
-}
-
 /// The app directory of a Shiny entry point. `None` for any other file.
 fn shiny_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
     if !is_shiny_entry_file(db, file) {
@@ -893,69 +999,6 @@ fn is_named(file: File, db: &dyn Db, name: &str) -> bool {
     file.path(db)
         .file_name()
         .is_some_and(|basename| basename.eq_ignore_ascii_case(name))
-}
-
-/// Load-time layers visible to a `tests/testthat/` file, in R's LIFO priority
-/// order.
-///
-/// A test file runs with the package loaded and `testthat` attached, after
-/// testthat has sourced the package's `helper*.R` and `setup*.R` files into
-/// the test environment. The layering, highest priority first, is:
-///
-/// 1. helper/setup files (sourced into the test env, shadow everything),
-/// 2. the whole package's `R/` code,
-/// 3. the package's NAMESPACE imports,
-/// 4. the file's own top-level `library()` calls (spliced in by the caller),
-/// 5. helper/setup and package attaches, then `testthat`, on the search path,
-/// 6. base.
-///
-/// Support files form their own collation. An `Eager` view keeps only
-/// source-order predecessors, while a `Lazy` view keeps every support file.
-/// Every `R/` file remains visible because package loading finishes first.
-fn testthat_load_layers(
-    file: File,
-    db: &dyn Db,
-    package: Package,
-    view: CollationView,
-) -> CrossFileLayers {
-    let mut support: Vec<File> = package
-        .scripts(db)
-        .iter()
-        .copied()
-        .filter(|script| is_testthat_support_file(*script, db))
-        .collect();
-    support.sort_by_cached_key(|script| testthat_support_key(*script, db));
-
-    // Test files run after every support file, so they use the full support prefix.
-    let prefix_len = support
-        .iter()
-        .position(|script| *script == file)
-        .unwrap_or(support.len());
-    let support = visible_siblings(file, &support, view, Some(prefix_len));
-
-    // The whole package is loaded when tests run, so every `R/` file is visible.
-    // Collation order reversed for LIFO, same as `package_load_layers`.
-    let package_files: Vec<File> = package.files(db).iter().rev().copied().collect();
-
-    let mut above: Vec<ImportLayer> = support
-        .iter()
-        .chain(package_files.iter())
-        .copied()
-        .map(ImportLayer::File)
-        .collect();
-    let namespace = package.namespace(db);
-    extend_with_namespace_imports(package, namespace, &mut above);
-    extend_with_namespace_package_imports(db, namespace, &mut above);
-
-    // Attaches from the sourced helpers and the loaded package, then testthat
-    // (attached first by the runner, so lowest), then base. The test file's own
-    // attaches are spliced above these by the caller.
-    let mut below = predecessor_attach_layers(db, &support);
-    below.extend(predecessor_attach_layers(db, &package_files));
-    below.extend(db.package_by_name("testthat").map(ImportLayer::Package));
-    below.extend(base_layer(db));
-
-    CrossFileLayers { above, below }
 }
 
 /// The search-path attaches contributed by a set of load-order files, latest
@@ -1113,12 +1156,6 @@ fn extend_with_namespace_package_imports(
 /// any root (the R system library is normally on `.libPaths()`, so it is).
 fn base_layer(db: &dyn Db) -> Option<ImportLayer> {
     db.package_by_name("base").map(ImportLayer::Package)
-}
-
-/// `shiny`, attached by `loadSupport()`'s own `require(shiny)` before an app's
-/// first line runs. `None` when it isn't scanned into any root.
-fn shiny_layer(db: &dyn Db) -> Option<ImportLayer> {
-    db.package_by_name("shiny").map(ImportLayer::Package)
 }
 
 /// The default startup search path as `Package` layers, `stats` first through
