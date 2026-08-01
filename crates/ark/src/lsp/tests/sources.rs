@@ -128,10 +128,8 @@ async fn test_source_pipeline_ingests_package_sources() {
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
 
-/// With `oak.sourceFetching.enabled` off, the same workspace that
-/// dispatches a request in `test_source_pipeline_ingests_package_sources`
-/// dispatches nothing. The scan still runs and still finds the dependency, so
-/// this pins that the gate is on the fetch and not on the analysis around it.
+/// Disabling `oak.sourceFetching.enabled` leaves dependency discovery intact
+/// but dispatches no source request.
 #[tokio::test]
 async fn test_disabled_source_fetching_dispatches_nothing() {
     let _aux = init_aux_for_test();
@@ -176,26 +174,14 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
 
     assert!(handler.calls().lock().unwrap().is_empty());
 
-    // The dependency was still discovered, so re-enabling would have something
-    // to fetch. Only the fetch is gated.
+    // The dependency is indexed even though its sources were not fetched.
     let db = &state.world().db;
     let donor = db.package_by_name("donor").unwrap();
     assert!(donor.files(db).is_empty());
 }
 
-/// The workspace scan runs during `initialize`, but fetching what it turns up
-/// waits for `initialized`. That's the first point `handle_initialized()` could
-/// have pulled the client's settings, and the `initialize` request handler
-/// can't await that round trip before answering. Without the wait, a workspace
-/// opened with `sourceFetching.enabled` off would still fetch at startup.
-///
-/// Only the fetch waits: the scan and the analysis around it run on the
-/// original schedule, so intellisense doesn't pay for the round trip.
-///
-/// The dummy `test_client()` can't actually answer `workspace/configuration`
-/// (its sends go nowhere), so this also pins that a failed pull still releases
-/// fetching. `handle_initialized()` has to log and move on rather than
-/// propagate, or the dispatch below would never happen either.
+/// Do not fetch packages found during `initialize()` before attempting client configuration.
+/// Release the startup gate after a failed configuration request.
 #[tokio::test]
 async fn test_fetching_waits_for_initialized() {
     let _aux = init_aux_for_test();
@@ -234,8 +220,7 @@ async fn test_fetching_waits_for_initialized() {
     let (event, _response_rx) = initialize(workspace.path());
     state.handle_event_to_quiescence(event).await;
 
-    // The scan ran to completion and found the dependency, yet nothing was
-    // fetched for it.
+    // The initial scan discovered the dependency without fetching its sources.
     assert!(handler.calls().lock().unwrap().is_empty());
     let db = &state.world().db;
     let donor = db.package_by_name("donor").unwrap();
@@ -245,14 +230,12 @@ async fn test_fetching_waits_for_initialized() {
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
 }
 
-/// `OAK_SOURCE_FETCHING_ENABLED` beats the LSP setting in both directions,
-/// following ty and ruff: a value given at the invocation wins over one from a
-/// settings file. Unset falls through to the setting.
+/// A recognized `OAK_SOURCE_FETCHING_ENABLED` value overrides `oak.sourceFetching.enabled`.
+/// Unset or unrecognized values preserve the LSP setting.
 #[test]
 fn test_env_var_overrides_the_setting() {
     let name = OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 
-    // Whether fetching is on after resolving `client_says` against the env var.
     let resolve = |client_says: bool| {
         let mut config = LspConfig::default();
         config.oak.source_fetching_enabled = client_says;
@@ -272,7 +255,6 @@ fn test_env_var_overrides_the_setting() {
     assert!(!resolve(true));
     assert!(!resolve(false));
 
-    // Unrecognised falls through to the setting rather than forcing a value.
     unsafe { std::env::set_var(name, "yes") };
     assert!(resolve(true));
     assert!(!resolve(false));

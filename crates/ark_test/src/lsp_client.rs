@@ -90,9 +90,8 @@ impl LspClient {
 
         self.send_notification("initialized", json!({}));
 
-        // The server sends `client/registerCapability`, then pulls the
-        // client's settings with `workspace/configuration`, both after
-        // `initialized` and before the first workspace scan.
+        // After `initialized`, the server registers capabilities and requests
+        // configuration before scheduling source fetches.
         self.recv_server_request("client/registerCapability");
         self.recv_server_request("workspace/configuration");
 
@@ -426,16 +425,9 @@ impl LspClient {
         }
     }
 
-    /// The `result` to answer a server request with.
-    ///
-    /// `workspace/configuration` needs one value per requested item, in order,
-    /// or the server's `configs.len() != n_items` check rejects the response.
-    /// Each item settles for its own default: the server's `Setting::set`
-    /// closures already fall back to a default when a value doesn't parse as
-    /// the expected type, and `null` never parses as anything.
-    ///
-    /// Every other server request we see (currently just
-    /// `client/registerCapability`) just wants an ack.
+    /// Reply to a server request without blocking the test client.
+    /// `workspace/configuration` requires one response per requested item,
+    /// while `null` selects each setting's default.
     fn reply_to_server_request(method: &str, params: &Value) -> Value {
         match method {
             "workspace/configuration" => {

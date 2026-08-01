@@ -642,7 +642,6 @@ impl GlobalState {
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
-    // Avoid unnecessary traffic on CI
     if is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) {
         log::info!(
             "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."

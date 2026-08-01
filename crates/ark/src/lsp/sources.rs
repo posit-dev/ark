@@ -146,8 +146,7 @@ pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
 
-    /// Whether we're still waiting on the client's settings. Set until
-    /// [`Self::config_arrived`].
+    /// Blocks initial fetches until client configuration is resolved.
     awaiting_config: bool,
 }
 
@@ -160,10 +159,9 @@ impl SourceScheduler {
         }
     }
 
-    /// Let fetches start, the client's settings having landed.
-    ///
-    /// Until this runs, [`Self::schedule`] records nothing, so the packages it
-    /// declined are all still unseen and the next call picks them up.
+    /// Release fetches after attempting to load client configuration. While
+    /// blocked, [`Self::schedule()`] leaves packages unrecorded so it can queue
+    /// them later.
     pub(crate) fn config_arrived(&mut self) {
         self.awaiting_config = false;
     }
@@ -182,19 +180,14 @@ impl SourceScheduler {
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
     ) {
-        // The workspace scan runs during `initialize`, so it can hand us
-        // packages before the client has told us whether to fetch at all. Wait
-        // for its settings rather than fetching against the defaults, which
-        // would download base R sources a `sourceFetching.enabled` of `false`
-        // was meant to prevent.
+        // Wait for client configuration so `oak.sourceFetching.enabled = false`
+        // may prevent startup fetches.
         if self.awaiting_config {
             return;
         }
 
-        // Checked per call rather than at construction, because the client can
-        // flip this mid-session. Turning it back on picks up every package
-        // we've seen so far. Already resolved against the environment by
-        // `apply_env_overrides()`.
+        // Check every time so re-enabling source fetching queues packages left
+        // unhandled while disabled.
         if !config.source_fetching_enabled {
             return;
         }

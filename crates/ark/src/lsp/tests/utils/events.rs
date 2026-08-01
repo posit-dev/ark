@@ -37,9 +37,7 @@ pub(crate) fn initialize(path: &Path) -> (Event, UnboundedReceiver<RequestRespon
     (event, rx)
 }
 
-/// The `initialized` notification, sent once the client has processed the
-/// `initialize` response. This is what triggers the deferred workspace scan;
-/// see `state_handlers::handle_initialized()`.
+/// An `initialized` notification that starts configuration resolution and releases deferred source fetching.
 pub(crate) fn initialized() -> Event {
     Event::Lsp(LspMessage::Notification(LspNotification::Initialized(
         InitializedParams {},

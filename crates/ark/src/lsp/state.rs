@@ -79,8 +79,7 @@ impl WorldState {
             db,
             ..Default::default()
         };
-        // Resolved here as well as in `initialize()` and `update_config()`, so
-        // an override holds at all times.
+        // Apply environment overrides before the LSP receives client configuration.
         crate::lsp::config::apply_env_overrides(&mut state.config);
         state
     }

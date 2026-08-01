@@ -9,8 +9,8 @@ pub fn env_flag(name: &str) -> bool {
     env_flag_opt(name).unwrap_or(false)
 }
 
-/// `None` when unset, or set to anything we don't recognise. Lets a caller fall
-/// back to another source of truth rather than to a hardcoded default.
+/// Returns `None` for unset or unrecognized values so callers preserve a
+/// lower-precedence setting.
 pub fn env_flag_opt(name: &str) -> Option<bool> {
     match std::env::var(name) {
         Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
@@ -31,9 +31,8 @@ mod tests {
     use super::env_flag;
     use super::env_flag_opt;
 
-    /// `None` has to be distinguishable from `Some(false)`, otherwise an env var
-    /// can't override a setting: unset must fall through to the setting, while
-    /// `0` must beat it.
+    /// Preserve the distinction between an absent override and an explicit
+    /// false override.
     #[test]
     fn test_env_flag_opt_separates_unset_from_false() {
         let name = "STDEXT_TEST_ENV_FLAG_OPT";
@@ -51,8 +50,6 @@ mod tests {
             assert_eq!(env_flag_opt(name), Some(false));
         }
 
-        // Unrecognised reads as unset, so a typo falls through rather than
-        // silently meaning "off".
         for value in ["", "  ", "yes", "no", "2"] {
             unsafe { std::env::set_var(name, value) };
             assert_eq!(env_flag_opt(name), None);

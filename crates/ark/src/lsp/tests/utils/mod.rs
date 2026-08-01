@@ -65,21 +65,15 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     }
 }
 
-/// A [`SourceScheduler`] already past the startup wait for the client's
-/// settings, so a test can drive fetches without replaying the `initialized`
-/// handshake that would normally release them.
+/// Create a [`SourceScheduler`] with its startup configuration gate open.
 pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> SourceScheduler {
     let mut scheduler = SourceScheduler::new(Some(handler));
     scheduler.config_arrived();
     scheduler
 }
 
-/// A [`WorldState`] with source fetching pinned on.
-///
-/// `WorldState::new()` resolves `OAK_SOURCE_FETCHING_ENABLED`, so a test that
-/// drives a fetch pins the setting instead of inheriting the default. Otherwise
-/// exporting the variable to save bandwidth locally would decide what these
-/// tests exercise.
+/// Enable source fetching after [`WorldState::new()`] applies
+/// `OAK_SOURCE_FETCHING_ENABLED`.
 pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
     let mut world = WorldState::new(db);
     world.config.oak.source_fetching_enabled = true;

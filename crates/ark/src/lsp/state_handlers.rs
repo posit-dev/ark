@@ -102,9 +102,6 @@ pub(crate) fn initialize(
 
     state.workspace.folders = workspace_paths;
 
-    // Kick off the initial workspace scan. Fetching sources for whatever it
-    // finds waits on `handle_initialized()`, which is the first point we could
-    // have the client's settings; see `SourceScheduler::config_arrived()`.
     dispatch_workspace_scan(state, lsp_state, events_tx);
 
     let result = InitializeResult {
@@ -253,9 +250,6 @@ pub(crate) async fn handle_initialized(
         }
     }
 
-    // Neither this nor the config pull below propagate. Fetching is released
-    // at the end either way, so a client that can't answer falls back to the
-    // defaults rather than never fetching at all.
     client
         .register_capability(regs)
         .instrument(span.exit())
@@ -266,9 +260,8 @@ pub(crate) async fn handle_initialized(
         .await
         .log_err();
 
-    // Now that settings are in hand, release the packages the workspace scan
-    // has turned up so far. Later arrivals ride the tick's usual
-    // revision-advance check.
+    // Release the startup gate after attempting to load client configuration.
+    // Packages seen so far will be queued now if the scheduler is activated.
     lsp_state.source_scheduler.config_arrived();
     lsp_state.source_scheduler.schedule(
         &state.db,
@@ -447,11 +440,8 @@ pub(crate) fn did_change_workspace_folders(
     Ok(())
 }
 
-/// Scan `state.workspace.folders`, dispatching a request for whatever
-/// `oak_scheduler.set_workspace_paths()` finds newly in or out of scope.
-///
-/// Called both after `initialized` (the first scan) and whenever the client
-/// reports workspace folders changing afterwards.
+/// Update scan roots from `state.workspace.folders`. Dispatch scans for files
+/// entering or leaving workspace scope.
 fn dispatch_workspace_scan(
     state: &mut WorldState,
     lsp_state: &mut LspState,
@@ -602,13 +592,11 @@ async fn update_config(
         }
     }
 
-    // Last, so an environment variable outranks client settings.
     apply_env_overrides(&mut state.config);
 
-    // The config lives outside Oak, so we bump the revision manually to make the
-    // next tick act on it. That refreshes diagnostics and reruns source
-    // scheduling, which is how turning `sourceFetching.enabled` back on starts
-    // fetching the packages we've already seen.
+    // `config` is not an Oak input, so we manually bump the revision to refresh
+    // diagnostics and rerun source scheduling. This queues already discovered
+    // packages when source fetching is re-enabled.
     if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
         tracing::info!("Bumping salsa revision after configuration changed");
         state.bump_revision();
