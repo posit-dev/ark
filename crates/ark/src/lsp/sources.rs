@@ -145,6 +145,10 @@ enum SourceState {
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
+
+    /// Whether we're still waiting on the client's settings. Set until
+    /// [`Self::config_arrived`].
+    awaiting_config: bool,
 }
 
 impl SourceScheduler {
@@ -152,7 +156,16 @@ impl SourceScheduler {
         Self {
             handler,
             state: HashMap::new(),
+            awaiting_config: true,
         }
+    }
+
+    /// Let fetches start, the client's settings having landed.
+    ///
+    /// Until this runs, [`Self::schedule`] records nothing, so the packages it
+    /// declined are all still unseen and the next call picks them up.
+    pub(crate) fn config_arrived(&mut self) {
+        self.awaiting_config = false;
     }
 
     /// Run a fetch for each package we haven't seen before on `pool`, shipping
@@ -169,6 +182,15 @@ impl SourceScheduler {
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
     ) {
+        // The workspace scan runs during `initialize`, so it can hand us
+        // packages before the client has told us whether to fetch at all. Wait
+        // for its settings rather than fetching against the defaults, which
+        // would download base R sources a `sourceFetching.enabled` of `false`
+        // was meant to prevent.
+        if self.awaiting_config {
+            return;
+        }
+
         // Checked per call rather than at construction, because the client can
         // flip this mid-session. Turning it back on picks up every package
         // we've seen so far. Already resolved against the environment by

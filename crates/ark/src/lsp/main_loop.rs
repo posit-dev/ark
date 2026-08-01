@@ -419,7 +419,7 @@ impl GlobalState {
 
                     match notif {
                         LspNotification::Initialized(_params) => {
-                            handlers::handle_initialized(&self.client, &self.lsp_state).await?;
+                            state_handlers::handle_initialized(&self.client, &mut self.lsp_state, &mut self.world, &self.events_tx).await;
                         },
                         LspNotification::DidChangeWorkspaceFolders(params) => {
                             state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;

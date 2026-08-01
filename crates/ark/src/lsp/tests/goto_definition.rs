@@ -18,6 +18,7 @@ use super::utils::did_change_workspace_folders;
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
+use super::utils::source_scheduler_for_test;
 use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
@@ -27,7 +28,6 @@ use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UrlExt;
 use crate::lsp::util::test_path;
@@ -285,7 +285,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler)),
+            source_scheduler_for_test(handler),
         ),
     );
 
@@ -351,7 +351,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler)),
+            source_scheduler_for_test(handler),
         ),
     );
 
@@ -421,7 +421,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler)),
+            source_scheduler_for_test(handler),
         ),
     );
 

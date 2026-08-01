@@ -21,19 +21,23 @@ use tower_lsp_server::ls_types::CompletionOptionsCompletionItem;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
 use tower_lsp_server::ls_types::ExecuteCommandOptions;
 use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FileSystemWatcher;
 use tower_lsp_server::ls_types::FoldingRangeProviderCapability;
 use tower_lsp_server::ls_types::FormattingOptions;
+use tower_lsp_server::ls_types::GlobPattern;
 use tower_lsp_server::ls_types::HoverProviderCapability;
 use tower_lsp_server::ls_types::ImplementationProviderCapability;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializeResult;
 use tower_lsp_server::ls_types::OneOf;
+use tower_lsp_server::ls_types::Registration;
 use tower_lsp_server::ls_types::RenameOptions;
 use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
 use tower_lsp_server::ls_types::ServerCapabilities;
@@ -52,7 +56,6 @@ use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::apply_env_overrides;
-use crate::lsp::config::apply_initialization_options;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
@@ -97,21 +100,12 @@ pub(crate) fn initialize(
     let workspace_paths = effective_workspace_paths(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
-    if let Some(options) = &params.initialization_options {
-        apply_initialization_options(&mut state.config, options);
-    }
-    apply_env_overrides(&mut state.config);
-
     state.workspace.folders = workspace_paths;
 
-    // Kick off the initial workspace scan
-    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
-    let requests = lsp_state.oak_scheduler.set_workspace_paths(
-        &mut state.db,
-        &to_std_paths(&state.workspace.folders),
-        &editor_owned,
-    );
-    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
+    // Kick off the initial workspace scan. Fetching sources for whatever it
+    // finds waits on `handle_initialized()`, which is the first point we could
+    // have the client's settings; see `SourceScheduler::config_arrived()`.
+    dispatch_workspace_scan(state, lsp_state, events_tx);
 
     let result = InitializeResult {
         server_info: Some(ServerInfo {
@@ -198,6 +192,90 @@ pub(super) fn effective_workspace_paths(params: &InitializeParams) -> Vec<AbsPat
         .filter_map(|folder| folder.uri.to_url().log_err())
         .filter_map(|url| AbsPathBuf::from_url(&url))
         .collect()
+}
+
+pub(crate) async fn handle_initialized(
+    client: &tower_lsp_server::Client,
+    lsp_state: &mut LspState,
+    state: &mut WorldState,
+    events_tx: &TokioUnboundedSender<Event>,
+) {
+    let span = tracing::info_span!("handle_initialized").entered();
+
+    // Register capabilities to the client
+    let mut regs: Vec<Registration> = vec![];
+
+    // Watch R files and DESCRIPTION. We get notified on any disk change;
+    // the handler skips editor-owned URLs since those are tracked via
+    // `textDocument/did*` instead.
+    let watchers = vec![
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+    ];
+    regs.push(Registration {
+        id: uuid::Uuid::new_v4().to_string(),
+        method: String::from("workspace/didChangeWatchedFiles"),
+        register_options: Some(
+            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
+        ),
+    });
+
+    if lsp_state
+        .capabilities
+        .dynamic_registration_for_did_change_configuration()
+    {
+        // The `didChangeConfiguration` request instructs the client to send
+        // a notification when the tracked settings have changed.
+        //
+        // Note that some settings, such as editor indentation properties, may be
+        // changed by extensions or by the user without changing the actual
+        // underlying setting. Unfortunately we don't receive updates in that case.
+
+        for setting in GLOBAL_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
+        for setting in DOCUMENT_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
+    }
+
+    // Neither this nor the config pull below propagate. Fetching is released
+    // at the end either way, so a client that can't answer falls back to the
+    // defaults rather than never fetching at all.
+    client
+        .register_capability(regs)
+        .instrument(span.exit())
+        .await
+        .log_err();
+
+    update_config(open_file_wire_uris(state), client, state)
+        .await
+        .log_err();
+
+    // Now that settings are in hand, release the packages the workspace scan
+    // has turned up so far. Later arrivals ride the tick's usual
+    // revision-advance check.
+    lsp_state.source_scheduler.config_arrived();
+    lsp_state.source_scheduler.schedule(
+        &state.db,
+        &state.config.oak,
+        &lsp_state.source_pool,
+        events_tx,
+    );
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -365,6 +443,20 @@ pub(crate) fn did_change_workspace_folders(
         }
     }
 
+    dispatch_workspace_scan(state, lsp_state, events_tx);
+    Ok(())
+}
+
+/// Scan `state.workspace.folders`, dispatching a request for whatever
+/// `oak_scheduler.set_workspace_paths()` finds newly in or out of scope.
+///
+/// Called both after `initialized` (the first scan) and whenever the client
+/// reports workspace folders changing afterwards.
+fn dispatch_workspace_scan(
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event>,
+) {
     // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
     // open buffers keep getting analysed even when their workspace
     // folder goes away.
@@ -376,7 +468,6 @@ pub(crate) fn did_change_workspace_folders(
         &editor_owned,
     );
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
-    Ok(())
 }
 
 /// Convert workspace folders to the `std::path::PathBuf`s the scan scheduler

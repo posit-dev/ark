@@ -24,6 +24,7 @@ use super::source_handler::TestSourceHandler;
 use super::utils::did_change;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::source_scheduler_for_test;
 use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
@@ -126,7 +127,7 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
         world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler)),
+            source_scheduler_for_test(handler),
         ),
     );
 

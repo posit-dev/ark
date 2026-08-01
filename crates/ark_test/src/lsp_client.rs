@@ -90,8 +90,11 @@ impl LspClient {
 
         self.send_notification("initialized", json!({}));
 
-        // The server sends `client/registerCapability` after `initialized`
+        // The server sends `client/registerCapability`, then pulls the
+        // client's settings with `workspace/configuration`, both after
+        // `initialized` and before the first workspace scan.
         self.recv_server_request("client/registerCapability");
+        self.recv_server_request("workspace/configuration");
 
         self.initialized = true;
         self.server_capabilities = Some(result.capabilities.clone());
@@ -391,14 +394,14 @@ impl LspClient {
     }
 
     /// Receive the next server-to-client request, assert its method, and
-    /// auto-reply with an empty success so the server doesn't block.
+    /// auto-reply with a response the server accepts, so it doesn't block.
     ///
     /// Skips benign server notifications. Panics on unexpected messages.
     #[track_caller]
     fn recv_server_request(&mut self, expected_method: &str) {
         loop {
             match self.recv_any() {
-                LspMessage::ServerRequest { id, method } => {
+                LspMessage::ServerRequest { id, method, params } => {
                     assert_eq!(
                         method, expected_method,
                         "Expected server request `{expected_method}`, got `{method}`"
@@ -406,7 +409,7 @@ impl LspClient {
                     let response = json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "result": null,
+                        "result": Self::reply_to_server_request(&method, &params),
                     });
                     self.send_raw(&response);
                     return;
@@ -422,6 +425,26 @@ impl LspClient {
             }
         }
     }
+
+    /// The `result` to answer a server request with.
+    ///
+    /// `workspace/configuration` needs one value per requested item, in order,
+    /// or the server's `configs.len() != n_items` check rejects the response.
+    /// Each item settles for its own default: the server's `Setting::set`
+    /// closures already fall back to a default when a value doesn't parse as
+    /// the expected type, and `null` never parses as anything.
+    ///
+    /// Every other server request we see (currently just
+    /// `client/registerCapability`) just wants an ack.
+    fn reply_to_server_request(method: &str, params: &Value) -> Value {
+        match method {
+            "workspace/configuration" => {
+                let n_items = params["items"].as_array().map_or(0, Vec::len);
+                Value::Array(vec![Value::Null; n_items])
+            },
+            _ => Value::Null,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -434,6 +457,7 @@ enum LspMessage {
     ServerRequest {
         id: Value,
         method: String,
+        params: Value,
     },
     Notification {
         diagnostics: Option<lsp_types::PublishDiagnosticsParams>,
@@ -459,6 +483,7 @@ impl LspClient {
             (true, true, false) => LspMessage::ServerRequest {
                 id: message["id"].clone(),
                 method: message["method"].as_str().unwrap_or("unknown").to_string(),
+                params: message.get("params").cloned().unwrap_or(Value::Null),
             },
 
             (false, true, false) => {

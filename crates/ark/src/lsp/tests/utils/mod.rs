@@ -3,6 +3,7 @@ mod events;
 mod namespace_writer;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use aether_path::FilePath;
 pub(super) use description_writer::DescriptionWriter;
@@ -10,6 +11,7 @@ pub(super) use events::did_change;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use events::initialize;
+pub(super) use events::initialized;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
@@ -19,6 +21,8 @@ use tower_lsp_server::Client;
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::LspService;
 
+use crate::lsp::sources::SourceHandler;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
 
@@ -59,6 +63,15 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     for (basename, contents) in files {
         std::fs::write(dir.join(basename), contents).unwrap();
     }
+}
+
+/// A [`SourceScheduler`] already past the startup wait for the client's
+/// settings, so a test can drive fetches without replaying the `initialized`
+/// handshake that would normally release them.
+pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> SourceScheduler {
+    let mut scheduler = SourceScheduler::new(Some(handler));
+    scheduler.config_arrived();
+    scheduler
 }
 
 /// A [`WorldState`] with source fetching pinned on.
