@@ -455,6 +455,24 @@ fn test_join_takes_the_else_arm_order_when_the_arms_attach_in_different_orders()
 }
 
 #[test]
+fn test_attach_rejoined_inside_an_arm_carries_through_the_outer_join() {
+    // The inner `if` rejoins cli onto its own `else` call, which the outer join
+    // then sees as the consequence arm's attach. So the outer `else` carries cli
+    // out, and the inner calls stay capped at the arm they ran in.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "if (a) {\n  if (b) library(cli) else library(cli)\n} else {\n  before\n  \
+                  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["before", "after"]), vec![
+        Vec::<String>::new(),
+        vec!["cli".to_string()]
+    ]);
+}
+
+#[test]
 fn test_attach_on_every_arm_of_an_else_if_chain_holds_after_the_chain() {
     // An `else if` nests a whole `if` in the alternative, so each join sees the
     // arm below it already rejoined. The final `else` closes the outer `if` too,

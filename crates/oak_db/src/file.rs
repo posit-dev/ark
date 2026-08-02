@@ -363,11 +363,24 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
         let line_index = file.line_index(db);
 
         for diagnostic in diagnostics {
+            if let SemanticDiagnostic::AmbiguousAttachOrder { packages, range } = diagnostic {
+                let at = format_line_col(line_index, *range);
+                log::warn!(
+                    "Ambiguous attach order in {path}:{at}: the branches attach {packages} in \
+                     different orders.",
+                    packages = packages.join(", ")
+                );
+                continue;
+            }
+
             let SemanticDiagnostic::EffectAmbiguity {
                 name,
                 call_range,
                 reason,
-            } = diagnostic;
+            } = diagnostic
+            else {
+                continue;
+            };
             let call = format_line_col(line_index, *call_range);
 
             match reason {

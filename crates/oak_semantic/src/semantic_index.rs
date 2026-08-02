@@ -923,6 +923,16 @@ pub enum SemanticDiagnostic {
         call_range: TextRange,
         reason: AmbiguityReason,
     },
+    /// Both `if` arms attach the same packages in different orders. The scanner
+    /// retains the `else` arm's order in `packages`, but R searches the most recent
+    /// attach first, so masked names after the `if` depend on the selected arm.
+    ///
+    /// Emit this even without a current name collision. A later package upgrade
+    /// could introduce one without a source change. The `range` covers the `if`.
+    AmbiguousAttachOrder {
+        packages: Vec<String>,
+        range: TextRange,
+    },
 }
 
 /// What made an [`EffectAmbiguity`](SemanticDiagnostic::EffectAmbiguity)

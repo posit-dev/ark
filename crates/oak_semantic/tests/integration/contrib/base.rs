@@ -2619,6 +2619,139 @@ f <- function() {
 // --- Attach tracking ---
 
 #[test]
+fn test_attach_order_ambiguity_flagged_when_arms_disagree() {
+    let source = "\
+if (cond) {
+    library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
+            assert_eq!(packages, &vec!["rlang".to_string(), "cli".to_string()]);
+            let start = u32::from(range.start()) as usize;
+            let end = u32::from(range.end()) as usize;
+            assert!(source[start..end].starts_with("if (cond) {"));
+            assert!(source[start..end].ends_with("library(cli)\n}"));
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_attach_order_ambiguity_not_flagged_when_arms_agree() {
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(cli)
+    library(rlang)
+} else {
+    library(cli)
+    library(rlang)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_sees_an_attach_rejoined_by_a_nested_if() {
+    // cli reaches the outer join on the inner `if`'s `else` call, so it competes
+    // with rlang there as if it had been attached directly in the arm.
+    let index = index_with_base(
+        "\
+if (a) {
+    if (b) library(cli) else library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousAttachOrder { packages, .. } => {
+            assert_eq!(packages, &vec!["rlang".to_string(), "cli".to_string()]);
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_attach_order_ambiguity_silent_across_a_conditional_attach() {
+    // Nothing fires, though the paths that attach both disagree: `a && b` puts
+    // cli below rlang, `!a` puts it above. cli doesn't survive the consequence
+    // arm's own join, so it isn't among the packages this join compares.
+    //
+    // The join is the wrong place to catch it. Comparing every package attached
+    // anywhere in an arm would flag this one, but also `if (b) library(cli) else
+    // library(rlang)`, where no single path attaches both. A use that resolves to
+    // a conditionally attached package from outside that package's region is the
+    // signal that separates them, and it lives in resolution, not here.
+    let index = index_with_base(
+        "\
+if (a) {
+    if (b) library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_ignores_a_reattach_that_settles_the_order() {
+    // The consequence attaches cli twice. R searches the latest attach of a
+    // package first, so both arms end up finding cli before rlang and the arms
+    // agree after all.
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(cli)
+    library(rlang)
+    library(cli)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_ignores_a_package_only_one_arm_attaches() {
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(rlang)
+    library(cli)
+} else {
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
 fn test_nse_attach_eager_body_inside_lazy_body_is_deferred() {
     // `local` is eager, but it sits inside `f`'s function body, so reaching
     // its `library(shiny)` waits on `f()` being called. The attach is recorded

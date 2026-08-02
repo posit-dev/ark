@@ -214,7 +214,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let alternative = stmt
                     .else_clause()
                     .and_then(|else_clause| else_clause.alternative().ok());
-                self.scan_branch(stmt.consequence().ok(), alternative);
+                self.scan_branch(
+                    stmt.consequence().ok(),
+                    alternative,
+                    stmt.syntax().text_trimmed_range(),
+                );
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -240,6 +244,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         &mut self,
         consequence: Option<AnyRExpression>,
         alternative: Option<AnyRExpression>,
+        range: TextRange,
     ) {
         let pre = self.scan.bound_so_far.snapshot();
         // A `library()` in one branch must not be visible in the sibling
@@ -263,6 +268,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             consequence_end,
             alternative_attaches,
             alternative_end,
+            range,
         );
     }
 
@@ -298,6 +304,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         consequence_end: Option<TextSize>,
         alternative: Vec<AttachSite>,
         alternative_end: Option<TextSize>,
+        range: TextRange,
     ) {
         // The `else` arm is the `if`'s final child, so its attach reaches the
         // closing brace. End the consequence attach at its arm so it cannot reach
@@ -309,12 +316,46 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
         let (rejoined, dropped): (Vec<_>, Vec<_>) = alternative.into_iter().partition(rejoined);
 
+        self.record_attach_order_ambiguity(&consequence, &rejoined, range);
+
         self.end_attach_effects(consequence, consequence_end);
         self.end_attach_effects(dropped, alternative_end);
 
         for site in rejoined {
             self.scan.attached_so_far.push(site.package, site.offset);
         }
+    }
+
+    /// Record a diagnostic when packages attached on both `if` arms have different
+    /// search orders. The scanner retains the `else` order, so masked names after
+    /// the join may resolve differently on the consequence path.
+    ///
+    /// Compare only packages attached on every path through both arms. A package
+    /// attached conditionally within an arm may still reorder another on some path,
+    /// but this join cannot distinguish that from exclusive sibling arms.
+    /// TODO(diagnostics): Resolution should detect and lint a use outside the
+    /// package's effect region.
+    fn record_attach_order_ambiguity(
+        &mut self,
+        consequence: &[AttachSite],
+        rejoined: &[AttachSite],
+        range: TextRange,
+    ) {
+        if rejoined.len() < 2 {
+            return;
+        }
+
+        let packages: FxHashSet<&str> = rejoined.iter().map(|site| site.package.as_str()).collect();
+        let kept = search_order(rejoined, &packages);
+        if search_order(consequence, &packages) == kept {
+            return;
+        }
+
+        self.diagnostics
+            .push(SemanticDiagnostic::AmbiguousAttachOrder {
+                packages: kept.into_iter().map(String::from).collect(),
+                range,
+            });
     }
 
     /// End the effect of each attach in `sites` at `end`, the close of the
@@ -883,6 +924,24 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
 pub(super) struct AttachSite {
     pub(super) package: String,
     pub(super) offset: TextSize,
+}
+
+/// Return the selected packages in reverse R lookup order after applying
+/// `sites`. Reattaching a selected package moves it to the end because R searches
+/// its most recent attach first.
+fn search_order<'a>(sites: &'a [AttachSite], packages: &FxHashSet<&str>) -> Vec<&'a str> {
+    let mut order: Vec<&str> = Vec::new();
+
+    for site in sites {
+        let package = site.package.as_str();
+        if !packages.contains(package) {
+            continue;
+        }
+        order.retain(|kept| *kept != package);
+        order.push(package);
+    }
+
+    order
 }
 
 /// The packages attached on every path reaching the current point, each with
