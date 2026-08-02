@@ -802,8 +802,9 @@ pub struct SemanticCall {
 /// Where an attach is known to hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttachRegion {
-    /// From the call to the end of its scope, since the attach ran on every
-    /// path.
+    /// From the call to its scope's end when every path to a later offset has the
+    /// package attached. This includes calls that run on every path and the `else`
+    /// call when both `if` arms attach the package.
     Unconditional,
     /// From the call to `end` only, the close of the arm or loop body that
     /// made it. Nothing outside is known, in either direction.

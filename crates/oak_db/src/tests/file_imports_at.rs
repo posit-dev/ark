@@ -369,9 +369,9 @@ fn test_conditional_attach_does_not_reach_the_sibling_branch() {
 
 #[test]
 fn test_attach_on_both_branches_holds_after_the_if() {
-    // Whichever arm runs, cli ends up attached, so the join keeps it. This is
-    // the case that separates the effect-region rule from "anything inside an
-    // `if` is conditional".
+    // Both arms attach `cli`, so the join carries one attach past the `if`.
+    // This distinguishes effect regions from treating every attach inside an `if`
+    // as conditional.
     let mut db = TestDb::new();
     install_packages(&mut db, &["cli"]);
 
@@ -379,9 +379,119 @@ fn test_attach_on_both_branches_holds_after_the_if() {
     let file = make_file(&mut db, "a.R", source);
 
     assert_eq!(attaches_at(&db, file, source, &["after"]), vec![vec![
-        "cli".to_string(),
         "cli".to_string()
     ]]);
+}
+
+#[test]
+fn test_attach_on_both_branches_does_not_reach_earlier_uses_in_either_arm() {
+    // Each arm's attach applies only after its own call. The joined attach begins
+    // at the `else` call, so it does not reach `second`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source =
+        "if (cond) {\n  first\n  library(cli)\n} else {\n  second\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let no_attach: Vec<String> = Vec::new();
+    assert_eq!(
+        attaches_at(&db, file, source, &["first", "second", "after"]),
+        vec![no_attach.clone(), no_attach, vec!["cli".to_string()]]
+    );
+}
+
+#[test]
+fn test_join_matches_arms_per_package_not_wholesale() {
+    // The consequence attaches an extra package. Matching is per package, so cli
+    // carries past the `if` while rlang stays capped at the arm that attached it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli", "rlang"]);
+
+    let source =
+        "if (cond) {\n  library(cli)\n  library(rlang)\n  inside\n} else {\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside", "after"]), vec![
+        vec!["rlang".to_string(), "cli".to_string()],
+        vec!["cli".to_string()]
+    ]);
+}
+
+#[test]
+fn test_join_caps_a_package_attached_only_by_the_else_arm() {
+    // Mirror of the above with the extra package in the `else`. Being the arm
+    // that closes the `if` doesn't carry rlang past it, since the consequence
+    // never attached it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli", "rlang"]);
+
+    let source =
+        "if (cond) {\n  library(cli)\n} else {\n  library(cli)\n  library(rlang)\n  inside\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside", "after"]), vec![
+        vec!["rlang".to_string(), "cli".to_string()],
+        vec!["cli".to_string()]
+    ]);
+}
+
+#[test]
+fn test_join_takes_the_else_arm_order_when_the_arms_attach_in_different_orders() {
+    // Both arms attach both packages, so both carry past the `if`, but the arms
+    // disagree on which was attached last. One layer order has to stand for both
+    // paths, and it's the `else` arm's calls that carry the packages out.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli", "rlang"]);
+
+    let source = "if (cond) {\n  library(cli)\n  library(rlang)\n} else {\n  \
+                  library(rlang)\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["after"]), vec![vec![
+        "cli".to_string(),
+        "rlang".to_string()
+    ]]);
+}
+
+#[test]
+fn test_attach_on_every_arm_of_an_else_if_chain_holds_after_the_chain() {
+    // An `else if` nests a whole `if` in the alternative, so each join sees the
+    // arm below it already rejoined. The final `else` closes the outer `if` too,
+    // which is what lets its attach carry the chain.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "if (a) {\n  first\n  library(cli)\n} else if (b) {\n  second\n  \
+                  library(cli)\n} else {\n  third\n  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let no_attach: Vec<String> = Vec::new();
+    assert_eq!(
+        attaches_at(&db, file, source, &["first", "second", "third", "after"]),
+        vec![no_attach.clone(), no_attach.clone(), no_attach, vec![
+            "cli".to_string()
+        ]]
+    );
+}
+
+#[test]
+fn test_attach_on_all_but_one_arm_of_an_else_if_chain_drops_at_the_chain() {
+    // One arm without the attach breaks the chain, so nothing holds afterwards
+    // even though the last arm attaches. Closing the outer `if` isn't on its own
+    // enough to carry an attach past it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "if (a) {\n  library(cli)\n} else if (b) {\n  middle\n} else {\n  \
+                  library(cli)\n}\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let no_attach: Vec<String> = Vec::new();
+    assert_eq!(attaches_at(&db, file, source, &["middle", "after"]), vec![
+        no_attach.clone(),
+        no_attach
+    ]);
 }
 
 #[test]
@@ -402,9 +512,8 @@ fn test_attach_in_loop_body_does_not_hold_after_the_loop() {
 
 #[test]
 fn test_attach_on_both_branches_inside_a_loop_drops_at_the_loop_join() {
-    // The `if` join keeps cli, then the loop join drops it. Both arms' calls
-    // have to carry an effect end for this to hold: keeping only one would
-    // leave the other looking unconditional.
+    // Both `if` arms attach `cli`, but a loop body may not run. The attach ends
+    // at the loop's closing brace.
     let mut db = TestDb::new();
     install_packages(&mut db, &["cli"]);
 
@@ -412,7 +521,7 @@ fn test_attach_on_both_branches_inside_a_loop_drops_at_the_loop_join() {
     let file = make_file(&mut db, "a.R", source);
 
     assert_eq!(attaches_at(&db, file, source, &["inside", "after"]), vec![
-        vec!["cli".to_string(), "cli".to_string()],
+        vec!["cli".to_string()],
         Vec::<String>::new()
     ]);
 }

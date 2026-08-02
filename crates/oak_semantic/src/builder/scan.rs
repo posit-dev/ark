@@ -288,10 +288,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         Some(region.syntax().text_trimmed_range().end())
     }
 
-    /// Rejoin the two arms' attaches. A package attached on only one arm isn't
-    /// attached on every path, so it drops here the same way a one-arm binding
-    /// drops from `bound_so_far`, and its effect ends at the close of its arm.
-    /// A package attached on both arms carries past the `if`.
+    /// Rejoin the two `if` arms' attaches. An attach in only one of the arms
+    /// ends at that arm's close because it does not run on every path. When
+    /// both arms attach a package, retain the `else` attach since every path
+    /// has the package after its call.
     fn join_attaches(
         &mut self,
         consequence: Vec<AttachSite>,
@@ -299,40 +299,32 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         alternative: Vec<AttachSite>,
         alternative_end: Option<TextSize>,
     ) {
-        if consequence.is_empty() && alternative.is_empty() {
-            return;
-        }
+        // The `else` arm is the `if`'s final child, so its attach reaches the
+        // closing brace. End the consequence attach at its arm so it cannot reach
+        // the `else` arm.
+        let rejoined = |site: &AttachSite| {
+            consequence
+                .iter()
+                .any(|other| other.package == site.package)
+        };
+        let (rejoined, dropped): (Vec<_>, Vec<_>) = alternative.into_iter().partition(rejoined);
 
-        let attaches =
-            |sites: &[AttachSite], package: &str| sites.iter().any(|site| site.package == package);
+        self.end_attach_effects(consequence, consequence_end);
+        self.end_attach_effects(dropped, alternative_end);
 
-        let (kept_consequence, dropped_consequence): (Vec<_>, Vec<_>) = consequence
-            .iter()
-            .cloned()
-            .partition(|site| attaches(&alternative, &site.package));
-        let (kept_alternative, dropped_alternative): (Vec<_>, Vec<_>) = alternative
-            .iter()
-            .cloned()
-            .partition(|site| attaches(&consequence, &site.package));
-
-        self.end_attach_effects(dropped_consequence, consequence_end);
-        self.end_attach_effects(dropped_alternative, alternative_end);
-
-        // Both arms' calls go back on the search path, not just one of them. An
-        // enclosing loop join has to be able to end the effect of each.
-        for site in kept_consequence.into_iter().chain(kept_alternative) {
+        for site in rejoined {
             self.scan.attached_so_far.push(site.package, site.offset);
         }
     }
 
-    /// End the effect of each attach in `dropped` at `end`, the close of the
+    /// End the effect of each attach in `sites` at `end`, the close of the
     /// branch arm or loop body that made it. `end` is `None` only for an absent
     /// arm, which attaches nothing.
-    fn end_attach_effects(&mut self, dropped: Vec<AttachSite>, end: Option<TextSize>) {
+    fn end_attach_effects(&mut self, sites: Vec<AttachSite>, end: Option<TextSize>) {
         let Some(end) = end else {
             return;
         };
-        for site in dropped {
+        for site in sites {
             self.scan
                 .attach_effect_ends
                 .entry(site.offset)
