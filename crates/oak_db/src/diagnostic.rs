@@ -54,7 +54,7 @@ pub struct Annotation {
 /// experimental status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
-    EffectAmbiguity,
+    AmbiguousEffect,
     AmbiguousAttachOrder,
     UninstalledPackage,
 }
@@ -63,7 +63,7 @@ impl DiagnosticKind {
     /// The stable string an LSP consumer reports as the diagnostic `code`.
     pub fn as_str(&self) -> &'static str {
         match self {
-            DiagnosticKind::EffectAmbiguity => "effect-ambiguity",
+            DiagnosticKind::AmbiguousEffect => "ambiguous-effect",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
         }
@@ -71,7 +71,7 @@ impl DiagnosticKind {
 
     pub fn severity(&self) -> Severity {
         match self {
-            DiagnosticKind::EffectAmbiguity => Severity::Info,
+            DiagnosticKind::AmbiguousEffect => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
         }
@@ -82,7 +82,7 @@ impl DiagnosticKind {
     /// `Diagnostic::experimental` / `DiagnosticsConfig::disable_experimental`.
     pub fn is_experimental(&self) -> bool {
         match self {
-            DiagnosticKind::EffectAmbiguity => true,
+            DiagnosticKind::AmbiguousEffect => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
             DiagnosticKind::UninstalledPackage => true,
         }
@@ -100,11 +100,11 @@ pub enum Severity {
 /// Lower one of `oak_semantic`'s raw diagnostic records into a `Diagnostic`.
 pub(crate) fn lower_semantic_diagnostic(diagnostic: &SemanticDiagnostic) -> Diagnostic {
     match diagnostic {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason,
-        } => lower_effect_ambiguity(name, *call_range, reason),
+        } => lower_ambiguous_effect(name, *call_range, reason),
         SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
             lower_ambiguous_attach_order(packages, *range)
         },
@@ -116,7 +116,7 @@ pub(crate) fn lower_semantic_diagnostic(diagnostic: &SemanticDiagnostic) -> Diag
 
 /// The primary range is always the call site. The reason's competing site
 /// becomes a single annotation.
-fn lower_effect_ambiguity(
+fn lower_ambiguous_effect(
     name: &str,
     call_range: TextRange,
     reason: &AmbiguityReason,
@@ -157,7 +157,7 @@ fn lower_effect_ambiguity(
         ),
     };
 
-    Diagnostic::new(DiagnosticKind::EffectAmbiguity, message, call_range, vec![
+    Diagnostic::new(DiagnosticKind::AmbiguousEffect, message, call_range, vec![
         annotation,
     ])
 }

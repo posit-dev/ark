@@ -387,7 +387,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason:
@@ -428,7 +428,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             reason:
                 AmbiguityReason::ConditionalAttach {
                     package,
@@ -465,7 +465,7 @@ reactive(1)
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason:
@@ -554,7 +554,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             reason: AmbiguityReason::ConditionalAttach { package, .. },
             ..

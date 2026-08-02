@@ -259,7 +259,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         call_range: TextRange,
         overwrite_range: TextRange,
     ) {
-        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::LazyShadow { overwrite_range },
@@ -301,7 +301,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 continue;
             }
 
-            self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+            self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
                 name: sym.to_string(),
                 call_range,
                 reason: AmbiguityReason::ConditionalAttach {

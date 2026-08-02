@@ -923,7 +923,7 @@ pub enum SemanticDiagnostic {
     /// reading even though another reading was possible. `call_range` points at
     /// the call we decided about, which may or may not have come out effectful;
     /// `reason` says what made it ambiguous and where the competing site is.
-    EffectAmbiguity {
+    AmbiguousEffect {
         name: String,
         call_range: TextRange,
         reason: AmbiguityReason,
@@ -943,8 +943,8 @@ pub enum SemanticDiagnostic {
     UninstalledPackage { package: String, range: TextRange },
 }
 
-/// What made an [`EffectAmbiguity`](SemanticDiagnostic::EffectAmbiguity)
-/// ambiguous, and where the competing site is.
+/// Why an [`AmbiguousEffect`](SemanticDiagnostic::AmbiguousEffect) could have
+/// read the other way, and where the competing site is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmbiguityReason {
     /// The callee is bound by a lazy-crossed ancestor with undetermined

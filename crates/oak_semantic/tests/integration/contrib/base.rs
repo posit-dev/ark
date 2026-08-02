@@ -1432,7 +1432,7 @@ y
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -1503,7 +1503,7 @@ f <- function() local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::LazyShadow { overwrite_range },
@@ -1554,7 +1554,7 @@ local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -1604,7 +1604,7 @@ with(d, {
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -2394,7 +2394,7 @@ local <- identity
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::LazyShadow { overwrite_range },

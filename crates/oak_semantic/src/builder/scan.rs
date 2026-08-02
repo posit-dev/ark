@@ -662,7 +662,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let call_range = call.syntax().text_trimmed_range();
-        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { binding_range },
