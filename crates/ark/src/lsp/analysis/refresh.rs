@@ -124,7 +124,7 @@ fn refresh_diagnostics(
     let now = std::time::Instant::now();
     lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());
 
-    let diagnostics = generate_diagnostics(file.file(), state, testthat);
+    let diagnostics = generate_diagnostics(file.file(), state, testthat, &uri);
 
     lsp::log_info!(
         "Finished diagnostics for file: {} in {:.0?}",

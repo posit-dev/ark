@@ -115,7 +115,7 @@ fn setup_testthat(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
 /// Register bare installed packages (empty namespace) on `LibraryRoots`, one
 /// root each, so `package_by_name` finds them. Their NSE effects come from the
 /// static registry keyed on the name, so no namespace is needed here.
-fn install_packages(db: &mut TestDb, names: &[&str]) {
+pub(super) fn install_packages(db: &mut TestDb, names: &[&str]) {
     let roots: Vec<Root> = names
         .iter()
         .map(|&name| {

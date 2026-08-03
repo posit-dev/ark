@@ -22,7 +22,6 @@ pub(crate) use pool::AnalysisPool;
 pub(crate) use refresh::DiagnosticsReady;
 pub(crate) use refresh::DiagnosticsState;
 pub(crate) use snapshot::WorldStateSnapshot;
-pub(crate) use warmup::warm_semantic_indexes;
 pub(crate) use warmup::warm_workspace_index;
 
 /// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.

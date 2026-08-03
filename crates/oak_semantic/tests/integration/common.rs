@@ -14,41 +14,37 @@ use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::ImportsResolver;
 use oak_semantic::NoopImportsResolver;
 
 use crate::resolvers::TestImportsResolver;
 
 pub(crate) fn index(source: &str) -> SemanticIndex {
-    let parsed = parse(source, RParserOptions::default());
-
-    if parsed.has_error() {
-        panic!("source has syntax errors: {source}");
-    }
-
-    build_index(&parsed.tree(), NoopImportsResolver)
+    build_with(source, NoopImportsResolver)
 }
 
 /// Build with base attached. Attach recognition (`library()`/`require()`) runs
 /// on the resolve path now, so it needs a resolver that resolves base, unlike
 /// the resolver-independent `source()` recognition the `index()` helper covers.
 pub(crate) fn index_with_base(source: &str) -> SemanticIndex {
-    let parsed = parse(source, RParserOptions::default());
-
-    if parsed.has_error() {
-        panic!("source has syntax errors: {source}");
-    }
-
-    build_index(&parsed.tree(), TestImportsResolver::with_base())
+    build_with(source, TestImportsResolver::with_base())
 }
 
 /// Build with `packages` attached (plus base), for package-contributed effects
 /// like magrittr's `%<>%` operator.
 pub(crate) fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIndex {
+    build_with(source, TestImportsResolver::with_attached(packages))
+}
+
+/// Build with an arbitrary resolver, for cases the helpers above don't cover.
+pub(crate) fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
+
     if parsed.has_error() {
         panic!("source has syntax errors: {source}");
     }
-    build_index(&parsed.tree(), TestImportsResolver::with_attached(packages))
+
+    build_index(&parsed.tree(), resolver)
 }
 
 pub(crate) fn semantic_call_kinds(index: &SemanticIndex) -> Vec<&SemanticCallKind> {

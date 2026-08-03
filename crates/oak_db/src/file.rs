@@ -1,13 +1,11 @@
 use std::fs;
 
 use aether_path::FilePath;
-use biome_line_index::LineIndex;
-use biome_rowan::TextRange;
-use oak_semantic::semantic_index::AmbiguityReason;
-use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::db::root_by_file;
+use crate::diagnostic::lower_semantic_diagnostic;
+use crate::diagnostic::Diagnostic;
 use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -254,6 +252,23 @@ impl File {
         names
     }
 
+    /// Diagnostics derived from this file's semantic index.
+    ///
+    /// Not keyed on user configuration, so the memo isn't duplicated per
+    /// setting combination. Consumers filter on severity and
+    /// [`crate::DiagnosticId::is_experimental`] instead.
+    ///
+    /// Ranges shift whenever text above them changes, so unlike
+    /// `attached_packages()` and friends this query can't backdate.
+    #[salsa::tracked(returns(ref))]
+    pub fn diagnostics(self, db: &dyn Db) -> Vec<Diagnostic> {
+        self.semantic_index(db)
+            .diagnostics()
+            .iter()
+            .map(lower_semantic_diagnostic)
+            .collect()
+    }
+
     /// The root containing this file, if any.
     ///
     /// Packaged files ask the db which live root holds the package via
@@ -301,17 +316,6 @@ fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
         .map(|(_, r)| r)
 }
 
-/// Warm the tracked queries an LSP request reads on `file`, so the first
-/// request after a scan doesn't pay the cold build.
-///
-/// Computing `imports()` builds the file's `semantic_index` and its cross-file
-/// import view in one go; the file's collation predecessors get pulled in (and
-/// primed shallow) as a side effect. Best-effort, meant to run off the request
-/// thread once a scan settles.
-pub fn warm_file(db: &dyn Db, file: File) {
-    file.imports(db);
-}
-
 /// Guard against stack overflow when `semantic_index` recurses across files.
 const STACK_RED_ZONE: usize = 1024 * 1024;
 const STACK_GROW_BY: usize = 8 * 1024 * 1024;
@@ -335,79 +339,7 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
 fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
-    let index = oak_semantic::build_index(&parsed.tree(), resolver);
-
-    // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now.
-    // The builder is file-agnostic, so it carries them on the index and leaves
-    // the file reference to us.
-    let diagnostics = index.diagnostics();
-    if !diagnostics.is_empty() {
-        let path = file.path(db);
-        let line_index = file.line_index(db);
-
-        for diagnostic in diagnostics {
-            if let SemanticDiagnostic::AmbiguousAttachOrder { packages, range } = diagnostic {
-                let at = format_line_col(line_index, *range);
-                log::warn!(
-                    "Ambiguous attach order in {path}:{at}: the branches attach {packages} in \
-                     different orders.",
-                    packages = packages.join(", ")
-                );
-                continue;
-            }
-
-            let SemanticDiagnostic::EffectAmbiguity {
-                name,
-                call_range,
-                reason,
-            } = diagnostic
-            else {
-                continue;
-            };
-            let call = format_line_col(line_index, *call_range);
-
-            match reason {
-                AmbiguityReason::LazyShadow { overwrite_range } => {
-                    let overwrite = format_line_col(line_index, *overwrite_range);
-                    log::warn!(
-                        "Lazy-shadow ambiguity in {path}:{call}: callee `{name}` is recognized \
-                         as effectful, but a lazy-crossed ancestor binds it at {overwrite} with \
-                         undetermined timing"
-                    )
-                },
-                AmbiguityReason::ConditionalShadow { binding_range } => {
-                    let binding = format_line_col(line_index, *binding_range);
-                    log::warn!(
-                        "Conditional-shadow ambiguity in {path}:{call}: callee `{name}` is \
-                         recognized as effectful, but a conditional local binding at {binding} \
-                         could shadow it on some path"
-                    )
-                },
-                AmbiguityReason::ConditionalAttach {
-                    package,
-                    attach_range,
-                } => {
-                    let attach = format_line_col(line_index, *attach_range);
-                    log::warn!(
-                        "Conditional-attach ambiguity in {path}:{call}: callee `{name}` is read as \
-                         plain because `{package}`, attached at {attach}, dropped at a branch or \
-                         loop join. It would be effectful on the path where that attach ran"
-                    )
-                },
-            }
-        }
-    }
-
-    index
-}
-
-/// Render a byte range as `line:col` (1-based), anchored at its start, for a log
-/// message. Falls back to the raw byte range if the offset can't be mapped.
-fn format_line_col(line_index: &LineIndex, range: TextRange) -> String {
-    match line_index.line_col(range.start()) {
-        Some(pos) => format!("{}:{}", pos.line + 1, pos.col + 1),
-        None => format!("{range:?}"),
-    }
+    oak_semantic::build_index(&parsed.tree(), resolver)
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {

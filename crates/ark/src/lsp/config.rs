@@ -28,6 +28,14 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
         },
     },
     Setting {
+        key: "oak.diagnostics.experimental.enabled",
+        set: |cfg, v| {
+            cfg.diagnostics.experimental = v
+                .as_bool()
+                .unwrap_or_else(|| DiagnosticsConfig::default().experimental)
+        },
+    },
+    Setting {
         key: "positron.r.symbols.includeAssignmentsInBlocks",
         set: |cfg, v| {
             cfg.symbols.include_assignments_in_blocks = v

@@ -78,3 +78,22 @@ impl ImportsResolver for TestImportsResolver {
             .find_map(|pkg| effects::lookup(pkg, name).copied())
     }
 }
+
+/// Resolves base effects (so `library()` itself is recognized as an attach
+/// call) but reports every package as not installed. For asserting the
+/// builder's `UninstalledPackage` diagnostic at an attach site.
+pub struct MissingPackageResolver;
+
+impl ImportsResolver for MissingPackageResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+        effects::lookup("base", name).copied()
+    }
+
+    fn package_exists(&mut self, _package: &str) -> bool {
+        false
+    }
+}

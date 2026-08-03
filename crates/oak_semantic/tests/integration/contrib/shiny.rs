@@ -387,7 +387,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             call_range,
             reason:
@@ -428,7 +428,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             reason:
                 AmbiguityReason::ConditionalAttach {
                     package,
@@ -440,6 +440,50 @@ reactive({
             let start = u32::from(attach_range.start()) as usize;
             let end = u32::from(attach_range.end()) as usize;
             assert_eq!(&source[start..end], "library(shiny)");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_nse_conditional_attach_wins_over_sibling_conditional_shadow() {
+    // The `else` branch conditionally binds the callee, so both ambiguity
+    // reasons look applicable. Only the attach one fires: the conditional
+    // binding drops at the join, so `resolve_symbol_effects()` still probes the
+    // search path, and that probe fails, which is what suppresses the
+    // conditional-shadow check downstream (it only runs on a resolved effect).
+    let source = "\
+if (sample(0:1, 1)) {
+    library(shiny)
+} else {
+    reactive <- identity
+}
+reactive(1)
+";
+    let index = index(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousEffect {
+            name,
+            call_range,
+            reason:
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+        } => {
+            assert_eq!(name, "reactive");
+            assert_eq!(package, "shiny");
+
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "reactive(1)");
+
+            let attach_start = u32::from(attach_range.start()) as usize;
+            let attach_end = u32::from(attach_range.end()) as usize;
+            assert_eq!(&source[attach_start..attach_end], "library(shiny)");
         },
         other => panic!("unexpected diagnostic: {other:?}"),
     }
@@ -510,7 +554,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::EffectAmbiguity {
+        SemanticDiagnostic::AmbiguousEffect {
             name,
             reason: AmbiguityReason::ConditionalAttach { package, .. },
             ..

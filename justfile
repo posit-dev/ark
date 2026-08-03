@@ -12,6 +12,10 @@ test-verbose:
 test-insta:
   cargo insta test --test-runner nextest
 
+# Rewrite the diagnostic snapshots in place
+test-insta-diagnostics:
+  INSTA_UPDATE=always cargo nextest run -p oak_db test_diagnostic_
+
 # Run clippy
 clippy:
   cargo clippy --workspace --all-targets --all-features -- -D warnings

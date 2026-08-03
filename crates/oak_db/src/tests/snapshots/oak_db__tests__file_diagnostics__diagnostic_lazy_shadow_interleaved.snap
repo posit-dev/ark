@@ -1,0 +1,19 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"a.R\", source, file.diagnostics(&db))"
+---
+info[ambiguous-effect]: Ambiguous reading of effectful `with()`. An assignment to `with` in an enclosing scope could run before this call and change its effect.
+ --> a.R:1:17
+  |
+1 | f <- function() with(local({ x <- 1 }), { y <- 2 })
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2 | local <- identity
+3 | with <- identity
+  | ---- could run before the call
+info[ambiguous-effect]: Ambiguous reading of effectful `local()`. An assignment to `local` in an enclosing scope could run before this call and change its effect.
+ --> a.R:1:22
+  |
+1 | f <- function() with(local({ x <- 1 }), { y <- 2 })
+  |                      ^^^^^^^^^^^^^^^^^
+2 | local <- identity
+  | ----- could run before the call
