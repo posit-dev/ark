@@ -1,7 +1,7 @@
 use url::Url;
 
+use crate::effects;
 use crate::effects::EffectsHandlers;
-use crate::effects_registry;
 
 /// The result of resolving a `source()` call. Returned by
 /// [`ImportsResolver::resolve_source`].
@@ -67,7 +67,7 @@ pub trait ImportsResolver {
     /// Resolve a namespace-qualified callee `pkg::fn` (or equivalently with
     /// `:::`) to its effects.
     fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<EffectsHandlers> {
-        effects_registry::lookup(package, name).copied()
+        effects::lookup(package, name).copied()
     }
 }
 
