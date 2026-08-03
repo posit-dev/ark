@@ -58,6 +58,7 @@ use rustc_hash::FxHashSet;
 
 use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffects;
+use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::Definition;
@@ -873,19 +874,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.collect_assignment(bin);
                 } else {
                     let range = bin.syntax().text_trimmed_range();
-                    let is_binding_op = self
-                        .call_resolutions
-                        .get(&range)
-                        .is_some_and(|resolution| !resolution.assign.is_empty());
 
-                    // A binding operator (`x := expr`) treats its left operand
-                    // as a definition target, not a read, the same as `<-`. An
-                    // ordinary operator (`a + b`) reads both operands.
-                    //
-                    // TODO(nse): `%<>%` is compound (`x <- f(x)`), so it also
-                    // reads its target. Record that read once the registry
-                    // carries a per-operator "reads target" flag.
-                    if !is_binding_op {
+                    let reads_lhs = match self.call_resolutions.get(&range) {
+                        Some(resolution) if !resolution.assign.is_empty() => {
+                            // Pure binding operators such as `x := expr` do not
+                            // read their LHS. `%<>%` is compound and acts like
+                            // `x <- x %>% f()`.
+                            resolution
+                                .assign
+                                .iter()
+                                .any(|binding| binding.target == TargetAccess::ReadWrite)
+                        },
+                        _ => true,
+                    };
+
+                    if reads_lhs {
                         if let Ok(lhs) = bin.left() {
                             self.collect_expression(&lhs);
                         }

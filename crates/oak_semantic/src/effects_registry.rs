@@ -3,9 +3,12 @@ use crate::effects::ArgumentEffect;
 use crate::effects::ArgumentsAnnotation;
 use crate::effects::AssignAnnotation;
 use crate::effects::AttachAnnotation;
+use crate::effects::BindingOperatorHandler;
 use crate::effects::BquoteHandler;
 use crate::effects::EffectsHandlers;
 use crate::effects::SourceAnnotation;
+use crate::effects::TargetAccess::ReadWrite;
+use crate::effects::TargetAccess::Write;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -121,7 +124,8 @@ macro_rules! source {
 }
 
 /// An assign entry: `(name-argument position)`. The function binds a name in the
-/// current scope.
+/// current scope, naming it in a positional argument it evaluates (`assign("x",
+/// v)`).
 macro_rules! assign {
     ($pkg:literal, $func:literal, $pos:literal) => {
         Entry {
@@ -132,6 +136,23 @@ macro_rules! assign {
                 attach: None,
                 source: None,
                 assign: Some(&AssignAnnotation { position: $pos }),
+            },
+        }
+    };
+}
+
+/// Register a binding operator and whether it reads its LHS before rebinding
+/// it. Its unevaluated LHS supplies the bound name.
+macro_rules! assign_op {
+    ($pkg:literal, $func:literal, $target:expr) => {
+        Entry {
+            package: $pkg,
+            function: $func,
+            effects: EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: None,
+                assign: Some(&BindingOperatorHandler { target: $target }),
             },
         }
     };
@@ -168,9 +189,9 @@ static REGISTRY: &[Entry] = &[
     assign!("base", "assign", 0),
     assign!("base", "delayedAssign", 0),
     // magrittr / rlang / S7 binding operators
-    assign!("magrittr", "%<>%", 0),
-    assign!("rlang", "%<~%", 0),
-    assign!("S7", ":=", 0),
+    assign_op!("magrittr", "%<>%", ReadWrite),
+    assign_op!("rlang", "%<~%", Write),
+    assign_op!("S7", ":=", Write),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny

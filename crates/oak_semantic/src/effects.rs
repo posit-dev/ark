@@ -2,12 +2,13 @@ use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
 use aether_syntax::RArgument;
+use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use biome_rowan::AstNode;
 use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::WalkEvent;
-// Re-exported so consumers building an `AssignBinding` (custom `EffectHandler`s)
+// Re-exported so consumers building an `AssignBinding` (custom `AssignHandler`s)
 // can name the `name_expr` field's type without depending on oak_core directly.
 pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
@@ -40,11 +41,13 @@ pub struct Effects {
 ///   be matched against a cursor (e.g. for goto/rename).
 /// - `value_expr` is what a type checker infers the binding's type from (`None`
 ///   with no value argument).
+/// - `target` tells the walk whether the bound name is also read here.
 #[derive(Debug, Clone)]
 pub struct AssignBinding {
     pub name: String,
     pub name_expr: RangedAstPtr<AnyRExpression>,
     pub value_expr: Option<AstPtr<AnyRExpression>>,
+    pub target: TargetAccess,
 }
 
 /// The handlers that compute a function's effects.
@@ -53,7 +56,7 @@ pub struct EffectsHandlers {
     pub arguments: Option<&'static dyn EffectHandler<Output = ResolvedArgumentEffects>>,
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
     pub source: Option<&'static dyn EffectHandler<Output = Vec<String>>>,
-    pub assign: Option<&'static dyn EffectHandler<Output = Vec<AssignBinding>>>,
+    pub assign: Option<&'static dyn AssignHandler>,
 }
 
 /// Resolver for an effect of a call.
@@ -71,6 +74,35 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
     /// `ctx` resolves information the call's own syntax doesn't carry, e.g. what
     /// a `character.only = TRUE` variable is bound to. Unused until that lands.
     fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Self::Output>;
+}
+
+/// Where an effect is invoked. Most effects are only ever calls but an Assign
+/// effect can also be a binding operator (`x %<>% f`). [`AssignHandler`] takes
+/// this to disambiguate rather than a bare call.
+pub enum EffectSite<'a> {
+    Call(&'a RCall),
+    Operator(&'a RBinaryExpression),
+}
+
+/// Resolver for an assign-like effect.
+///
+/// Separate from [`EffectHandler`] because an assign has two invocation shapes,
+/// a call (`assign("x", v)`) and a binding operator (`x %<>% f`).
+///
+/// Contributed statically like [`EffectHandler`], so it's `Sync` for the
+/// registry `static`s.
+pub trait AssignHandler: std::fmt::Debug + Sync {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>>;
+}
+
+/// Whether an assign effect reads its target before writing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetAccess {
+    /// Writes the target without reading it, as in `x <- value`.
+    Write,
+    /// Reads the target before rebinding it. `x %<>% f()` expands to
+    /// `x <- x %>% f()`, so `x` is a use and a definition.
+    ReadWrite,
 }
 
 /// Context for effect handlers.
@@ -139,6 +171,15 @@ impl CallContext {
         match value {
             AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
             // Static resolution of expressions is not implemented yet
+            _ => None,
+        }
+    }
+
+    /// Read a quoted name argument. E.g. the LHS of an Assign operator.
+    pub fn resolve_quoted_symbol_or_string(&self, value: &AnyRExpression) -> Option<String> {
+        match value {
+            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
             _ => None,
         }
     }
@@ -454,10 +495,11 @@ pub struct AssignAnnotation {
     pub position: usize,
 }
 
-impl EffectHandler for AssignAnnotation {
-    type Output = Vec<AssignBinding>;
-
-    fn resolve(&self, call: &RCall, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+impl AssignHandler for AssignAnnotation {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        let EffectSite::Call(call) = site else {
+            return None;
+        };
         let args = call.arguments().ok()?;
 
         // Matched positionally among unnamed arguments, same as `source`, so a
@@ -508,6 +550,33 @@ impl EffectHandler for AssignAnnotation {
             name,
             name_expr,
             value_expr,
+            target: TargetAccess::Write,
+        }])
+    }
+}
+
+/// Handler for a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`).
+#[derive(Debug, Clone, Copy)]
+pub struct BindingOperatorHandler {
+    /// Whether the target is also read (compound operators like `%<>%`).
+    pub target: TargetAccess,
+}
+
+impl AssignHandler for BindingOperatorHandler {
+    fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        let EffectSite::Operator(bin) = site else {
+            return None;
+        };
+        let left = bin.left().ok()?;
+        let right = bin.right().ok()?;
+
+        let name = ctx.resolve_quoted_symbol_or_string(&left)?;
+
+        Some(vec![AssignBinding {
+            name,
+            name_expr: RangedAstPtr::new(&left),
+            value_expr: Some(AstPtr::new(&right)),
+            target: self.target,
         }])
     }
 }
