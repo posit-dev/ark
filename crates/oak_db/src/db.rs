@@ -104,35 +104,27 @@ pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
     roots
 }
 
-/// All files known to the database, in stable order (workspace, library, orphan).
+/// Files reachable from workspace roots and orphan buffers, plus library
+/// files that belong to an actual workspace dependency (see
+/// [`crate::all_package_dependencies`]).
 ///
-/// Used as the workspace-wide candidate pool for find-references: callers
-/// apply a textual name filter before building indexes.
-///
-/// Nested roots overlap on disk, so the same `File` is reachable from several
-/// roots (open `/proj` and `/proj/sub-pkg` and the outer scan walks into
-/// `sub-pkg`). A `seen` set drops the repeats. Unlike `root_by_package` /
-/// `root_by_file`, this query exposes no ownership, just a flat set, so it
-/// doesn't matter which root a duplicate is attributed to. We keep the first
-/// occurrence, which preserves the traversal order above.
+/// Same as [`all_known_files`] but excluding library packages that aren't a
+/// dependency (direct or indirect) of the workspace.
 #[salsa::tracked(returns(ref))]
-pub fn all_files(db: &dyn Db) -> Vec<File> {
+pub fn all_used_files(db: &dyn Db) -> Vec<File> {
+    let dependencies: FxHashSet<Package> = crate::workspace::all_package_dependencies(db)
+        .iter()
+        .copied()
+        .collect();
+
     let mut seen = FxHashSet::default();
     let mut files = Vec::new();
 
     for &root in db.live_roots() {
         match root {
-            LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
-                let root_files = r.scripts(db).iter().chain(
-                    r.packages(db)
-                        .iter()
-                        .flat_map(|&pkg| pkg.files(db).iter().chain(pkg.scripts(db))),
-                );
-                for &file in root_files {
-                    if seen.insert(file) {
-                        files.push(file);
-                    }
-                }
+            LiveRoot::Workspace(root) => push_root_files(db, &mut files, &mut seen, root, None),
+            LiveRoot::Library(root) => {
+                push_root_files(db, &mut files, &mut seen, root, Some(&dependencies))
             },
             LiveRoot::Orphan(orphan) => {
                 for &file in orphan.files(db) {
@@ -145,6 +137,58 @@ pub fn all_files(db: &dyn Db) -> Vec<File> {
     }
 
     files
+}
+
+/// All files known to the database, in stable order (workspace, library, orphan).
+///
+/// Note that this also contains files from all installed packages, _including
+/// those that are not dependencies of the workspace_. Only use this for very
+/// wide searches. LSP functionality should generally not depend on
+/// non-dependencies, prefer [`all_used_files()`] instead.
+#[salsa::tracked(returns(ref))]
+pub fn all_known_files(db: &dyn Db) -> Vec<File> {
+    let mut seen = FxHashSet::default();
+    let mut files = Vec::new();
+
+    for &root in db.live_roots() {
+        match root {
+            LiveRoot::Workspace(root) | LiveRoot::Library(root) => {
+                push_root_files(db, &mut files, &mut seen, root, None)
+            },
+            LiveRoot::Orphan(orphan) => {
+                for &file in orphan.files(db) {
+                    if seen.insert(file) {
+                        files.push(file);
+                    }
+                }
+            },
+        }
+    }
+
+    files
+}
+
+/// Pushes `root`'s scripts and package files into `files`, skipping ones
+/// already in `seen`. When `dependencies` is `Some`, packages not in that set
+/// are skipped entirely.
+fn push_root_files(
+    db: &dyn Db,
+    files: &mut Vec<File>,
+    seen: &mut FxHashSet<File>,
+    root: Root,
+    dependencies: Option<&FxHashSet<Package>>,
+) {
+    let root_files = root.scripts(db).iter().chain(
+        root.packages(db)
+            .iter()
+            .filter(|&&pkg| dependencies.is_none_or(|deps| deps.contains(&pkg)))
+            .flat_map(|&pkg| pkg.files(db).iter().chain(pkg.scripts(db))),
+    );
+    for &file in root_files {
+        if seen.insert(file) {
+            files.push(file);
+        }
+    }
 }
 
 /// Files eligible for the workspace symbol index: workspace-root scripts and

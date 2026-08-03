@@ -317,7 +317,38 @@ fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
         .map(|(_, r)| r)
 }
 
+/// Warm the tracked queries an LSP request reads on `file`, so the first
+/// request after a scan doesn't pay the cold build.
+///
+/// Computing `imports()` builds the file's `semantic_index` and its cross-file
+/// import view in one go; the file's collation predecessors get pulled in (and
+/// primed shallow) as a side effect. Best-effort, meant to run off the request
+/// thread once a scan settles.
+pub fn warm_file(db: &dyn Db, file: File) {
+    file.imports(db);
+}
+
+/// Guard against stack overflow when `semantic_index` recurses across files.
+const STACK_RED_ZONE: usize = 1024 * 1024;
+const STACK_GROW_BY: usize = 8 * 1024 * 1024;
+
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
+    #[cfg(test)]
+    let _depth = recursion_depth::enter();
+
+    if matches!(stacker::remaining_stack(), Some(left) if left < STACK_RED_ZONE) {
+        log::trace!(
+            "Deep cross-file recursion building semantic index for {}, growing the stack",
+            file.path(db)
+        );
+    }
+
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_BY, || {
+        build_semantic_index_inner(file, db)
+    })
+}
+
+fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
     let index = oak_semantic::build_index(&parsed.tree(), resolver);
@@ -368,4 +399,44 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
     );
     let parsed = file.parse(db);
     oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)
+}
+
+/// Test-only recorder for the deepest `build_semantic_index` nesting.
+#[cfg(test)]
+pub(crate) mod recursion_depth {
+    use std::cell::Cell;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    thread_local! {
+        static CURRENT: Cell<usize> = const { Cell::new(0) };
+    }
+    static MAX: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) fn reset() {
+        MAX.store(0, Ordering::Relaxed);
+    }
+    pub(crate) fn max() -> usize {
+        MAX.load(Ordering::Relaxed)
+    }
+
+    /// Bumps the running depth on entry and records the peak. The returned guard
+    /// decrements on drop.
+    pub(crate) fn enter() -> Guard {
+        let depth = CURRENT.with(|current| {
+            let depth = current.get() + 1;
+            current.set(depth);
+            depth
+        });
+        MAX.fetch_max(depth, Ordering::Relaxed);
+        Guard
+    }
+
+    pub(crate) struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            CURRENT.with(|current| current.set(current.get() - 1));
+        }
+    }
 }

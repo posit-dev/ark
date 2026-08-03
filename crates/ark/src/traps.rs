@@ -39,4 +39,7 @@ pub extern "C-unwind" fn backtrace_handler(signum: libc::c_int) {
     // capture the current thread's backtrace
     let bt = std::backtrace::Backtrace::force_capture();
     log::error!("{}\n{}", header, bt);
+
+    log::logger().flush();
+    std::thread::sleep(std::time::Duration::from_millis(250));
 }

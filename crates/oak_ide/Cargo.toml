@@ -28,5 +28,7 @@ aether_path.workspace = true
 oak_package_metadata.workspace = true
 oak_scan.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
+oak_source.workspace = true
 salsa.workspace = true
 stdext.workspace = true
+tempfile.workspace = true

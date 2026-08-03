@@ -14,6 +14,7 @@ use oak_db::OakDatabase;
 use oak_ide::find_references;
 
 use crate::support::install_library_package;
+use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
 use crate::support::offset;
 use crate::support::pairs;
@@ -211,6 +212,31 @@ fn test_on_exit_body_use_has_lazy_view() {
     assert_eq!(ranges(&refs), vec![
         range(on_exit_use, on_exit_use + 1),
         range(second_def, second_def + 1),
+    ]);
+}
+
+#[test]
+fn test_bquote_hole_nested_in_quoted_call() {
+    // `foo(...)` is itself inside the quoted `expr`, so its call name is not a
+    // live use; only the escaped `.(foo)` argument is. Regression test for a
+    // reported LSP crash on this shape; it does not reproduce at this layer.
+    let source = "foo <- function() {}\nbquote(foo(.(foo)))\n";
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
+
+    let hole_use = source.rfind("foo").unwrap() as u32;
+
+    let refs = find_references(&db, file, offset(0), true);
+    assert_eq!(ranges(&refs), vec![
+        range(0, 3),
+        range(hole_use, hole_use + 3)
+    ]);
+
+    // Same result when the cursor starts on the hole's `foo` itself.
+    let refs = find_references(&db, file, offset(hole_use), true);
+    assert_eq!(ranges(&refs), vec![
+        range(0, 3),
+        range(hole_use, hole_use + 3)
     ]);
 }
 
@@ -493,6 +519,27 @@ fn test_cursor_in_installed_package_excludes_other_packages() {
     assert_eq!(pairs(&refs), vec![
         (mypkg_file, range(0, 3)),
         (script, range(7, 10)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_non_dependency_installed_package_finds_references() {
+    // `mypkg` is not a workspace dependency, so `all_used_files()` excludes it.
+    // Reference search must still include the cursor package.
+    let mut db = OakDatabase::new();
+    let files = install_library_package_files(&mut db, "mypkg", &["foo"], &[
+        ("a.R", "foo <- function() 1\nfoo()\n"),
+        ("b.R", "foo()\n"),
+    ]);
+    let (a_file, b_file) = (files[0], files[1]);
+    let _script = upsert(&mut db, "script.R", "1 + 1\n");
+
+    let refs = find_references(&db, a_file, offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (a_file, range(0, 3)),
+        (a_file, range(20, 23)),
+        (b_file, range(0, 3)),
     ]);
 }
 

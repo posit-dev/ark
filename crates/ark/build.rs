@@ -17,6 +17,25 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=resources");
 
+    // Every first-party crate directory name. Used by `logger::internal_crates()`
+    // to `ark`'s `RUST_LOG` level to all our crates.
+    let workspace_crates_dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("..")
+        .canonicalize()
+        .unwrap();
+    println!("cargo:rerun-if-changed={}", workspace_crates_dir.display());
+
+    let internal_crates: Vec<String> = std::fs::read_dir(&workspace_crates_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    println!(
+        "cargo:rustc-env=ARK_INTERNAL_CRATES={}",
+        internal_crates.join(",")
+    );
+
     // Attempt to use `git rev-parse HEAD` to get the current git hash. If this
     // fails, we'll just use the string "<unknown>" to indicate that the git hash
     // could not be determined..

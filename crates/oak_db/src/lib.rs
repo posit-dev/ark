@@ -19,11 +19,13 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 
-pub use db::all_files;
+pub use db::all_known_files;
+pub use db::all_used_files;
 pub use db::workspace_files;
 pub use db::Db;
 pub use db::DbInputs;
 pub use definition::Definition;
+pub use file::warm_file;
 pub use file::File;
 pub use file_exports::ExportEntry;
 pub use file_exports::FileExports;
