@@ -504,11 +504,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // (sequential execution is guaranteed), but inside a function it's
         // only visible within that function and its children, since the
         // function might never be called. Same reasoning as `source()` calls.
-        let call_offset = call.syntax().text_trimmed_range().start();
-        let region = self.attach_region(call_offset, &package);
+        let call_range = call.syntax().text_trimmed_range();
+        let region = self.attach_region(call_range.start(), &package);
         self.walk.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Attach { package, region },
-            offset: call_offset,
+            range: call_range,
             scope: self.current_scope,
         });
     }
@@ -561,7 +561,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let resolved = resolution.as_ref().map(|r| r.url.clone());
             self.walk.semantic_calls.push(SemanticCall {
                 kind: SemanticCallKind::Source { path, resolved },
-                offset: call_offset,
+                range,
                 scope: self.current_scope,
             });
 
@@ -589,11 +589,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 );
             }
 
-            // `library()` calls inside the sourced file attach packages to R's
-            // global search path at runtime, the same as a `library()` written
-            // here directly would. Emit them as `Attach` semantic calls scoped
-            // to this `source()`'s offset so scope-layer composition treats
-            // them identically to local `library()` calls.
+            // A sourced `library()` attaches to R's global search path. Model it
+            // as an `Attach` in this `source()` call's scope so import resolution
+            // handles it like a local `library()` call.
             for pkg in resolution.packages {
                 let region = self.attach_region(call_offset, &pkg);
                 self.walk.semantic_calls.push(SemanticCall {
@@ -601,7 +599,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         package: pkg,
                         region,
                     },
-                    offset: call_offset,
+                    range,
                     scope: self.current_scope,
                 });
             }

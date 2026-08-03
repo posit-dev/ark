@@ -297,15 +297,13 @@ fn test_testthat_top_level_library_narrows_by_offset() {
 
 #[test]
 fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
-    // A `library()` inside a file that's `source()`d from a function body is
-    // forwarded by the builder as an `Attach` scoped to that `source()` call,
-    // so its attach layer is visible inside the function (the lazy / EOF view)
-    // but not at file scope before or after it.
+    // A sourced `library()` becomes an `Attach` in `source()`'s calling scope.
+    // It appears after `source()` returns, but does not escape the function.
     let mut db = TestDb::new();
     install_packages(&mut db, &["dplyr"]);
 
     let helpers = make_file(&mut db, "w/helpers.R", "library(dplyr)\n");
-    let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n}\nafter\n";
+    let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n  inside\n}\nafter\n";
     let script = make_file(&mut db, "w/script.R", script_src);
 
     let root = workspace_root(&db, "w");
@@ -318,7 +316,8 @@ fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     };
 
     assert!(!at("before").contains(&"dplyr".to_string()));
-    assert!(at("source").contains(&"dplyr".to_string()));
+    assert!(!at("source").contains(&"dplyr".to_string()));
+    assert!(at("inside").contains(&"dplyr".to_string()));
     assert!(!at("after").contains(&"dplyr".to_string()));
 }
 
@@ -563,6 +562,22 @@ fn test_conditional_attach_reaches_only_a_body_defined_in_its_branch() {
 }
 
 #[test]
+fn test_conditional_attach_inside_a_body_holds_only_in_its_arm() {
+    // The arm narrowing is the same inside a lazy body as at file scope: `taken`
+    // runs with cli attached, `after` only might.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  if (cond) {\n    library(cli)\n    taken\n  }\n  after\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["taken", "after"]), vec![
+        vec!["cli".to_string()],
+        Vec::<String>::new()
+    ]);
+}
+
+#[test]
 fn test_cursor_in_local_narrows_to_calls_that_have_run() {
     // `local()` runs at its call site, so a cursor inside it sees the search
     // path as of that point, not the end-of-file view a function body gets.
@@ -608,4 +623,115 @@ fn test_attach_in_function_body_is_not_visible_after_it() {
         String,
     >::new(
     )]);
+}
+
+#[test]
+fn test_attach_in_a_function_body_is_not_visible_in_a_sibling_body() {
+    // `g()` and `h()` can run in either order, so `g()`'s attach does not reach
+    // `h()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  library(cli)\n}\nh <- function() {\n  inside\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![Vec::<
+        String,
+    >::new(
+    )]);
+}
+
+#[test]
+fn test_attach_from_a_local_block_reaches_the_rest_of_the_body() {
+    // `local()` runs during `g()`, so its `library()` reaches code after the
+    // block.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  local({ library(cli) })\n  inside\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![vec![
+        "cli".to_string()
+    ]]);
+}
+
+#[test]
+fn test_attach_later_in_an_enclosing_body_is_not_visible_in_a_nested_body() {
+    // `h()` can run before `g()` reaches the later `library()`, so the attach
+    // does not reach `h()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  h <- function() inside\n  library(cli)\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![Vec::<
+        String,
+    >::new(
+    )]);
+}
+
+#[test]
+fn test_attach_in_a_function_body_is_visible_in_a_body_it_encloses() {
+    // `outer()` creates `inner` only after the preceding `library()` runs, so
+    // the attach reaches `inner()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "outer <- function() {\n  library(cli)\n  inner <- function() inside\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![vec![
+        "cli".to_string()
+    ]]);
+}
+
+#[test]
+fn test_attach_in_a_function_body_is_not_visible_earlier_in_that_body() {
+    // `g()` executes `inside` before its later `library()`, so no attach reaches
+    // `inside`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  inside\n  library(cli)\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![Vec::<
+        String,
+    >::new(
+    )]);
+}
+
+#[test]
+fn test_attach_is_not_visible_on_the_attaching_call() {
+    // The attach begins after `library()` returns, so offsets in the multiline
+    // call see no attach.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "library(\n  cli\n)\nafter\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(
+        attaches_at(&db, file, source, &["library", "cli", "after"]),
+        vec![Vec::<String>::new(), Vec::<String>::new(), vec![
+            "cli".to_string()
+        ]]
+    );
+}
+
+#[test]
+fn test_attach_in_a_function_body_is_visible_later_in_that_body() {
+    // `library()` returns before the later `inside` expression runs in `g()`, so
+    // the attach is visible there.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["cli"]);
+
+    let source = "g <- function() {\n  library(cli)\n  inside\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![vec![
+        "cli".to_string()
+    ]]);
 }

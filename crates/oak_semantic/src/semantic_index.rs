@@ -215,17 +215,17 @@ impl SemanticIndex {
     /// Whether `scope` runs during the file's own top-level execution, i.e. no
     /// enclosing scope is lazy.
     pub fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
-        let mut ancestor_id = Some(scope_id);
+        self.enclosing_lazy_scope(scope_id).is_none()
+    }
 
-        while let Some(id) = ancestor_id {
-            let ancestor_scope = self.scope(id);
-            if ancestor_scope.kind.is_lazy() {
-                return false;
-            }
-            ancestor_id = ancestor_scope.parent;
-        }
-
-        true
+    /// The scan unit that controls when code in `scope_id` runs.
+    ///
+    /// Returns `scope_id` when it is lazy, otherwise its nearest lazy ancestor.
+    /// `None` means the code runs while the file loads. An eager `local()` block
+    /// remains in its enclosing lazy scan unit.
+    pub fn enclosing_lazy_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.ancestor_scope_ids(scope_id)
+            .find(|&id| self.scope(id).kind.is_lazy())
     }
 
     /// Cross-file call sites (`library()`, `source()`, …) recorded
@@ -795,7 +795,7 @@ impl Ranged for Use {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticCall {
     pub(crate) kind: SemanticCallKind,
-    pub(crate) offset: TextSize,
+    pub(crate) range: TextRange,
     pub(crate) scope: ScopeId,
 }
 
@@ -816,11 +816,12 @@ pub enum AttachRegion {
 }
 
 impl AttachRegion {
-    /// Whether `offset` falls inside the region of the attach `call` made.
+    /// Whether the attach from `call` holds at `offset`.
     ///
-    /// The lower bound is strict, since at the call's own offset it hasn't run.
+    /// The package attaches after the call returns, so the region starts at
+    /// `call.range().end()` and excludes every offset in `library(foo)`.
     pub fn contains(&self, call: &SemanticCall, offset: TextSize) -> bool {
-        call.offset() < offset &&
+        call.range().end() <= offset &&
             match self {
                 AttachRegion::Unconditional => true,
                 AttachRegion::Conditional { end } => offset <= *end,
@@ -852,7 +853,11 @@ impl SemanticCall {
     }
 
     pub fn offset(&self) -> TextSize {
-        self.offset
+        self.range.start()
+    }
+
+    pub fn range(&self) -> TextRange {
+        self.range
     }
 
     pub fn scope(&self) -> ScopeId {

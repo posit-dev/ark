@@ -5,6 +5,7 @@ use biome_rowan::TextSize;
 use camino::Utf8Path;
 use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
@@ -78,10 +79,27 @@ enum AttachView {
     /// though the body may never run, and a conditional one counts even though
     /// its branch may not have been taken.
     Anywhere,
-    /// The attaches in effect at `offset` in a lazy scope. Source order doesn't
-    /// constrain a body that runs later, so an attach anywhere in the file
-    /// counts, but a conditional one still only covers its own arm.
-    Lazy(TextSize),
+    /// Attaches visible at `offset` in lazy `scope`.
+    ///
+    /// An attach in `scope_id` or an enclosing lazy body applies only after its
+    /// `library()` call. The lazy view treats an unconditional top-level attach
+    /// as visible regardless of position, which over-approximates this case:
+    ///
+    /// ```r
+    /// f <- function() {
+    ///     cli_alert("x")
+    /// }
+    ///
+    /// f()
+    /// library(cli)
+    /// ```
+    ///
+    /// `f()` runs before `library(cli)`, so the attach is unavailable at
+    /// `cli_alert()`. In the future, call analysis could detect that order.
+    ///
+    /// Conditional attaches remain limited to their arm, and child or sibling
+    /// bodies do not reach `scope_id`.
+    Lazy { offset: TextSize, scope_id: ScopeId },
     /// The attaches that have run and still hold at `offset` in an eagerly
     /// evaluated scope. Calls reached only by running a lazy body are dropped,
     /// as are calls after the offset.
@@ -92,9 +110,24 @@ impl AttachView {
     fn sees(&self, index: &SemanticIndex, call: &SemanticCall, region: &AttachRegion) -> bool {
         match *self {
             AttachView::Anywhere => true,
-            AttachView::Lazy(offset) => match region {
-                AttachRegion::Unconditional => true,
-                AttachRegion::Conditional { .. } => region.contains(call, offset),
+            AttachView::Lazy {
+                offset,
+                scope_id: scope,
+            } => match index.enclosing_lazy_scope(call.scope()) {
+                // The lazy view treats unconditional top-level attaches as
+                // preceding every body. Conditional attaches stay in their arm.
+                None => match region {
+                    AttachRegion::Unconditional => true,
+                    AttachRegion::Conditional { .. } => region.contains(call, offset),
+                },
+                // A lazy body's attach reaches only that body and its descendants,
+                // and only after the call returns.
+                Some(unit) => {
+                    index
+                        .ancestor_scope_ids(scope)
+                        .any(|ancestor| ancestor == unit) &&
+                        region.contains(call, offset)
+                },
             },
             AttachView::Eager(offset) => {
                 index.scope_is_eager(call.scope()) && region.contains(call, offset)
@@ -141,12 +174,10 @@ impl File {
 
     /// Import layers visible at an `offset` in a file:
     ///
-    /// - **Cursor in lazy context**: the end-of-file view. Lazy contexts like
-    ///   functions are treated as if they run after the file is fully sourced
-    ///   (over-approximation), so any `library()` / collation entry is
-    ///   potentially visible regardless of where it appears relative to the
-    ///   cursor. A conditional attach is the exception: it only covers the arm
-    ///   that made it, so a body defined outside that arm doesn't see it.
+    /// - **Cursor in lazy context**: every collation sibling and unconditional
+    ///   top-level attach is visible. Attaches from the current or enclosing lazy
+    ///   body must precede the cursor, and conditional attaches remain limited to
+    ///   the arm that attaches them.
     ///
     /// - **Top-level cursor (script)**: only `library()` calls that
     ///   have occurred before `offset`. Most recently attached comes
@@ -173,7 +204,10 @@ impl File {
             // have run by `offset`.
             (CollationView::Eager, AttachView::Eager(offset))
         } else {
-            (CollationView::Lazy, AttachView::Lazy(offset))
+            (CollationView::Lazy, AttachView::Lazy {
+                offset,
+                scope_id: cursor_scope,
+            })
         };
 
         let layers = self.cross_file_layers(db, collation);
