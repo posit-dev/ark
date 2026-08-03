@@ -28,6 +28,7 @@ use super::assignment_name;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
+use super::scan::BodyScan;
 use super::scan::SourcedFile;
 use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
@@ -308,13 +309,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn walk_function(&mut self, fun: &RFunctionDefinition) {
+        let watermark = self.scan.deferred_bodies.len();
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
         if let Ok(params) = fun.parameters() {
             // Scan the default values before collecting them. R binds all
             // formals into the frame at once, so a default sees every parameter
             // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `flow_state`
+            // not NSE. So we seed the whole formal set into `bound_so_far`
             // up front rather than flow-ordered, then scan each default.
             self.begin_scan();
             self.scan_parameter_defaults(&params);
@@ -324,9 +326,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // above recorded.
             self.walk_parameters(&params);
         }
+
         if let Ok(body) = fun.body() {
             self.begin_scan();
             self.scan_expression(&body);
+            self.scan_deferred_bodies(watermark);
             self.walk_expression(&body);
         }
 
@@ -640,11 +644,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Walk a single NSE argument body, pushing a scope when appropriate.
-    ///
-    /// `Current + Eager` stays in the current scope. `Nested + Eager` was
-    /// already scanned by the descent, so we install its pending names and only
-    /// walk. The remaining lazy bodies are their own scan units that we scan
-    /// here on entry.
     fn walk_nse_argument(&mut self, env: EvalEnv, timing: EvalTiming, value: &AnyRExpression) {
         match (env, timing) {
             // Calls like `evalq()`
@@ -658,21 +657,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager);
                 let scope = self.push_scope(kind, range);
 
-                // Install the pending names the descent recorded for this body,
+                // Install the scanned names the descent recorded for this body,
                 // before collecting so lazy children inside can see them via
                 // `scope_binds_anywhere()`.
-                match self.scan.eager_descent.pending.remove(&range) {
-                    Some(bound) => self.scan.bound_names[scope] = bound,
-                    None => {
+                match self.scan.body_scans.remove(&range) {
+                    Some(BodyScan::Scanned(bound)) => self.scan.bound_anywhere[scope] = bound,
+                    _ => {
                         // An eager NSE scope is reachable only through the scan
-                        // unit that descended into it, so the pending set must
+                        // unit that descended into it, so its scanned entry must
                         // exist. If not this is a builder bug. In release
                         // builds we still scan the body here so the walk can
                         // proceed. This fallback runs with an empty eager
                         // environment and its shadow decisions are more
                         // degraded than a real lazy unit's.
                         stdext::debug_panic!(
-                            "Missing pending bound names for eager NSE body at {range:?}"
+                            "Missing scanned bound names for eager NSE body at {range:?}"
                         );
                         self.begin_scan();
                         self.scan_expression(value);
@@ -683,16 +682,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.pop_scope(scope);
             },
 
-            (env, timing) => {
-                let kind = ScopeKind::Nse(env, timing);
+            // Calls like `on_load()`. The deferred drain already scanned this
+            // body (its names are in the owner, its NSE decisions cached), so we
+            // only push the scope and walk.
+            (EvalEnv::Current, EvalTiming::Lazy) => {
+                let kind = ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy);
+                let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
+                self.walk_expression(value);
+                self.pop_scope(scope);
+            },
+
+            // Calls like `reactive()`. Its own scan unit, scanned here on entry
+            // in the child's flow context. Its body can queue `on_load()`s that
+            // own the `reactive()` scope, so drain them before walking.
+            (EvalEnv::Nested, EvalTiming::Lazy) => {
+                let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy);
                 let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
 
-                // Scan the child body before walking it. A `Current + Lazy`
-                // scope routes its defs to the owner and holds no bound names of its
-                // own, which `record_binding` handles; the scan still runs to
-                // record the body's NSE decisions in the child's flow context.
                 self.begin_scan();
+                let watermark = self.scan.deferred_bodies.len();
                 self.scan_expression(value);
+                self.scan_deferred_bodies(watermark);
                 self.walk_expression(value);
                 self.pop_scope(scope);
             },
@@ -717,13 +727,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         kind: DefinitionKind,
         range: TextRange,
     ) {
-        // `Nse(Current, Lazy)` scopes don't own any definitions. We add the
-        // definitions to the real enclosing owner scope. Note that `Current +
-        // Eager` never reaches here because it doesn't push a scope.
-        if matches!(
-            self.scopes[self.current_scope].kind,
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
-        ) {
+        // A scope that doesn't own its bindings routes its definitions to the
+        // enclosing owner scope. Only `Nse(Current, Lazy)` (`on_load`) reaches
+        // here as such: `Current + Eager` pushes no scope, so it never does.
+        if !self.scopes[self.current_scope].kind.owns_bindings() {
             self.add_definition_to_owner(name, flags, kind, range);
             return;
         }
@@ -750,19 +757,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         kind: DefinitionKind,
         range: TextRange,
     ) {
-        let Some(target_scope) = self.definition_owner() else {
+        let Some(owner_scope) = self.enclosing_owner() else {
             stdext::debug_panic!("Current + Lazy scope has no parent");
             return;
         };
 
-        let symbol_id = self.walk.symbol_tables[target_scope].intern(name, flags);
-        let def_id = self.walk.definitions[target_scope].push(Definition {
+        let symbol_id = self.walk.symbol_tables[owner_scope].intern(name, flags);
+        let def_id = self.walk.definitions[owner_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
         });
 
-        self.walk.use_def_maps[target_scope].ensure_symbol(symbol_id);
+        self.walk.use_def_maps[owner_scope].ensure_symbol(symbol_id);
 
         // Deferred: the body executes at an unknown later time, so the
         // definition shouldn't shadow what's already live. This is the same
@@ -773,7 +780,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // file-level uses that run before the lazy body executes. Ideally
         // these defs would only be reachable from lazy scopes (functions),
         // not from eager/file-level code.
-        self.walk.use_def_maps[target_scope].record_deferred_definition(symbol_id, def_id);
+        self.walk.use_def_maps[owner_scope].record_deferred_definition(symbol_id, def_id);
     }
 
     // Super-assignment is lexically in the current scope but binds in an

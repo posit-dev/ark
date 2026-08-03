@@ -123,7 +123,7 @@ pub trait AssignHandler: std::fmt::Debug + Sync {
 /// in the current scope (so they resolve here, against substitute's env) from
 /// those that stay quoted (so they resolve wherever the result is later
 /// evaluated).
-pub trait ScopeBindings {
+pub trait ScopeContext {
     /// Whether `name` is bound in the current scope. With `inherits`, also
     /// counts bindings inherited from enclosing scopes, mirroring R's
     /// `get(..., inherits=)`.
@@ -132,7 +132,7 @@ pub trait ScopeBindings {
     /// Whether the current scope is the global (file) scope. R's `substitute`
     /// substitutes nothing in the global environment, so a handler falls back to
     /// a plain quote there.
-    fn is_global_scope(&self) -> bool;
+    fn is_global(&self) -> bool;
 }
 
 /// Whether an assign effect reads its target before writing it.
@@ -151,34 +151,33 @@ pub enum TargetAccess {
 /// binding state of the surrounding scope.
 #[derive(Default)]
 pub struct CallContext<'a> {
-    bindings: Option<&'a dyn ScopeBindings>,
+    scope: Option<&'a dyn ScopeContext>,
 }
 
 impl<'a> CallContext<'a> {
     /// A context backed by the builder's scope state, for handlers that query
     /// bindings (`substitute`).
-    pub fn with_bindings(bindings: &'a dyn ScopeBindings) -> Self {
+    pub fn with_bindings(bindings: &'a dyn ScopeContext) -> Self {
         Self {
-            bindings: Some(bindings),
+            scope: Some(bindings),
         }
     }
 
     /// Whether `name` is bound in the current scope (see
-    /// [`ScopeBindings::is_bound`]). Without a bindings backing (a [`Default`]
+    /// [`ScopeQuery::is_bound`]). Without a bindings backing (a [`Default`]
     /// context) we can't tell, so we answer "unbound", the choice that leaves a
     /// symbol quoted rather than treating it as a use.
     pub fn is_bound(&self, name: &str, inherits: bool) -> bool {
-        self.bindings
-            .is_some_and(|bindings| bindings.is_bound(name, inherits))
+        self.scope
+            .is_some_and(|scope| scope.is_bound(name, inherits))
     }
 
     /// Whether the current scope is the global (file) scope (see
-    /// [`ScopeBindings::is_global_scope`]). Without a bindings backing (a
+    /// [`ScopeQuery::is_global_scope`]). Without a bindings backing (a
     /// [`Default`] context) we assume global, so `substitute` degrades to a
     /// plain quote (its no-substitution behaviour).
     pub fn current_scope_is_global(&self) -> bool {
-        self.bindings
-            .is_none_or(|bindings| bindings.is_global_scope())
+        self.scope.is_none_or(|scope| scope.is_global())
     }
 
     /// Match `call`'s arguments to `formals`, returning for each call argument

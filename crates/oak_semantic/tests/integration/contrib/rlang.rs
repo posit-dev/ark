@@ -259,20 +259,74 @@ local({ x <- 1 })
 #[test]
 fn test_nse_descent_current_lazy_owner_routes_to_descent_top() {
     // A `Current + Lazy` body (`on_load`) inside an eager `local` body binds `x`.
-    // During the descent, `record_owner_name` must route `x` to the descent top
-    // (local), not to the current scope. `scan_lazy_owner_bindings` runs while
-    // the arena's `current_scope` is still the file, so only the descent-top
-    // shortcut lands `x` in local's pending names.
+    // During the descent, `record_binding` must route `x` to the descent top
+    // (local), not to the current scope. The `on_load` body is scanned in the
+    // deferred drain while `local`'s frame is still open, so its assignment lands
+    // `x` in local's bound names.
     //
     // We pin it through a FORWARD reference: `f` uses `x` before `on_load` binds
-    // it, so the walk resolves the use through local's `bound_names` (the pending
-    // set), not through an already-recorded definition. If the routing regressed,
-    // `x` would land in the file and the use would resolve to the file scope.
+    // it, so the walk resolves the use through local's `bound_anywhere` (the
+    // scanned set), not through an already-recorded definition. If the routing
+    // regressed, `x` would land in the file and the use would resolve to the
+    // file scope.
     let index = index(
         "\
 local({
     f <- function() x
     rlang::on_load({ x <- 1 })
+})
+",
+    );
+    let local_scope = ScopeId::from(1);
+    let f_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+
+    let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, local_scope);
+}
+
+#[test]
+fn test_nse_descent_current_lazy_owner_routes_assign_to_descent_top() {
+    // Same as above, but the `on_load` body binds `x` through `assign("x", 1)`
+    // instead of `<-`. The deferred scan runs the full scan machinery over the
+    // body, so it recognizes the `assign()` effect and routes `x` to `local`,
+    // the descent top. The old reduced preview stopped at nested calls and never
+    // saw the `assign`, so `f`'s forward use of `x` could not resolve to it.
+    let index = index(
+        "\
+local({
+    f <- function() x
+    rlang::on_load({ assign(\"x\", 1) })
+})
+",
+    );
+    let local_scope = ScopeId::from(1);
+    let f_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+
+    let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, local_scope);
+}
+
+#[test]
+fn test_nse_descent_current_lazy_owner_routes_delayed_assign_to_descent_top() {
+    // The `delayedAssign("x", ...)` variant of the `assign()` case above, another
+    // call-based binding the full deferred scan recognizes and routes to `local`.
+    let index = index(
+        "\
+local({
+    f <- function() x
+    rlang::on_load({ delayedAssign(\"x\", 1) })
 })
 ",
     );

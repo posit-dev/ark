@@ -39,18 +39,18 @@ use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
-use scan::BoundNames;
+use scan::BindingSites;
+use scan::BodyScan;
 use scan::CallResolution;
-use scan::EagerNestedDescent;
+use scan::DeferredBody;
 use scan::FlowState;
+use scan::OpenScope;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
-use crate::semantic_index::EvalEnv;
-use crate::semantic_index::EvalTiming;
 use crate::semantic_index::NamespaceAccess;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
@@ -85,6 +85,7 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
     let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.begin_scan();
     builder.scan_expression_list(&root.expressions());
+    builder.scan_deferred_bodies(0);
     builder.walk_expression_list(&root.expressions());
     builder.finish()
 }
@@ -103,34 +104,46 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     walk: WalkState,
 }
 
-/// State owned by the scan pass: its working state plus the products the walk
-/// reads back (`bound_names`, `call_resolutions`, `eager_descent.pending`).
-/// The walk also writes `bound_names`, but only to install scan-produced data:
-/// the lockstep push in `push_scope()` and the pending install in
-/// `walk_nse_argument()`.
+/// State owned by the scan pass.
+///
+/// Binding state comes in two views, because eager and lazy code ask
+/// different questions.
+///
+/// - An eager callee is shadowed only by bindings that already ran.
+///   `bound_so_far` reflects this view. It rewinds at branch joins and is
+///   reseeded for each scan unit.
+/// - A lazy body runs after its scope has finished and resolves symbols
+///   in the whole scope. `bound_anywhere` reflects this view.
+///
+/// Both views are written together by `record_binding()`. They diverge on
+/// two rules. Names inherited from enclosing scopes seed `bound_so_far` only,
+/// via `begin_scan()`. Names bound by a deferred body reach the owner's
+/// `bound_anywhere` only, because the deferred scan restores `bound_so_far`
+/// afterwards, so the name is visible to lazy readers without shadowing an
+/// eager callee after the call.
 struct ScanState {
-    bound_names: IndexVec<ScopeId, BoundNames>,
-    // Per-call facts resolved by the scanner in flow order, keyed by the call's
-    // range. See `CallResolution`.
-    call_resolutions: FxHashMap<TextRange, CallResolution>,
-    // The scan's flow-precise binding state for the scope being scanned, reset
-    // at each scope's `begin_scan()`. See [`FlowState`].
-    flow_state: FlowState,
-    // Names inherited from enclosing scopes at this scope's entry point, keyed
-    // by the scope's range. Captured from `flow_state`, and read by
-    // `begin_scan()` to seed the scope's own scan.
-    enclosing_flow: FxHashMap<TextRange, FlowState>,
+    bound_anywhere: IndexVec<ScopeId, BindingSites>,
+    bound_so_far: FlowState,
+    // Scopes the scan has entered that are not yet allocated in the arena,
+    // innermost last.
+    open_scopes: Vec<OpenScope>,
+    // What the scan prepared for each child body, keyed by the body's range.
+    // See [`BodyScan`].
+    body_scans: FxHashMap<TextRange, BodyScan>,
     // Packages attached in eager flow order (file level and eager NSE descents),
     // appended only when `!is_lazy()`. Append-only, never restored across a
     // descent or branch: attaches hit the global search path, they aren't scoped
-    // like `flow_state`. An eager callee reads the flow-precise prefix during
+    // like `bound_so_far`. An eager callee reads the flow-precise prefix during
     // the file scan. A lazy callee reads the complete set during the walk (which
     // runs after the file scan finishes), so this doubles as the end-of-file
     // attach view.
     attached_flow: Vec<String>,
-    // Bound names of Eager + Nested bodies like `local()` are discovered inline
-    // by the scanner. See `EagerNestedDescent`.
-    eager_descent: EagerNestedDescent,
+    // Per-call facts resolved by the scanner in flow order, keyed by the call's
+    // range. See `CallResolution`.
+    call_resolutions: FxHashMap<TextRange, CallResolution>,
+    // `Current + Lazy` bodies (e.g. `rlang::on_load()`) queued at their call
+    // sites, scanned when their enclosing scan unit finishes.
+    deferred_bodies: Vec<DeferredBody>,
 }
 
 /// State written by the walk pass: the per-scope arenas and the flat outputs
@@ -156,7 +169,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let mut definitions = IndexVec::new();
         let mut uses = IndexVec::new();
         let mut use_def_maps = IndexVec::new();
-        let mut bound_names = IndexVec::new();
+        let mut bound_anywhere = IndexVec::new();
 
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
         // fills in `descendants.end` with the current arena length. Everything
@@ -175,7 +188,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
         use_def_maps.push(UseDefMapBuilder::new());
-        bound_names.push(BoundNames::new());
+        bound_anywhere.push(BindingSites::new());
 
         Self {
             scopes,
@@ -183,12 +196,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             diagnostics: Vec::new(),
             resolver,
             scan: ScanState {
-                bound_names,
+                bound_anywhere,
                 call_resolutions: FxHashMap::default(),
-                flow_state: FlowState::default(),
-                enclosing_flow: FxHashMap::default(),
+                bound_so_far: FlowState::default(),
+                body_scans: FxHashMap::default(),
                 attached_flow: Vec::new(),
-                eager_descent: EagerNestedDescent::default(),
+                open_scopes: Vec::new(),
+                deferred_bodies: Vec::new(),
             },
             walk: WalkState {
                 symbol_tables,
@@ -223,7 +237,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.walk.definitions.push(IndexVec::new());
         self.walk.uses.push(IndexVec::new());
         self.walk.use_def_maps.push(UseDefMapBuilder::new());
-        self.scan.bound_names.push(BoundNames::new());
+        self.scan.bound_anywhere.push(BindingSites::new());
 
         id
     }
@@ -242,12 +256,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// climb is iterative to handle e.g. `on_load(on_load(...))`. Every other
     /// scope kind (`File`, `Function`, `Nse(Nested, _)`) owns its definitions
     /// and stops the climb.
-    fn definition_owner(&self) -> Option<ScopeId> {
+    fn enclosing_owner(&self) -> Option<ScopeId> {
         let mut scope = self.scopes[self.current_scope].parent?;
-        while matches!(
-            self.scopes[scope].kind,
-            ScopeKind::Nse(EvalEnv::Current, EvalTiming::Lazy)
-        ) {
+        while !self.scopes[scope].kind.owns_bindings() {
             scope = self.scopes[scope].parent?;
         }
         Some(scope)
@@ -257,18 +268,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
     /// pre-scan covers definitions the walk hasn't reached yet in this scope.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
-        self.walked_binding(scope, name).is_some() || self.scan.bound_names[scope].binds(name)
+        self.walked_binding(scope, name).is_some() || self.scan.bound_anywhere[scope].binds(name)
     }
 
     /// The site where `scope` binds `name`, matching what
     /// [`scope_binds_anywhere`](Self::scope_binds_anywhere) counts as a binding
     /// (so it returns `Some` on exactly the same names). Prefers the
-    /// scan-collected site in `bound_names`, falling back to the range of an
+    /// scan-collected site in `bound_anywhere`, falling back to the range of an
     /// already-walked `IS_BOUND` definition (e.g. a parameter, which the scan
-    /// seeds straight into `flow_state` without a `bound_names` entry). Used to
+    /// seeds straight into `bound_so_far` without a `bound_anywhere` entry). Used to
     /// point the lazy-shadow diagnostic at the overwrite.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
-        if let Some(range) = self.scan.bound_names[scope].binding_range(name) {
+        if let Some(range) = self.scan.bound_anywhere[scope].binding_range(name) {
             return Some(range);
         }
 
@@ -294,21 +305,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
-
-        // TODO(diagnostics): Diagnostics are not surfaced yet, so log them for now
-        for diagnostic in &self.diagnostics {
-            match diagnostic {
-                SemanticDiagnostic::LazyShadowAmbiguity {
-                    name,
-                    call_range,
-                    overwrite_range,
-                } => log::warn!(
-                    "Lazy-shadow ambiguity: callee `{name}` at {call_range:?} is recognized \
-                     as effectful, but a lazy-crossed ancestor binds it at {overwrite_range:?} \
-                     with undetermined timing"
-                ),
-            }
-        }
 
         let symbol_tables = self
             .walk

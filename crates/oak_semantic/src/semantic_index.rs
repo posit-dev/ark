@@ -498,6 +498,17 @@ impl ScopeKind {
             ScopeKind::Nse(_, timing) => timing == EvalTiming::Lazy,
         }
     }
+
+    /// Whether this scope is its own evaluation environment, holding its own
+    /// bindings. `Current` NSE scopes (`evalq()`, `rlang::on_load()`) share
+    /// their bindings with a parent scope. All other scopes are owners.
+    ///
+    /// Orthogonal to [`is_lazy`](Self::is_lazy), which is about timing:
+    /// `shiny::reactive()` owns its bindings and is lazy, `base::local()` owns
+    /// its bindings and is eager.
+    pub fn owns_bindings(self) -> bool {
+        !matches!(self, ScopeKind::Nse(EvalEnv::Current, _))
+    }
 }
 
 impl Scope {
