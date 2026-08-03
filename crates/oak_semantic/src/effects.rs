@@ -181,6 +181,10 @@ pub struct Argument {
 pub enum ArgumentEffect {
     /// Quote plus Eval in a controlled scope, fused
     Nse { scope: NseScope, timing: NseTiming },
+    /// Captured unevaluated, so its symbols are not uses and nothing in it runs.
+    /// `quote`, `bquote`. TODO:`bquote(.(foo))` should unquote `foo`. This
+    /// requires implementing the `Eval` effect.
+    Quote,
 }
 
 impl EffectHandler for ArgumentsAnnotation {

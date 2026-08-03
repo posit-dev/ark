@@ -859,9 +859,9 @@ fn test_super_assignment_with_use_on_value_side() {
 
 // --- NSE / quoting constructs ---
 //
-// Identifiers inside `~`, `quote()`, and `bquote()` are currently recorded
-// as uses. This is a known simplification; refining it is deferred as
-// future work. These tests document the current behaviour.
+// `quote()` and `bquote()` capture their argument unevaluated, so the symbols
+// inside are not uses (the tests below). Identifiers inside a formula `~` are
+// still recorded as uses, a known simplification left for future work.
 
 #[test]
 fn test_fixme_formula_records_uses() {
@@ -898,18 +898,61 @@ fn test_fixme_one_sided_formula_records_uses() {
 }
 
 #[test]
-fn test_fixme_quote_records_uses() {
-    let index = index("quote(x + y)");
+fn test_quote_suppresses_uses() {
+    // `quote()` captures its argument unevaluated, so the symbols inside are not
+    // uses. Only the callee `quote` itself is a use.
+    let index = index_with_base("quote(x + y)");
     let file = ScopeId::from(0);
 
     assert_eq!(
         index.symbols(file).get("quote").unwrap().flags(),
         SymbolFlags::IS_USED
     );
-    assert_eq!(
-        index.symbols(file).get("x").unwrap().flags(),
-        SymbolFlags::IS_USED
-    );
+    assert!(index.symbols(file).get("x").is_none());
+    assert!(index.symbols(file).get("y").is_none());
+    assert_eq!(index.uses(file).len(), 1);
+}
+
+#[test]
+fn test_quote_suppresses_assignment() {
+    // The `x <- 1` inside `quote()` is captured unevaluated, so it binds
+    // nothing.
+    let index = index_with_base("quote(x <- 1)");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(index.definitions(file).len(), 0);
+}
+
+#[test]
+fn test_bquote_suppresses_uses() {
+    // `bquote()` quotes its argument the same as `quote()`.
+    let index = index_with_base("bquote(x + y)");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("x").is_none());
+    assert!(index.symbols(file).get("y").is_none());
+    assert_eq!(index.uses(file).len(), 1);
+}
+
+#[test]
+fn test_fixme_bquote_unquote_hole_suppressed() {
+    // TODO(eval): `bquote`'s `.()` holes are evaluated, so `y` here is really a
+    // use. We treat the whole argument as quoted until the `Eval` effect lands,
+    // so `y` is suppressed for now.
+    let index = index_with_base("bquote(x + .(y))");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("y").is_none());
+}
+
+#[test]
+fn test_local_quote_definition_shadows() {
+    // A local `quote` shadows base's, so `quote(y)` is an ordinary call and `y`
+    // is a use again.
+    let index = index_with_base("quote <- function(a) a\nquote(y)");
+    let file = ScopeId::from(0);
+
     assert_eq!(
         index.symbols(file).get("y").unwrap().flags(),
         SymbolFlags::IS_USED
@@ -917,13 +960,30 @@ fn test_fixme_quote_records_uses() {
 }
 
 #[test]
-fn test_fixme_quote_records_assignment() {
-    let index = index("quote(x <- 1)");
+fn test_quote_suppresses_attach_effect() {
+    // A `library()` inside `quote()` is captured unevaluated, so it attaches
+    // nothing to the search path.
+    let index = index_with_base("quote(library(dplyr))");
+    assert!(semantic_call_kinds(&index).is_empty());
+}
+
+#[test]
+fn test_quote_suppresses_source_effect() {
+    // A `source()` inside `quote()` is captured unevaluated, so it injects no
+    // names and records no source call.
+    let index = index_with_base("quote(source(\"helpers.R\"))");
+    assert!(semantic_call_kinds(&index).is_empty());
+}
+
+#[test]
+fn test_quote_suppresses_assign_effect() {
+    // An `assign()` inside `quote()` is captured unevaluated, so it binds
+    // nothing.
+    let index = index_with_base("quote(assign(\"x\", 1))");
     let file = ScopeId::from(0);
 
-    let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.definitions(file).len(), 1);
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
