@@ -6,6 +6,7 @@ use oak_package_metadata::description::Description;
 use oak_package_metadata::description::Priority;
 use oak_package_metadata::index::Index;
 use oak_package_metadata::namespace::Namespace;
+use rustc_hash::FxHashMap;
 use stdext::result::ResultExt;
 
 use crate::file_revision::report_untracked_if_zero;
@@ -127,6 +128,23 @@ impl Package {
                 Namespace::default()
             },
         }
+    }
+
+    /// NAMESPACE `importFrom` entries keyed by imported name, each mapping to
+    /// its source package name. Lets the resolution paths look up a name
+    /// directly instead of scanning [`Namespace::imports`].
+    ///
+    /// The value is the source package's name, not a resolved `Package`:
+    /// resolving through [`Db::package_by_name`] depends on which roots are
+    /// live, and baking that in here would invalidate this index on every
+    /// root change. Call sites resolve the name themselves.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn imported_from(self, db: &dyn Db) -> FxHashMap<String, String> {
+        self.namespace(db)
+            .imports
+            .iter()
+            .map(|import| (import.name.clone(), import.package.clone()))
+            .collect()
     }
 
     /// The package's `Version:`, parsed lazily from `DESCRIPTION`. `None`

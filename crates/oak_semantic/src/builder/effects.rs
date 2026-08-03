@@ -115,17 +115,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         // Now check imports since the symbol is locally unbound
-        let lazy = self.scan_is_lazy();
         let attached = attach_search_path(
             &self.scan.attached_inherited,
             self.scan.attached_so_far.packages(),
         );
-        let effects = self.resolver.resolve_effects(sym, &attached, lazy);
+        let effects = self.resolver.resolve_effects(sym, &attached);
 
         let Some(effects) = effects else {
             // The search path didn't resolve. Probe whether it would have if a
             // dropped attach had survived the join, so we can flag it.
-            self.record_conditional_attach_ambiguity(sym, range, lazy);
+            self.record_conditional_attach_ambiguity(sym, range);
             return None;
         };
 
@@ -254,18 +253,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         None
     }
 
-    /// Whether the scan is currently inside a lazy context.
-    ///
-    /// Laziness is monotone from the outside in. Once an enclosing context runs
-    /// lazily, everything nested in it does too, even an eager `local()`.
-    fn scan_is_lazy(&self) -> bool {
-        self.scopes[self.current_scope].kind.is_lazy() ||
-            self.scan
-                .open_scopes
-                .iter()
-                .any(|frame| frame.kind.is_lazy())
-    }
-
     fn record_lazy_shadow_ambiguity(
         &mut self,
         name: String,
@@ -288,12 +275,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// which needs the complete set of lazy-context attaches from a post-pass,
     /// not this call-site probe. That belongs in the future salsa diagnostics
     /// query where this lint family should move too.
-    fn record_conditional_attach_ambiguity(
-        &mut self,
-        sym: &str,
-        call_range: TextRange,
-        lazy: bool,
-    ) {
+    fn record_conditional_attach_ambiguity(&mut self, sym: &str, call_range: TextRange) {
         // A package in `attached_anywhere` but off the search path means it was
         // dropped at a branch or loop join
         let search_path = attach_search_path(
@@ -313,7 +295,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         for (package, attach_range) in dropped.into_iter().rev() {
             if self
                 .resolver
-                .resolve_effects(sym, std::slice::from_ref(&package), lazy)
+                .resolve_effects(sym, std::slice::from_ref(&package))
                 .is_none()
             {
                 continue;

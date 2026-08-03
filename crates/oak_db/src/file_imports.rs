@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use biome_rowan::TextSize;
 use camino::Utf8Path;
@@ -23,10 +22,9 @@ pub enum ImportLayer {
     /// A predecessor file in a package's collation, or another workspace
     /// file. Names are resolved through `file.exports(db)`.
     File(File),
-    /// NAMESPACE `importFrom(pkg, name)` entries. Maps each imported
-    /// symbol to its source package by name. Translation to `Package`
-    /// happens at resolution time.
-    From(HashMap<String, String>),
+    /// The package whose NAMESPACE declares `importFrom(pkg, name)` entries.
+    /// [`Package::import_index`] says which entry, if any, binds a given name.
+    From(Package),
     /// A whole package made available, either via NAMESPACE `import(pkg)`,
     /// `library()` / `require()` calls, or the default R search path.
     /// Missing packages are filtered out by `imports`.
@@ -56,17 +54,14 @@ pub(crate) struct CrossFileLayers {
 }
 
 impl CrossFileLayers {
-    /// Flatten to a single lookup-ordered layer list, splicing the file's own
+    /// The layers as a single lookup-ordered list, splicing the file's own
     /// `library()` attaches into the band between the definition/namespace
     /// layers (which outrank them) and the rest of the search path.
-    pub(crate) fn splice_own_attaches(&self, own: Vec<ImportLayer>) -> Vec<ImportLayer> {
-        let mut out = Vec::with_capacity(self.above.len() + own.len() + self.below.len());
-
-        out.extend(self.above.iter().cloned());
-        out.extend(own);
-        out.extend(self.below.iter().cloned());
-
-        out
+    pub(crate) fn lookup_order<'a>(
+        &'a self,
+        own: &'a [ImportLayer],
+    ) -> impl Iterator<Item = &'a ImportLayer> {
+        self.above.iter().chain(own).chain(self.below.iter())
     }
 }
 
@@ -169,7 +164,7 @@ impl File {
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let layers = self.cross_file_layers(db, CollationView::Lazy);
         let own = self.attach_layers(db, AttachView::Anywhere);
-        layers.splice_own_attaches(own)
+        layers.lookup_order(&own).cloned().collect()
     }
 
     /// Import layers visible at an `offset` in a file:
@@ -212,7 +207,7 @@ impl File {
 
         let layers = self.cross_file_layers(db, collation);
         let own = self.attach_layers(db, attaches);
-        layers.splice_own_attaches(own)
+        layers.lookup_order(&own).cloned().collect()
     }
 
     /// This file's own `library()` / `require()` attaches as `Package` layers,
@@ -309,7 +304,7 @@ fn package_load_layers(
 
     let mut above: Vec<ImportLayer> = def_files.iter().copied().map(ImportLayer::File).collect();
     let namespace = package.namespace(db);
-    extend_with_namespace_imports(namespace, &mut above);
+    extend_with_namespace_imports(package, namespace, &mut above);
     extend_with_namespace_package_imports(db, namespace, &mut above);
 
     // Every def file's attaches go on the search path below the file's own.
@@ -360,7 +355,7 @@ fn testthat_load_layers(file: File, db: &dyn Db, package: Package) -> CrossFileL
         .map(ImportLayer::File)
         .collect();
     let namespace = package.namespace(db);
-    extend_with_namespace_imports(namespace, &mut above);
+    extend_with_namespace_imports(package, namespace, &mut above);
     extend_with_namespace_package_imports(db, namespace, &mut above);
 
     // Attaches from the sourced helpers and the loaded package, then testthat
@@ -444,18 +439,16 @@ fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
     file.path(db).file_name().unwrap_or_default()
 }
 
-/// Push the `From` layer if the namespace has any `importFrom` entries.
-/// Collects them into a single map from name to source package.
-fn extend_with_namespace_imports(namespace: &Namespace, layers: &mut Vec<ImportLayer>) {
+/// Push the `From` layer if `package`'s namespace has any `importFrom` entries.
+fn extend_with_namespace_imports(
+    package: Package,
+    namespace: &Namespace,
+    layers: &mut Vec<ImportLayer>,
+) {
     if namespace.imports.is_empty() {
         return;
     }
-    let map: HashMap<String, String> = namespace
-        .imports
-        .iter()
-        .map(|imp| (imp.name.clone(), imp.package.clone()))
-        .collect();
-    layers.push(ImportLayer::From(map));
+    layers.push(ImportLayer::From(package));
 }
 
 /// Push one `Package` layer per `import(pkg)` directive in the namespace

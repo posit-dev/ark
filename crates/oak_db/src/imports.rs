@@ -8,6 +8,7 @@ use oak_semantic::effects;
 use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
+use rustc_hash::FxHashMap;
 use url::Url;
 
 use crate::file_imports::CollationView;
@@ -45,11 +46,38 @@ pub(crate) struct SalsaImportsResolver<'db> {
     db: &'db dyn Db,
     /// The file currently being indexed.
     file: File,
+    cache: EffectsCache,
 }
 
 impl<'db> SalsaImportsResolver<'db> {
     pub(crate) fn new(db: &'db dyn Db, file: File) -> Self {
-        Self { db, file }
+        Self {
+            db,
+            file,
+            cache: EffectsCache::default(),
+        }
+    }
+}
+
+/// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
+/// Sound because the answer only depends on the frozen db, and a
+/// `SalsaImportsResolver` lives exactly as long as one `File::semantic_index`
+/// build.
+#[derive(Default)]
+struct EffectsCache {
+    entries: FxHashMap<Vec<String>, FxHashMap<String, Option<EffectsHandlers>>>,
+}
+
+impl EffectsCache {
+    fn get(&self, name: &str, attached: &[String]) -> Option<Option<EffectsHandlers>> {
+        self.entries.get(attached)?.get(name).copied()
+    }
+
+    fn insert(&mut self, name: &str, attached: &[String], effects: Option<EffectsHandlers>) {
+        self.entries
+            .entry(attached.to_vec())
+            .or_default()
+            .insert(name.to_string(), effects);
     }
 }
 
@@ -90,51 +118,13 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         })
     }
 
-    fn resolve_effects(
-        &mut self,
-        name: &str,
-        attached: &[String],
-        _lazy: bool,
-    ) -> Option<EffectsHandlers> {
-        // Walk the same load-time layer chain as `File::resolve`, but map each
-        // layer to an NSE effect instead of a definition.
-        //
-        // Always the eager (predecessors-only) view, even for a lazy callee. A
-        // top-level callee only sees names loaded before it, so eager is exact
-        // there. A lazy callee (a function body) runs after the whole package
-        // has loaded, so R would resolve it against every sibling, and
-        // `File::resolve` does use the lazy view for that case. We can't here.
-        // This runs while the file's own index is being built, and the lazy
-        // view would read a collation successor's `exports`, whose own build
-        // reads back into this file and cycles (salsa recovers with empty
-        // exports, so the extra shadow detection it would buy is degraded
-        // anyway). A later sibling that shadows a lazy NSE call is missed here,
-        // and is linted later on.
-        let layers = self.file.cross_file_layers(self.db, CollationView::Eager);
-
-        // The file's own attaches slot between the definition/namespace band
-        // and the rest of the search path, exactly as in `File::imports`.
-        // `attached` is the builder's flow-ordered set (latest last), so
-        // eager/lazy flow-sensitivity is already applied; reverse it to LIFO so
-        // a later attach shadows an earlier one.
-        let own: Vec<ImportLayer> = attached
-            .iter()
-            .rev()
-            .filter_map(|package| self.db.package_by_name(package).map(ImportLayer::Package))
-            .collect();
-
-        for layer in layers.splice_own_attaches(own) {
-            if let ControlFlow::Break(effect) = self.layer_effect(&layer, name) {
-                return effect;
-            }
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+        if let Some(effects) = self.cache.get(name, attached) {
+            return effects;
         }
-
-        // base is the bottom of every R search path and is present in any
-        // session, so its builtins (`library`, `source`, `quote`, `local`, ...)
-        // resolve by name here even when base isn't scanned into a root. A
-        // definition or a higher package on the path shadows it, which the walk
-        // above already handled before falling through.
-        effects::lookup("base", name).copied()
+        let effects = self.resolve_effects_uncached(name, attached);
+        self.cache.insert(name, attached, effects);
+        effects
     }
 }
 
@@ -151,6 +141,54 @@ enum PackageBinding {
 }
 
 impl<'db> SalsaImportsResolver<'db> {
+    /// Walks the same load-time layer chain as `File::resolve`, but maps each
+    /// layer to an NSE effect instead of a definition.
+    ///
+    /// Always the eager (predecessors-only) view, even for a lazy callee. A
+    /// top-level callee only sees names loaded before it, so eager is exact
+    /// there. A lazy callee (a function body) runs after the whole package
+    /// has loaded, so R would resolve it against every sibling, and
+    /// `File::resolve` does use the lazy view for that case. We can't here.
+    /// This runs while the file's own index is being built, and the lazy
+    /// view would read a collation successor's `exports`, whose own build
+    /// reads back into this file and cycles (salsa recovers with empty
+    /// exports, so the extra shadow detection it would buy is degraded
+    /// anyway).
+    ///
+    /// A later sibling that shadows a lazy NSE call is missed here, and nothing
+    /// flags it.
+    ///
+    /// TODO(diagnostics): Detect it in the post-index diagnostics query, where
+    /// reading a successor's `exports` doesn't cycle. Unlike the ambiguities the
+    /// builder records, this one can't be seen from inside the file.
+    fn resolve_effects_uncached(&self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+        let layers = self.file.cross_file_layers(self.db, CollationView::Eager);
+
+        // The file's own attaches slot between the definition/namespace band
+        // and the rest of the search path, exactly as in `File::imports`.
+        // `attached` is the builder's flow-ordered set (latest last), so
+        // eager/lazy flow-sensitivity is already applied; reverse it to LIFO so
+        // a later attach shadows an earlier one.
+        let own: Vec<ImportLayer> = attached
+            .iter()
+            .rev()
+            .filter_map(|package| self.db.package_by_name(package).map(ImportLayer::Package))
+            .collect();
+
+        for layer in layers.lookup_order(&own) {
+            if let ControlFlow::Break(effect) = self.layer_effect(layer, name) {
+                return effect;
+            }
+        }
+
+        // base is the bottom of every R search path and is present in any
+        // session, so its builtins (`library`, `source`, `quote`, `local`, ...)
+        // resolve by name here even when base isn't scanned into a root. A
+        // definition or a higher package on the path shadows it, which the walk
+        // above already handled before falling through.
+        effects::lookup("base", name).copied()
+    }
+
     /// Project one import layer to an NSE effect, the effects-side twin of
     /// `resolve_import_layer` in `file_resolve`. Both reduce the layer to the
     /// package it binds `name` to and split on the same cases. Only the
@@ -182,7 +220,7 @@ impl<'db> SalsaImportsResolver<'db> {
             // A NAMESPACE `importFrom` binds `name` unconditionally (that's what
             // the directive asserts), so it always shadows the search path
             // below. Its effect, if any, comes from the source package.
-            ImportLayer::From(map) => match map.get(name) {
+            ImportLayer::From(importer) => match importer.imported_from(self.db).get(name) {
                 Some(source) => {
                     let effect = self.db.package_by_name(source).and_then(|package| {
                         match self.package_binding(package, name) {
@@ -223,8 +261,8 @@ impl<'db> SalsaImportsResolver<'db> {
         }
         // Exports `name`, so it binds. Chase a re-export for the effect; a plain
         // own definition (no matching `importFrom`) only shadows.
-        match namespace.imports.iter().find(|import| import.name == name) {
-            Some(import) => match effects::lookup(&import.package, name) {
+        match package.imported_from(self.db).get(name) {
+            Some(source) => match effects::lookup(source, name) {
                 Some(effects) => PackageBinding::Effect(*effects),
                 None => PackageBinding::Shadow,
             },
