@@ -27,7 +27,6 @@ use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
-use amalthea::comm::plot_comm::PlotUnit;
 use amalthea::comm::plot_comm::UpdateParams;
 use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
@@ -58,7 +57,9 @@ use crate::comm_handler::CommHandlerContext;
 use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
-use crate::r_task;
+use crate::plots::sizing::IntrinsicSizeExt;
+use crate::plots::sizing::PlotSizing;
+use crate::plots::sizing::DEFAULT_DPI;
 
 pub const PLOT_COMM_NAME: &str = "positron.plot";
 
@@ -92,46 +93,8 @@ struct ExecutionContext {
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
-    /// Figure width in inches requested by the execute request (Quarto's
-    /// `fig-width`), validated positive.
-    fig_width: Option<f64>,
-    /// Figure height in inches requested by the execute request (Quarto's
-    /// `fig-height`), validated positive.
-    fig_height: Option<f64>,
-    /// Device pixel ratio of the frontend's display (`output_pixel_ratio`).
-    pixel_ratio: Option<f64>,
-}
-
-impl ExecutionContext {
-    /// The figure size requested via `fig-width`/`fig-height`, in inches.
-    ///
-    /// Either option may be set alone, matching `quarto render`; the missing
-    /// dimension falls back to the Quarto default. Returns `None` when
-    /// neither dimension is set.
-    fn requested_fig_size(&self) -> Option<(f64, f64)> {
-        if self.fig_width.is_none() && self.fig_height.is_none() {
-            return None;
-        }
-
-        Some((
-            self.fig_width.unwrap_or(DEFAULT_FIG_WIDTH),
-            self.fig_height.unwrap_or(DEFAULT_FIG_HEIGHT),
-        ))
-    }
-
-    /// The requested figure size as an `IntrinsicSize` for the plot comm.
-    ///
-    /// Returns `None` when no figure size was requested.
-    fn intrinsic_size(&self) -> Option<IntrinsicSize> {
-        let (width, height) = self.requested_fig_size()?;
-
-        Some(IntrinsicSize {
-            width,
-            height,
-            unit: PlotUnit::Inches,
-            source: String::from("Quarto"),
-        })
-    }
+    /// Plot sizing metadata from the execute request (e.g. Quarto's fig size).
+    sizing: PlotSizing,
 }
 
 /// Per-plot context captured at creation time.
@@ -274,21 +237,11 @@ impl DeviceContext {
         code_location: Option<CodeLocation>,
         positron: Option<&ExecuteRequestPositron>,
     ) {
-        let fig_width = positron
-            .and_then(|req| req.fig_width)
-            .filter(|width| *width > 0.0);
-        let fig_height = positron
-            .and_then(|req| req.fig_height)
-            .filter(|height| *height > 0.0);
-        let pixel_ratio = positron.and_then(|req| req.output_pixel_ratio);
-
         *self.execution_context.borrow_mut() = Some(ExecutionContext {
             execution_id,
             code,
             code_location,
-            fig_width,
-            fig_height,
-            pixel_ratio,
+            sizing: PlotSizing::from_request(positron),
         });
     }
 
@@ -677,12 +630,10 @@ impl DeviceContext {
         // Pre-render at the requested figure size if the execute request
         // specified one, otherwise fall back to the frontend-driven prerender
         // settings.
-        let settings = match ctx.requested_fig_size() {
-            Some((width, height)) => {
-                render_settings_from_inches(width, height, ctx.pixel_ratio.unwrap_or(1.0))
-            },
-            None => self.prerender_settings.get(),
-        };
+        let settings = ctx
+            .sizing
+            .requested_render_settings()
+            .unwrap_or_else(|| self.prerender_settings.get());
 
         let open_data = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
@@ -769,7 +720,7 @@ impl DeviceContext {
                     code: ctx.code.clone(),
                     origin,
                 },
-                intrinsic_size: ctx.intrinsic_size(),
+                intrinsic_size: ctx.sizing.intrinsic_size(),
             });
     }
 
@@ -840,7 +791,7 @@ impl DeviceContext {
         // fig options apply to plots it modifies), so refresh the stored
         // intrinsic size to match what was just rendered.
         if let Some(plot_ctx) = self.plot_contexts.borrow_mut().get_mut(id) {
-            plot_ctx.intrinsic_size = ctx.intrinsic_size();
+            plot_ctx.intrinsic_size = ctx.sizing.intrinsic_size();
         }
 
         let transient = TransientValue {
@@ -868,22 +819,7 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<(serde_json::Value, serde_json::Value), anyhow::Error> {
-        // Resolve each dimension independently: the `ark.plot.*` R options
-        // override the execute request's figure size, which overrides the
-        // default figure size. Unsized plots deliberately render at the
-        // default figure size rather than scaling with the output area
-        // (posit-dev/positron#15260).
-        let width = r_option_positive_f64("ark.plot.width")
-            .or(ctx.fig_width)
-            .unwrap_or(DEFAULT_FIG_WIDTH);
-        let height = r_option_positive_f64("ark.plot.height")
-            .or(ctx.fig_height)
-            .unwrap_or(DEFAULT_FIG_HEIGHT);
-        let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio")
-            .or(ctx.pixel_ratio)
-            .unwrap_or(1.0);
-
-        let settings = render_settings_from_inches(width, height, pixel_ratio);
+        let settings = ctx.sizing.resolved_render_settings();
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
@@ -1025,60 +961,6 @@ impl From<PlotId> for RObject {
 impl From<&PlotId> for RObject {
     fn from(value: &PlotId) -> Self {
         RObject::from(value.0.as_str())
-    }
-}
-
-/// Default DPI for converting inches to pixels.
-/// Matches R's default: 96 on macOS, 72 on Linux/Windows.
-/// See `default_resolution_in_pixels_per_inch()` in graphics.R.
-const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
-    96.0
-} else {
-    72.0
-};
-
-/// Default figure size in inches, matching Quarto's base/HTML format
-/// defaults (`fig-width: 7`, `fig-height: 5`). Other formats differ (e.g.
-/// pdf is 5.5 x 3.5), but Positron doesn't know the target format.
-const DEFAULT_FIG_WIDTH: f64 = 7.0;
-const DEFAULT_FIG_HEIGHT: f64 = 5.0;
-
-trait IntrinsicSizeExt {
-    /// Convert an intrinsic size to a logical-pixel-based `PlotSize`.
-    ///
-    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
-    /// physical pixel scaling via the separate `pixel_ratio` parameter.
-    fn to_plot_size(&self) -> PlotSize;
-}
-
-impl IntrinsicSizeExt for IntrinsicSize {
-    fn to_plot_size(&self) -> PlotSize {
-        match self.unit {
-            PlotUnit::Inches => PlotSize {
-                width: (self.width * DEFAULT_DPI).round() as i64,
-                height: (self.height * DEFAULT_DPI).round() as i64,
-            },
-            PlotUnit::Pixels => PlotSize {
-                width: self.width.round() as i64,
-                height: self.height.round() as i64,
-            },
-        }
-    }
-}
-
-/// Build PNG render settings from a figure size in inches.
-///
-/// The size is converted to CSS/logical pixels (inches * DPI). The R
-/// rendering layer handles physical pixel scaling via the separate
-/// `pixel_ratio` parameter.
-fn render_settings_from_inches(width: f64, height: f64, pixel_ratio: f64) -> PlotRenderSettings {
-    PlotRenderSettings {
-        size: PlotSize {
-            width: (width * DEFAULT_DPI).round() as i64,
-            height: (height * DEFAULT_DPI).round() as i64,
-        },
-        pixel_ratio,
-        format: PlotRenderFormat::Png,
     }
 }
 
@@ -1337,21 +1219,6 @@ unsafe extern "C-unwind" fn ps_graphics_default_dpi() -> anyhow::Result<SEXP> {
     Ok(RObject::from(DEFAULT_DPI as i32).sexp)
 }
 
-/// Read a positive `f64` from an R option. Returns `None` if the option is
-/// unset, not numeric, or not positive.
-fn r_option_positive_f64(name: &str) -> Option<f64> {
-    let value = r_task(|| {
-        RFunction::from("getOption")
-            .param("x", name)
-            .call()?
-            .to::<f64>()
-    });
-    match value {
-        Ok(v) if v > 0.0 => Some(v),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1368,9 +1235,9 @@ mod tests {
         assert_eq!(ctx.execution_id, "");
         assert_eq!(ctx.code, "");
         assert!(ctx.code_location.is_none());
-        assert!(ctx.fig_width.is_none());
-        assert!(ctx.fig_height.is_none());
-        assert!(ctx.pixel_ratio.is_none());
+        assert!(ctx.sizing.fig_width.is_none());
+        assert!(ctx.sizing.fig_height.is_none());
+        assert!(ctx.sizing.pixel_ratio.is_none());
     }
 
     #[test]
