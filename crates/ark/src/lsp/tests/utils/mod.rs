@@ -15,6 +15,7 @@ pub(super) use events::did_change_configuration;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use events::initialize;
+pub(super) use events::initialize_with_options;
 pub(super) use events::initialize_without_configuration;
 pub(super) use events::initialized;
 pub(super) use namespace_writer::NamespaceWriter;

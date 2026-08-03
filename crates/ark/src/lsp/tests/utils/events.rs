@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::ClientCapabilities;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
@@ -29,20 +30,30 @@ use crate::lsp::main_loop::Event;
 /// it for the duration of the test: dropping it early makes `respond()`'s send
 /// fail, which nextest then reports as a leak.
 pub(crate) fn initialize(path: &Path) -> (Event, UnboundedReceiver<RequestResponse>) {
-    initialize_with_configuration_support(path, true)
+    initialize_with(path, true, None)
 }
 
-/// An [`initialize()`] request from a client that doesn't support
-/// `workspace/configuration`, so the server never asks for settings.
+/// A pull-capable [`initialize()`] request with `initialization_options`.
+pub(crate) fn initialize_with_options(
+    path: &Path,
+    initialization_options: Value,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    initialize_with(path, true, Some(initialization_options))
+}
+
+/// An [`initialize()`] request from a client without `workspace/configuration`
+/// support, using `initialization_options` for its global settings.
 pub(crate) fn initialize_without_configuration(
     path: &Path,
+    initialization_options: Option<Value>,
 ) -> (Event, UnboundedReceiver<RequestResponse>) {
-    initialize_with_configuration_support(path, false)
+    initialize_with(path, false, initialization_options)
 }
 
-fn initialize_with_configuration_support(
+fn initialize_with(
     path: &Path,
     configuration: bool,
+    initialization_options: Option<Value>,
 ) -> (Event, UnboundedReceiver<RequestResponse>) {
     let params = InitializeParams {
         capabilities: ClientCapabilities {
@@ -56,6 +67,7 @@ fn initialize_with_configuration_support(
             uri: Uri::from_file_path(path).unwrap(),
             name: String::new(),
         }]),
+        initialization_options,
         ..Default::default()
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();

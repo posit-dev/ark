@@ -12,56 +12,86 @@ pub struct Setting<T> {
     pub set: fn(&mut T, Value),
 }
 
-/// List of LSP settings for which clients can send `didChangeConfiguration`
-/// notifications. We register our interest in watching over these settings in
-/// our `initialized` handler. The `set` methods convert from a json `Value` to
-/// the expected type, using a default value if the conversion fails.
-///
-/// This array is for global settings. If the setting should only affect a given
-/// document URI, add it to `DOCUMENT_SETTINGS` instead.
-pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
-    Setting {
-        key: "positron.r.diagnostics.enable",
-        set: |cfg, v| {
-            cfg.diagnostics.enable = v
-                .as_bool()
-                .unwrap_or_else(|| DiagnosticsConfig::default().enable)
-        },
-    },
-    Setting {
-        key: "oak.diagnostics.experimental.enabled",
-        set: |cfg, v| {
-            cfg.diagnostics.experimental = v
-                .as_bool()
-                .unwrap_or_else(|| DiagnosticsConfig::default().experimental)
-        },
-    },
-    Setting {
-        key: OAK_SOURCE_FETCHING_ENABLED_SETTING,
-        set: |cfg, v| {
-            cfg.oak.source_fetching_enabled = v
-                .as_bool()
-                .unwrap_or_else(|| OakConfig::default().source_fetching_enabled)
-        },
-    },
-    Setting {
-        key: "positron.r.symbols.includeAssignmentsInBlocks",
-        set: |cfg, v| {
-            cfg.symbols.include_assignments_in_blocks = v
-                .as_bool()
-                .unwrap_or_else(|| SymbolsConfig::default().include_assignments_in_blocks)
-        },
-    },
-    Setting {
-        key: "positron.r.workspaceSymbols.includeCommentSections",
-        set: |cfg, v| {
-            cfg.workspace_symbols.include_comment_sections = v
-                .as_bool()
-                .unwrap_or_else(|| WorkspaceSymbolsConfig::default().include_comment_sections)
-        },
-    },
-];
+/// Declare global settings with their [`LspSettings`] and [`LspConfig`] fields.
+/// Keeping the mapping here synchronizes the request, layering, and resolution
+/// code. All global settings are (currently) booleans.
+macro_rules! global_settings {
+    ($($key:expr => $field:ident : $($config:ident).+),+ $(,)?) => {
+        /// A partial settings layer. `None` lets a lower-priority layer or a
+        /// default supply the setting.
+        #[derive(Clone, Debug, Default, Eq, PartialEq)]
+        pub(crate) struct LspSettings {
+            $(pub(crate) $field: Option<bool>,)+
+        }
 
+        impl LspSettings {
+            /// Overlay `self` on `base`, preferring every value set in `self`.
+            #[must_use]
+            pub(crate) fn or(self, base: Self) -> Self {
+                Self {
+                    $($field: self.$field.or(base.$field),)+
+                }
+            }
+
+            /// Apply this layer to `config`. Missing settings use defaults, and
+            /// unrelated fields such as the position encoding remain unchanged.
+            pub(crate) fn resolve_into(&self, config: &mut LspConfig) {
+                $(
+                    config.$($config).+ = self
+                        .$field
+                        .unwrap_or_else(|| LspConfig::default().$($config).+);
+                )+
+            }
+        }
+
+        /// Global settings requested through `workspace/configuration` and
+        /// registered for `didChangeConfiguration` notifications.
+        pub static GLOBAL_SETTINGS: &[Setting<LspSettings>] = &[
+            $(Setting {
+                key: $key,
+                set: |settings, value| settings.$field = value.as_bool(),
+            },)+
+        ];
+    };
+}
+
+// Each row is `key => field: config.path`. It maps an LSP setting key to the
+// corresponding fields in [`LspSettings`] and [`LspConfig`].
+global_settings! {
+    OAK_DIAGNOSTICS_EXPERIMENTAL_ENABLED_SETTING
+        => diagnostics_experimental: diagnostics.experimental,
+    OAK_SOURCE_FETCHING_ENABLED_SETTING => source_fetching_enabled: oak.source_fetching_enabled,
+    "positron.r.diagnostics.enable" => diagnostics_enable: diagnostics.enable,
+    "positron.r.symbols.includeAssignmentsInBlocks"
+        => include_assignments_in_blocks: symbols.include_assignments_in_blocks,
+    "positron.r.workspaceSymbols.includeCommentSections"
+        => include_comment_sections: workspace_symbols.include_comment_sections,
+}
+
+/// Read global settings from the client's `initializationOptions`.
+///
+/// Dotted keys from [`GLOBAL_SETTINGS`] follow nested objects. For example,
+/// `oak.sourceFetching.enabled` reads `{oak: {sourceFetching: {enabled: ...}}}`.
+pub(crate) fn initialization_options(options: &Value) -> LspSettings {
+    let mut layer = LspSettings::default();
+    for setting in GLOBAL_SETTINGS {
+        if let Some(value) = nested_setting(options, setting.key) {
+            (setting.set)(&mut layer, value.clone());
+        }
+    }
+    layer
+}
+
+fn nested_setting<'options>(options: &'options Value, key: &str) -> Option<&'options Value> {
+    let mut value = options;
+    for segment in key.split('.') {
+        value = value.get(segment)?;
+    }
+    Some(value)
+}
+
+pub(crate) const OAK_DIAGNOSTICS_EXPERIMENTAL_ENABLED_SETTING: &str =
+    "oak.diagnostics.experimental.enabled";
 pub(crate) const OAK_SOURCE_FETCHING_ENABLED_SETTING: &str = "oak.sourceFetching.enabled";
 
 /// Overrides [`OAK_SOURCE_FETCHING_ENABLED_SETTING`] when set to `1`, `true`,
@@ -74,19 +104,21 @@ pub struct EnvOverride<T> {
 }
 
 /// Environment overrides for LSP settings.
-pub static ENV_OVERRIDES: &[EnvOverride<LspConfig>] = &[EnvOverride {
+pub static ENV_OVERRIDES: &[EnvOverride<LspSettings>] = &[EnvOverride {
     name: OAK_SOURCE_FETCHING_ENABLED_ENV_VAR,
-    set: |cfg, on| cfg.oak.source_fetching_enabled = on,
+    set: |settings, on| settings.source_fetching_enabled = Some(on),
 }];
 
-/// Apply recognized environment overrides after client settings.
-/// Unset or unrecognized values preserve the client setting.
-pub(crate) fn apply_env_overrides(config: &mut LspConfig) {
+/// Read recognized environment values into a settings layer. Unset or invalid
+/// values leave their setting available to lower-priority layers.
+pub(crate) fn env_settings() -> LspSettings {
+    let mut layer = LspSettings::default();
     for env_override in ENV_OVERRIDES {
         if let Some(on) = env_flag_opt(env_override.name) {
-            (env_override.set)(config, on);
+            (env_override.set)(&mut layer, on);
         }
     }
+    layer
 }
 
 /// These document settings are updated on a URI basis. Each document has its

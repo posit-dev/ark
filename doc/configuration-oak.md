@@ -10,7 +10,8 @@ Configuration follows these rules of precedence:
 
 1. Environment variables.
 2. LSP settings from the client.
-3. Defaults.
+3. `initializationOptions` from the client.
+4. Defaults.
 
 Environment variables read `1` and `true` as on, `0` and `false` as off, case-insensitively. Anything else, including the empty string, counts as unset and falls through to the setting.
 

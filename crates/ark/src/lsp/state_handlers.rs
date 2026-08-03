@@ -55,8 +55,9 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::config::apply_env_overrides;
 use crate::lsp::config::indent_style_from_lsp;
+use crate::lsp::config::initialization_options;
+use crate::lsp::config::LspSettings;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
@@ -101,6 +102,13 @@ pub(crate) fn initialize(
 ) -> LspResult<InitializeResult> {
     let workspace_paths = effective_workspace_paths(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
+
+    // Retain `initializationOptions` so a missing setting in a later pull falls
+    // through to it.
+    if let Some(options) = &params.initialization_options {
+        state.initialization_options = initialization_options(options);
+        state.resolve_config(LspSettings::default());
+    }
 
     state.workspace.folders = workspace_paths;
 
@@ -566,13 +574,19 @@ async fn update_config(
     let pulled = if capabilities.workspace_configuration() {
         pull_config(open_files, client, state).await
     } else {
-        lsp::log_info!("Client can't answer `workspace/configuration`, using default settings");
-        Ok(())
+        lsp::log_info!(
+            "Client can't answer `workspace/configuration`, keeping the settings from `initializationOptions`"
+        );
+        Ok(LspSettings::default())
     };
 
-    // Overrides apply even when the pull failed, so that an unresponsive client
-    // doesn't strand us on the defaults.
-    apply_env_overrides(&mut state.config);
+    // A failed pull supplies no values, but must not discard environment or
+    // initialization options.
+    let (client_settings, pull_result) = match pulled {
+        Ok(options) => (options, Ok(())),
+        Err(err) => (LspSettings::default(), Err(err)),
+    };
+    state.resolve_config(client_settings);
 
     // `config` is not an Oak input, so we manually bump the revision to refresh
     // diagnostics and rerun source scheduling. This queues already discovered
@@ -582,16 +596,17 @@ async fn update_config(
         state.bump_revision();
     }
 
-    pulled
+    pull_result
 }
 
-/// Pull the global and document settings from the client with a
-/// `workspace/configuration` request, then store them in `state`.
+/// Pull global and document settings with `workspace/configuration`. Document
+/// settings update their documents, while global settings form a layer to
+/// resolve.
 async fn pull_config(
     open_files: Vec<(FilePath, Uri)>,
     client: &tower_lsp_server::Client,
     state: &mut WorldState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<LspSettings> {
     // Build the configuration request for global and document settings
     let mut items: Vec<_> = vec![];
 
@@ -639,8 +654,9 @@ async fn pull_config(
     let document_configs = configs.split_off(GLOBAL_SETTINGS.len());
     let global_configs = configs;
 
+    let mut global_options = LspSettings::default();
     for (mapping, value) in GLOBAL_SETTINGS.iter().zip(global_configs) {
-        (mapping.set)(&mut state.config, value);
+        (mapping.set)(&mut global_options, value);
     }
 
     let mut remaining = document_configs;
@@ -658,7 +674,7 @@ async fn pull_config(
         }
     }
 
-    Ok(())
+    Ok(global_options)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
