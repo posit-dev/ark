@@ -85,6 +85,10 @@ pub struct SemanticIndex {
     // `package:::symbol`
     namespace_accesses: Vec<NamespaceAccess>,
 
+    // Diagnostics surfaced during indexing, for downstream consumers to turn
+    // into user-facing diagnostics.
+    diagnostics: Vec<SemanticDiagnostic>,
+
     // The file scope's exit flow state: for each top-level symbol, the
     // definitions still in effect once the file has run top to bottom. This is
     // the file's exports (see `exports()`). Only the file scope's exit state is
@@ -102,6 +106,7 @@ impl SemanticIndex {
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         semantic_calls: Vec<SemanticCall>,
         namespace_accesses: Vec<NamespaceAccess>,
+        diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
     ) -> Self {
         Self {
@@ -113,6 +118,7 @@ impl SemanticIndex {
             enclosing_snapshots,
             semantic_calls,
             namespace_accesses,
+            diagnostics,
             final_bindings,
         }
     }
@@ -188,6 +194,12 @@ impl SemanticIndex {
     /// `package:::symbol`
     pub fn namespace_accesses(&self) -> &[NamespaceAccess] {
         &self.namespace_accesses
+    }
+
+    /// Diagnostics surfaced during indexing, for downstream consumers to turn
+    /// into user-facing diagnostics.
+    pub fn diagnostics(&self) -> &[SemanticDiagnostic] {
+        &self.diagnostics
     }
 
     /// Find the innermost scope containing `offset`.
@@ -323,8 +335,7 @@ impl SemanticIndex {
         let local = bindings.definitions().iter().map(move |&d| (scope_id, d));
 
         let enclosing = if bindings.may_be_unbound() {
-            let symbol_id = self.uses(scope_id)[use_id].symbol();
-            self.enclosing_bindings(scope_id, symbol_id)
+            self.enclosing_bindings(scope_id, use_id)
         } else {
             None
         };
@@ -337,10 +348,10 @@ impl SemanticIndex {
 
     /// Resolve a free variable's bindings from the enclosing scope.
     ///
-    /// When a use in `scope` may be unbound (`may_be_unbound: true`), some
-    /// control-flow paths fall through to an enclosing scope. This looks up
-    /// the enclosing snapshot that was registered during the build and
-    /// returns the ancestor scope and its bindings. This covers both purely
+    /// When the use `use_id` in `scope` may be unbound (`may_be_unbound: true`),
+    /// some control-flow paths fall through to an enclosing scope. This looks up
+    /// the enclosing snapshot that was registered for that use during the build
+    /// and returns the ancestor scope and its bindings. This covers both purely
     /// free variables (no local definitions) and conditionally defined
     /// variables (local definitions exist but don't cover all paths).
     ///
@@ -350,11 +361,11 @@ impl SemanticIndex {
     pub fn enclosing_bindings(
         &self,
         scope: ScopeId,
-        symbol: SymbolId,
+        use_id: UseId,
     ) -> Option<(ScopeId, &Bindings)> {
         let key = EnclosingSnapshotKey {
             nested_scope: scope,
-            nested_symbol: symbol,
+            nested_use: use_id,
         };
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
@@ -363,18 +374,17 @@ impl SemanticIndex {
 }
 
 /// Key for looking up an enclosing snapshot. Keyed by the nested scope and the
-/// symbol's `SymbolId` in the nested scope's symbol table (not the enclosing
-/// scope's), so consumers can do an O(1) lookup directly from a `UseId` without
-/// re-walking the ancestor chain.
+/// `UseId` of the free variable in that scope, so consumers do an O(1) lookup
+/// straight from a use without re-walking the ancestor chain.
 ///
-/// When we implement NSE, we will add a `laziness: ScopeLaziness` field to
-/// distinguish lazy snapshots (functions, accumulated union via watchers) from
-/// eager snapshots (NSE scopes like `local()`, point-in-time capture at the
-/// call site). Currently all nested scopes are lazy, so the field is omitted.
+/// Keyed per use, not per symbol, because eager snapshots (e.g. `local()`) are
+/// point-in-time: two uses of the same free variable at different points in an
+/// eager body can see different enclosing states, so each gets its own
+/// snapshot. Lazy uses of one symbol still share a single snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnclosingSnapshotKey {
     pub nested_scope: ScopeId,
-    pub nested_symbol: SymbolId,
+    pub nested_use: UseId,
 }
 
 // --- Scope ---
@@ -384,9 +394,9 @@ pub struct EnclosingSnapshotKey {
 // by the file: walking `parent` from any scope eventually reaches the
 // `File` scope which itself has `parent: None`.
 //
-// Currently only `function()` creates a new scope. In the future, constructs
-// like `local()`, `with()`, `within()` may also create scopes (determined
-// by function declarations resolved via salsa queries).
+// `function()` creates `Function` scopes. NSE constructs like `local()`,
+// `with()`, `test_that()` create `Nse` scopes, recognized by resolving the
+// call target against for their effects annotations during the walk.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
@@ -405,6 +415,45 @@ pub enum ScopeKind {
     // cross-file resolution (package namespace, session, etc.) takes over.
     File,
     Function,
+    Nse(NseScope, NseTiming),
+}
+
+/// Where definitions in an NSE scope land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NseScope {
+    /// Definitions go to the current (parent) environment.
+    /// e.g. `rlang::on_load()`
+    Current,
+    /// Definitions go to a nested environment.
+    /// e.g. `local()`, `test_that()`, `with()`
+    Nested,
+}
+
+/// Whether an NSE scope evaluates eagerly (at the call site) or lazily
+/// (at an unknown later time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NseTiming {
+    /// Expression that runs at the call site. Free variables resolve against
+    /// the linear state right there. E.g. `local()`, `evalq()`, `test_that()`.
+    Eager,
+    /// Expression that runs at an unknown later time, so free variables resolve
+    /// against the accumulated union of enclosing definitions. E.g.
+    /// `shiny::reactive()`, `rlang::on_load()`.
+    Lazy,
+}
+
+impl ScopeKind {
+    /// Whether free variables in this scope resolve against the union of all
+    /// enclosing definitions (lazy) or against a point-in-time snapshot at the
+    /// call site (eager). `Function` bodies run at an unknown later time, so
+    /// they're always lazy.
+    pub fn is_lazy(self) -> bool {
+        match self {
+            ScopeKind::File => false,
+            ScopeKind::Function => true,
+            ScopeKind::Nse(_, timing) => timing == NseTiming::Lazy,
+        }
+    }
 }
 
 impl Scope {
@@ -762,6 +811,22 @@ pub enum NamespaceAccessKind {
     Export,
     /// `:::`
     Internal,
+}
+
+/// A diagnostic surfaced while building the semantic index, for downstream
+/// consumers to turn into user-facing diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticDiagnostic {
+    /// An NSE call recognized in a lazy context whose callee is also bound by a
+    /// lazy-crossed ancestor with undetermined timing, so the NSE decision is a
+    /// guess. `call_range` points at the NSE call we recognized, `overwrite_range`
+    /// at the ancestor binding that could invalidate it (a later assignment in
+    /// parent code, or one from another lazy context).
+    LazyShadowAmbiguity {
+        name: String,
+        call_range: TextRange,
+        overwrite_range: TextRange,
+    },
 }
 
 // --- Iterators ---

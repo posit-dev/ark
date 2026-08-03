@@ -186,10 +186,13 @@ use crate::semantic_index::UseId;
 // The consumer combines both: the local bindings and the enclosing
 // snapshot give the full picture of what `x` could be.
 //
-// For eager NSE scopes (e.g. `local()`), the snapshot will be even more
-// precise: since the body executes at the call site, the snapshot is a
-// point-in-time capture with no watcher, reflecting exactly the linear state.
-// No union over-approximation needed.
+// For eager NSE scopes (e.g. `local()`), the snapshot is more precise: since
+// the body executes at the call site, it's a point-in-time capture reflecting
+// exactly the linear state, with no union over definitions that come later in
+// the enclosing scope. Each use in the body captures its own snapshot, so a use
+// after a `<<-` in the body sees the mutated binding while an earlier use does
+// not. Eager snapshots take no watcher: they never fold in a later definition
+// (see `register_eager_snapshot()`).
 
 /// The immutable use-def map for a single scope. For each use site, stores the
 /// set of definitions that can reach it through control flow.
@@ -304,7 +307,10 @@ pub(crate) struct UseDefMapBuilder {
     // Currently used for `<<-` extra definitions in ancestor scopes.
     deferred_defs: Vec<(SymbolId, DefinitionId)>,
     enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
-    snapshot_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
+    // Lazy snapshots (e.g. `reactive()`), notified of every definition of a
+    // symbol so they fold in the whole union. Eager snapshots (e.g. `local()`)
+    // are point-in-time and subscribe to nothing.
+    lazy_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
 }
 
 impl UseDefMapBuilder {
@@ -314,7 +320,7 @@ impl UseDefMapBuilder {
             bindings_by_use: IndexVec::new(),
             deferred_defs: Vec::new(),
             enclosing_snapshots: IndexVec::new(),
-            snapshot_watchers: FxHashMap::default(),
+            lazy_watchers: FxHashMap::default(),
         }
     }
 
@@ -333,7 +339,14 @@ impl UseDefMapBuilder {
     /// live definitions for that symbol.
     pub(crate) fn record_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].record_definition(def_id);
-        self.update_enclosing_snapshots(symbol_id, def_id);
+        // A plain def reaches lazy snapshots only. Eager snapshots are
+        // point-in-time and ignore defs that land after the call.
+        Self::notify_watchers(
+            &mut self.enclosing_snapshots,
+            &self.lazy_watchers,
+            symbol_id,
+            def_id,
+        );
     }
 
     /// After visiting a loop body, retroactively patch uses so that
@@ -396,7 +409,15 @@ impl UseDefMapBuilder {
     pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
         self.deferred_defs.push((symbol_id, def_id));
-        self.update_enclosing_snapshots(symbol_id, def_id);
+        // A deferred def reaches lazy snapshots like any other def. Eager
+        // snapshots take no watcher, so a `<<-` inside an eager body reaches
+        // them only through the point-in-time clone of a use that follows it.
+        Self::notify_watchers(
+            &mut self.enclosing_snapshots,
+            &self.lazy_watchers,
+            symbol_id,
+            def_id,
+        );
     }
 
     /// Record a use of `symbol_id`. Clones the current live bindings for that
@@ -458,23 +479,58 @@ impl UseDefMapBuilder {
     /// registered so that each subsequent definition of this symbol we
     /// encounter is conservatively merged in, because we can't know statically
     /// when the nested scope will be called.
-    pub(crate) fn register_enclosing_snapshot(
-        &mut self,
-        symbol_id: SymbolId,
-    ) -> EnclosingSnapshotId {
+    pub(crate) fn register_lazy_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
         let bindings = self.symbol_states[symbol_id].clone();
         let id = self.enclosing_snapshots.push(bindings);
-        self.snapshot_watchers
-            .entry(symbol_id)
-            .or_default()
-            .push(id);
+        self.lazy_watchers.entry(symbol_id).or_default().push(id);
         id
     }
 
-    fn update_enclosing_snapshots(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
-        if let Some(watchers) = self.snapshot_watchers.get(&symbol_id) {
-            for &snapshot_id in watchers {
-                self.enclosing_snapshots[snapshot_id].add_definition(def_id);
+    /// Register a point-in-time enclosing snapshot for `symbol_id`. Used for
+    /// eager NSE scopes like `local()`: the body runs at the call site, so the
+    /// snapshot reflects exactly the linear state, with no union over the
+    /// definitions that come later in the enclosing scope.
+    ///
+    /// Unlike [`register_lazy_snapshot`](Self::register_lazy_snapshot), this
+    /// takes no watcher. The clone is the whole answer. Each use in the eager
+    /// body registers its own snapshot, so it captures the enclosing state at
+    /// that exact point in the flow. A `<<-` inside the body is already live in
+    /// `symbol_states` by the time a later use clones, so that use sees it while
+    /// an earlier one does not:
+    ///
+    /// ```r
+    /// x <- 1
+    /// local({
+    ///     x        # {1}: cloned before the `<<-`
+    ///     x <<- 2  # deferred def, now live in the enclosing state
+    ///     x        # {1, 2}: cloned after the `<<-`
+    /// })
+    /// ```
+    ///
+    /// And since nothing fires later, a definition recorded after the body has
+    /// run never folds in, which is correct: the eager body is already done.
+    ///
+    /// ```r
+    /// x <- 1
+    /// local({ x })                 # {1}
+    /// f <- function() { x <<- 2 }  # f's `<<-` can't reach the finished body
+    /// rlang::on_load({ x <- 3 })   # routed def can't reach it either
+    /// x <- 4                       # plain `<-` after the call, out of the snapshot
+    /// ```
+    pub(crate) fn register_eager_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
+        let bindings = self.symbol_states[symbol_id].clone();
+        self.enclosing_snapshots.push(bindings)
+    }
+
+    fn notify_watchers(
+        enclosing_snapshots: &mut IndexVec<EnclosingSnapshotId, Bindings>,
+        watchers: &FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
+        symbol_id: SymbolId,
+        def_id: DefinitionId,
+    ) {
+        if let Some(ids) = watchers.get(&symbol_id) {
+            for &snapshot_id in ids {
+                enclosing_snapshots[snapshot_id].add_definition(def_id);
             }
         }
     }
