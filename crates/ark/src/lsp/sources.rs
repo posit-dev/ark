@@ -9,10 +9,13 @@ use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
+use stdext::env_flag;
+use stdext::is_ci;
 use stdext::result::ResultExt;
 
 use crate::lsp;
 use crate::lsp::config::OakConfig;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -97,6 +100,11 @@ impl SourceHandler for OakSourceHandler {
     }
 }
 
+/// Whether source fetching is disabled due to to CI env.
+pub(crate) fn source_fetching_disabled_by_ci() -> bool {
+    is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR)
+}
+
 /// Find `R/` from a CRAN package tarball
 fn r_dir_for_cran(root: &Path) -> PathBuf {
     root.join("R")
@@ -164,6 +172,12 @@ impl SourceScheduler {
     /// them later.
     pub(crate) fn config_arrived(&mut self) {
         self.awaiting_config = false;
+    }
+
+    /// Whether a handler was built at all. `false` means fetching is off for a
+    /// reason that predates any setting, such as running on CI or a missing R.
+    pub(crate) fn has_handler(&self) -> bool {
+        self.handler.is_some()
     }
 
     /// Run a fetch for each package we haven't seen before on `pool`, shipping

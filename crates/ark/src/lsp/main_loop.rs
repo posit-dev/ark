@@ -21,8 +21,6 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use stdext::env_flag;
-use stdext::is_ci;
 use stdext::panic_message;
 use stdext::result::ResultExt;
 use stdext::spawn;
@@ -53,6 +51,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
+use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
@@ -642,7 +641,8 @@ impl GlobalState {
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
-    if is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) {
+    // Also reported to the LSP output channel from `handle_initialized()`.
+    if source_fetching_disabled_by_ci() {
         log::info!(
             "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."
         );

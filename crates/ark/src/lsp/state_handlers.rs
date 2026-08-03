@@ -59,6 +59,7 @@ use crate::lsp::config::apply_env_overrides;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::content_changes::apply_content_changes;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DiagnosticsPublication;
@@ -67,6 +68,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
+use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::state::open_file_wire_uris;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
@@ -263,6 +265,20 @@ pub(crate) async fn handle_initialized(
     // Release the startup gate after attempting to load client configuration.
     // Packages seen so far will be queued now if the scheduler is activated.
     lsp_state.source_scheduler.config_arrived();
+
+    // Say once why nothing will be fetched, if that's the case.
+    if !state.config.oak.source_fetching_enabled {
+        lsp::log_info!("Source fetching is disabled by `oak.sourceFetching.enabled`");
+    } else if source_fetching_disabled_by_ci() {
+        lsp::log_info!(
+            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."
+        );
+    } else if !lsp_state.source_scheduler.has_handler() {
+        // The specific reason (no R executable, or a handler that failed to
+        // build) was logged to the kernel log.
+        lsp::log_info!("Source fetching is unavailable, no source handler was built");
+    }
+
     lsp_state.source_scheduler.schedule(
         &state.db,
         &state.config.oak,
@@ -593,6 +609,15 @@ async fn update_config(
     }
 
     apply_env_overrides(&mut state.config);
+
+    if state.config.oak.source_fetching_enabled != oak_config.source_fetching_enabled {
+        let state_name = if state.config.oak.source_fetching_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        lsp::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
+    }
 
     // `config` is not an Oak input, so we manually bump the revision to refresh
     // diagnostics and rerun source scheduling. This queues already discovered

@@ -27,6 +27,7 @@ use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceRequest;
@@ -368,6 +369,33 @@ async fn test_fetching_waits_for_initialized() {
 
     state.handle_event_to_quiescence(initialized()).await;
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
+}
+
+/// CI holds fetching back unless the env var opts a job back in. Both
+/// `source_handler()` and the output-channel report in `handle_initialized()`
+/// read this, so they always agree on whether CI is the reason.
+#[test]
+fn test_ci_holds_source_fetching_back_unless_opted_in() {
+    let name = OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+
+    unsafe { std::env::set_var("CI", "true") };
+
+    unsafe { std::env::remove_var(name) };
+    assert!(source_fetching_disabled_by_ci());
+
+    unsafe { std::env::set_var(name, "1") };
+    assert!(!source_fetching_disabled_by_ci());
+
+    // An explicit `0` leaves CI's own suppression in place rather than fighting
+    // it, since both point the same way.
+    unsafe { std::env::set_var(name, "0") };
+    assert!(source_fetching_disabled_by_ci());
+
+    // Off CI the gate never applies, whatever the variable says.
+    unsafe { std::env::remove_var("CI") };
+    assert!(!source_fetching_disabled_by_ci());
+    unsafe { std::env::remove_var(name) };
+    assert!(!source_fetching_disabled_by_ci());
 }
 
 /// A recognized `OAK_SOURCE_FETCHING_ENABLED` value overrides `oak.sourceFetching.enabled`.
