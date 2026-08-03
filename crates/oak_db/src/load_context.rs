@@ -35,6 +35,7 @@ pub(crate) struct LoadContext {
     pub fixed_load_order: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchPathTail {
     /// Only `base`. Package dependencies are supplied by the NAMESPACE.
     Base,

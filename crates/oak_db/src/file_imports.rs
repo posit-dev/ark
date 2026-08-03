@@ -45,26 +45,25 @@ pub enum ImportLayer {
     Package(Package),
 }
 
-/// The cross-file layers a file sees at load time, split at the point where the
-/// file's own `library()` attaches slot in.
+/// Cross-file layers visible while a file loads.
 ///
-/// `above` outranks the file's own attaches. It holds sibling and predecessor
-/// definitions plus the NAMESPACE imports, the parts R searches before the
-/// attached search path. `below` is the rest of the search path: predecessor
-/// attaches, the loader's implicit attaches, and `base`.
+/// `enclosing` contains definitions and NAMESPACE imports reached through the
+/// environment chain. `attaches` holds inherited and loader attaches. `tail` is
+/// the search-path suffix R searches last.
 ///
-/// The file's own attaches are deliberately left out, so building this never
-/// reads the file's own semantic index. That's what lets the resolver call it
-/// while that index is still being built (see [`SalsaImportsResolver`]). Each
-/// caller splices its own attaches between the two bands: [`File::imports`]
-/// reads them from the file's index, the resolver takes them from the builder's
-/// flow-ordered set.
+/// Keep `tail` unexpanded until [`Self::lookup_order`]. Materializing a sourced
+/// file's tail first would put its caller's attaches below `base`.
+///
+/// The file's own attaches are omitted to avoid reading its semantic index while
+/// it is building. [`File::imports`] reads them from the index, while
+/// [`SalsaImportsResolver`] uses the builder's flow-ordered set.
 ///
 /// [`SalsaImportsResolver`]: crate::imports::SalsaImportsResolver
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub(crate) struct CrossFileLayers {
-    pub above: Vec<ImportLayer>,
-    pub below: Vec<ImportLayer>,
+    pub enclosing: Vec<ImportLayer>,
+    pub attaches: Vec<ImportLayer>,
+    pub tail: SearchPathTail,
 }
 
 impl CrossFileLayers {
@@ -73,9 +72,24 @@ impl CrossFileLayers {
     /// layers (which outrank them) and the rest of the search path.
     pub(crate) fn lookup_order<'a>(
         &'a self,
+        db: &'a dyn Db,
         own: &'a [ImportLayer],
-    ) -> impl Iterator<Item = &'a ImportLayer> {
-        self.above.iter().chain(own).chain(self.below.iter())
+    ) -> impl Iterator<Item = ImportLayer> + 'a {
+        self.enclosing
+            .iter()
+            .chain(own)
+            .chain(self.attaches.iter())
+            .cloned()
+            .chain(self.tail.layers(db))
+    }
+}
+
+impl SearchPathTail {
+    fn layers(self, db: &dyn Db) -> Vec<ImportLayer> {
+        match self {
+            SearchPathTail::Base => base_layer(db).into_iter().collect(),
+            SearchPathTail::Default => default_search_path_layers(db),
+        }
     }
 }
 
@@ -215,7 +229,7 @@ impl File {
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let layers = self.resolution_layers(db, CollationView::Lazy);
         let own = self.attach_layers(db, AttachView::Anywhere);
-        layers.lookup_order(&own).cloned().collect()
+        layers.lookup_order(db, &own).collect()
     }
 
     /// Import layers visible at an `offset` in a file:
@@ -262,7 +276,7 @@ impl File {
 
         let layers = self.resolution_layers(db, collation);
         let own = self.attach_layers(db, attaches);
-        layers.lookup_order(&own).cloned().collect()
+        layers.lookup_order(db, &own).collect()
     }
 
     /// The file's own layers and the layers it inherits from the files that
@@ -278,20 +292,20 @@ impl File {
         }
 
         let own = self.cross_file_layers(db, view);
-        let mut above = own.above.clone();
-        let mut below = own.below.clone();
+        let mut enclosing = own.enclosing.clone();
+        let mut attaches = own.attaches.clone();
         for site in inherited {
-            above.extend(site.layers.above.iter().cloned());
-            below.extend(site.layers.below.iter().cloned());
+            enclosing.extend(site.layers.enclosing.iter().cloned());
+            attaches.extend(site.layers.attaches.iter().cloned());
         }
 
-        // Every alternative's `below` ends in the default search path. Hoist it
-        // out and append it once, or the next one's attaches land under `base`.
-        let search_path = default_search_path_layers(db);
-        below.retain(|layer| !search_path.contains(layer));
-        below.extend(search_path);
-
-        Cow::Owned(CrossFileLayers { above, below })
+        // Only a script-like load context reaches this path because fixed load
+        // orders skip source-site inheritance. Use the default session search path.
+        Cow::Owned(CrossFileLayers {
+            enclosing,
+            attaches,
+            tail: SearchPathTail::Default,
+        })
     }
 
     /// The lookup-ordered layers this file's lazy / end-of-file view sees: the
@@ -308,7 +322,7 @@ impl File {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.layers_by_sourcing_file(db, CollationView::Lazy)
             .into_iter()
-            .map(|layers| layers.lookup_order(&own).cloned().collect())
+            .map(|layers| layers.lookup_order(db, &own).collect())
             .collect()
     }
 
@@ -340,7 +354,7 @@ impl File {
         let own = self.attach_layers(db, attaches);
         self.layers_by_sourcing_file(db, collation)
             .into_iter()
-            .map(|layers| layers.lookup_order(&own).cloned().collect())
+            .map(|layers| layers.lookup_order(db, &own).collect())
             .collect()
     }
 
@@ -382,8 +396,7 @@ impl File {
     pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.cross_file_layers(db, CollationView::Lazy)
-            .lookup_order(&own)
-            .cloned()
+            .lookup_order(db, &own)
             .collect()
     }
 
@@ -450,9 +463,8 @@ fn inherited_layers_cycle_result(
 /// What `sourcing_file` contributes to `target`, its own bands plus what it
 /// inherits in turn.
 ///
-/// `sourcing_file`'s own `below` band goes last because the default search
-/// path lives at the end of it, and that has to stay at the bottom of the
-/// whole chain.
+/// Collation predecessors rank below inherited attaches because they run
+/// outside the sourcing chain.
 fn build_inherited_layers(
     db: &dyn Db,
     file: File,
@@ -488,7 +500,7 @@ fn build_inherited_layers(
     // One Source effect can load several files (`sourceDir()`, `tar_source()`).
     // Keep track of already sourced files, since their eager top-level context
     // can see what's already been sourced.
-    let mut above: Vec<ImportLayer> = match offsets.as_deref() {
+    let mut enclosing: Vec<ImportLayer> = match offsets.as_deref() {
         Some(offsets) => loaded_before(db, source_site, file, offsets)
             .into_iter()
             .map(ImportLayer::File)
@@ -496,25 +508,29 @@ fn build_inherited_layers(
         None => Vec::new(),
     };
 
-    above.push(source_layer);
-    above.extend(own_cross.above.iter().cloned());
-    above.extend(
+    enclosing.push(source_layer);
+    enclosing.extend(own_cross.enclosing.iter().cloned());
+    enclosing.extend(
         grandparents
             .iter()
-            .flat_map(|site| site.layers.above.iter().cloned()),
+            .flat_map(|site| site.layers.enclosing.iter().cloned()),
     );
 
-    let mut below = own_attach;
-    below.extend(
+    let mut attaches = own_attach;
+    attaches.extend(
         grandparents
             .iter()
-            .flat_map(|site| site.layers.below.iter().cloned()),
+            .flat_map(|site| site.layers.attaches.iter().cloned()),
     );
-    below.extend(own_cross.below.iter().cloned());
+    attaches.extend(own_cross.attaches.iter().cloned());
 
     InheritedLayers {
         file: source_site,
-        layers: CrossFileLayers { above, below },
+        layers: CrossFileLayers {
+            enclosing,
+            attaches,
+            tail: own_cross.tail,
+        },
     }
 }
 
@@ -586,32 +602,32 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         fixed_load_order: _,
     } = context;
 
-    let mut above: Vec<ImportLayer> = visible_files
+    let mut enclosing: Vec<ImportLayer> = visible_files
         .iter()
         .copied()
         .map(ImportLayer::File)
         .collect();
     if let Some(package) = namespace_owner {
         let namespace = package.namespace(db);
-        extend_with_namespace_imports(package, namespace, &mut above);
-        extend_with_namespace_package_imports(db, namespace, &mut above);
+        extend_with_namespace_imports(package, namespace, &mut enclosing);
+        extend_with_namespace_package_imports(db, namespace, &mut enclosing);
     }
 
     // `Lazy` includes successor attaches that run later and should outrank this
     // file's own. Ranking them below loses only names shadowed by a package a
     // successor reattaches.
-    let mut below = predecessor_attach_layers(db, &visible_files);
-    below.extend(
+    let mut attaches = predecessor_attach_layers(db, &visible_files);
+    attaches.extend(
         implicit_attaches
             .iter()
             .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package)),
     );
-    match search_path_tail {
-        SearchPathTail::Base => below.extend(base_layer(db)),
-        SearchPathTail::Default => below.extend(default_search_path_layers(db)),
-    }
 
-    CrossFileLayers { above, below }
+    CrossFileLayers {
+        enclosing,
+        attaches,
+        tail: search_path_tail,
+    }
 }
 
 /// The search-path attaches contributed by a set of load-order files, latest

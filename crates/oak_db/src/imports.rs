@@ -230,8 +230,8 @@ impl<'db> SalsaImportsResolver<'db> {
             .filter_map(|package| self.db.package_by_name(package).map(ImportLayer::Package))
             .collect();
 
-        for layer in layers.lookup_order(&own) {
-            if let ControlFlow::Break(effect) = self.layer_effect(layer, name) {
+        for layer in layers.lookup_order(self.db, &own) {
+            if let ControlFlow::Break(effect) = self.layer_effect(&layer, name) {
                 return effect;
             }
         }

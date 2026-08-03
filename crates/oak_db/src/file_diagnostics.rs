@@ -113,7 +113,7 @@ fn resolve_layer<'db>(
 fn sourcing_file(db: &dyn Db, file: File, layer: &ImportLayer) -> Option<String> {
     file.inherited_layers(db, CollationView::Lazy)
         .iter()
-        .find(|site| site.layers.above.contains(layer) || site.layers.below.contains(layer))
+        .find(|site| site.layers.enclosing.contains(layer) || site.layers.attaches.contains(layer))
         .map(|site| {
             site.file
                 .path(db)

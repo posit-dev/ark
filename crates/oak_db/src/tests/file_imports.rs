@@ -878,10 +878,10 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
     for view in [CollationView::Eager, CollationView::Lazy] {
         let scan_side = helpers.cross_file_layers(&db, view);
         assert!(scan_side
-            .lookup_order(&[])
-            .any(|layer| matches!(layer, ImportLayer::File(file) if *file == sibling)));
+            .lookup_order(&db, &[])
+            .any(|layer| matches!(layer, ImportLayer::File(file) if file == sibling)));
         assert!(!scan_side
-            .lookup_order(&[])
+            .lookup_order(&db, &[])
             .any(|layer| matches!(layer, ImportLayer::SourcingFile { .. })));
     }
 }
@@ -954,6 +954,98 @@ fn test_collation_attach_outranks_the_search_path_under_inheritance() {
         "File(main.R)".to_string(),
         "Package(dplyr)".to_string(),
         "Package(tibble)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_attach_to_a_default_search_path_package_keeps_its_priority() {
+    // `stats` is already on the default search path. Removing that path by
+    // value would also remove `b.R`'s explicit attach and let `tibble` outrank it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "stats", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("library(stats)\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // The two `stats` layers distinguish the explicit attach from the default search path.
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(stats)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(stats)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_transitive_inheritance_keeps_attaches_above_the_search_path() {
+    // `setup.R` inherits `main.R`'s search-path tail before the `dplyr` attach
+    // from `aaa.R`. Removing only the combined suffix would leave that tail
+    // above `dplyr`, making it rank below `base`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let sibling = File::new(
+        &db,
+        file_path("ws/R/aaa.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let setup = File::new(
+        &db,
+        file_path("ws/R/setup.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("ws/helpers.R"),
+        FileRevision::zero(),
+        Some("foo <- 1\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/setup.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db)
+        .to(vec![sibling, setup, helpers, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(setup.R)".to_string(),
+        "File(aaa.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(dplyr)".to_string(),
         "Package(base)".to_string(),
     ]);
 }
