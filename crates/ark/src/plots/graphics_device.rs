@@ -836,6 +836,13 @@ impl DeviceContext {
             return;
         });
 
+        // Sizing follows the current execution (as in knitr, where a chunk's
+        // fig options apply to plots it modifies), so refresh the stored
+        // intrinsic size to match what was just rendered.
+        if let Some(plot_ctx) = self.plot_contexts.borrow_mut().get_mut(id) {
+            plot_ctx.intrinsic_size = ctx.intrinsic_size();
+        }
+
         let transient = TransientValue {
             display_id: id.to_string(),
             data: None,
