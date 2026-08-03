@@ -19,7 +19,7 @@ Environment variables read `1` and `true` as on, `0` and `false` as off, case-in
 
 ## `oak.sourceFetching.enabled`
 
-A boolean, default `TRUE`.
+A boolean, default `true`.
 
 Whether to recover the R sources of the packages your workspace uses, so analysis can see inside them. See [Package sources](#package-sources) for what that involves.
 
