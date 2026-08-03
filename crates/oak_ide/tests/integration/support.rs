@@ -77,7 +77,21 @@ pub fn install_library_package(
     file_name: &str,
     contents: &str,
 ) -> File {
-    install_pkg(db, RootKind::Library, name, exports, file_name, contents)
+    let files = install_pkg(db, RootKind::Library, name, exports, &[(
+        file_name, contents,
+    )]);
+    files[0]
+}
+
+/// Install a library package with `files` under `R/`. Returns files in input
+/// order.
+pub fn install_library_package_files(
+    db: &mut OakDatabase,
+    name: &str,
+    exports: &[&str],
+    files: &[(&str, &str)],
+) -> Vec<File> {
+    install_pkg(db, RootKind::Library, name, exports, files)
 }
 
 /// Install `name` as a workspace package exporting `exports`, with one file at
@@ -89,7 +103,10 @@ pub fn install_workspace_package(
     file_name: &str,
     contents: &str,
 ) -> File {
-    install_pkg(db, RootKind::Workspace, name, exports, file_name, contents)
+    let files = install_pkg(db, RootKind::Workspace, name, exports, &[(
+        file_name, contents,
+    )]);
+    files[0]
 }
 
 fn install_pkg(
@@ -97,20 +114,18 @@ fn install_pkg(
     kind: RootKind,
     name: &str,
     exports: &[&str],
-    file_name: &str,
-    contents: &str,
-) -> File {
-    let (pkg_url, file_url, root_url) = match kind {
-        RootKind::Library => (
-            lib_url(&format!("{name}/DESCRIPTION")),
-            lib_url(&format!("{name}/R/{file_name}")),
-            lib_url(name),
-        ),
+    sources: &[(&str, &str)],
+) -> Vec<File> {
+    let (pkg_url, root_url) = match kind {
+        RootKind::Library => (lib_url(&format!("{name}/DESCRIPTION")), lib_url(name)),
         RootKind::Workspace => (
             workspace_url(&format!("{name}/DESCRIPTION")),
-            workspace_url(&format!("{name}/R/{file_name}")),
             workspace_url(name),
         ),
+    };
+    let file_url = |file_name: &str| match kind {
+        RootKind::Library => lib_url(&format!("{name}/R/{file_name}")),
+        RootKind::Workspace => workspace_url(&format!("{name}/R/{file_name}")),
     };
     let namespace = Namespace {
         exports: SortedVec::from_vec(exports.iter().map(|s| s.to_string()).collect()),
@@ -127,14 +142,19 @@ fn install_pkg(
         Vec::new(),
         Vec::new(),
     );
-    let file = File::new(
-        db,
-        FilePath::from_url(&file_url),
-        FileRevision::zero(),
-        Some(contents.to_string()),
-        Some(pkg),
-    );
-    pkg.set_files(db).to(vec![file]);
+    let files: Vec<File> = sources
+        .iter()
+        .map(|&(file_name, contents)| {
+            File::new(
+                db,
+                FilePath::from_url(&file_url(file_name)),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
+        .collect();
+    pkg.set_files(db).to(files.clone());
     let root = Root::new(db, FilePath::from_url(&root_url), kind, Vec::new(), vec![
         pkg,
     ]);
@@ -150,5 +170,5 @@ fn install_pkg(
             db.workspace_roots().set_roots(db).to(vec![root]);
         },
     };
-    file
+    files
 }

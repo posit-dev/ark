@@ -14,6 +14,7 @@ use oak_db::OakDatabase;
 use oak_ide::find_references;
 
 use crate::support::install_library_package;
+use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
 use crate::support::offset;
 use crate::support::pairs;
@@ -518,6 +519,27 @@ fn test_cursor_in_installed_package_excludes_other_packages() {
     assert_eq!(pairs(&refs), vec![
         (mypkg_file, range(0, 3)),
         (script, range(7, 10)),
+    ]);
+}
+
+#[test]
+fn test_cursor_in_non_dependency_installed_package_finds_references() {
+    // `mypkg` is not a workspace dependency, so `all_used_files()` excludes it.
+    // Reference search must still include the cursor package.
+    let mut db = OakDatabase::new();
+    let files = install_library_package_files(&mut db, "mypkg", &["foo"], &[
+        ("a.R", "foo <- function() 1\nfoo()\n"),
+        ("b.R", "foo()\n"),
+    ]);
+    let (a_file, b_file) = (files[0], files[1]);
+    let _script = upsert(&mut db, "script.R", "1 + 1\n");
+
+    let refs = find_references(&db, a_file, offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (a_file, range(0, 3)),
+        (a_file, range(20, 23)),
+        (b_file, range(0, 3)),
     ]);
 }
 

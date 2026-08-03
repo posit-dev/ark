@@ -144,7 +144,7 @@ pub fn all_used_files(db: &dyn Db) -> Vec<File> {
 /// Note that this also contains files from all installed packages, _including
 /// those that are not dependencies of the workspace_. Only use this for very
 /// wide searches. LSP functionality should generally not depend on
-/// non-dependencies, prefer `all_dependency_files()` instead.
+/// non-dependencies, prefer [`all_used_files()`] instead.
 #[salsa::tracked(returns(ref))]
 pub fn all_known_files(db: &dyn Db) -> Vec<File> {
     let mut seen = FxHashSet::default();

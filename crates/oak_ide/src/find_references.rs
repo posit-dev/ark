@@ -94,7 +94,7 @@ fn collect_definition_references<'db>(
     let files = if locally_scoped {
         vec![file]
     } else {
-        all_matching_files(db, name.text(db).as_str())
+        all_matching_files(db, file, name.text(db).as_str())
     };
 
     // Rust-Analyzer does a pure text search across all files, then resolves
@@ -120,7 +120,7 @@ fn collect_definition_references<'db>(
     // package-level definition, so include the qualified sites too. Locally
     // scoped symbols (params, locals) can't be reached through `::`.
     if !locally_scoped {
-        collect_package_qualified_uses(db, &target_defs, name, &mut results);
+        collect_package_qualified_uses(db, file, &target_defs, name, &mut results);
     }
 
     if include_declaration {
@@ -152,6 +152,7 @@ fn collect_definition_references<'db>(
 /// hands the definitions to `collect_definition_references`.
 fn collect_package_qualified_uses<'db>(
     db: &'db dyn Db,
+    cursor_file: File,
     target_defs: &[Definition<'db>],
     name: Name<'db>,
     results: &mut Vec<FileRange>,
@@ -166,7 +167,7 @@ fn collect_package_qualified_uses<'db>(
     let package = package.name(db);
 
     let name = name.text(db);
-    for file in all_matching_files(db, name.as_str()) {
+    for file in all_matching_files(db, cursor_file, name.as_str()) {
         for range in file.namespace_uses_of(db, package, name.as_str()) {
             results.push(FileRange { file, range });
         }
@@ -176,7 +177,7 @@ fn collect_package_qualified_uses<'db>(
 fn find_member_references(db: &dyn Db, file: File, name: &str, kind: MemberKind) -> Vec<FileRange> {
     let mut results = Vec::new();
 
-    for file in all_matching_files(db, name) {
+    for file in all_matching_files(db, file, name) {
         for range in file.member_uses_of(db, name, kind) {
             results.push(FileRange { file, range });
         }
@@ -216,7 +217,7 @@ fn find_namespace_references<'db>(
     let package = package.text(db).as_str();
     let name = name.text(db).as_str();
 
-    for file in all_matching_files(db, name) {
+    for file in all_matching_files(db, primary, name) {
         for range in file.namespace_uses_of(db, package, name) {
             results.push(FileRange { file, range });
         }
@@ -226,12 +227,21 @@ fn find_namespace_references<'db>(
     results
 }
 
-/// Every db file whose contents mention `text`, scoped to the workspace plus
-/// its actual dependencies (not every package under `.libPaths()`).
-fn all_matching_files(db: &dyn Db, text: &str) -> Vec<File> {
+/// Searches the workspace, its dependencies, and `cursor_file`'s package.
+///
+/// The cursor package may not be a workspace dependency, but references within
+/// it must still be found.
+fn all_matching_files(db: &dyn Db, cursor_file: File, text: &str) -> Vec<File> {
+    let cursor_package_files = cursor_file
+        .package(db)
+        .into_iter()
+        .flat_map(|package| package.files(db).iter().chain(package.scripts(db)));
+
+    let mut seen = HashSet::new();
     all_used_files(db)
         .iter()
-        .filter(|&&f| f.source_text(db).contains(text))
+        .chain(cursor_package_files)
+        .filter(|&&file| seen.insert(file) && file.source_text(db).contains(text))
         .copied()
         .collect()
 }
