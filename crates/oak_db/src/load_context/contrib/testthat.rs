@@ -5,7 +5,7 @@ use camino::Utf8Path;
 use crate::file_imports::CollationView;
 use crate::load_context::visible_siblings;
 use crate::load_context::LoadContext;
-use crate::load_context::SearchPathTail;
+use crate::load_context::LoadKind;
 use crate::Db;
 use crate::File;
 
@@ -42,11 +42,9 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Opti
     visible_files.extend(package.files(db).iter().rev().copied());
 
     Some(LoadContext {
+        kind: LoadKind::Namespace(package),
         visible_files,
-        namespace_owner: Some(package),
         implicit_attaches: vec!["testthat"],
-        search_path_tail: SearchPathTail::Base,
-        fixed_load_order: true,
     })
 }
 

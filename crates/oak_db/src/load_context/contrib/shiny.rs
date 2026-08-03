@@ -11,7 +11,7 @@ use crate::file_imports::CollationView;
 use crate::load_context::collation_visible_files;
 use crate::load_context::in_r_directory;
 use crate::load_context::LoadContext;
-use crate::load_context::SearchPathTail;
+use crate::load_context::LoadKind;
 use crate::Db;
 use crate::File;
 
@@ -46,11 +46,9 @@ fn autoload_context(
     visible_files.extend(autoload);
 
     LoadContext {
+        kind: LoadKind::Session,
         visible_files,
-        namespace_owner: None,
         implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-        fixed_load_order: false,
     }
 }
 
@@ -58,6 +56,7 @@ fn autoload_context(
 /// `R/` files. It sees the full support set because it is not a collation member.
 fn entry_context(file: File, autoload: &[File]) -> LoadContext {
     LoadContext {
+        kind: LoadKind::Session,
         // `R/` bindings shadow `global.R` through reverse load order and the
         // child environment created by `loadSupport()`.
         visible_files: autoload
@@ -66,20 +65,15 @@ fn entry_context(file: File, autoload: &[File]) -> LoadContext {
             .copied()
             .filter(|support| *support != file)
             .collect(),
-        namespace_owner: None,
         implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-        fixed_load_order: false,
     }
 }
 
 fn global_context() -> LoadContext {
     LoadContext {
+        kind: LoadKind::Session,
         visible_files: Vec::new(),
-        namespace_owner: None,
         implicit_attaches: vec!["shiny"],
-        search_path_tail: SearchPathTail::Default,
-        fixed_load_order: false,
     }
 }
 

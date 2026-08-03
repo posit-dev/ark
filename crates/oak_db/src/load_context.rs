@@ -19,20 +19,43 @@ use crate::Package;
 /// Source inheritance is lowered separately because it can add an
 /// offset-narrowed [`ImportLayer::SourcingFile`].
 pub(crate) struct LoadContext {
+    pub kind: LoadKind,
+
     /// Visible files in lookup order, highest priority first, excluding the
     /// file itself.
     pub visible_files: Vec<File>,
 
-    pub namespace_owner: Option<Package>,
-
     /// Packages attached by the loader, omitting packages unavailable in every
     /// root during lowering.
     pub implicit_attaches: Vec<&'static str>,
+}
 
-    pub search_path_tail: SearchPathTail,
+/// Resolver context selected by the loader.
+///
+/// Determines namespace imports, the search-path tail, and whether source-site
+/// inheritance adds alternate lookup contexts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoadKind {
+    /// Resolve package imports from `package`'s NAMESPACE and end at `base`.
+    Namespace(Package),
 
-    /// Omit source-site inheritance when the loader fixes this file's runtime load order.
-    pub fixed_load_order: bool,
+    /// Use the default session search path and allow source-site inheritance.
+    Session,
+}
+
+impl LoadKind {
+    /// Whether source-site inheritance is excluded because the loader fixes
+    /// runtime evaluation order.
+    pub fn fixes_load_order(self) -> bool {
+        matches!(self, LoadKind::Namespace(_))
+    }
+
+    pub fn search_path_tail(self) -> SearchPathTail {
+        match self {
+            LoadKind::Namespace(_) => SearchPathTail::Base,
+            LoadKind::Session => SearchPathTail::Default,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,11 +106,9 @@ fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<
     let prefix_len = files.iter().position(|sibling| *sibling == file)?;
 
     Some(LoadContext {
+        kind: LoadKind::Namespace(package),
         visible_files: visible_siblings(file, files, view, prefix_len),
-        namespace_owner: Some(package),
         implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Base,
-        fixed_load_order: true,
     })
 }
 
@@ -98,22 +119,18 @@ fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<L
         return None;
     }
     Some(LoadContext {
+        kind: LoadKind::Session,
         visible_files: collation_visible_files(db, file, view),
-        namespace_owner: None,
         implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Default,
-        fixed_load_order: false,
     })
 }
 
 /// A file nothing else loads. It sees only its own attaches and the search path.
 fn standalone_load_context() -> LoadContext {
     LoadContext {
+        kind: LoadKind::Session,
         visible_files: Vec::new(),
-        namespace_owner: None,
         implicit_attaches: Vec::new(),
-        search_path_tail: SearchPathTail::Default,
-        fixed_load_order: false,
     }
 }
 

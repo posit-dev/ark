@@ -14,6 +14,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 use crate::directory::files_in_directory;
 use crate::load_context::load_context;
 use crate::load_context::LoadContext;
+use crate::load_context::LoadKind;
 use crate::load_context::SearchPathTail;
 use crate::Db;
 use crate::File;
@@ -299,8 +300,8 @@ impl File {
             attaches.extend(site.layers.attaches.iter().cloned());
         }
 
-        // Only a script-like load context reaches this path because fixed load
-        // orders skip source-site inheritance. Use the default session search path.
+        // Source-site inheritance requires `LoadKind::Session`, which uses the default
+        // session search path.
         Cow::Owned(CrossFileLayers {
             enclosing,
             attaches,
@@ -382,7 +383,7 @@ impl File {
     #[salsa::tracked(returns(ref), cycle_result =
     inherited_layers_cycle_result)]
     pub(crate) fn inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> {
-        if load_context(db, self, view).fixed_load_order {
+        if load_context(db, self, view).kind.fixes_load_order() {
             return Vec::new();
         }
 
@@ -595,11 +596,9 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
 /// search-path layers rank below them.
 pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
     let LoadContext {
+        kind,
         visible_files,
-        namespace_owner,
         implicit_attaches,
-        search_path_tail,
-        fixed_load_order: _,
     } = context;
 
     let mut enclosing: Vec<ImportLayer> = visible_files
@@ -607,7 +606,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         .copied()
         .map(ImportLayer::File)
         .collect();
-    if let Some(package) = namespace_owner {
+    if let LoadKind::Namespace(package) = kind {
         let namespace = package.namespace(db);
         extend_with_namespace_imports(package, namespace, &mut enclosing);
         extend_with_namespace_package_imports(db, namespace, &mut enclosing);
@@ -626,7 +625,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
     CrossFileLayers {
         enclosing,
         attaches,
-        tail: search_path_tail,
+        tail: kind.search_path_tail(),
     }
 }
 
