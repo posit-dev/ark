@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use tokio::sync::mpsc::UnboundedReceiver;
+use tower_lsp_server::ls_types::ClientCapabilities;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
@@ -10,6 +11,7 @@ use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
+use tower_lsp_server::ls_types::WorkspaceClientCapabilities;
 use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
@@ -19,13 +21,36 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::Event;
 
-/// An `initialize` request opening `path` as the sole workspace folder.
+/// An `initialize` request opening `path` as the sole workspace folder, from a
+/// client that answers `workspace/configuration` like Positron does.
 ///
 /// Hand back the response receiver along with the event. The caller has to hold
 /// it for the duration of the test: dropping it early makes `respond()`'s send
 /// fail, which nextest then reports as a leak.
 pub(crate) fn initialize(path: &Path) -> (Event, UnboundedReceiver<RequestResponse>) {
+    initialize_with_configuration_support(path, true)
+}
+
+/// An [`initialize()`] request from a client that doesn't support
+/// `workspace/configuration`, so the server never asks for settings.
+pub(crate) fn initialize_without_configuration(
+    path: &Path,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    initialize_with_configuration_support(path, false)
+}
+
+fn initialize_with_configuration_support(
+    path: &Path,
+    configuration: bool,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
     let params = InitializeParams {
+        capabilities: ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                configuration: Some(configuration),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         workspace_folders: Some(vec![WorkspaceFolder {
             uri: Uri::from_file_path(path).unwrap(),
             name: String::new(),

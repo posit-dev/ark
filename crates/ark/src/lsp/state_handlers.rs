@@ -258,9 +258,14 @@ pub(crate) async fn handle_initialized(
         .await
         .log_err();
 
-    update_config(open_file_wire_uris(state), client, state)
-        .await
-        .log_err();
+    update_config(
+        open_file_wire_uris(state),
+        client,
+        &lsp_state.capabilities,
+        state,
+    )
+    .await
+    .log_err();
 
     // Release the startup gate after attempting to load client configuration.
     // Packages seen so far will be queued now if the scheduler is activated.
@@ -488,6 +493,7 @@ fn to_std_paths(paths: &[AbsPathBuf]) -> Vec<PathBuf> {
 pub(crate) async fn did_change_configuration(
     _params: DidChangeConfigurationParams,
     client: &tower_lsp_server::Client,
+    capabilities: &Capabilities,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     // The notification params sometimes contain data but it seems in practice
@@ -497,7 +503,7 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(open_file_wire_uris(state), client, state)
+    update_config(open_file_wire_uris(state), client, capabilities, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
 }
@@ -536,12 +542,51 @@ pub(crate) fn did_change_formatting_options(
 async fn update_config(
     open_files: Vec<(FilePath, Uri)>,
     client: &tower_lsp_server::Client,
+    capabilities: &Capabilities,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     // Keep track of existing config to detect whether it was changed
     let diagnostics_config = state.config.diagnostics.clone();
     let oak_config = state.config.oak.clone();
 
+    let pulled = if capabilities.workspace_configuration() {
+        pull_config(open_files, client, state).await
+    } else {
+        lsp::log_info!("Client can't answer `workspace/configuration`, using default settings");
+        Ok(())
+    };
+
+    // Overrides apply even when the pull failed, so that an unresponsive client
+    // doesn't strand us on the defaults.
+    apply_env_overrides(&mut state.config);
+
+    if state.config.oak.source_fetching_enabled != oak_config.source_fetching_enabled {
+        let state_name = if state.config.oak.source_fetching_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        lsp::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
+    }
+
+    // `config` is not an Oak input, so we manually bump the revision to refresh
+    // diagnostics and rerun source scheduling. This queues already discovered
+    // packages when source fetching is re-enabled.
+    if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
+        tracing::info!("Bumping salsa revision after configuration changed");
+        state.bump_revision();
+    }
+
+    pulled
+}
+
+/// Pull the global and document settings from the client with a
+/// `workspace/configuration` request, then store them in `state`.
+async fn pull_config(
+    open_files: Vec<(FilePath, Uri)>,
+    client: &tower_lsp_server::Client,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
     // Build the configuration request for global and document settings
     let mut items: Vec<_> = vec![];
 
@@ -606,25 +651,6 @@ async fn update_config(
                 (mapping.set)(doc.config_mut(), value);
             }
         }
-    }
-
-    apply_env_overrides(&mut state.config);
-
-    if state.config.oak.source_fetching_enabled != oak_config.source_fetching_enabled {
-        let state_name = if state.config.oak.source_fetching_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        };
-        lsp::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
-    }
-
-    // `config` is not an Oak input, so we manually bump the revision to refresh
-    // diagnostics and rerun source scheduling. This queues already discovered
-    // packages when source fetching is re-enabled.
-    if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
-        tracing::info!("Bumping salsa revision after configuration changed");
-        state.bump_revision();
     }
 
     Ok(())

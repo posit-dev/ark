@@ -424,7 +424,7 @@ impl GlobalState {
                             state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
-                            state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
+                            state_handlers::did_change_configuration(params, &self.client, &self.lsp_state.capabilities, &mut self.world).await?;
                         },
                         LspNotification::DidChangeWatchedFiles(params) => {
                             state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;

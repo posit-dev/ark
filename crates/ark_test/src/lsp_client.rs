@@ -82,7 +82,9 @@ impl LspClient {
         let response = self.send_request(
             "initialize",
             json!({
-                "capabilities": {}
+                // `configuration` is advertised because `recv_server_request()`
+                // answers `workspace/configuration`.
+                "capabilities": { "workspace": { "configuration": true } }
             }),
         );
 

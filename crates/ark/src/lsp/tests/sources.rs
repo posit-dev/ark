@@ -2,6 +2,7 @@
 //! event loop.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -9,22 +10,26 @@ use std::sync::Mutex;
 use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
 use super::utils::initialize;
+use super::utils::initialize_without_configuration;
 use super::utils::initialized;
 use super::utils::source_scheduler_for_test;
 use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
+use crate::lsp::backend::RequestResponse;
 use crate::lsp::config::apply_env_overrides;
 use crate::lsp::config::LspConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sources::source_fetching_disabled_by_ci;
@@ -318,6 +323,19 @@ async fn test_disabling_stops_fetching_new_packages() {
 /// Release the startup gate after a failed configuration request.
 #[tokio::test]
 async fn test_fetching_waits_for_initialized() {
+    check_fetching_waits_for_initialized(initialize).await;
+}
+
+/// A client that doesn't support `workspace/configuration` is never asked for
+/// settings, so the gate releases on the defaults instead of waiting forever.
+#[tokio::test]
+async fn test_fetching_waits_for_initialized_without_configuration() {
+    check_fetching_waits_for_initialized(initialize_without_configuration).await;
+}
+
+async fn check_fetching_waits_for_initialized(
+    initialize: fn(&Path) -> (Event, UnboundedReceiver<RequestResponse>),
+) {
     let _aux = init_aux_for_test();
 
     let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
