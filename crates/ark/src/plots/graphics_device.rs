@@ -92,11 +92,46 @@ struct ExecutionContext {
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
-    /// Render settings override from the execute request (e.g. Quarto sizing metadata).
-    /// When `Some`, used instead of `DeviceContext::prerender_settings` for pre-rendering.
-    render_settings: Option<PlotRenderSettings>,
-    /// Intrinsic size from the execute request (e.g. Quarto's fig-width/fig-height in inches).
-    intrinsic_size: Option<IntrinsicSize>,
+    /// Figure width in inches requested by the execute request (Quarto's
+    /// `fig-width`), validated positive.
+    fig_width: Option<f64>,
+    /// Figure height in inches requested by the execute request (Quarto's
+    /// `fig-height`), validated positive.
+    fig_height: Option<f64>,
+    /// Device pixel ratio of the frontend's display (`output_pixel_ratio`).
+    pixel_ratio: Option<f64>,
+}
+
+impl ExecutionContext {
+    /// The figure size requested via `fig-width`/`fig-height`, in inches.
+    ///
+    /// Either option may be set alone, matching `quarto render`; the missing
+    /// dimension falls back to the Quarto default. Returns `None` when
+    /// neither dimension is set.
+    fn requested_fig_size(&self) -> Option<(f64, f64)> {
+        if self.fig_width.is_none() && self.fig_height.is_none() {
+            return None;
+        }
+
+        Some((
+            self.fig_width.unwrap_or(DEFAULT_FIG_WIDTH),
+            self.fig_height.unwrap_or(DEFAULT_FIG_HEIGHT),
+        ))
+    }
+
+    /// The requested figure size as an `IntrinsicSize` for the plot comm.
+    ///
+    /// Returns `None` when no figure size was requested.
+    fn intrinsic_size(&self) -> Option<IntrinsicSize> {
+        let (width, height) = self.requested_fig_size()?;
+
+        Some(IntrinsicSize {
+            width,
+            height,
+            unit: PlotUnit::Inches,
+            source: String::from("Quarto"),
+        })
+    }
 }
 
 /// Per-plot context captured at creation time.
@@ -237,15 +272,23 @@ impl DeviceContext {
         execution_id: String,
         code: String,
         code_location: Option<CodeLocation>,
-        render_settings: Option<PlotRenderSettings>,
-        intrinsic_size: Option<IntrinsicSize>,
+        positron: Option<&ExecuteRequestPositron>,
     ) {
+        let fig_width = positron
+            .and_then(|req| req.fig_width)
+            .filter(|width| *width > 0.0);
+        let fig_height = positron
+            .and_then(|req| req.fig_height)
+            .filter(|height| *height > 0.0);
+        let pixel_ratio = positron.and_then(|req| req.output_pixel_ratio);
+
         *self.execution_context.borrow_mut() = Some(ExecutionContext {
             execution_id,
             code,
             code_location,
-            render_settings,
-            intrinsic_size,
+            fig_width,
+            fig_height,
+            pixel_ratio,
         });
     }
 
@@ -631,11 +674,15 @@ impl DeviceContext {
         let ctx = self.capture_execution_context();
         self.store_plot_context(id, &ctx);
 
-        // Use render settings from the execute request if available, otherwise fall back
-        // to the default prerender settings.
-        let settings = ctx
-            .render_settings
-            .unwrap_or_else(|| self.prerender_settings.get());
+        // Pre-render at the requested figure size if the execute request
+        // specified one, otherwise fall back to the frontend-driven prerender
+        // settings.
+        let settings = match ctx.requested_fig_size() {
+            Some((width, height)) => {
+                render_settings_from_inches(width, height, ctx.pixel_ratio.unwrap_or(1.0))
+            },
+            None => self.prerender_settings.get(),
+        };
 
         let open_data = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
@@ -722,7 +769,7 @@ impl DeviceContext {
                     code: ctx.code.clone(),
                     origin,
                 },
-                intrinsic_size: ctx.intrinsic_size.clone(),
+                intrinsic_size: ctx.intrinsic_size(),
             });
     }
 
@@ -814,28 +861,22 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<(serde_json::Value, serde_json::Value), anyhow::Error> {
-        let base = ctx.render_settings.unwrap_or(PlotRenderSettings {
-            size: PlotSize {
-                width: 800,
-                height: 600,
-            },
-            pixel_ratio: 1.0,
-            format: PlotRenderFormat::Png,
-        });
-
+        // Resolve each dimension independently: the `ark.plot.*` R options
+        // override the execute request's figure size, which overrides the
+        // default figure size. Unsized plots deliberately render at the
+        // default figure size rather than scaling with the output area
+        // (posit-dev/positron#15260).
         let width = r_option_positive_f64("ark.plot.width")
-            .map(|w| (w * DEFAULT_DPI).round() as i64)
-            .unwrap_or(base.size.width);
+            .or(ctx.fig_width)
+            .unwrap_or(DEFAULT_FIG_WIDTH);
         let height = r_option_positive_f64("ark.plot.height")
-            .map(|h| (h * DEFAULT_DPI).round() as i64)
-            .unwrap_or(base.size.height);
-        let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio").unwrap_or(base.pixel_ratio);
+            .or(ctx.fig_height)
+            .unwrap_or(DEFAULT_FIG_HEIGHT);
+        let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio")
+            .or(ctx.pixel_ratio)
+            .unwrap_or(1.0);
 
-        let settings = PlotRenderSettings {
-            size: PlotSize { width, height },
-            pixel_ratio,
-            format: base.format,
-        };
+        let settings = render_settings_from_inches(width, height, pixel_ratio);
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
@@ -1018,101 +1059,20 @@ impl IntrinsicSizeExt for IntrinsicSize {
     }
 }
 
-trait FromExecuteRequest: Sized {
-    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self>;
-}
-
-impl FromExecuteRequest for PlotRenderSettings {
-    /// Create render settings from an execute request's Positron metadata.
-    ///
-    /// If `fig_width` and/or `fig_height` is set (Quarto), returns settings
-    /// with size in logical pixels (inches * DPI). Either dimension may be set
-    /// alone; the missing one falls back to the Quarto default.
-    ///
-    /// Otherwise, if the request describes the output area (`output_width_px`
-    /// or `output_pixel_ratio`), returns settings at the default figure size,
-    /// so that plots keep a predictable size rather than scaling with the
-    /// viewport.
-    ///
-    /// Sizes are in CSS/logical pixels. The R rendering layer handles physical
-    /// pixel scaling via the separate `pixel_ratio` parameter.
-    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
-        let pixel_ratio = req.output_pixel_ratio.unwrap_or(1.0);
-
-        if let Some((width, height)) = requested_fig_size(req) {
-            return Some(Self {
-                size: PlotSize {
-                    width: (width * DEFAULT_DPI).round() as i64,
-                    height: (height * DEFAULT_DPI).round() as i64,
-                },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            });
-        }
-
-        // The frontend describes a sized output area (notebook or inline
-        // output) but the cell didn't request a figure size. Render at the
-        // default figure size rather than sizing to the output area width
-        // (posit-dev/positron#15260).
-        if req.output_width_px.is_some() || req.output_pixel_ratio.is_some() {
-            return Some(Self {
-                size: PlotSize {
-                    width: (DEFAULT_FIG_WIDTH * DEFAULT_DPI).round() as i64,
-                    height: (DEFAULT_FIG_HEIGHT * DEFAULT_DPI).round() as i64,
-                },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            });
-        }
-
-        None
-    }
-}
-
-impl FromExecuteRequest for IntrinsicSize {
-    /// Create an intrinsic size from an execute request's Positron metadata.
-    ///
-    /// Only returns `Some` when `fig_width` and/or `fig_height` is set
-    /// (i.e. Quarto sizing), providing the intrinsic size in inches.
-    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
-        let (width, height) = requested_fig_size(req)?;
-
-        Some(Self {
-            width,
-            height,
-            unit: PlotUnit::Inches,
-            source: String::from("Quarto"),
-        })
-    }
-}
-
-/// The figure size requested via `fig-width`/`fig-height`, in inches.
+/// Build PNG render settings from a figure size in inches.
 ///
-/// Either option may be set alone, matching `quarto render`; the missing (or
-/// non-positive) dimension falls back to the Quarto default. Returns `None`
-/// when neither dimension is set.
-fn requested_fig_size(req: &ExecuteRequestPositron) -> Option<(f64, f64)> {
-    let width = req.fig_width.filter(|width| *width > 0.0);
-    let height = req.fig_height.filter(|height| *height > 0.0);
-
-    if width.is_none() && height.is_none() {
-        return None;
+/// The size is converted to CSS/logical pixels (inches * DPI). The R
+/// rendering layer handles physical pixel scaling via the separate
+/// `pixel_ratio` parameter.
+fn render_settings_from_inches(width: f64, height: f64, pixel_ratio: f64) -> PlotRenderSettings {
+    PlotRenderSettings {
+        size: PlotSize {
+            width: (width * DEFAULT_DPI).round() as i64,
+            height: (height * DEFAULT_DPI).round() as i64,
+        },
+        pixel_ratio,
+        format: PlotRenderFormat::Png,
     }
-
-    Some((
-        width.unwrap_or(DEFAULT_FIG_WIDTH),
-        height.unwrap_or(DEFAULT_FIG_HEIGHT),
-    ))
-}
-
-/// Compute render settings and intrinsic size from execute request metadata.
-pub(crate) fn compute_plot_overrides(
-    req: &ExecuteRequestPositron,
-) -> (Option<PlotRenderSettings>, Option<IntrinsicSize>) {
-    (
-        PlotRenderSettings::from_execute_request(req),
-        IntrinsicSize::from_execute_request(req),
-    )
 }
 
 /// Activation callback
@@ -1401,8 +1361,9 @@ mod tests {
         assert_eq!(ctx.execution_id, "");
         assert_eq!(ctx.code, "");
         assert!(ctx.code_location.is_none());
-        assert!(ctx.render_settings.is_none());
-        assert!(ctx.intrinsic_size.is_none());
+        assert!(ctx.fig_width.is_none());
+        assert!(ctx.fig_height.is_none());
+        assert!(ctx.pixel_ratio.is_none());
     }
 
     #[test]
@@ -1411,7 +1372,6 @@ mod tests {
         dc.set_execution_context(
             String::from("msg-123"),
             String::from("plot(1:10)"),
-            None,
             None,
             None,
         );
@@ -1427,7 +1387,6 @@ mod tests {
         dc.set_execution_context(
             String::from("msg-123"),
             String::from("plot(1:10)"),
-            None,
             None,
             None,
         );

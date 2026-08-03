@@ -763,7 +763,8 @@ fn test_plot_with_output_width_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that plots without sizing metadata render at the default 800x600.
+/// Test that plots without sizing metadata render at the default figure size
+/// (posit-dev/positron#15260).
 #[test]
 fn test_plot_default_size_without_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -779,8 +780,44 @@ fn test_plot_default_size_without_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    assert_eq!(width, 800);
-    assert_eq!(height, 600);
+    let dpi = default_dpi();
+    // 7 inches (default) * DPI, 5 inches (default) * DPI
+    assert_eq!(width, (7.0 * dpi).round() as u32);
+    assert_eq!(height, (5.0 * dpi).round() as u32);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that output_pixel_ratio applies to unsized plots: the PNG is rendered
+/// at the default figure size scaled by the pixel ratio.
+#[test]
+fn test_plot_with_pixel_ratio_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            output_width_px: Some(600.0),
+            output_pixel_ratio: Some(2.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let dpi = default_dpi();
+    // The PNG's physical size is the logical size (default figure size * DPI)
+    // scaled by the pixel ratio
+    assert_eq!(width, ((7.0 * dpi).round() as u32) * 2);
+    assert_eq!(height, ((5.0 * dpi).round() as u32) * 2);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
