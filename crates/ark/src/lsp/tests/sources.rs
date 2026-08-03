@@ -12,6 +12,7 @@ use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use super::source_handler::gate;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_workspace_folders;
@@ -32,6 +33,7 @@ use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::main_loop::SOURCE_POOL_THREADS;
 use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceHandler;
@@ -317,6 +319,99 @@ async fn test_disabling_stops_fetching_new_packages() {
     let db = &state.world().db;
     assert!(db.package_by_name("donor2").unwrap().files(db).is_empty());
     assert_eq!(db.package_by_name("donor1").unwrap().files(db).len(), 1);
+}
+
+/// Turning the setting off also stops the fetches still sitting in the pool's
+/// queue. A fetch already inside the handler can't be interrupted, so what we
+/// assert is that the queued one never reaches it, and that it stays on offer
+/// for when fetching comes back on.
+#[tokio::test]
+async fn test_disabling_skips_queued_fetches() {
+    let _aux = init_aux_for_test();
+
+    // One gated package per source worker, plus the one that has to wait in the
+    // queue. They share an "entered" sender because which of them a worker picks
+    // up is unpredictable.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let donors: Vec<String> = (0..SOURCE_POOL_THREADS + 1)
+        .map(|i| format!("donor{i}"))
+        .collect();
+
+    let mut behavior = HashMap::new();
+    let mut releases = Vec::new();
+    for name in &donors {
+        let (gate, release) = gate(entered_tx.clone());
+        behavior.insert(name.clone(), TestBehavior::Gated(gate));
+        releases.push(release);
+    }
+    let handler = Arc::new(TestSourceHandler::new(behavior));
+
+    let lib = tempfile::tempdir().unwrap();
+    for name in &donors {
+        DescriptionWriter::new()
+            .package(name)
+            .version("0.0.0")
+            .built("dummy")
+            .write(&lib.path().join(name));
+    }
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db, true),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler.clone()),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    let uses: String = donors
+        .iter()
+        .map(|name| format!("{name}::foo()\n"))
+        .collect();
+    write_sources(&myproj.join("R"), &[("use.R", &uses)]);
+
+    state
+        .handle_event_once(did_change_workspace_folders(workspace.path()))
+        .await;
+    state.pump_scans_to_quiescence().await;
+
+    // Every worker is now parked in `handle()`. A parked worker can't pick up
+    // another job, so the last fetch is stuck in the queue until we release
+    // them, which is what makes the rest of this test deterministic.
+    for _ in 0..SOURCE_POOL_THREADS {
+        entered_rx.recv().unwrap();
+    }
+
+    // The new setting reaches the queued job through the `schedule()` call that
+    // ends this tick.
+    state.world_mut().config.oak.source_fetching_enabled = false;
+    state
+        .handle_event_once(did_open(&workspace.path().join("script.R"), "x <- 1\n"))
+        .await;
+
+    // Let the parked fetches through and collect every response.
+    drop(releases);
+    state.pump_sources_to_quiescence().await;
+    assert_eq!(handler.calls().lock().unwrap().len(), SOURCE_POOL_THREADS);
+
+    state.world_mut().config.oak.source_fetching_enabled = true;
+    state
+        .handle_event_to_quiescence(did_open(&workspace.path().join("other.R"), "x <- 2\n"))
+        .await;
+
+    // The skipped package was left on offer, so it gets fetched now. The ones
+    // that ran while fetching was on aren't asked for twice.
+    let mut names = dispatched_names(handler.calls());
+    names.sort();
+    assert_eq!(names, donors);
 }
 
 /// Do not fetch packages found during `initialize()` before attempting client configuration.

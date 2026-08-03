@@ -22,7 +22,7 @@ A boolean, default `TRUE`.
 
 Whether to recover the R sources of the packages your workspace uses, so analysis can see inside them. See [Package sources](#package-sources) for what that involves.
 
-Takes effect immediately. Turning it back on fetches sources for the packages Oak has already seen, without needing a restart.
+Takes effect immediately. Turning it off drops the fetches that haven't started yet. Note that a fetch already under way runs to completion and its sources are kept. Turning it back on fetches sources for the packages Oak has seen meanwhile, without needing a restart.
 
 Overridden by the `OAK_SOURCE_FETCHING_ENABLED` environment variable.
 

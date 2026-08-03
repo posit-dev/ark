@@ -12,6 +12,7 @@ use oak_srcref::SrcrefCache;
 use stdext::env_flag;
 use stdext::is_ci;
 use stdext::result::ResultExt;
+use tokio::sync::watch;
 
 use crate::lsp;
 use crate::lsp::config::OakConfig;
@@ -128,6 +129,10 @@ pub(crate) struct SourceRequest {
 pub(crate) enum SourceResponse {
     Success(PathBuf),
     Failure,
+
+    /// Fetching was turned off while the job waited in the pool's queue, so no
+    /// handler ran. Never returned by a [`SourceHandler`].
+    Skipped,
 }
 
 #[derive(Debug)]
@@ -156,6 +161,10 @@ pub(crate) struct SourceScheduler {
 
     /// Blocks initial fetches until client configuration is resolved.
     awaiting_config: bool,
+
+    /// Shares the latest [`OakConfig::source_fetching_enabled`] with queued
+    /// jobs. Read this value before starting the job.
+    enabled_tx: watch::Sender<bool>,
 }
 
 impl SourceScheduler {
@@ -164,6 +173,7 @@ impl SourceScheduler {
             handler,
             state: HashMap::new(),
             awaiting_config: true,
+            enabled_tx: watch::Sender::new(OakConfig::default().source_fetching_enabled),
         }
     }
 
@@ -194,6 +204,10 @@ impl SourceScheduler {
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
     ) {
+        // Send the current setting before returning so queued jobs observe a
+        // newly disabled fetch.
+        self.enabled_tx.send_replace(config.source_fetching_enabled);
+
         // Wait for client configuration so `oak.sourceFetching.enabled = false`
         // may prevent startup fetches.
         if self.awaiting_config {
@@ -228,6 +242,7 @@ impl SourceScheduler {
             };
 
             let handler = Arc::clone(handler);
+            let enabled_rx = self.enabled_tx.subscribe();
             let tx = events_tx.clone();
 
             // Mark as `Pending` just before launching the job
@@ -240,7 +255,15 @@ impl SourceScheduler {
             );
 
             pool.submit(move || {
-                let response = handler.handle(&request);
+                // Copy the value before fetching so the `borrow()` guard does
+                // not span `handle()`.
+                let enabled = *enabled_rx.borrow();
+
+                let response = if enabled {
+                    handler.handle(&request)
+                } else {
+                    SourceResponse::Skipped
+                };
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
                     package,
@@ -253,10 +276,20 @@ impl SourceScheduler {
 
     #[must_use]
     pub(crate) fn finish(&mut self, package: Package, response: SourceResponse) -> Option<PathBuf> {
-        self.state.insert(package, SourceState::Finished);
         match response {
-            SourceResponse::Success(directory) => Some(directory),
-            SourceResponse::Failure => None,
+            SourceResponse::Success(directory) => {
+                self.state.insert(package, SourceState::Finished);
+                Some(directory)
+            },
+            SourceResponse::Failure => {
+                self.state.insert(package, SourceState::Finished);
+                None
+            },
+            SourceResponse::Skipped => {
+                // Forget the package, so turning fetching back on queues it again.
+                self.state.remove(&package);
+                None
+            },
         }
     }
 

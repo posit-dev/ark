@@ -167,6 +167,10 @@ pub(crate) struct LoopHandles {
     _aux_loop: tokio::task::JoinSet<()>,
 }
 
+/// Workers on [`LspState::source_pool`]. We never have more than this many
+/// package downloads in flight.
+pub(crate) const SOURCE_POOL_THREADS: usize = 2;
+
 /// Non-cloneable, per-session state mutated only by exclusive handlers.
 /// Sits alongside [`WorldState`], which the main loop owns. State that can't
 /// travel with a snapshot lives here instead.
@@ -224,10 +228,13 @@ impl LspState {
             // `ignore::Walk` and `WalkDir`, both iterative, and parses
             // DESCRIPTION line by line.
             scan_pool: IoPool::new("oak-scan", 1, stdext::SMALL_STACK_SIZE),
-            // Two threads, so we never have more than two package downloads in flight.
             // Full stack because a fetch runs a rustls handshake, zstd and tar
             // decoding, and an R subprocess.
-            source_pool: IoPool::new("oak-source", 2, stdext::DEFAULT_STACK_SIZE),
+            source_pool: IoPool::new(
+                "oak-source",
+                SOURCE_POOL_THREADS,
+                stdext::DEFAULT_STACK_SIZE,
+            ),
             watchdog: Watchdog::new(),
         }
     }
@@ -585,6 +592,7 @@ impl GlobalState {
                 let outcome = match &response {
                     SourceResponse::Success(_) => "completed",
                     SourceResponse::Failure => "failed",
+                    SourceResponse::Skipped => "skipped, source fetching was turned off",
                 };
                 lsp::log_info!(
                     "Source fetch for package {name} {outcome}",
@@ -698,6 +706,14 @@ impl GlobalState {
     /// requests.
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() {
+            let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
+    /// Pump events until no source request is pending, ignoring pending scans.
+    pub(crate) async fn pump_sources_to_quiescence(&mut self) {
+        while self.lsp_state.source_scheduler.has_pending() {
             let event = self.next_event().await;
             self.handle_event(event).await.unwrap();
         }
