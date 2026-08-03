@@ -984,8 +984,9 @@ const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
 
-/// Default figure size in inches, matching Quarto's defaults
-/// (`fig-width: 7`, `fig-height: 5`).
+/// Default figure size in inches, matching Quarto's base/HTML format
+/// defaults (`fig-width: 7`, `fig-height: 5`). Other formats differ (e.g.
+/// pdf is 5.5 x 3.5), but Positron doesn't know the target format.
 const DEFAULT_FIG_WIDTH: f64 = 7.0;
 const DEFAULT_FIG_HEIGHT: f64 = 5.0;
 
