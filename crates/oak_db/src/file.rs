@@ -1,15 +1,11 @@
 use std::fs;
-use std::sync::Arc;
 
 use aether_path::FilePath;
 use biome_line_index::LineIndex;
 use biome_rowan::TextRange;
 use oak_semantic::semantic_index::AmbiguityReason;
-use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::semantic_index::SymbolTable;
-use oak_semantic::use_def_map::UseDefMap;
 
 use crate::db::root_by_file;
 use crate::file_revision::report_untracked_if_zero;
@@ -150,8 +146,7 @@ impl File {
     /// This is a coarse query that invalidates downstream on every edit
     /// (`AstPtr` ranges inside `Definition`s shift). External consumers should
     /// go through the narrow queries: `exports()`, `imports()`, `resolve()`,
-    /// `attached_packages()`, `symbol_table()`, `use_def_map()` to shield
-    /// themselves from edit changes.
+    /// `attached_packages()` to shield themselves from edit changes.
     ///
     /// Cross-file symbol resolution (`source()` injection, NSE resolution)
     /// is driven by [`SalsaImportsResolver`].
@@ -185,18 +180,6 @@ impl File {
     #[salsa::tracked(returns(ref), no_eq, cycle_result = semantic_index_cycle_result)]
     pub(crate) fn semantic_index(self, db: &dyn Db) -> SemanticIndex {
         build_semantic_index(self, db)
-    }
-
-    /// The symbol table for one scope of this file.
-    #[salsa::tracked]
-    pub fn symbol_table(self, db: &dyn Db, scope: ScopeId) -> Arc<SymbolTable> {
-        Arc::clone(self.semantic_index(db).symbols(scope))
-    }
-
-    /// The use-def map for one scope of this file.
-    #[salsa::tracked]
-    pub fn use_def_map(self, db: &dyn Db, scope: ScopeId) -> Arc<UseDefMap> {
-        Arc::clone(self.semantic_index(db).use_def_map(scope))
     }
 
     /// Package names from `library()` / `require()` calls that run at the
