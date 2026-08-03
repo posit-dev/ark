@@ -56,6 +56,7 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffects;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
@@ -636,12 +637,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         }
                     }
                 } else {
+                    // A binding operator (`x %<>% f()`) binds its left operand.
+                    // Scan the operands as uses first, then record the binding,
+                    // so a later callee in this scope sees that name shadowed.
+                    // Mirrors the value-then-target order of the `is_assignment`
+                    // branch.
                     if let Ok(lhs) = bin.left() {
                         self.scan_expression(&lhs);
                     }
                     if let Ok(rhs) = bin.right() {
                         self.scan_expression(&rhs);
                     }
+                    self.scan_operator_assign(bin);
                 }
             },
 
@@ -865,12 +872,30 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 if is_assignment(bin) {
                     self.collect_assignment(bin);
                 } else {
-                    if let Ok(lhs) = bin.left() {
-                        self.collect_expression(&lhs);
+                    let range = bin.syntax().text_trimmed_range();
+                    let is_binding_op = self
+                        .call_resolutions
+                        .get(&range)
+                        .is_some_and(|resolution| !resolution.assign.is_empty());
+
+                    // A binding operator (`x := expr`) treats its left operand
+                    // as a definition target, not a read, the same as `<-`. An
+                    // ordinary operator (`a + b`) reads both operands.
+                    //
+                    // TODO(nse): `%<>%` is compound (`x <- f(x)`), so it also
+                    // reads its target. Record that read once the registry
+                    // carries a per-operator "reads target" flag.
+                    if !is_binding_op {
+                        if let Ok(lhs) = bin.left() {
+                            self.collect_expression(&lhs);
+                        }
                     }
                     if let Ok(rhs) = bin.right() {
                         self.collect_expression(&rhs);
                     }
+                    // A `%...%` operator the scan recognized as an assign effect
+                    // emits its binding here, after the operand uses.
+                    self.collect_assign_operator(bin);
                 }
             },
 
@@ -1231,6 +1256,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         {
             self.collect_source_call(call);
         }
+
+        // Assign: same recognition path. The scan cached the bound names and we
+        // emit the corresponding definitions so they feed the use-def map,
+        // `exports()`, and goto.
+        if self
+            .call_resolutions
+            .get(&range)
+            .is_some_and(|resolution| !resolution.assign.is_empty())
+        {
+            self.collect_assign_call(call);
+        }
     }
 
     // ## `library()` / `require()` scoping
@@ -1329,6 +1365,58 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
+    // ## `assign()` binding
+    //
+    // `assign("x", value)` binds `x` in the current scope, the same as `x <-
+    // value` would. We record a `DefinitionKind::Assign` def so it feeds the
+    // use-def map, `exports()`, and goto exactly like a syntactic assignment.
+    // The name is not chased to its value, so an `assign("f", local)` def
+    // carries no NSE, just like `f <- local`.
+    fn collect_assign_call(&mut self, call: &aether_syntax::RCall) {
+        let range = call.syntax().text_trimmed_range();
+
+        // Read back the bindings the scan extracted (their presence is what the
+        // caller checked before dispatching here).
+        let bindings = match self.call_resolutions.get(&range) {
+            Some(resolution) => resolution.assign.clone(),
+            None => return,
+        };
+
+        self.add_assign_definitions(&AnyRExpression::RCall(call.clone()), bindings);
+    }
+
+    fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {
+        for binding in bindings {
+            // The def's own range is the name token, captured at scan time, so a
+            // cursor on the name at the definition site hit-tests to it, the same
+            // as a syntactic `<-` binding.
+            let name_range = binding.name_expr.text_trimmed_range();
+            let name = binding.name_expr.as_ptr().clone();
+            self.add_definition(
+                &binding.name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::Assign {
+                    node: AstPtr::new(node),
+                    name,
+                    value: binding.value_expr,
+                },
+                name_range,
+            );
+        }
+    }
+
+    /// Emit the `Assign` definition for a binding operator (e.g. `x %<>% f()`) the
+    /// scan recognized, after its operands were collected as uses.
+    fn collect_assign_operator(&mut self, bin: &RBinaryExpression) {
+        let range = bin.syntax().text_trimmed_range();
+        let bindings = match self.call_resolutions.get(&range) {
+            Some(resolution) if !resolution.assign.is_empty() => resolution.assign.clone(),
+            _ => return,
+        };
+
+        self.add_assign_definitions(&AnyRExpression::RBinaryExpression(bin.clone()), bindings);
+    }
+
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
@@ -1389,11 +1477,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 ///   `SemanticCall::Attach`.
 /// - `source`: the files a recognized `source()` call brings in, each with its
 ///   resolution.
+/// - `assign`: the bindings `assign()`-like calls create in the current scope.
 #[derive(Default)]
 struct CallResolution {
     arguments: Option<ResolvedArgumentEffects>,
     attach: Option<String>,
     source: Vec<SourcedFile>,
+    assign: Vec<AssignBinding>,
 }
 
 /// A single file a `source()` call brings in: its statically-extracted path and

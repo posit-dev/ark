@@ -159,6 +159,26 @@ fn test_super_assignment_targets_outer_scope() {
     ]);
 }
 
+#[test]
+fn test_references_from_assign_definition_site() {
+    // Find-references invoked with the cursor ON the `assign()` name literal (not
+    // a later use) resolves the binding and returns the declaration plus the use.
+    // This is what the definition's own range enables: `definition_at` hit-tests
+    // the name token at the definition site.
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", "assign(\"foo\", 1)\nfoo\n");
+
+    // Cursor inside the `"foo"` literal.
+    let refs = find_references(&db, file, offset(8), true);
+    assert_eq!(ranges(&refs), vec![range(7, 12), range(17, 20)]);
+
+    // TODO!(nse-resolver): find-references for a `%<>%`/`%<~%` binding can't be
+    // tested here yet, from a use or from its definition site.
+    // `SalsaImportsResolver` only resolves `base`, so the operators aren't
+    // recognized as assign effects at this layer until the resolver walks the
+    // search path.
+}
+
 // --- Boundary cursor ---
 
 #[test]

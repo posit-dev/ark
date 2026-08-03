@@ -2,9 +2,13 @@ use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RCall;
 use aether_syntax::RSyntaxKind;
+use biome_rowan::AstNode;
+use biome_rowan::AstSeparatedList;
 use oak_semantic::build_index;
+use oak_semantic::effects::AssignBinding;
 use oak_semantic::effects::CallContext;
 use oak_semantic::effects::EffectHandler;
+use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects_registry;
 use oak_semantic::semantic_index::DefinitionId;
@@ -1545,6 +1549,286 @@ fn test_source_call_recognized_under_base_resolver() {
     assert_eq!(index.semantic_calls().len(), 1);
 }
 
+// --- assign() ---
+
+/// The single `DefinitionKind::Assign` def in a file, or `None`.
+fn only_assign_def(index: &SemanticIndex) -> Option<&DefinitionKind> {
+    let file = ScopeId::from(0);
+    let mut defs = index
+        .definitions(file)
+        .iter()
+        .map(|(_, def)| def.kind())
+        .filter(|kind| matches!(kind, DefinitionKind::Assign { .. }));
+    let first = defs.next();
+    assert!(defs.next().is_none());
+    first
+}
+
+#[test]
+fn test_assign_records_definition() {
+    // `assign("x", 1)` binds `x` in the current scope, and the later use of `x`
+    // resolves to that definition.
+    let index = index_with_base("assign(\"x\", 1)\nx");
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    // Uses: assign(0), x(1). The `x` use binds to the assign-created def.
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_assign_qualified_base_call_recognized() {
+    // The namespaced form resolves through `resolve_qualified_effects`.
+    let index = index_with_base("base::assign(\"x\", 1)");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_delayed_assign_records_definition() {
+    let index = index_with_base("delayedAssign(\"x\", expensive())");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_assign_non_literal_name_not_recorded() {
+    // A dynamic name can't be pinned, so the effect is recognized but nothing
+    // is recorded (same spirit as a dynamic `source()` path).
+    let index = index_with_base("assign(nm, 1)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_explicit_envir_not_recorded() {
+    // An explicit target environment binds outside the current scope, so we
+    // skip it rather than record a def in the wrong place.
+    let index = index_with_base("assign(\"x\", 1, envir = e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_shadowed_by_local_binding_not_recognized() {
+    // A user-defined `assign` shadows base `assign`, so the call binds nothing.
+    let index = index_with_base("assign <- function(...) {}\nassign(\"x\", 1)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_assign_value_handle_points_at_value_expression() {
+    // The stored `value` handle resolves to the value argument, which is what a
+    // type checker infers the binding's type from.
+    let parsed = parse("assign(\"x\", 1 + 2)", RParserOptions::default());
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
+
+    let kind = only_assign_def(&index).expect("assign def");
+    let DefinitionKind::Assign {
+        value: Some(value), ..
+    } = kind
+    else {
+        panic!("expected a value handle");
+    };
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "1 + 2"
+    );
+}
+
+#[test]
+fn test_assign_without_value_has_no_value_handle() {
+    // The name still binds, but there's no value argument to infer from.
+    let index = index_with_base("assign(\"x\")");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { value: None, .. })
+    ));
+}
+
+// --- binding operators (`%<>%`, `%<~%`) ---
+
+/// Build with `packages` attached (plus base), for package-contributed effects
+/// like magrittr's `%<>%` operator.
+fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIndex {
+    let parsed = parse(source, RParserOptions::default());
+    if parsed.has_error() {
+        panic!("source has syntax errors: {source}");
+    }
+    build_index(&parsed.tree(), TestImportsResolver::with_attached(packages))
+}
+
+#[test]
+fn test_magrittr_compound_assignment_binds_lhs() {
+    // `x %<>% f()` binds `x`. The left operand is a definition target, not a
+    // read, the same as `<-`, so only `f` (the right operand) is a use.
+    //
+    // `%<>%` is compound (`x <- f(x)`), so `x` is conceptually read too, but we
+    // don't record that read yet. See the `TODO(nse)` in the walk's binary arm.
+    let index = index_with_attached("x %<>% f()", &["magrittr"]);
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    // Only the right operand `f` is a use; the target `x` is not recorded.
+    assert_eq!(index.uses(file).len(), 1);
+    let symbols = index.symbols(file);
+    assert_eq!(
+        symbols
+            .symbol(index.uses(file)[UseId::from(0)].symbol())
+            .name(),
+        "f"
+    );
+}
+
+#[test]
+fn test_magrittr_compound_assignment_name_and_value_handles() {
+    // The `name` handle is the left operand (goto, rename), the `value` handle
+    // the right operand.
+    let source = "x %<>% f()";
+    let parsed = parse(source, RParserOptions::default());
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(
+        &parsed.tree(),
+        TestImportsResolver::with_attached(&["magrittr"]),
+    );
+
+    let Some(DefinitionKind::Assign {
+        name,
+        value: Some(value),
+        ..
+    }) = only_assign_def(&index)
+    else {
+        panic!("expected an assign def with a value handle");
+    };
+    assert_eq!(name.to_node(&root).syntax().text_trimmed().to_string(), "x");
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "f()"
+    );
+}
+
+#[test]
+fn test_rlang_lazy_assignment_binds_lhs() {
+    let index = index_with_attached("x %<~% compute()", &["rlang"]);
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_s7_walrus_assignment_binds_lhs() {
+    // S7's `:=` binds its left operand, like `%<>%`. It's the `WALRUS` token
+    // kind rather than `SPECIAL`, so it exercises the other arm of the operator
+    // gate.
+    let index = index_with_attached("x := f()", &["S7"]);
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_binding_operator_left_operand_is_not_a_use() {
+    // A pure-binding operator (`:=` is `x <- expr`, not compound) reads only its
+    // right operand. The left operand `x` is the binding target, not a use, so
+    // exactly one use is recorded and it's the value operand.
+    let index = index_with_attached("x := f()", &["S7"]);
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.uses(file).len(), 1);
+    assert_eq!(
+        index
+            .symbols(file)
+            .symbol(index.uses(file)[UseId::from(0)].symbol())
+            .name(),
+        "f"
+    );
+}
+
+#[test]
+fn test_plain_operators_do_not_bind() {
+    // A pipe and a plain infix operator are not assign effects, even with
+    // magrittr attached: the match is on the exact operator text.
+    assert!(only_assign_def(&index_with_attached("x %>% f()", &["magrittr"])).is_none());
+    assert!(only_assign_def(&index_with_attached("x %in% y", &["magrittr"])).is_none());
+}
+
+#[test]
+fn test_compound_assignment_shadowed_by_local_binding_not_recognized() {
+    // A user-defined `%<>%` shadows magrittr's, so the operator binds nothing.
+    let index = index_with_attached("`%<>%` <- function(lhs, rhs) {}\nx %<>% f()", &["magrittr"]);
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_complex_lhs_not_recorded() {
+    // A complex target binds no name, matching `<-` on `x$y <- v`.
+    let index = index_with_attached("x$y %<>% f()", &["magrittr"]);
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_not_recognized_without_magrittr() {
+    // Package-aware: without magrittr attached, `%<>%` doesn't resolve, so it
+    // stays a plain operator and binds nothing.
+    let index = index_with_base("x %<>% f()");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_compound_assignment_use_resolves_to_binding() {
+    // A later use resolves to the operator's binding, the same as `assign()`.
+    let index = index_with_attached("y %<>% f()\ny", &["magrittr"]);
+    let file = ScopeId::from(0);
+
+    // Uses in order: `f` (right operand), then the trailing `y`. The left
+    // operand `y` is the binding target, not a use.
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_compound_assignment_definition_range_is_name() {
+    // The def's range is the left operand, so `definition_at` locates it when the
+    // cursor is on the name at the definition site (not an empty span).
+    let index = index_with_attached("value %<>% f()", &["magrittr"]);
+    let (scope, _id, def) = index
+        .definition_at(biome_rowan::TextSize::from(0))
+        .expect("assign def at the name offset");
+    assert_eq!(scope, ScopeId::from(0));
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_compound_assignment_binding_masks_later_callee() {
+    // `local %<>% f()` binds `local`, so the later `local({ ... })` is shadowed
+    // and not treated as NSE (no nested scope pushed). The correctness win,
+    // parallel to `assign("local", identity)` masking base `local`.
+    let index = index_with_attached("local %<>% f()\nlocal({ x <- 1 })", &["magrittr"]);
+    assert_eq!(index.scope_ids().count(), 1);
+}
+
 /// Project each access into a comparable tuple via the public accessors.
 fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
     index
@@ -1874,6 +2158,7 @@ impl ImportsResolver for MultiFileResolver {
                 arguments: None,
                 attach: None,
                 source: Some(&COLLATION_HANDLER),
+                assign: None,
             });
         }
         effects_registry::lookup("base", name).copied()
@@ -1897,6 +2182,64 @@ impl ImportsResolver for PositionResolver {
                 arguments: None,
                 attach: None,
                 source: Some(&SOURCE_AT_POSITION_1),
+                assign: None,
+            });
+        }
+        None
+    }
+}
+
+/// An assign handler that binds a fixed set of names, standing in for a
+/// multi-binding callee. Attached to `assign` by [`MultiAssignResolver`].
+#[derive(Debug)]
+struct MultiAssignHandler;
+
+static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
+
+impl EffectHandler for MultiAssignHandler {
+    type Output = Vec<AssignBinding>;
+
+    fn resolve(&self, call: &RCall, _ctx: &CallContext) -> Option<Vec<AssignBinding>> {
+        // Point every binding's handles at the first argument. This test only
+        // checks that multiple defs are created and resolve, not their ranges.
+        let expr = call
+            .arguments()
+            .ok()?
+            .items()
+            .iter()
+            .next()?
+            .ok()?
+            .value()?;
+        let ptr = RangedAstPtr::new(&expr);
+        Some(vec![
+            AssignBinding {
+                name: "a".into(),
+                name_expr: ptr.clone(),
+                value_expr: None,
+            },
+            AssignBinding {
+                name: "b".into(),
+                name_expr: ptr,
+                value_expr: None,
+            },
+        ])
+    }
+}
+
+struct MultiAssignResolver;
+
+impl ImportsResolver for MultiAssignResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, _: &[String], _: bool) -> Option<EffectsHandlers> {
+        if name == "assign" {
+            return Some(EffectsHandlers {
+                arguments: None,
+                attach: None,
+                source: None,
+                assign: Some(&MULTI_ASSIGN_HANDLER),
             });
         }
         None
@@ -2191,4 +2534,29 @@ fn test_source_call_leading_named_arg_still_finds_path() {
         path: "helpers.R".into(),
         resolved: None,
     }]);
+}
+
+#[test]
+fn test_assign_resolver_multiple_names_each_defined() {
+    // An assign handler can bind several names from one call. Each becomes its
+    // own definition and resolves at its use.
+    let code = "assign(\"unused\")\na\nb\n";
+    let index = build_test_index(code, MultiAssignResolver);
+    let file = ScopeId::from(0);
+
+    let assign_defs = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, def)| matches!(def.kind(), DefinitionKind::Assign { .. }))
+        .count();
+    assert_eq!(assign_defs, 2);
+
+    // Uses: assign(0), a(1), b(2). Both resolve to an assign-created def.
+    let map = index.use_def_map(file);
+    for use_index in [1, 2] {
+        let bindings = map.bindings_at_use(UseId::from(use_index));
+        assert_eq!(bindings.definitions().len(), 1);
+        let def = &index.definitions(file)[bindings.definitions()[0]];
+        assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+    }
 }

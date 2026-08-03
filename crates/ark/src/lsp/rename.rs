@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::Context;
-use oak_core::identifier::to_identifier_text;
 use oak_db::Db;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::PrepareRenameResponse;
@@ -63,28 +62,27 @@ pub(crate) fn rename(
 
     let offset = from_proto::offset_from_position(position, file.line_index(db), encoding)?;
 
-    // Normalize the new name to its canonical R syntax (backtick-wrapped if
-    // needed) before searching, so an invalid name fails fast.
-    let new_text = to_identifier_text(&new_name)?;
-    let ranges = oak_ide::rename(db, file, offset)?;
+    // oak_ide resolves the sites and renders each edit in its own spelling
+    // (bare identifier, or a quoted string for a string-form binding).
+    let edits = oak_ide::rename(db, file, offset, &new_name)?;
 
     let mut changes: HashMap<lsp_types::Uri, Vec<TextEdit>> = HashMap::new();
-    for file_range in ranges {
-        let line_index = file_range.file.line_index(db);
-        let path = file_range.file.path(db);
+    for edit in edits {
+        let line_index = edit.file.line_index(db);
+        let path = edit.file.path(db);
 
         // A rename is all or nothing. Skipping a file here would rename some
         // uses of the symbol and silently leave the rest behind, so we bail
         // instead.
         let target_uri = state
-            .wire_uri(file_range.file)
+            .wire_uri(edit.file)
             .with_context(|| format!("Can't rename: no valid URI for `{path}`."))?;
-        let range = to_proto::range(file_range.range, line_index, encoding)
+        let range = to_proto::range(edit.range, line_index, encoding)
             .with_context(|| format!("Can't rename: no valid text range in `{path}`."))?;
 
         changes.entry(target_uri).or_default().push(TextEdit {
             range,
-            new_text: new_text.clone(),
+            new_text: edit.new_text,
         });
     }
 

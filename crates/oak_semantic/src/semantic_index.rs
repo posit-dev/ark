@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use aether_syntax::RForStatement;
@@ -674,6 +675,16 @@ pub enum DefinitionKind {
         call: AstPtr<RCall>,
         file: Url,
         name: String,
+    },
+    /// A binding created by a call (e.g. `assign("x", value)`) or a binding
+    /// operator (`x %<>% f()`) rather than a syntactic `<-`. `node` is the whole
+    /// binding expression (for its range and provenance), `name` the name
+    /// argument or left operand (goto, rename), and `value` the value a type
+    /// checker infers from (`None` when absent).
+    Assign {
+        node: AstPtr<AnyRExpression>,
+        name: AstPtr<AnyRExpression>,
+        value: Option<AstPtr<AnyRExpression>>,
     },
 }
 
