@@ -421,12 +421,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .entry(call_range)
                 .or_default()
                 .attach = Some(package.clone());
+
+            // Keep every eager attach here even after a branch or loop removes
+            // it from `attached_so_far`. If a later effect lookup fails, we
+            // emit a lint when one of these dropped attaches would have
+            // resolved it. Lazy-body attaches stay out because this scan cannot
+            // establish their order relative to other lazy bodies.
             if !self.scopes[self.current_scope].kind.is_lazy() {
                 self.scan
                     .attached_anywhere
                     .push((package.clone(), call_range));
-                self.scan.attached_so_far.push(package, call_range.start());
             }
+
+            // Make this attach available to later calls in the current scan unit.
+            self.scan.attached_so_far.push(package, call_range.start());
         }
 
         // Cache each recognized path with its resolution. The walk reads them
@@ -970,6 +978,11 @@ impl FlowAttaches {
     pub(super) fn push(&mut self, package: String, offset: TextSize) {
         self.packages.push(package);
         self.offsets.push(offset);
+    }
+
+    pub(super) fn truncate(&mut self, watermark: usize) {
+        self.packages.truncate(watermark);
+        self.offsets.truncate(watermark);
     }
 
     /// Remove and return everything attached since `mark`, in attach order.

@@ -2858,14 +2858,9 @@ reactive({
 }
 
 #[test]
-fn test_nse_attach_within_lazy_body_not_yet_supported() {
-    // Sequential-within-one-lazy-body: when `f` runs, `library(shiny)` runs
-    // before `reactive`, so `reactive` is determinately NSE. We don't promote it
-    // today: `attached_so_far` only grows in eager context, so the attach inside
-    // `f` (a lazy body) isn't visible to `reactive` in the same body. The attach
-    // is still recorded as a `SemanticCall::Attach`. This could be supported by
-    // tracking a per-unit attach set seeded from the EOF view, parallel to
-    // `bound_so_far`; deferred for now.
+fn test_nse_attach_within_lazy_body_applies_to_later_calls() {
+    // The attach precedes `reactive()` whenever `f()` runs, so shiny's
+    // annotation makes `reactive()` NSE.
     let index = index_with_base(
         "\
 f <- function() {
@@ -2877,14 +2872,83 @@ f <- function() {
 ",
     );
     let f_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
 
-    // The attach is recorded (scoped to `f`), but not fed to `reactive`, and
-    // not counted at the file's top level: only `attached_packages_anywhere()`
-    // sees a `library()` buried in a function body.
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(index.scope(reactive_scope).parent(), Some(f_scope));
+    assert!(index.symbols(f_scope).get("x").is_none());
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // The nested-body history includes shiny, but the file's final search path
+    // does not.
     assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
     assert!(index.attached_packages().is_empty());
+}
+
+#[test]
+fn test_nse_attach_within_lazy_body_does_not_escape_it() {
+    // `g()` cannot change the search path used by `h()` or the file scope.
+    let index = index_with_base(
+        "\
+g <- function() {
+    library(shiny)
+}
+h <- function() {
+    reactive({
+        x <- 1
+    })
+}
+reactive({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let h_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(h_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(h_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_todo_effects_of_a_called_function_are_not_applied() {
+    // At runtime, `g()` attaches shiny before `reactive()` runs. The index does
+    // not infer local-function effects, so `reactive()` is not recognized as NSE.
+    let index = index_with_base(
+        "\
+g <- function() library(shiny)
+g()
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
+    assert!(index.attached_packages().is_empty());
+
     assert_eq!(index.scope_ids().count(), 2);
-    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
 }
 
 // --- `on.exit` (Current + Lazy) ---

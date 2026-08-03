@@ -313,6 +313,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let watermark = self.scan.deferred_bodies.len();
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
+        // Keep track of attaches made in the function context. We'll discard
+        // them upon leaving the lazy context.
+        let attached = self.scan.attached_so_far.len();
+
         if let Ok(params) = fun.parameters() {
             // Scan the default values before collecting them. R binds all
             // formals into the frame at once, so a default sees every parameter
@@ -335,6 +339,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.walk_expression(&body);
         }
 
+        // Discard attaches made in the lazy context.
+        self.scan.attached_so_far.truncate(attached);
         self.pop_scope(scope);
     }
 
@@ -719,11 +725,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy);
                 let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
 
+                // Keep track of attach state. We discard any attaches made in
+                // the lazy context upon leaving it.
+                let attached = self.scan.attached_so_far.len();
+
                 self.begin_scan();
                 let watermark = self.scan.deferred_bodies.len();
                 self.scan_expression(value);
                 self.scan_deferred_bodies(watermark);
                 self.walk_expression(value);
+
+                // Discard attaches made in the lazy context.
+                self.scan.attached_so_far.truncate(attached);
                 self.pop_scope(scope);
             },
         }

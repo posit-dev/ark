@@ -142,7 +142,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Local resolver for declared effects, mirroring the imports resolver's
     /// `resolve_effects()` method on the cross-file side.
-    /// TODO(nse, annotations): always `None` until `declare()` parsing lands.
+    ///
+    /// TODO(nse, annotations): Resolve effects declare()'d on local functions.
+    ///
+    /// TODO(nse, inference): Infer effects from local function bodies. Calling
+    /// `g()` should apply the attach in `g <- function() library(shiny)`. Mutual
+    /// recursion needs a fixed point.
     fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
         None
     }
