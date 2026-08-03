@@ -4,6 +4,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -40,8 +42,10 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::SOURCE_POOL_THREADS;
 use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
+use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceRequest;
+use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 
 /// The package names passed to the handler, in call order.
@@ -405,7 +409,91 @@ async fn test_disabling_stops_fetching_new_packages() {
 #[tokio::test]
 async fn test_disabling_skips_queued_fetches() {
     let _aux = init_aux_for_test();
+    let mut session = queued_fetch_session().await;
 
+    // Let the parked fetches through and collect every response.
+    drop(session.releases);
+    session.state.pump_sources_to_quiescence().await;
+    assert_eq!(
+        session.handler.calls().lock().unwrap().len(),
+        SOURCE_POOL_THREADS
+    );
+
+    session
+        .client
+        .set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true));
+    session
+        .state
+        .handle_event_to_quiescence(did_change_configuration())
+        .await;
+
+    // The skipped package remains unrecorded and is queued after re-enabling. Completed jobs stay `Finished`.
+    let mut names = dispatched_names(session.handler.calls());
+    names.sort();
+    assert_eq!(names, session.donors);
+}
+
+/// Re-enabling while a `Skipped` response is still in flight must not strand the
+/// package. The scheduling pass on the re-enable can't pick it up, since the
+/// package still looks `Pending` until its response lands, so handling the
+/// response has to be what starts the fetch.
+#[tokio::test]
+async fn test_reenabling_before_a_skip_lands_still_fetches() {
+    let _aux = init_aux_for_test();
+    let mut session = queued_fetch_session().await;
+
+    // The queued job now starts, reads the `false`, and answers `Skipped`. Hold
+    // that response back so the re-enable lands in front of it.
+    drop(session.releases);
+    let skipped = session
+        .state
+        .take_event(|event| {
+            matches!(
+                event,
+                Event::SourceCompleted(SourceCompleted {
+                    response: SourceResponse::Skipped,
+                    ..
+                })
+            )
+        })
+        .await;
+
+    session
+        .client
+        .set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true));
+    session
+        .state
+        .handle_event_once(did_change_configuration())
+        .await;
+
+    session.state.handle_event_to_quiescence(skipped).await;
+
+    let mut names = dispatched_names(session.handler.calls());
+    names.sort();
+    assert_eq!(names, session.donors);
+}
+
+/// A session with every source worker parked in a gated fetch, one more fetch
+/// queued behind them, and fetching turned off through the client while that
+/// last one waits. Dropping [`Self::releases`] lets the parked fetches return,
+/// which is when the queued job starts and reads the setting.
+struct QueuedFetchSession {
+    state: GlobalState,
+    client: TestClient,
+    handler: Arc<TestSourceHandler>,
+    donors: Vec<String>,
+    releases: Vec<Sender<()>>,
+
+    /// Held for the duration of the test. The sources live under the temporary
+    /// directories, and dropping the response receiver early makes `respond()`
+    /// fail.
+    _lib: tempfile::TempDir,
+    _workspace: tempfile::TempDir,
+    _response_rx: UnboundedReceiver<RequestResponse>,
+    _entered_rx: Receiver<()>,
+}
+
+async fn queued_fetch_session() -> QueuedFetchSession {
     // One gated package per source worker, plus the one that has to wait in the
     // queue. They share an "entered" sender because which of them a worker picks
     // up is unpredictable.
@@ -472,20 +560,17 @@ async fn test_disabling_skips_queued_fetches() {
     client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false));
     state.handle_event_once(did_change_configuration()).await;
 
-    // Let the parked fetches through and collect every response.
-    drop(releases);
-    state.pump_sources_to_quiescence().await;
-    assert_eq!(handler.calls().lock().unwrap().len(), SOURCE_POOL_THREADS);
-
-    client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true));
-    state
-        .handle_event_to_quiescence(did_change_configuration())
-        .await;
-
-    // The skipped package remains unrecorded and is queued after re-enabling. Completed jobs stay `Finished`.
-    let mut names = dispatched_names(handler.calls());
-    names.sort();
-    assert_eq!(names, donors);
+    QueuedFetchSession {
+        state,
+        client,
+        handler,
+        donors,
+        releases,
+        _lib: lib,
+        _workspace: workspace,
+        _response_rx,
+        _entered_rx: entered_rx,
+    }
 }
 
 /// Source fetching waits for configuration resolution, but a failed request

@@ -503,9 +503,23 @@ pub(crate) async fn did_change_configuration(
     // Note that the client sends notifications for settings for which we have
     // declared interest in. This registration is done in `handle_initialized()`.
 
-    update_config(open_file_wire_uris(state), client, capabilities, state)
+    let was_enabled = state.config.oak.source_fetching_enabled;
+
+    let result = update_config(open_file_wire_uris(state), client, capabilities, state)
         .instrument(tracing::info_span!("did_change_configuration"))
-        .await
+        .await;
+
+    // Report only changes after startup. `handle_initialized()` reports the initial state.
+    if state.config.oak.source_fetching_enabled != was_enabled {
+        let state_name = if state.config.oak.source_fetching_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        lsp::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
+    }
+
+    result
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -559,15 +573,6 @@ async fn update_config(
     // Overrides apply even when the pull failed, so that an unresponsive client
     // doesn't strand us on the defaults.
     apply_env_overrides(&mut state.config);
-
-    if state.config.oak.source_fetching_enabled != oak_config.source_fetching_enabled {
-        let state_name = if state.config.oak.source_fetching_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        };
-        lsp::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
-    }
 
     // `config` is not an Oak input, so we manually bump the revision to refresh
     // diagnostics and rerun source scheduling. This queues already discovered

@@ -17,6 +17,7 @@ use std::sync::RwLock;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
+use oak_db::Package;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
@@ -55,6 +56,7 @@ use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
+use crate::lsp::sources::SourceOrigin;
 use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
@@ -589,18 +591,19 @@ impl GlobalState {
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
-                let outcome = match &response {
-                    SourceResponse::Success(_) => "completed",
-                    SourceResponse::Failure => "failed",
-                    SourceResponse::Skipped => "skipped, source fetching was turned off",
-                };
-                lsp::log_info!(
-                    "Source fetch for package {name} {outcome}",
-                    name = package.name(&self.world.db)
-                );
+                self.log_source_completed(package, &response);
+
+                let skipped = matches!(response, SourceResponse::Skipped);
 
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
                     self.world.db.set_package_sources(package, &directory);
+                }
+
+                // Schedule a skipped package immediately. `finish()` removes it
+                // without advancing the revision, so tick-end scheduling cannot
+                // retry it after fetching is re-enabled.
+                if skipped {
+                    self.schedule_sources();
                 }
             },
 
@@ -635,15 +638,45 @@ impl GlobalState {
                 &self.lsp_state.analysis_pool,
                 &self.events_tx,
             );
-            self.lsp_state.source_scheduler.schedule(
-                &self.world.db,
-                &self.world.config.oak,
-                &self.lsp_state.source_pool,
-                &self.events_tx,
-            );
+            self.schedule_sources();
         }
 
         Ok(())
+    }
+
+    fn schedule_sources(&mut self) {
+        self.lsp_state.source_scheduler.schedule(
+            &self.world.db,
+            &self.world.config.oak,
+            &self.lsp_state.source_pool,
+            &self.events_tx,
+        );
+    }
+
+    fn log_source_completed(&self, package: Package, response: &SourceResponse) {
+        let name = package.name(&self.world.db);
+
+        match response {
+            SourceResponse::Success {
+                origin: SourceOrigin::Cached,
+                ..
+            } => {
+                // Cache hits use trace logging because they do not make a network request.
+                tracing::trace!("Sources for package {name} came from the cache")
+            },
+            SourceResponse::Success {
+                origin: SourceOrigin::Fetched,
+                ..
+            } => {
+                lsp::log_info!("Fetched sources for package {name}")
+            },
+            SourceResponse::Failure => {
+                lsp::log_info!("Found no sources for package {name}")
+            },
+            SourceResponse::Skipped => {
+                lsp::log_info!("Skipped sources for package {name}, source fetching was turned off")
+            },
+        }
     }
 }
 
@@ -715,6 +748,19 @@ impl GlobalState {
     pub(crate) async fn pump_sources_to_quiescence(&mut self) {
         while self.lsp_state.source_scheduler.has_pending() {
             let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
+    /// Pump events until one satisfies `wanted`, handling the others, and hand
+    /// that one back unhandled. Lets a test slip its own events in front of a
+    /// response that is already in flight.
+    pub(crate) async fn take_event(&mut self, wanted: impl Fn(&Event) -> bool) -> Event {
+        loop {
+            let event = self.next_event().await;
+            if wanted(&event) {
+                return event;
+            }
             self.handle_event(event).await.unwrap();
         }
     }

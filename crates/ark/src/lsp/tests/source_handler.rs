@@ -90,7 +90,7 @@ impl SourceHandler for TestSourceHandler {
             Some(TestBehavior::Success(files)) => {
                 let dir = self.sources.path().join(request.name());
                 write_sources(&dir, files);
-                SourceResponse::Success(dir)
+                SourceResponse::fetched(dir)
             },
             Some(TestBehavior::Failure) => SourceResponse::Failure,
             Some(TestBehavior::Gated(gate)) => {
