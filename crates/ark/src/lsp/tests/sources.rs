@@ -32,7 +32,6 @@ use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceRequest;
 use crate::lsp::sources::SourceScheduler;
-use crate::lsp::state::WorldState;
 
 /// The package names passed to the handler, in call order.
 fn dispatched_names(calls: &Mutex<Vec<SourceRequest>>) -> Vec<String> {
@@ -90,7 +89,7 @@ async fn test_source_pipeline_ingests_package_sources() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -149,12 +148,9 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = false;
-
     let mut state = GlobalState::from_parts(
         test_client(),
-        world,
+        world_with_source_fetching(db, false),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -208,12 +204,9 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = false;
-
     let mut state = GlobalState::from_parts(
         test_client(),
-        world,
+        world_with_source_fetching(db, false),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -278,7 +271,7 @@ async fn test_disabling_stops_fetching_new_packages() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -343,7 +336,7 @@ async fn test_fetching_waits_for_initialized() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -452,7 +445,7 @@ async fn test_failed_source_is_not_retried() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -527,7 +520,7 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),

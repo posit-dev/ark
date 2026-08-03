@@ -21,6 +21,7 @@ use tower_lsp_server::Client;
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::LspService;
 
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
@@ -72,11 +73,12 @@ pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> Sour
     scheduler
 }
 
-/// Enable source fetching after [`WorldState::new()`] applies
-/// `OAK_SOURCE_FETCHING_ENABLED`.
-pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
+/// A [`WorldState`] with source fetching set to `enabled`, whatever the ambient
+/// `OAK_SOURCE_FETCHING_ENABLED` says.
+pub(super) fn world_with_source_fetching(db: OakDatabase, enabled: bool) -> WorldState {
+    unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
     let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = true;
+    world.config.oak.source_fetching_enabled = enabled;
     world
 }
 

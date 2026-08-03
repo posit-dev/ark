@@ -282,7 +282,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),
@@ -348,7 +348,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),
@@ -418,7 +418,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db),
+        world_with_source_fetching(db, true),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),
