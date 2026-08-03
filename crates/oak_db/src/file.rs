@@ -4,6 +4,7 @@ use std::sync::Arc;
 use aether_path::FilePath;
 use biome_line_index::LineIndex;
 use biome_rowan::TextRange;
+use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
@@ -362,18 +363,52 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
         let line_index = file.line_index(db);
 
         for diagnostic in diagnostics {
-            match diagnostic {
-                SemanticDiagnostic::LazyShadowAmbiguity {
-                    name,
-                    call_range,
-                    overwrite_range,
-                } => {
-                    let call = format_line_col(line_index, *call_range);
+            if let SemanticDiagnostic::AmbiguousAttachOrder { packages, range } = diagnostic {
+                let at = format_line_col(line_index, *range);
+                log::warn!(
+                    "Ambiguous attach order in {path}:{at}: the branches attach {packages} in \
+                     different orders.",
+                    packages = packages.join(", ")
+                );
+                continue;
+            }
+
+            let SemanticDiagnostic::EffectAmbiguity {
+                name,
+                call_range,
+                reason,
+            } = diagnostic
+            else {
+                continue;
+            };
+            let call = format_line_col(line_index, *call_range);
+
+            match reason {
+                AmbiguityReason::LazyShadow { overwrite_range } => {
                     let overwrite = format_line_col(line_index, *overwrite_range);
                     log::warn!(
                         "Lazy-shadow ambiguity in {path}:{call}: callee `{name}` is recognized \
                          as effectful, but a lazy-crossed ancestor binds it at {overwrite} with \
                          undetermined timing"
+                    )
+                },
+                AmbiguityReason::ConditionalShadow { binding_range } => {
+                    let binding = format_line_col(line_index, *binding_range);
+                    log::warn!(
+                        "Conditional-shadow ambiguity in {path}:{call}: callee `{name}` is \
+                         recognized as effectful, but a conditional local binding at {binding} \
+                         could shadow it on some path"
+                    )
+                },
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                } => {
+                    let attach = format_line_col(line_index, *attach_range);
+                    log::warn!(
+                        "Conditional-attach ambiguity in {path}:{call}: callee `{name}` is read as \
+                         plain because `{package}`, attached at {attach}, dropped at a branch or \
+                         loop join. It would be effectful on the path where that attach ran"
                     )
                 },
             }

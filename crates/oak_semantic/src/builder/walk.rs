@@ -20,6 +20,7 @@ use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
@@ -36,6 +37,7 @@ use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::AttachRegion;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotKey;
@@ -185,19 +187,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&sequence);
                 }
 
-                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                if let Ok(body) = stmt.body() {
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
-
-                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk_loop_body(stmt.body().ok(), true);
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -206,26 +196,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&condition);
                 }
 
-                let pre_if = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                // If-body (consequence)
-                if let Ok(consequence) = stmt.consequence() {
-                    self.walk_expression(&consequence);
-                }
-
-                let post_if = self.walk.use_def_maps[self.current_scope].snapshot();
-                self.walk.use_def_maps[self.current_scope].restore(pre_if);
-
-                // Else-body (alternative), if present. If absent, the
-                // "else path" is just the pre-if state we restored to.
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.walk_expression(&alternative);
-                    }
-                }
-
-                // After: definitions from both branches are live
-                self.walk.use_def_maps[self.current_scope].merge(post_if);
+                let alternative = stmt
+                    .else_clause()
+                    .and_then(|else_clause| else_clause.alternative().ok());
+                self.walk_branch(stmt.consequence().ok(), alternative);
             },
 
             AnyRExpression::RWhileStatement(stmt) => {
@@ -233,34 +207,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.walk_expression(&condition);
                 }
 
-                let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-
-                if let Ok(body) = stmt.body() {
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
-
                 // Body may not execute
-                self.walk.use_def_maps[self.current_scope].merge(pre_loop);
+                self.walk_loop_body(stmt.body().ok(), true);
             },
 
             AnyRExpression::RRepeatStatement(stmt) => {
                 // Body always executes at least once, so no merge with pre-loop state.
-                if let Ok(body) = stmt.body() {
-                    let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
-                    let first_use = self.walk.uses[self.current_scope].next_id();
-                    self.walk_expression(&body);
-                    self.walk.use_def_maps[self.current_scope].finish_loop_defs(
-                        &pre_loop,
-                        first_use,
-                        &self.walk.uses[self.current_scope],
-                    );
-                }
+                self.walk_loop_body(stmt.body().ok(), false);
             },
 
             AnyRExpression::RBogusExpression(_) => {},
@@ -284,6 +237,54 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             _ => {
                 self.walk_descendants(expr.syntax());
             },
+        }
+    }
+
+    fn walk_branch(
+        &mut self,
+        consequence: Option<AnyRExpression>,
+        alternative: Option<AnyRExpression>,
+    ) {
+        let pre = self.walk.use_def_maps[self.current_scope].snapshot();
+
+        if let Some(consequence) = consequence {
+            self.walk_expression(&consequence);
+        }
+
+        let post = self.walk.use_def_maps[self.current_scope].snapshot();
+        self.walk.use_def_maps[self.current_scope].restore(pre);
+
+        if let Some(alternative) = alternative {
+            self.walk_expression(&alternative);
+        }
+
+        self.walk.use_def_maps[self.current_scope].merge(post);
+    }
+
+    // A loop body can run again, so a definition low in the body reaches a
+    // use above it on the next iteration. The forward walk records the use
+    // before reaching that definition, which `finish_loop_defs()` patches into
+    // the use afterward.
+    //
+    // `may_skip_body` is true when the body might run zero times, e.g. with
+    // `for`/`while`. In that case the pre-loop state must stay live alongside
+    // what the body bound. `repeat` runs at least once, so the body's state
+    // replaces it.
+    fn walk_loop_body(&mut self, body: Option<AnyRExpression>, may_skip_body: bool) {
+        let pre_loop = self.walk.use_def_maps[self.current_scope].snapshot();
+
+        if let Some(body) = body {
+            let first_use = self.walk.uses[self.current_scope].next_id();
+            self.walk_expression(&body);
+            self.walk.use_def_maps[self.current_scope].finish_loop_defs(
+                &pre_loop,
+                first_use,
+                &self.walk.uses[self.current_scope],
+            );
+        }
+
+        if may_skip_body {
+            self.walk.use_def_maps[self.current_scope].merge(pre_loop);
         }
     }
 
@@ -312,6 +313,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let watermark = self.scan.deferred_bodies.len();
         let scope = self.push_scope(ScopeKind::Function, fun.syntax().text_trimmed_range());
 
+        // Keep track of attaches made in the function context. We'll discard
+        // them upon leaving the lazy context.
+        let attached = self.scan.attached_so_far.len();
+
         if let Ok(params) = fun.parameters() {
             // Scan the default values before collecting them. R binds all
             // formals into the frame at once, so a default sees every parameter
@@ -334,6 +339,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.walk_expression(&body);
         }
 
+        // Discard attaches made in the lazy context.
+        self.scan.attached_so_far.truncate(attached);
         self.pop_scope(scope);
     }
 
@@ -497,12 +504,27 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // (sequential execution is guaranteed), but inside a function it's
         // only visible within that function and its children, since the
         // function might never be called. Same reasoning as `source()` calls.
-        let call_offset = call.syntax().text_trimmed_range().start();
+        let call_range = call.syntax().text_trimmed_range();
+        let region = self.attach_region(call_range.start(), &package);
         self.walk.semantic_calls.push(SemanticCall {
-            kind: SemanticCallKind::Attach { package },
-            offset: call_offset,
+            kind: SemanticCallKind::Attach { package, region },
+            range: call_range,
             scope: self.current_scope,
         });
+    }
+
+    /// Where the attach of `package` at `offset` holds, as the scan recorded
+    /// it at a branch or loop join. `Unconditional` for an attach on every path.
+    fn attach_region(&self, offset: TextSize, package: &str) -> AttachRegion {
+        let end = self.scan.attach_effect_ends.get(&offset).and_then(|ends| {
+            ends.iter()
+                .find_map(|(site_package, end)| (site_package == package).then_some(*end))
+        });
+
+        match end {
+            Some(end) => AttachRegion::Conditional { end },
+            None => AttachRegion::Unconditional,
+        }
     }
 
     // `source("file.R")` creates `DefinitionKind::Import` forwarding
@@ -539,7 +561,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let resolved = resolution.as_ref().map(|r| r.url.clone());
             self.walk.semantic_calls.push(SemanticCall {
                 kind: SemanticCallKind::Source { path, resolved },
-                offset: call_offset,
+                range,
                 scope: self.current_scope,
             });
 
@@ -567,15 +589,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 );
             }
 
-            // `library()` calls inside the sourced file attach packages to R's
-            // global search path at runtime, the same as a `library()` written
-            // here directly would. Emit them as `Attach` semantic calls scoped
-            // to this `source()`'s offset so scope-layer composition treats
-            // them identically to local `library()` calls.
+            // A sourced `library()` attaches to R's global search path. Model it
+            // as an `Attach` in this `source()` call's scope so import resolution
+            // handles it like a local `library()` call.
             for pkg in resolution.packages {
+                let region = self.attach_region(call_offset, &pkg);
                 self.walk.semantic_calls.push(SemanticCall {
-                    kind: SemanticCallKind::Attach { package: pkg },
-                    offset: call_offset,
+                    kind: SemanticCallKind::Attach {
+                        package: pkg,
+                        region,
+                    },
+                    range,
                     scope: self.current_scope,
                 });
             }
@@ -699,11 +723,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 let kind = ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy);
                 let scope = self.push_scope(kind, value.syntax().text_trimmed_range());
 
+                // Keep track of attach state. We discard any attaches made in
+                // the lazy context upon leaving it.
+                let attached = self.scan.attached_so_far.len();
+
                 self.begin_scan();
                 let watermark = self.scan.deferred_bodies.len();
                 self.scan_expression(value);
                 self.scan_deferred_bodies(watermark);
                 self.walk_expression(value);
+
+                // Discard attaches made in the lazy context.
+                self.scan.attached_so_far.truncate(attached);
                 self.pop_scope(scope);
             },
         }

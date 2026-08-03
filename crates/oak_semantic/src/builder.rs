@@ -21,9 +21,10 @@
 //!   snapshot.
 //!
 //! So there are two flow states, on purpose. The scan's flow state tracks only
-//! eager bindings and is allowed to stay coarse (across `if` branches it
-//! over-approximates to "bound on some path"). The walk builds the precise
-//! structures, such as the use-def map.
+//! eager bindings and is allowed to stay coarse: at an `if` join it only keeps
+//! the names consistently bound on every path. The walk builds the precise
+//! structures, such as the use-def map, where conditionality is recorded as
+//! `may_be_unbound`.
 
 use std::sync::Arc;
 
@@ -34,6 +35,7 @@ use aether_syntax::RRoot;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
@@ -43,6 +45,7 @@ use scan::BindingSites;
 use scan::BodyScan;
 use scan::CallResolution;
 use scan::DeferredBody;
+use scan::FlowAttaches;
 use scan::FlowState;
 use scan::OpenScope;
 
@@ -111,7 +114,8 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
 ///
 /// - An eager callee is shadowed only by bindings that already ran.
 ///   `bound_so_far` reflects this view. It rewinds at branch joins and is
-///   reseeded for each scan unit.
+///   reseeded for each scan unit. Forward bindings (defined later) and
+///   deferred bindings (`on.exit()`, `<<-`) don't enter `bound_so_far`.
 /// - A lazy body runs after its scope has finished and resolves symbols
 ///   in the whole scope. `bound_anywhere` reflects this view.
 ///
@@ -130,14 +134,32 @@ struct ScanState {
     // What the scan prepared for each child body, keyed by the body's range.
     // See [`BodyScan`].
     body_scans: FxHashMap<TextRange, BodyScan>,
-    // Packages attached in eager flow order (file level and eager NSE descents),
-    // appended only when `!is_lazy()`. Append-only, never restored across a
-    // descent or branch: attaches hit the global search path, they aren't scoped
-    // like `bound_so_far`. An eager callee reads the flow-precise prefix during
-    // the file scan. A lazy callee reads the complete set during the walk (which
-    // runs after the file scan finishes), so this doubles as the end-of-file
-    // attach view.
-    attached_flow: Vec<String>,
+    // Packages attached on every path so far, the attach analog of
+    // `bound_so_far` (file level and eager NSE descents, appended only when
+    // `!is_lazy()`). A `library()` on only one branch, or in a loop body that
+    // may not run, drops at the join. An eager callee reads the flow-precise
+    // prefix during the file scan. A lazy callee reads the end-of-file value
+    // during the walk, paired with `attached_inherited` for what was live where
+    // that body was defined.
+    attached_so_far: FlowAttaches,
+    // Where a conditional attach stops holding, keyed by the attaching call's
+    // offset, holding the (package, end) pairs recorded at that offset (almost
+    // always one; a `source()` forwarding several packages can produce
+    // several). Written when a branch or loop join drops the attach from
+    // `attached_so_far`, and read by the walk onto the `SemanticCall` so an
+    // offset-based consumer narrows the same way the scan does.
+    attach_effect_ends: FxHashMap<TextSize, Vec<(String, TextSize)>>,
+    // Attaches that were live where the current scan unit was defined, cleared
+    // and reseeded by `begin_scan()`. A lazy body inherits them, e.g. in
+    // `if (cond) { library(shiny); f <- function() reactive({ ... }) }`. Empty
+    // for the file scope and for any unit defined outside a branch.
+    attached_inherited: Vec<String>,
+    // Every package attached on any eager path, paired with the attaching
+    // call's range, in attach order. Unlike `attached_so_far`, this is never
+    // dropped or truncated at a branch or loop join. Used to probe whether an
+    // effect decision based on the linear view is ambiguous across paths
+    // (`record_conditional_attach_ambiguity()`).
+    attached_anywhere: Vec<(String, TextRange)>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
@@ -200,7 +222,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 call_resolutions: FxHashMap::default(),
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
-                attached_flow: Vec::new(),
+                attached_so_far: FlowAttaches::default(),
+                attach_effect_ends: FxHashMap::default(),
+                attached_inherited: Vec::new(),
+                attached_anywhere: Vec::new(),
                 open_scopes: Vec::new(),
                 deferred_bodies: Vec::new(),
             },

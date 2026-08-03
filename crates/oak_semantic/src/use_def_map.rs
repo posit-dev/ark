@@ -20,7 +20,9 @@ use crate::semantic_index::UseId;
 // `DefinitionId`s that are "live". A fresh scope starts with every symbol in
 // the "unbound" state: empty definition set, `may_be_unbound: true`.
 // The "may_be_unbound" flag tracks whether there exists some control flow path
-// where no definition was reached.
+// where no definition was reached. It's a rudimentary version of the
+// reachability constraints that you can find in ty, which record under what
+// condition a variable use is bound or unbound.
 //
 // ```r
 // if (cond) {

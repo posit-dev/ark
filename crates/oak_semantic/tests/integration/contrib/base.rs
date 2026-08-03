@@ -4,6 +4,8 @@ use biome_rowan::AstNode;
 use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::SourceAnnotation;
+use oak_semantic::semantic_index::AmbiguityReason;
+use oak_semantic::semantic_index::AttachRegion;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -473,7 +475,8 @@ fn test_quote_suppresses_assign_effect() {
 fn test_directive_library_identifier() {
     let index = index_with_base("library(dplyr)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -481,7 +484,8 @@ fn test_directive_library_identifier() {
 fn test_directive_library_string() {
     let index = index_with_base("library(\"tidyr\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "tidyr".into()
+        package: "tidyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -489,7 +493,8 @@ fn test_directive_library_string() {
 fn test_directive_library_single_quoted_string() {
     let index = index_with_base("library('ggplot2')");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "ggplot2".into()
+        package: "ggplot2".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -497,7 +502,8 @@ fn test_directive_library_single_quoted_string() {
 fn test_directive_require() {
     let index = index_with_base("require(data.table)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "data.table".into()
+        package: "data.table".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -506,13 +512,16 @@ fn test_directive_multiple_libraries() {
     let index = index_with_base("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Attach {
-            package: "tidyr".into()
+            package: "tidyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Attach {
-            package: "ggplot2".into()
+            package: "ggplot2".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -522,7 +531,8 @@ fn test_directive_named_argument() {
     // The package binds the `package` formal by name.
     let index = index_with_base("library(package = dplyr)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -532,7 +542,8 @@ fn test_directive_multiple_arguments() {
     // no formal we track.
     let index = index_with_base("library(dplyr, warn.conflicts = FALSE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -542,7 +553,8 @@ fn test_directive_character_only_string() {
     // A string literal resolves to its text.
     let index = index_with_base("library(\"dplyr\", character.only = TRUE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -561,7 +573,8 @@ fn test_directive_character_only_false_is_quoted() {
     // text is the package name.
     let index = index_with_base("library(dplyr, character.only = FALSE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -576,7 +589,8 @@ fn test_directive_library_in_function_scope() {
     // library() in a function body now records a scoped directive
     let index = index_with_base("f <- function() { library(dplyr) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
     let semantic_calls = index.semantic_calls();
     assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
@@ -687,14 +701,16 @@ fn test_source_and_library_calls_coexist() {
     let index = index_with_base("library(dplyr)\nsource(\"helpers.R\")\nrequire(tidyr)");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "helpers.R".into(),
             resolved: None,
         },
         &SemanticCallKind::Attach {
-            package: "tidyr".into()
+            package: "tidyr".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -874,7 +890,8 @@ fn test_fixme_directive_declare_library_transparent() {
     // FIXME: We should declare `declare()` as a quoting function.
     let index = index_with_base("declare(library(dplyr))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
-        package: "dplyr".into()
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
     }]);
 }
 
@@ -904,7 +921,8 @@ fn test_directive_declare_mixed_with_bare() {
         index_with_base("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "helpers.R".into(),
@@ -1046,7 +1064,8 @@ fn test_source_resolver_packages_become_attach_calls() {
             resolved: Some(Url::parse("file:///test/helpers.R").unwrap()),
         },
         &SemanticCallKind::Attach {
-            package: "dplyr".into()
+            package: "dplyr".into(),
+            region: AttachRegion::Unconditional,
         },
     ]);
 }
@@ -1201,7 +1220,8 @@ fn test_source_resolver_multiple_files_each_emitted_and_injected() {
             resolved: Some(Url::parse("file:///a.R").unwrap()),
         },
         &SemanticCallKind::Attach {
-            package: "pkgA".into()
+            package: "pkgA".into(),
+            region: AttachRegion::Unconditional,
         },
         &SemanticCallKind::Source {
             path: "b.R".into(),
@@ -1367,6 +1387,66 @@ local({
 }
 
 #[test]
+fn test_nse_conditionally_shadowed_name_builds_scope_and_lints() {
+    // Eager linear view: a conditional shadow (`local` bound on only one path)
+    // drops out of `bound_so_far` at the branch join, so the scan resolves the
+    // effect and builds the NSE scope with `y` scoped inside. We settle on that
+    // reading (no mirror) and record an ambiguity diagnostic, because a local
+    // binding could have suppressed the effect on the `cond` path.
+    let source = "\
+if (cond) local <- identity
+local({
+    y <- 1
+})
+y
+";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // Not mirrored: `y` at file scope is only the trailing use, and it resolves
+    // to nothing (the binding lives in the NSE scope in the chosen reading).
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    let (_, use_id, _) = index
+        .uses_of("y")
+        .into_iter()
+        .find(|(scope, _, _)| *scope == file)
+        .unwrap();
+    let bindings = index.use_def_map(file).bindings_at_use(use_id);
+    assert!(bindings.may_be_unbound());
+    assert!(bindings.definitions().is_empty());
+
+    // The conditional shadow of `local` is flagged.
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n    y <- 1\n})");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
 fn test_nse_ancestor_shadowed_name_no_scope() {
     // A `local` binding in an ENCLOSING scope shadows the base function too,
     // even when the call site sits in a nested scope where `local` is free.
@@ -1403,6 +1483,139 @@ f <- function() {
         index.symbols(f_scope).get("y").unwrap().flags(),
         SymbolFlags::IS_BOUND
     );
+}
+
+#[test]
+fn test_conditional_shadow_ancestor_lazy_is_lint_covered() {
+    // A conditional shadow of `local` in an ENCLOSING scope, with the NSE call
+    // inside a lazy nested scope (a function body). The conditional-shadow
+    // diagnostic is same-scope only and doesn't fire, but the file isn't silent:
+    // the lazy-shadow diagnostic catches it, because inside a lazy body `local`
+    // resolves against the ancestor union where the conditional binding lives.
+    let source = "\
+if (cond) local <- identity
+f <- function() local({
+    y <- 1
+})
+";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
+        } => {
+            assert_eq!(name, "local");
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "local({\n    y <- 1\n})");
+            let ov_start = u32::from(overwrite_range.start()) as usize;
+            let ov_end = u32::from(overwrite_range.end()) as usize;
+            assert_eq!(&source[ov_start..ov_end], "local");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_conditional_shadow_same_scope_in_eager_nse() {
+    // The conditional-shadow diagnostic works one level down too. Here the
+    // conditional binding and the shadowed call sit in the SAME eager NSE scope
+    // (the outer `local` body), so the inner `local({...})` is flagged just as
+    // it would be at file scope.
+    let source = "\
+local({
+    if (cond) local <- identity
+    local({
+        y <- 1
+    })
+})
+";
+    let index = index_with_base(source);
+
+    let outer = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+    assert_eq!(
+        index.scope(outer).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.scope(inner).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(inner).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "known blind spot: an eager-nested ancestor conditional shadow is \
+            unflagged until reachability constraints land"]
+fn test_conditional_shadow_ancestor_eager_blind_spot() {
+    // `local` is conditionally shadowed in an ENCLOSING scope and the call sits
+    // in a nested EAGER scope (a `with()` body) that never binds `local`. This
+    // is the genuine zero-coverage case: same-scope detection can't see the
+    // ancestor's binding, and the eager body means the lazy-shadow diagnostic
+    // doesn't apply either, so today no diagnostic fires. Reachability
+    // constraints should flag the inner call, matching the binding's `cond`
+    // guard against the call's.
+    let source = "\
+if (cond) local <- identity
+with(d, {
+    local({
+        y <- 1
+    })
+})
+";
+    let index = index_with_base(source);
+
+    // The NSE scope is still built (we settle on the effectful reading), so the
+    // only thing missing today is the ambiguity diagnostic.
+    let inner = ScopeId::from(2);
+    assert_eq!(
+        index.scope(inner).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(inner).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { .. },
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
 }
 
 #[test]
@@ -2181,10 +2394,10 @@ local <- identity
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::LazyShadowAmbiguity {
+        SemanticDiagnostic::EffectAmbiguity {
             name,
             call_range,
-            overwrite_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
         } => {
             assert_eq!(name, "local");
 
@@ -2196,6 +2409,7 @@ local <- identity
             let overwrite_end = u32::from(overwrite_range.end()) as usize;
             assert_eq!(&source[overwrite_start..overwrite_end], "local");
         },
+        other => panic!("unexpected diagnostic: {other:?}"),
     }
 }
 
@@ -2405,6 +2619,139 @@ f <- function() {
 // --- Attach tracking ---
 
 #[test]
+fn test_attach_order_ambiguity_flagged_when_arms_disagree() {
+    let source = "\
+if (cond) {
+    library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
+            assert_eq!(packages, &vec!["rlang".to_string(), "cli".to_string()]);
+            let start = u32::from(range.start()) as usize;
+            let end = u32::from(range.end()) as usize;
+            assert!(source[start..end].starts_with("if (cond) {"));
+            assert!(source[start..end].ends_with("library(cli)\n}"));
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_attach_order_ambiguity_not_flagged_when_arms_agree() {
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(cli)
+    library(rlang)
+} else {
+    library(cli)
+    library(rlang)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_sees_an_attach_rejoined_by_a_nested_if() {
+    // cli reaches the outer join on the inner `if`'s `else` call, so it competes
+    // with rlang there as if it had been attached directly in the arm.
+    let index = index_with_base(
+        "\
+if (a) {
+    if (b) library(cli) else library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousAttachOrder { packages, .. } => {
+            assert_eq!(packages, &vec!["rlang".to_string(), "cli".to_string()]);
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_attach_order_ambiguity_silent_across_a_conditional_attach() {
+    // Nothing fires, though the paths that attach both disagree: `a && b` puts
+    // cli below rlang, `!a` puts it above. cli doesn't survive the consequence
+    // arm's own join, so it isn't among the packages this join compares.
+    //
+    // The join is the wrong place to catch it. Comparing every package attached
+    // anywhere in an arm would flag this one, but also `if (b) library(cli) else
+    // library(rlang)`, where no single path attaches both. A use that resolves to
+    // a conditionally attached package from outside that package's region is the
+    // signal that separates them, and it lives in resolution, not here.
+    let index = index_with_base(
+        "\
+if (a) {
+    if (b) library(cli)
+    library(rlang)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_ignores_a_reattach_that_settles_the_order() {
+    // The consequence attaches cli twice. R searches the latest attach of a
+    // package first, so both arms end up finding cli before rlang and the arms
+    // agree after all.
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(cli)
+    library(rlang)
+    library(cli)
+} else {
+    library(rlang)
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_attach_order_ambiguity_ignores_a_package_only_one_arm_attaches() {
+    let index = index_with_base(
+        "\
+if (cond) {
+    library(rlang)
+    library(cli)
+} else {
+    library(cli)
+}
+",
+    );
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
 fn test_nse_attach_eager_body_inside_lazy_body_is_deferred() {
     // `local` is eager, but it sits inside `f`'s function body, so reaching
     // its `library(shiny)` waits on `f()` being called. The attach is recorded
@@ -2511,14 +2858,9 @@ reactive({
 }
 
 #[test]
-fn test_nse_attach_within_lazy_body_not_yet_supported() {
-    // Sequential-within-one-lazy-body: when `f` runs, `library(shiny)` runs
-    // before `reactive`, so `reactive` is determinately NSE. We don't promote it
-    // today: `attached_flow` only grows in eager context, so the attach inside
-    // `f` (a lazy body) isn't visible to `reactive` in the same body. The attach
-    // is still recorded as a `SemanticCall::Attach`. This could be supported by
-    // tracking a per-unit attach set seeded from the EOF view, parallel to
-    // `bound_so_far`; deferred for now.
+fn test_nse_attach_within_lazy_body_applies_to_later_calls() {
+    // The attach precedes `reactive()` whenever `f()` runs, so shiny's
+    // annotation makes `reactive()` NSE.
     let index = index_with_base(
         "\
 f <- function() {
@@ -2530,14 +2872,83 @@ f <- function() {
 ",
     );
     let f_scope = ScopeId::from(1);
+    let reactive_scope = ScopeId::from(2);
 
-    // The attach is recorded (scoped to `f`), but not fed to `reactive`, and
-    // not counted at the file's top level: only `attached_packages_anywhere()`
-    // sees a `library()` buried in a function body.
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(index.scope(reactive_scope).parent(), Some(f_scope));
+    assert!(index.symbols(f_scope).get("x").is_none());
+    assert_eq!(
+        index.symbols(reactive_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    // The nested-body history includes shiny, but the file's final search path
+    // does not.
     assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
     assert!(index.attached_packages().is_empty());
+}
+
+#[test]
+fn test_nse_attach_within_lazy_body_does_not_escape_it() {
+    // `g()` cannot change the search path used by `h()` or the file scope.
+    let index = index_with_base(
+        "\
+g <- function() {
+    library(shiny)
+}
+h <- function() {
+    reactive({
+        x <- 1
+    })
+}
+reactive({
+    y <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let h_scope = ScopeId::from(2);
+
+    assert_eq!(index.scope_ids().count(), 3);
+    assert_eq!(index.scope(h_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(h_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
+fn test_todo_effects_of_a_called_function_are_not_applied() {
+    // At runtime, `g()` attaches shiny before `reactive()` runs. The index does
+    // not infer local-function effects, so `reactive()` is not recognized as NSE.
+    let index = index_with_base(
+        "\
+g <- function() library(shiny)
+g()
+reactive({
+    x <- 1
+})
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.attached_packages_anywhere(), vec!["shiny"]);
+    assert!(index.attached_packages().is_empty());
+
     assert_eq!(index.scope_ids().count(), 2);
-    assert_eq!(index.scope(f_scope).kind(), ScopeKind::Function);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
 }
 
 // --- `on.exit` (Current + Lazy) ---

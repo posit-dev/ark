@@ -614,7 +614,7 @@ fn test_library_in_sourced_file_records_attach_call() {
         .semantic_calls()
         .iter()
         .filter_map(|c| match c.kind() {
-            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
             _ => None,
         })
         .collect();
@@ -640,7 +640,7 @@ fn test_library_propagates_transitively_through_source_chains() {
         .semantic_calls()
         .iter()
         .filter_map(|c| match c.kind() {
-            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
             _ => None,
         })
         .collect();

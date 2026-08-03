@@ -189,7 +189,7 @@ impl SemanticIndex {
             .iter()
             .filter(|call| self.scope_is_eager(call.scope))
             .filter_map(|call| match &call.kind {
-                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
                 SemanticCallKind::Source { .. } => None,
             })
             .collect()
@@ -206,7 +206,7 @@ impl SemanticIndex {
         self.semantic_calls
             .iter()
             .filter_map(|call| match &call.kind {
-                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Attach { package, .. } => Some(package.as_str()),
                 SemanticCallKind::Source { .. } => None,
             })
             .collect()
@@ -214,18 +214,18 @@ impl SemanticIndex {
 
     /// Whether `scope` runs during the file's own top-level execution, i.e. no
     /// enclosing scope is lazy.
-    fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
-        let mut ancestor_id = Some(scope_id);
+    pub fn scope_is_eager(&self, scope_id: ScopeId) -> bool {
+        self.enclosing_lazy_scope(scope_id).is_none()
+    }
 
-        while let Some(id) = ancestor_id {
-            let ancestor_scope = self.scope(id);
-            if ancestor_scope.kind.is_lazy() {
-                return false;
-            }
-            ancestor_id = ancestor_scope.parent;
-        }
-
-        true
+    /// The scan unit that controls when code in `scope_id` runs.
+    ///
+    /// Returns `scope_id` when it is lazy, otherwise its nearest lazy ancestor.
+    /// `None` means the code runs while the file loads. An eager `local()` block
+    /// remains in its enclosing lazy scan unit.
+    pub fn enclosing_lazy_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.ancestor_scope_ids(scope_id)
+            .find(|&id| self.scope(id).kind.is_lazy())
     }
 
     /// Cross-file call sites (`library()`, `source()`, …) recorded
@@ -795,15 +795,48 @@ impl Ranged for Use {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticCall {
     pub(crate) kind: SemanticCallKind,
-    pub(crate) offset: TextSize,
+    pub(crate) range: TextRange,
     pub(crate) scope: ScopeId,
+}
+
+/// Where an attach is known to hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachRegion {
+    /// From the call to its scope's end when every path to a later offset has the
+    /// package attached. This includes calls that run on every path and the `else`
+    /// call when both `if` arms attach the package.
+    Unconditional,
+    /// From the call to `end` only, the close of the arm or loop body that
+    /// made it. Nothing outside is known, in either direction.
+    ///
+    /// The start isn't a field: it's always the call's own offset, so
+    /// [`contains`](Self::contains) takes the `call` rather than storing a
+    /// redundant start that could disagree with it.
+    Conditional { end: TextSize },
+}
+
+impl AttachRegion {
+    /// Whether the attach from `call` holds at `offset`.
+    ///
+    /// The package attaches after the call returns, so the region starts at
+    /// `call.range().end()` and excludes every offset in `library(foo)`.
+    pub fn contains(&self, call: &SemanticCall, offset: TextSize) -> bool {
+        call.range().end() <= offset &&
+            match self {
+                AttachRegion::Unconditional => true,
+                AttachRegion::Conditional { end } => offset <= *end,
+            }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticCallKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the
     /// search path. Contributes a fallback layer for unbound symbols.
-    Attach { package: String },
+    Attach {
+        package: String,
+        region: AttachRegion,
+    },
     /// `source("path")`: injects the sourced file's top-level
     /// bindings into the current scope. Local-scope semantics, not
     /// search-path semantics.
@@ -820,7 +853,11 @@ impl SemanticCall {
     }
 
     pub fn offset(&self) -> TextSize {
-        self.offset
+        self.range.start()
+    }
+
+    pub fn range(&self) -> TextRange {
+        self.range
     }
 
     pub fn scope(&self) -> ScopeId {
@@ -882,16 +919,49 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An effectful call (NSE scope or attach) recognized in a lazy context
-    /// whose callee is also bound by a lazy-crossed ancestor with undetermined
-    /// timing, so the decision is a guess. `call_range` points at the call we
-    /// recognized, `overwrite_range` at the ancestor binding that could
-    /// invalidate it (a later assignment in parent code, or one from another
-    /// lazy context).
-    LazyShadowAmbiguity {
+    /// An effect decision (NSE scope or attach) settled on the eager-linear
+    /// reading even though another reading was possible. `call_range` points at
+    /// the call we decided about, which may or may not have come out effectful;
+    /// `reason` says what made it ambiguous and where the competing site is.
+    EffectAmbiguity {
         name: String,
         call_range: TextRange,
-        overwrite_range: TextRange,
+        reason: AmbiguityReason,
+    },
+    /// Both `if` arms attach the same packages in different orders. The scanner
+    /// retains the `else` arm's order in `packages`, but R searches the most recent
+    /// attach first, so masked names after the `if` depend on the selected arm.
+    ///
+    /// Emit this even without a current name collision. A later package upgrade
+    /// could introduce one without a source change. The `range` covers the `if`.
+    AmbiguousAttachOrder {
+        packages: Vec<String>,
+        range: TextRange,
+    },
+}
+
+/// What made an [`EffectAmbiguity`](SemanticDiagnostic::EffectAmbiguity)
+/// ambiguous, and where the competing site is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AmbiguityReason {
+    /// The callee is bound by a lazy-crossed ancestor with undetermined
+    /// timing: a later assignment in parent code, or one from another
+    /// deferred body that could run before or after us. `overwrite_range`
+    /// points at that ancestor binding.
+    LazyShadow { overwrite_range: TextRange },
+    /// The callee is shadowed by a *conditional* local binding in the same
+    /// scope (`if (cond) local <- identity; local({...})`). The eager linear
+    /// scan dropped the conditional binding and resolved the effect, so the
+    /// scope shape is condition-dependent. `binding_range` points at the
+    /// conditional binding.
+    ConditionalShadow { binding_range: TextRange },
+    /// The callee would have been effectful, but the `library()`/`require()`
+    /// that annotates it was attached on only some paths and dropped at a
+    /// branch or loop join, so we read the call as plain. `attach_range` points
+    /// at that conditional attach.
+    ConditionalAttach {
+        package: String,
+        attach_range: TextRange,
     },
 }
 

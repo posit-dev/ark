@@ -562,3 +562,30 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
     assert_eq!(def.file(&db), ext_file);
     assert_eq!(def.name(&db).text(&db).as_str(), "baz");
 }
+
+#[test]
+fn test_conditional_library_resolves_only_inside_its_branch() {
+    // The reported symptom of the conditional-attach bug was goto-definition,
+    // which reaches the attach layers through `resolve_at` rather than
+    // `imports_at`. Nothing says the branch ran, so the use after it resolves
+    // to nothing while the one inside the arm still lands in the package.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "mypkg", &["foo"], &[(
+        "library/mypkg/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let (_ws_root, files) = setup_workspace_scripts(&mut db, "ws", &[(
+        "ws/script.R",
+        "if (cond) {\n  library(mypkg)\n  foo\n}\nfoo\n",
+    )]);
+    let script = files[0];
+    let source = script.source_text(&db).clone();
+
+    let inside = TextSize::from(source.find("  foo").unwrap() as u32 + 2);
+    assert_eq!(resolve_one(&db, script, inside).file(&db), pkg_file);
+
+    let after = TextSize::from(source.rfind("foo").unwrap() as u32);
+    assert!(script.resolve_at(&db, after).is_empty());
+}

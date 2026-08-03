@@ -14,12 +14,14 @@ use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
 use super::assignment_name;
+use super::effects::attach_search_path;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -30,10 +32,12 @@ use crate::effects::ResolvedArgumentEffects;
 use crate::effects::ScopeContext;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
+use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
+use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SymbolFlags;
 
 // Traversal
@@ -59,16 +63,25 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         match self.scan.body_scans.get(&range) {
             // The file scope has no entry: nothing is inherited, so start clean.
-            None => self.scan.bound_so_far.clear(),
-            Some(BodyScan::Deferred(snapshot)) => {
-                let snapshot = snapshot.clone();
-                self.scan.bound_so_far.restore(snapshot);
+            None => {
+                self.scan.bound_so_far.clear();
+                self.scan.attached_inherited.clear();
+            },
+            Some(BodyScan::Deferred {
+                bound_so_far,
+                attached_inherited,
+            }) => {
+                let bound_so_far = bound_so_far.clone();
+                let attached_inherited = attached_inherited.clone();
+                self.scan.bound_so_far.restore(bound_so_far);
+                self.scan.attached_inherited = attached_inherited;
             },
             Some(BodyScan::Scanned(_)) => {
                 // A body scanned inline by an eager descent is installed by the
                 // walk without a re-scan, so `begin_scan()` should never meet one.
                 stdext::debug_panic!("`begin_scan()` on an already-scanned body at {range:?}");
                 self.scan.bound_so_far.clear();
+                self.scan.attached_inherited.clear();
             },
         }
 
@@ -185,15 +198,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         variable.syntax().text_trimmed_range(),
                     );
                 }
+
                 if let Ok(sequence) = stmt.sequence() {
                     self.scan_expression(&sequence);
                 }
-                // A loop body only adds bindings (a name bound inside still
-                // "reaches" on the ran path), so no restore is needed, unlike
-                // the two-branch `if`/`else` below.
-                if let Ok(body) = stmt.body() {
-                    self.scan_expression(&body);
-                }
+
+                self.scan_loop_body(stmt.body().ok());
             },
 
             AnyRExpression::RIfStatement(stmt) => {
@@ -201,32 +211,166 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     self.scan_expression(&condition);
                 }
 
-                let pre_if = self.scan.bound_so_far.snapshot();
-
-                if let Ok(consequence) = stmt.consequence() {
-                    self.scan_expression(&consequence);
-                }
-
-                let post_if = self.scan.bound_so_far.snapshot();
-                self.scan.bound_so_far.restore(pre_if);
-
-                if let Some(else_clause) = stmt.else_clause() {
-                    if let Ok(alternative) = else_clause.alternative() {
-                        self.scan_expression(&alternative);
-                    }
-                }
-
-                // Both branches' bindings are live afterwards.
-                self.scan.bound_so_far.merge(post_if);
+                let alternative = stmt
+                    .else_clause()
+                    .and_then(|else_clause| else_clause.alternative().ok());
+                self.scan_branch(
+                    stmt.consequence().ok(),
+                    alternative,
+                    stmt.syntax().text_trimmed_range(),
+                );
             },
 
-            // `while`/`repeat` loops, subsets, extractions, parentheses, unary
-            // ops, and literals: recurse into child expressions. Loops need no
-            // flow restore (see the `for` arm). Identifiers and dots are leaves
-            // with no bindings or calls, so they fall through to a no-op walk.
+            AnyRExpression::RWhileStatement(stmt) => {
+                if let Ok(condition) = stmt.condition() {
+                    self.scan_expression(&condition);
+                }
+
+                self.scan_loop_body(stmt.body().ok());
+            },
+
+            // `repeat` loops, subsets, extractions, parentheses, unary ops, and
+            // literals: recurse into child expressions. The body of a `repeat`
+            // expression always runs once, so its bindings are definite.
+            // Identifiers and dots are leaves with no bindings or calls, so
+            // they fall through to a no-op walk.
             _ => {
                 self.scan_descendants(expr.syntax());
             },
+        }
+    }
+
+    fn scan_branch(
+        &mut self,
+        consequence: Option<AnyRExpression>,
+        alternative: Option<AnyRExpression>,
+        range: TextRange,
+    ) {
+        let pre = self.scan.bound_so_far.snapshot();
+        // A `library()` in one branch must not be visible in the sibling
+        // branch, so peel each side's attaches off at this mark and re-add only
+        // what survives the join.
+        let attach_watermark = self.scan.attached_so_far.len();
+
+        let consequence_end = self.scan_conditional(consequence.as_ref());
+
+        let post = self.scan.bound_so_far.snapshot();
+        let consequence_attaches = self.scan.attached_so_far.split_off(attach_watermark);
+        self.scan.bound_so_far.restore(pre);
+
+        let alternative_end = self.scan_conditional(alternative.as_ref());
+
+        self.scan.bound_so_far.merge(post);
+        let alternative_attaches = self.scan.attached_so_far.split_off(attach_watermark);
+
+        self.join_attaches(
+            consequence_attaches,
+            consequence_end,
+            alternative_attaches,
+            alternative_end,
+            range,
+        );
+    }
+
+    /// Scan a loop body, which may not run at all (an empty `for` sequence, a
+    /// `while` condition false on entry). Effects in the body like a binding or
+    /// `library()` call don't persist past the loop.
+    fn scan_loop_body(&mut self, body: Option<AnyRExpression>) {
+        let attach_watermark = self.scan.attached_so_far.len();
+        let pre_body = self.scan.bound_so_far.snapshot();
+
+        let body_end = self.scan_conditional(body.as_ref());
+
+        self.scan.bound_so_far.merge(pre_body);
+        let dropped = self.scan.attached_so_far.split_off(attach_watermark);
+        self.end_attach_effects(dropped, body_end);
+    }
+
+    /// Scan a region that may not run (a branch arm, a loop body) and return
+    /// where it ends, the point past which its effects like attaches no longer hold.
+    fn scan_conditional(&mut self, region: Option<&AnyRExpression>) -> Option<TextSize> {
+        let region = region?;
+        self.scan_expression(region);
+        Some(region.syntax().text_trimmed_range().end())
+    }
+
+    /// Rejoin the two `if` arms' attaches. An attach in only one of the arms
+    /// ends at that arm's close because it does not run on every path. When
+    /// both arms attach a package, retain the `else` attach since every path
+    /// has the package after its call.
+    fn join_attaches(
+        &mut self,
+        consequence: Vec<AttachSite>,
+        consequence_end: Option<TextSize>,
+        alternative: Vec<AttachSite>,
+        alternative_end: Option<TextSize>,
+        range: TextRange,
+    ) {
+        // The `else` arm is the `if`'s final child, so its attach reaches the
+        // closing brace. End the consequence attach at its arm so it cannot reach
+        // the `else` arm.
+        let rejoined = |site: &AttachSite| {
+            consequence
+                .iter()
+                .any(|other| other.package == site.package)
+        };
+        let (rejoined, dropped): (Vec<_>, Vec<_>) = alternative.into_iter().partition(rejoined);
+
+        self.record_attach_order_ambiguity(&consequence, &rejoined, range);
+
+        self.end_attach_effects(consequence, consequence_end);
+        self.end_attach_effects(dropped, alternative_end);
+
+        for site in rejoined {
+            self.scan.attached_so_far.push(site.package, site.offset);
+        }
+    }
+
+    /// Record a diagnostic when packages attached on both `if` arms have different
+    /// search orders. The scanner retains the `else` order, so masked names after
+    /// the join may resolve differently on the consequence path.
+    ///
+    /// Compare only packages attached on every path through both arms. A package
+    /// attached conditionally within an arm may still reorder another on some path,
+    /// but this join cannot distinguish that from exclusive sibling arms.
+    /// TODO(diagnostics): Resolution should detect and lint a use outside the
+    /// package's effect region.
+    fn record_attach_order_ambiguity(
+        &mut self,
+        consequence: &[AttachSite],
+        rejoined: &[AttachSite],
+        range: TextRange,
+    ) {
+        if rejoined.len() < 2 {
+            return;
+        }
+
+        let packages: FxHashSet<&str> = rejoined.iter().map(|site| site.package.as_str()).collect();
+        let kept = search_order(rejoined, &packages);
+        if search_order(consequence, &packages) == kept {
+            return;
+        }
+
+        self.diagnostics
+            .push(SemanticDiagnostic::AmbiguousAttachOrder {
+                packages: kept.into_iter().map(String::from).collect(),
+                range,
+            });
+    }
+
+    /// End the effect of each attach in `sites` at `end`, the close of the
+    /// branch arm or loop body that made it. `end` is `None` only for an absent
+    /// arm, which attaches nothing.
+    fn end_attach_effects(&mut self, sites: Vec<AttachSite>, end: Option<TextSize>) {
+        let Some(end) = end else {
+            return;
+        };
+        for site in sites {
+            self.scan
+                .attach_effect_ends
+                .entry(site.offset)
+                .or_default()
+                .push((site.package, end));
         }
     }
 
@@ -271,14 +415,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         };
 
         if let Some(package) = attach {
+            let call_range = call.syntax().text_trimmed_range();
             self.scan
                 .call_resolutions
-                .entry(call.syntax().text_trimmed_range())
+                .entry(call_range)
                 .or_default()
                 .attach = Some(package.clone());
+
+            // Keep every eager attach here even after a branch or loop removes
+            // it from `attached_so_far`. If a later effect lookup fails, we
+            // emit a lint when one of these dropped attaches would have
+            // resolved it. Lazy-body attaches stay out because this scan cannot
+            // establish their order relative to other lazy bodies.
             if !self.scopes[self.current_scope].kind.is_lazy() {
-                self.scan.attached_flow.push(package);
+                self.scan
+                    .attached_anywhere
+                    .push((package.clone(), call_range));
             }
+
+            // Make this attach available to later calls in the current scan unit.
+            self.scan.attached_so_far.push(package, call_range.start());
         }
 
         // Cache each recognized path with its resolution. The walk reads them
@@ -326,6 +482,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return;
         };
 
+        // We resolved an effect for a callee that isn't bound on every path. If
+        // it's bound on *some* earlier path here (a conditional shadow that
+        // dropped out of the eager linear view), the scope-shape decision is
+        // ambiguous, so flag it before descending into the body.
+        self.record_conditional_shadow_ambiguity(call, &arg_effects);
+
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -353,9 +515,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     // end of this scan unit, once the owner's lexical
                     // environment is fully known. See `scan_deferred_bodies()`.
                     (EvalEnv::Current, EvalTiming::Lazy) => {
+                        let attached_inherited = attach_search_path(
+                            &self.scan.attached_inherited,
+                            self.scan.attached_so_far.packages(),
+                        )
+                        .into_owned();
                         self.scan.deferred_bodies.push(DeferredBody {
                             body: value.clone(),
                             bound_so_far: self.scan.bound_so_far.snapshot(),
+                            attached_inherited,
                         });
                     },
 
@@ -410,6 +578,82 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .arguments = Some(arg_effects);
     }
 
+    /// Flag an NSE call whose scope only exists on some branches, because a
+    /// *conditional* binding earlier in this scope shadows its callee.
+    ///
+    /// Take `if (cond) local <- identity` then `local({ y <- 1 })`. On the
+    /// branch where the shadow held, `local` is the user's own standard
+    /// evaluation function. The scope shape ambiguously depends on `cond`,
+    /// which we record here.
+    ///
+    /// A conditional shadow is a binding on some path through this scope but not
+    /// on every path, so we test both halves directly: bound somewhere in the
+    /// scope, and not bound on every path. A binding on every path is a definite
+    /// shadow that suppresses the effect, so that call is a plain local one and
+    /// never reaches here.
+    ///
+    /// Two things narrow what fires. The effect must actually build a scope, so
+    /// we skip `evalq()` (the `Current + Eager` quadrant, which builds none).
+    /// And we check only the current scan scope, so a conditional shadow in an
+    /// enclosing scope slips through. In
+    ///
+    /// ```r
+    /// if (cond) local <- identity
+    /// with(d, {
+    ///     local({ y <- 1 })
+    /// })
+    /// ```
+    ///
+    /// the `local({...})` call sits in the `with()` scope, which never bound
+    /// `local`, so nothing flags it even though the shape still depends on
+    /// `cond`. The `with()` body must be eager for this to go silent: a lazy
+    /// body (a function, `reactive()`) instead trips the lazy-shadow diagnostic,
+    /// which resolves against the ancestor union. Reachability constraints will
+    /// close the eager gap by matching the binding's guard against the call's,
+    /// rather than tracking a coarse per-scope set.
+    ///
+    /// The bindings of `on_load()` or `on.exit()` are not visible yet because
+    /// their bodies are scanned after this call. That lazy-timed shadow is left
+    /// to the lazy-shadow diagnostic.
+    fn record_conditional_shadow_ambiguity(
+        &mut self,
+        call: &RCall,
+        arg_effects: &ResolvedArgumentEffects,
+    ) {
+        let creates_scope = arg_effects.iter().flatten().any(|effect| {
+            matches!(
+                effect,
+                ResolvedArgumentEffect::EvalQ { env, timing }
+                    if !matches!((*env, *timing), (EvalEnv::Current, EvalTiming::Eager))
+            )
+        });
+        if !creates_scope {
+            return;
+        }
+
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        let name = ident.name_text();
+
+        // A conditional shadow is a binding on some path but not all: present in
+        // this scope's union (`scan_scope_binding_range()`) yet absent from
+        // `bound_so_far`.
+        let Some(binding_range) = self.scan_scope_binding_range(&name) else {
+            return;
+        };
+        if self.scan.bound_so_far.is_bound(&name) {
+            return;
+        }
+
+        let call_range = call.syntax().text_trimmed_range();
+        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { binding_range },
+        });
+    }
+
     /// Scan the `Current + Lazy` bodies queued since `watermark`, now that the
     /// enclosing unit's `bound_anywhere` is complete. Runs with the owner's
     /// frame context still live (the arena `current_scope`, plus any open eager
@@ -427,8 +671,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 break;
             }
 
-            for DeferredBody { body, bound_so_far } in batch {
+            for DeferredBody {
+                body,
+                bound_so_far,
+                attached_inherited,
+            } in batch
+            {
                 let old = self.scan.bound_so_far.snapshot();
+                let old_attached =
+                    std::mem::replace(&mut self.scan.attached_inherited, attached_inherited);
                 self.scan.bound_so_far.restore(bound_so_far);
 
                 self.scan.open_scopes.push(OpenScope {
@@ -440,6 +691,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
                 self.scan.open_scopes.pop();
                 self.scan.bound_so_far.restore(old);
+                self.scan.attached_inherited = old_attached;
             }
         }
     }
@@ -513,7 +765,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // context, matching `scan_attach_call`'s `!is_lazy()` gate.
         if !self.scopes[self.current_scope].kind.is_lazy() {
             for pkg in &resolution.packages {
-                self.scan.attached_flow.push(pkg.clone());
+                self.scan
+                    .attached_anywhere
+                    .push((pkg.clone(), source_range));
+                self.scan
+                    .attached_so_far
+                    .push(pkg.clone(), source_range.start());
             }
         }
 
@@ -530,6 +787,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match self.scan_scope() {
             ScanScope::Open(scope) => scope.binds(name),
             ScanScope::Arena(scope) => self.scope_binds_anywhere(scope, name),
+        }
+    }
+
+    /// The site where the current evaluation frame binds `name`, matching
+    /// what [`scan_scope_binds`](Self::scan_scope_binds) counts as a binding
+    /// (so it returns `Some` on exactly the same names).
+    fn scan_scope_binding_range(&self, name: &str) -> Option<TextRange> {
+        match self.scan_scope() {
+            ScanScope::Open(scope) => scope.binding_range(name),
+            ScanScope::Arena(scope) => self.scope_binding_range(scope, name),
         }
     }
 
@@ -559,16 +826,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 // State management
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    /// Record the names a child scope (function body, NSE argument) about to be
+    /// Record what a child scope (function body, NSE argument) about to be
     /// created at `range` inherits from its ancestors, to seed the child's scan
     /// in `begin_scan`. Called during the scan, where `bound_so_far` is the
     /// parent's flow-precise state at the child's definition point (already
     /// carrying the parent's own inherited ancestors, so the child inherits
     /// transitively).
+    ///
+    /// The attaches are captured as the parent's whole search path, so a nested
+    /// body inherits a branch-local attach through however many levels of
+    /// definition sit between them.
     fn record_enclosing_flow(&mut self, range: TextRange) {
-        self.scan
-            .body_scans
-            .insert(range, BodyScan::Deferred(self.scan.bound_so_far.snapshot()));
+        let attached_inherited = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        )
+        .into_owned();
+        self.scan.body_scans.insert(range, BodyScan::Deferred {
+            bound_so_far: self.scan.bound_so_far.snapshot(),
+            attached_inherited,
+        });
     }
 
     /// Record a binding in both scan binding views.
@@ -646,22 +923,97 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
     }
 }
 
-/// The scan's flow-precise binding state: which names are bound at the current
-/// point of the current scan unit, in flow order.
+/// One package attached by a `library()` / `require()` call, or forwarded by a
+/// `source()` one. `offset` is the attaching call's start, which pairs with
+/// `package` to identify the [`SemanticCall`] the walk emits for it.
+///
+/// [`SemanticCall`]: crate::semantic_index::SemanticCall
+#[derive(Clone)]
+pub(super) struct AttachSite {
+    pub(super) package: String,
+    pub(super) offset: TextSize,
+}
+
+/// Return the selected packages in reverse R lookup order after applying
+/// `sites`. Reattaching a selected package moves it to the end because R searches
+/// its most recent attach first.
+fn search_order<'a>(sites: &'a [AttachSite], packages: &FxHashSet<&str>) -> Vec<&'a str> {
+    let mut order: Vec<&str> = Vec::new();
+
+    for site in sites {
+        let package = site.package.as_str();
+        if !packages.contains(package) {
+            continue;
+        }
+        order.retain(|kept| *kept != package);
+        order.push(package);
+    }
+
+    order
+}
+
+/// The packages attached on every path reaching the current point, each with
+/// its call site. The attach analog of [`FlowState`].
+///
+/// The packages sit in their own `Vec` so [`attach_search_path`] can hand the
+/// resolver a `&[String]` without rebuilding the search path at every effect
+/// resolution. The offsets ride alongside so a branch or loop join can name the
+/// attaches it drops.
+#[derive(Default)]
+pub(super) struct FlowAttaches {
+    packages: Vec<String>,
+    offsets: Vec<TextSize>,
+}
+
+impl FlowAttaches {
+    /// The attached packages in attach order, the search path at this point.
+    pub(super) fn packages(&self) -> &[String] {
+        &self.packages
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.packages.len()
+    }
+
+    pub(super) fn push(&mut self, package: String, offset: TextSize) {
+        self.packages.push(package);
+        self.offsets.push(offset);
+    }
+
+    pub(super) fn truncate(&mut self, watermark: usize) {
+        self.packages.truncate(watermark);
+        self.offsets.truncate(watermark);
+    }
+
+    /// Remove and return everything attached since `mark`, in attach order.
+    pub(super) fn split_off(&mut self, watermark: usize) -> Vec<AttachSite> {
+        let offsets = self.offsets.split_off(watermark);
+        self.packages
+            .split_off(watermark)
+            .into_iter()
+            .zip(offsets)
+            .map(|(package, offset)| AttachSite { package, offset })
+            .collect()
+    }
+}
+
+/// The scan's eager linear binding state: the names bound on every path reaching
+/// the current point of the current scan unit. Branch and loop joins
+/// intersection-merge, so a binding made on only some paths is visible inside
+/// its branch and then dropped at the join.
 ///
 /// It's the scan's own flow state, a coarse variant of the walk's use-def map,
-/// which isn't built yet. It answers one question, "is this name bound here?",
-/// so the scan can tell whether a callee is shadowed at each call and decide
-/// whether a call is NSE. It tracks only eager bindings, and it is allowed to
-/// stay coarse: `merge()` unions the two sides of an `if`, so that a single
-/// branch marks a name as bound.
+/// which isn't built yet. `is_bound` answers "is this name definitely bound
+/// here?" so the scan can tell whether a callee is shadowed and decide whether a
+/// call is NSE. A conditional shadow drops out here, so it falls through to the
+/// effect and the walk records the ambiguity.
 #[derive(Clone, Default)]
 pub(super) struct FlowState {
     bound: FxHashSet<String>,
 }
 
 impl FlowState {
-    /// Whether `name` is bound at the current point.
+    /// Whether `name` is bound on every path reaching the current point.
     pub(super) fn is_bound(&self, name: &str) -> bool {
         self.bound.contains(name)
     }
@@ -676,13 +1028,13 @@ impl FlowState {
         *self = snapshot;
     }
 
-    /// Union `snapshot` in, so a name reads as bound here if it was bound on
-    /// either path. This is the `if`/`else` join.
-    fn merge(&mut self, snapshot: FlowState) {
-        self.bound.extend(snapshot.bound);
+    /// Intersect another path's state at a branch or loop join: keep only names
+    /// bound on both paths, so a binding made on just one path drops out.
+    fn merge(&mut self, other: FlowState) {
+        self.bound.retain(|name| other.bound.contains(name));
     }
 
-    /// Record `name` as bound from here on.
+    /// Record `name` as bound from here on this path.
     fn bind(&mut self, name: String) {
         self.bound.insert(name);
     }
@@ -717,7 +1069,10 @@ pub(super) struct OpenScope {
 pub(super) enum BodyScan {
     /// A walk-time scan unit (function body, `Nested + Lazy` like `reactive()`).
     /// The walk seeds `begin_scan()` from this snapshot.
-    Deferred(FlowState),
+    Deferred {
+        bound_so_far: FlowState,
+        attached_inherited: Vec<String>,
+    },
     /// Already scanned inline by an eager `Nested` descent (e.g. `local()`).
     Scanned(BindingSites),
 }
@@ -729,6 +1084,8 @@ pub(super) struct DeferredBody {
     pub(super) body: AnyRExpression,
     /// `bound_so_far` captured at the call site, the body's inherited eager env.
     pub(super) bound_so_far: FlowState,
+    /// The attach search path at the call site, the body's inherited attaches.
+    pub(super) attached_inherited: Vec<String>,
 }
 
 /// All definitions in a scope, collected by the scan pass before the
@@ -769,4 +1126,64 @@ impl BindingSites {
 enum ScanScope<'a> {
     Open(&'a BindingSites),
     Arena(ScopeId),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FlowState;
+
+    #[test]
+    fn test_bind_is_bound() {
+        let mut state = FlowState::default();
+        state.bind("x".to_string());
+        assert!(state.is_bound("x"));
+    }
+
+    #[test]
+    fn test_merge_one_branch_binding_drops() {
+        // `if (c) x <- 1`: the else path is empty, the if path binds `x`, so
+        // `x` isn't on every path and drops at the join.
+        let mut else_path = FlowState::default();
+        let mut if_path = FlowState::default();
+        if_path.bind("x".to_string());
+        else_path.merge(if_path);
+        assert!(!else_path.is_bound("x"));
+    }
+
+    #[test]
+    fn test_merge_both_branches_binding_persists() {
+        // `if (c) x <- 1 else x <- 2`: both paths bind `x`, so it persists.
+        let mut else_path = FlowState::default();
+        else_path.bind("x".to_string());
+        let mut if_path = FlowState::default();
+        if_path.bind("x".to_string());
+        else_path.merge(if_path);
+        assert!(else_path.is_bound("x"));
+    }
+
+    #[test]
+    fn test_merge_keeps_pre_branch_binding() {
+        // `x <- 1; if (c) y <- 1`: `x` is bound before, `y` only in the branch.
+        let mut pre = FlowState::default();
+        pre.bind("x".to_string());
+        let mut if_path = pre.clone();
+        if_path.bind("y".to_string());
+        let mut else_path = pre;
+        else_path.merge(if_path);
+        assert!(else_path.is_bound("x"));
+        assert!(!else_path.is_bound("y"));
+    }
+
+    #[test]
+    fn test_merge_loop_body_binding_drops() {
+        // `for (i in xs) z <- 1`: `i` is bound before the body, `z` only inside,
+        // so `z` drops when the body merges with the pre-loop state.
+        let mut pre_body = FlowState::default();
+        pre_body.bind("i".to_string());
+        let mut post_body = pre_body.clone();
+        post_body.bind("z".to_string());
+        post_body.merge(pre_body);
+        assert!(post_body.is_bound("i"));
+        assert!(!post_body.is_bound("z"));
+    }
 }

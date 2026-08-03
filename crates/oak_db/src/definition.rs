@@ -1,5 +1,6 @@
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RSyntaxKind;
+use aether_syntax::RSyntaxNode;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
 use oak_semantic::semantic_index::DefinitionId;
@@ -55,33 +56,38 @@ impl<'db> Definition<'db> {
     pub fn name_range(self, db: &'db dyn crate::Db) -> Option<TextRange> {
         let parse = self.file(db).parse(db);
         let root = parse.tree().syntax().clone();
-
-        let name_node = match self.kind(db) {
-            DefinitionKind::Assignment(ptr) | DefinitionKind::SuperAssignment(ptr) => {
-                let node = ptr.to_node(&root);
-                // Right-assign (`rhs -> x`, `rhs ->> x`) puts the target on
-                // the right, every other form (`x <- rhs`, `x <<- rhs`,
-                // `x = rhs`) puts it on the left.
-                let target = if is_right_assignment(&node) {
-                    node.right().ok()?
-                } else {
-                    node.left().ok()?
-                };
-                target.into_syntax()
-            },
-            DefinitionKind::Parameter(ptr) => {
-                let node = ptr.to_node(&root);
-                node.name().ok()?.into_syntax()
-            },
-            DefinitionKind::ForVariable(ptr) => {
-                let node = ptr.to_node(&root);
-                node.variable().ok()?.into_syntax()
-            },
-            DefinitionKind::Import { .. } => return None,
-            DefinitionKind::Assign { name, .. } => name.to_node(&root).into_syntax(),
-        };
-        Some(name_node.text_trimmed_range())
+        Some(name_node(self.kind(db), &root)?.text_trimmed_range())
     }
+}
+
+/// The syntax node of the bound name for `kind`.
+fn name_node(kind: &DefinitionKind, root: &RSyntaxNode) -> Option<RSyntaxNode> {
+    let node = match kind {
+        DefinitionKind::Assignment(ptr) | DefinitionKind::SuperAssignment(ptr) => {
+            let node = ptr.to_node(root);
+            // Right-assign (`rhs -> x`, `rhs ->> x`) puts the target on
+            // the right, every other form (`x <- rhs`, `x <<- rhs`,
+            // `x = rhs`) puts it on the left.
+            let target = if is_right_assignment(&node) {
+                node.right().ok()?
+            } else {
+                node.left().ok()?
+            };
+            target.into_syntax()
+        },
+        DefinitionKind::Parameter(ptr) => {
+            let node = ptr.to_node(root);
+            node.name().ok()?.into_syntax()
+        },
+        DefinitionKind::ForVariable(ptr) => {
+            let node = ptr.to_node(root);
+            node.variable().ok()?.into_syntax()
+        },
+        DefinitionKind::Assign { name, .. } => name.to_node(root).into_syntax(),
+        // No name token at the binding site
+        DefinitionKind::Import { .. } => return None,
+    };
+    Some(node)
 }
 
 fn is_right_assignment(node: &RBinaryExpression) -> bool {

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
@@ -16,6 +18,7 @@ use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticDiagnostic;
 
@@ -56,7 +59,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// - A bare identifier. If bound locally it goes through the local
     ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
     ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path, against the attach set in `attached_flow`.
+    ///   search path, against the attach set in `attached_so_far`.
     /// - A `pkg::fn` namespace expression, resolved through
     ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
     ///   so there's no search-path disambiguation; the resolver answers from
@@ -100,14 +103,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// diagnostic.
     fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
         // First check for a local definition (which in the future may
-        // carry declared effects that we resolve here)
-        //
-        // Looked up from `bound_so_far` which already carries every
-        // eager binding visible here: the scope's own flow-precise
-        // bindings so far, plus the enclosing eager environment seeded
-        // at `begin_scan()`. Forward and deferred (lazy-routed)
-        // bindings are excluded. A forward one isn't in `bound_so_far`
-        // yet, and a deferred one (`on_load`, `<<-`) never enters it.
+        // carry declared effects that we resolve here).
         if self.scan.bound_so_far.is_bound(sym) {
             return self.resolve_local_effects(sym);
         }
@@ -120,22 +116,23 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         // Now check imports since the symbol is locally unbound
         let lazy = self.scan_is_lazy();
-        let effects = self
-            .resolver
-            .resolve_effects(sym, &self.scan.attached_flow, lazy)?;
+        let attached = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
+        let effects = self.resolver.resolve_effects(sym, &attached, lazy);
+
+        let Some(effects) = effects else {
+            // The search path didn't resolve. Probe whether it would have if a
+            // dropped attach had survived the join, so we can flag it.
+            self.record_conditional_attach_ambiguity(sym, range, lazy);
+            return None;
+        };
 
         // The callee is unbound by any eager binding, so its effect
         // holds. If a lazy-crossed ancestor binds it whole-scope, that
         // binding's timing relative to this deferred body is
         // undetermined, so the decision is a guess. Flag it.
-        //
-        // TODO(diagnostics): a symmetric attach ambiguity is out of
-        // scope here. A callee resolved not-effectful could be flipped
-        // by an attach from a sibling lazy body (`g <- function()
-        // library(shiny); f <- function() reactive({...}`). Detecting it
-        // needs the complete set of lazy-context attaches, a post-pass
-        // rather than this local ancestor check, so it belongs in the
-        // future salsa diagnostics query where this lint should move too.
         if let Some(overwrite_range) = self.is_lazily_shadowed(sym) {
             self.record_lazy_shadow_ambiguity(sym.to_string(), range, overwrite_range);
         }
@@ -145,7 +142,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
     /// Local resolver for declared effects, mirroring the imports resolver's
     /// `resolve_effects()` method on the cross-file side.
-    /// TODO(nse, annotations): always `None` until `declare()` parsing lands.
+    ///
+    /// TODO(nse, annotations): Resolve effects declare()'d on local functions.
+    ///
+    /// TODO(nse, inference): Infer effects from local function bodies. Calling
+    /// `g()` should apply the attach in `g <- function() library(shiny)`. Mutual
+    /// recursion needs a fixed point.
     fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
         None
     }
@@ -270,11 +272,82 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         call_range: TextRange,
         overwrite_range: TextRange,
     ) {
-        self.diagnostics
-            .push(SemanticDiagnostic::LazyShadowAmbiguity {
-                name,
-                call_range,
-                overwrite_range,
-            });
+        self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+            name,
+            call_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
+        });
     }
+
+    /// Probe whether `sym`'s effect still resolves after a conditional
+    /// attach. If the case, we record the ambiguity for diagnostics.
+    ///
+    /// This handles the eager case, where the dropped attach and the callee are
+    /// both reachable from the same scan. What's still open is the lazy-sibling
+    /// case (`g <- function() library(shiny); f <- function() reactive({...})`),
+    /// which needs the complete set of lazy-context attaches from a post-pass,
+    /// not this call-site probe. That belongs in the future salsa diagnostics
+    /// query where this lint family should move too.
+    fn record_conditional_attach_ambiguity(
+        &mut self,
+        sym: &str,
+        call_range: TextRange,
+        lazy: bool,
+    ) {
+        // A package in `attached_anywhere` but off the search path means it was
+        // dropped at a branch or loop join
+        let search_path = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
+        let dropped: Vec<(String, TextRange)> = self
+            .scan
+            .attached_anywhere
+            .iter()
+            .filter(|(package, _)| !search_path.contains(package))
+            .cloned()
+            .collect();
+
+        // Probe one package at a time, most recent first, so the diagnostic
+        // mentions the attach that would actually have carried the effect.
+        for (package, attach_range) in dropped.into_iter().rev() {
+            if self
+                .resolver
+                .resolve_effects(sym, std::slice::from_ref(&package), lazy)
+                .is_none()
+            {
+                continue;
+            }
+
+            self.diagnostics.push(SemanticDiagnostic::EffectAmbiguity {
+                name: sym.to_string(),
+                call_range,
+                reason: AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+            });
+            return;
+        }
+    }
+}
+
+/// The packages seen in a scan unit: what it inherited at its definition point,
+/// then the eager linear set. Used for resolution of effect annotations within
+/// that scan unit.
+///
+/// The two halves only differ for a lazy body defined inside a branch that
+/// attached: the join dropped that package from `attached_so_far`, and the
+/// inherited half is what keeps it reachable.
+pub(super) fn attach_search_path<'a>(
+    inherited: &'a [String],
+    so_far: &'a [String],
+) -> Cow<'a, [String]> {
+    if inherited.is_empty() {
+        return Cow::Borrowed(so_far);
+    }
+
+    let mut path = inherited.to_vec();
+    path.extend_from_slice(so_far);
+    Cow::Owned(path)
 }
