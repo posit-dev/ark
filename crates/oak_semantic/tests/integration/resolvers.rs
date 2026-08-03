@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use oak_semantic::effects_registry;
-use oak_semantic::Effects;
+use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -71,7 +71,12 @@ impl ImportsResolver for TestImportsResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, attached: &[String], lazy: bool) -> Option<Effects> {
+    fn resolve_effects(
+        &mut self,
+        name: &str,
+        attached: &[String],
+        lazy: bool,
+    ) -> Option<EffectsHandlers> {
         self.consultations.set(self.consultations.get() + 1);
         self.consultation_log
             .borrow_mut()
@@ -81,6 +86,5 @@ impl ImportsResolver for TestImportsResolver {
             .rev()
             .chain(self.always_attached.iter())
             .find_map(|pkg| effects_registry::lookup(pkg, name).copied())
-            .map(Effects::nse)
     }
 }
