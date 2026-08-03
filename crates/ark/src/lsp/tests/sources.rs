@@ -10,11 +10,13 @@ use std::sync::Mutex;
 use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
+use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::source_handler::gate;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
+use super::utils::did_change_configuration;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
 use super::utils::initialize;
@@ -25,10 +27,12 @@ use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
+use super::utils::TestClient;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::config::apply_env_overrides;
 use crate::lsp::config::LspConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -96,7 +100,7 @@ async fn test_source_pipeline_ingests_package_sources() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db, true),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -135,8 +139,8 @@ async fn test_source_pipeline_ingests_package_sources() {
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
 
-/// Disabling `oak.sourceFetching.enabled` leaves dependency discovery intact
-/// but dispatches no source request.
+/// A `false` startup `workspace/configuration` response leaves dependency
+/// discovery intact but dispatches no source request.
 #[tokio::test]
 async fn test_disabled_source_fetching_dispatches_nothing() {
     let _aux = init_aux_for_test();
@@ -155,12 +159,14 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
+
     let mut state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db, false),
+        client.client(),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -172,10 +178,14 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
         .write(&myproj);
     write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
 
-    state
-        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
-        .await;
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+    state.handle_event_to_quiescence(initialized()).await;
 
+    assert_eq!(client.answered_requests(), vec![
+        "client/registerCapability",
+        "workspace/configuration"
+    ]);
     assert!(handler.calls().lock().unwrap().is_empty());
 
     // The dependency is indexed even though its sources were not fetched.
@@ -184,15 +194,65 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     assert!(donor.files(db).is_empty());
 }
 
+/// Without `workspace/configuration` support, source fetching uses its default
+/// because the client is never queried.
+#[tokio::test]
+async fn test_configuration_not_pulled_without_capability() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    // Configuring `false` proves that the client is never queried.
+    let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
+
+    let mut state = GlobalState::from_parts(
+        client.client(),
+        world_with_source_fetching(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(Some(handler.clone())),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    let (event, _response_rx) = initialize_without_configuration(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+    state.handle_event_to_quiescence(initialized()).await;
+
+    assert_eq!(client.answered_requests(), vec![
+        "client/registerCapability"
+    ]);
+    assert!(state.world().config.oak.source_fetching_enabled);
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
+}
+
 /// Turning the setting back on fetches the packages Oak saw while it was off,
 /// which is what `doc/configuration-oak.md` promises. This works because both
 /// early returns in `schedule()` come before the loop that records a package,
 /// so a declined package stays unseen rather than being marked `Finished`.
 ///
-/// In production `update_config()` bumps the revision itself, so the fetch
-/// starts on the config change alone. The `did_open()` here stands in for that
-/// bump, which a test can't reach without a client that answers
-/// `workspace/configuration`.
+/// The client returns `false` at startup and `true` after
+/// `didChangeConfiguration`. The configuration update advances the revision,
+/// so re-enabling starts the fetch without another workspace event.
 #[tokio::test]
 async fn test_reenabling_fetches_packages_seen_while_off() {
     let _aux = init_aux_for_test();
@@ -211,12 +271,14 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
+
     let mut state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db, false),
+        client.client(),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -228,14 +290,17 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
         .write(&myproj);
     write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
 
-    state
-        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
-        .await;
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+    state.handle_event_to_quiescence(initialized()).await;
+
+    // The startup response overrides `WorldState`'s default before source requests are released.
+    assert!(!state.world().config.oak.source_fetching_enabled);
     assert!(handler.calls().lock().unwrap().is_empty());
 
-    state.world_mut().config.oak.source_fetching_enabled = true;
+    client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true));
     state
-        .handle_event_to_quiescence(did_open(&workspace.path().join("other.R"), "1 + 1\n"))
+        .handle_event_to_quiescence(did_change_configuration())
         .await;
 
     // `donor` was declined while off, so it is still on offer and gets fetched
@@ -246,6 +311,13 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     let files = donor.files(db).clone();
     assert_eq!(files.len(), 1);
     assert!(files[0].source_text(db).contains("foo <- function()"));
+
+    // Each configuration pull consumes one client response.
+    assert_eq!(client.answered_requests(), vec![
+        "client/registerCapability",
+        "workspace/configuration",
+        "workspace/configuration"
+    ]);
 }
 
 /// Turning the setting off mid-session stops fetching for a dependency that
@@ -276,12 +348,14 @@ async fn test_disabling_stops_fetching_new_packages() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true))]).await;
+
     let mut state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db, true),
+        client.client(),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -303,12 +377,15 @@ async fn test_disabling_stops_fetching_new_packages() {
         .write(&proj2);
     write_sources(&proj2.join("R"), &[("use.R", "donor2::bar()\n")]);
 
-    state
-        .handle_event_to_quiescence(did_change_workspace_folders(first.path()))
-        .await;
+    let (event, _response_rx) = initialize(first.path());
+    state.handle_event_to_quiescence(event).await;
+    state.handle_event_to_quiescence(initialized()).await;
     assert_eq!(dispatched_names(handler.calls()), vec!["donor1"]);
 
-    state.world_mut().config.oak.source_fetching_enabled = false;
+    client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false));
+    state
+        .handle_event_to_quiescence(did_change_configuration())
+        .await;
     state
         .handle_event_to_quiescence(did_change_workspace_folders(second.path()))
         .await;
@@ -357,12 +434,14 @@ async fn test_disabling_skips_queued_fetches() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
+    let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true))]).await;
+
     let mut state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db, true),
+        client.client(),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
+            SourceScheduler::new(Some(handler.clone())),
         ),
     );
 
@@ -378,44 +457,39 @@ async fn test_disabling_skips_queued_fetches() {
         .collect();
     write_sources(&myproj.join("R"), &[("use.R", &uses)]);
 
-    state
-        .handle_event_once(did_change_workspace_folders(workspace.path()))
-        .await;
+    // Gated fetches never finish until `releases` drops, so waiting for quiescence would hang.
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_once(event).await;
     state.pump_scans_to_quiescence().await;
+    state.handle_event_once(initialized()).await;
 
-    // Every worker is now parked in `handle()`. A parked worker can't pick up
-    // another job, so the last fetch is stuck in the queue until we release
-    // them, which is what makes the rest of this test deterministic.
+    // Every worker is blocked in `handle()`, leaving the final fetch queued until `releases` drops.
     for _ in 0..SOURCE_POOL_THREADS {
         entered_rx.recv().unwrap();
     }
 
-    // The new setting reaches the queued job through the `schedule()` call that
-    // ends this tick.
-    state.world_mut().config.oak.source_fetching_enabled = false;
-    state
-        .handle_event_once(did_open(&workspace.path().join("script.R"), "x <- 1\n"))
-        .await;
+    // The configuration pull publishes `false` before the queued job starts.
+    client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false));
+    state.handle_event_once(did_change_configuration()).await;
 
     // Let the parked fetches through and collect every response.
     drop(releases);
     state.pump_sources_to_quiescence().await;
     assert_eq!(handler.calls().lock().unwrap().len(), SOURCE_POOL_THREADS);
 
-    state.world_mut().config.oak.source_fetching_enabled = true;
+    client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true));
     state
-        .handle_event_to_quiescence(did_open(&workspace.path().join("other.R"), "x <- 2\n"))
+        .handle_event_to_quiescence(did_change_configuration())
         .await;
 
-    // The skipped package was left on offer, so it gets fetched now. The ones
-    // that ran while fetching was on aren't asked for twice.
+    // The skipped package remains unrecorded and is queued after re-enabling. Completed jobs stay `Finished`.
     let mut names = dispatched_names(handler.calls());
     names.sort();
     assert_eq!(names, donors);
 }
 
-/// Do not fetch packages found during `initialize()` before attempting client configuration.
-/// Release the startup gate after a failed configuration request.
+/// Source fetching waits for configuration resolution, but a failed request
+/// releases the startup gate. `test_client()` simulates the failed request.
 #[tokio::test]
 async fn test_fetching_waits_for_initialized() {
     check_fetching_waits_for_initialized(initialize).await;
@@ -449,7 +523,7 @@ async fn check_fetching_waits_for_initialized(
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db, true),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             SourceScheduler::new(Some(handler.clone())),
@@ -558,7 +632,7 @@ async fn test_failed_source_is_not_retried() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db, true),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler.clone()),
@@ -633,7 +707,7 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db, true),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),

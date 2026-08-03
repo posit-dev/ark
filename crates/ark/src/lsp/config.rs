@@ -37,7 +37,7 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
         },
     },
     Setting {
-        key: "oak.sourceFetching.enabled",
+        key: OAK_SOURCE_FETCHING_ENABLED_SETTING,
         set: |cfg, v| {
             cfg.oak.source_fetching_enabled = v
                 .as_bool()
@@ -62,8 +62,10 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
     },
 ];
 
-/// Overrides `oak.sourceFetching.enabled` when set to `1`, `true`, `0`, or `false`.
-/// Set to `1` or `true` to allow source fetching on CI.
+pub(crate) const OAK_SOURCE_FETCHING_ENABLED_SETTING: &str = "oak.sourceFetching.enabled";
+
+/// Overrides [`OAK_SOURCE_FETCHING_ENABLED_SETTING`] when set to `1`, `true`,
+/// `0`, or `false`. Set to `1` or `true` to enable source fetching on CI.
 pub(crate) const OAK_SOURCE_FETCHING_ENABLED_ENV_VAR: &str = "OAK_SOURCE_FETCHING_ENABLED";
 
 pub struct EnvOverride<T> {

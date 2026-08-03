@@ -1,3 +1,4 @@
+mod client;
 mod description_writer;
 mod events;
 mod namespace_writer;
@@ -6,8 +7,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aether_path::FilePath;
+pub(super) use client::test_client;
+pub(super) use client::TestClient;
 pub(super) use description_writer::DescriptionWriter;
 pub(super) use events::did_change;
+pub(super) use events::did_change_configuration;
 pub(super) use events::did_change_workspace_folders;
 pub(super) use events::did_open;
 pub(super) use events::initialize;
@@ -18,47 +22,12 @@ use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
-use tower_lsp_server::Client;
-use tower_lsp_server::LanguageServer;
-use tower_lsp_server::LspService;
 
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
-
-/// Get a real `Client` without a live connection. `LspService::new` hands a
-/// `Client` to its init closure; we capture it and drop the service. The
-/// client's sends go nowhere, which is fine since the event paths under test
-/// never use it.
-pub(super) fn test_client() -> Client {
-    struct Dummy;
-
-    impl LanguageServer for Dummy {
-        async fn initialize(
-            &self,
-            _: lsp_types::InitializeParams,
-        ) -> tower_lsp_server::jsonrpc::Result<lsp_types::InitializeResult> {
-            Ok(lsp_types::InitializeResult::default())
-        }
-        async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
-            Ok(())
-        }
-    }
-
-    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let sink = std::sync::Arc::clone(&captured);
-    let (_service, _socket) = LspService::new(move |client| {
-        *sink.lock().unwrap() = Some(client);
-        Dummy
-    });
-
-    // Bind first so the `MutexGuard` temporary drops at the `;`, not at the
-    // end of the block.
-    let client = captured.lock().unwrap().take();
-    client.unwrap()
-}
 
 pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     std::fs::create_dir_all(dir).unwrap();
@@ -74,13 +43,11 @@ pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> Sour
     scheduler
 }
 
-/// A [`WorldState`] with source fetching set to `enabled`, whatever the ambient
-/// `OAK_SOURCE_FETCHING_ENABLED` says.
-pub(super) fn world_with_source_fetching(db: OakDatabase, enabled: bool) -> WorldState {
+/// Creates a [`WorldState`] with default source fetching by removing the ambient
+/// `OAK_SOURCE_FETCHING_ENABLED`. Tests disable it through [`TestClient`].
+pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
     unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-    let mut world = WorldState::new(db);
-    world.config.oak.source_fetching_enabled = enabled;
-    world
+    WorldState::new(db)
 }
 
 pub(super) fn make_state(wire: &str, contents: &str) -> (WorldState, Uri) {

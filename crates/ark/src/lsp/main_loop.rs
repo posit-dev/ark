@@ -722,14 +722,6 @@ impl GlobalState {
     pub(crate) fn world(&self) -> &WorldState {
         &self.world
     }
-
-    /// Reach into the config the way a `didChangeConfiguration` would. The
-    /// dummy test client can't answer `workspace/configuration`, so a test that
-    /// needs a setting to change mid-session writes it here instead of driving
-    /// the notification.
-    pub(crate) fn world_mut(&mut self) -> &mut WorldState {
-        &mut self.world
-    }
 }
 
 /// Run each [`ScanRequest`] on `pool`. Each job runs the pure-I/O

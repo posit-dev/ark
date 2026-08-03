@@ -2,6 +2,7 @@ use std::path::Path;
 
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::ClientCapabilities;
+use tower_lsp_server::ls_types::DidChangeConfigurationParams;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
@@ -62,11 +63,21 @@ fn initialize_with_configuration_support(
     (event, rx)
 }
 
-/// An `initialized` notification that starts configuration resolution and releases deferred source fetching.
+/// An `initialized` notification that resolves configuration and releases deferred source fetching.
 pub(crate) fn initialized() -> Event {
     Event::Lsp(LspMessage::Notification(LspNotification::Initialized(
         InitializedParams {},
     )))
+}
+
+/// A `didChangeConfiguration` notification. The server ignores its `settings`
+/// payload and pulls the registered settings again.
+pub(crate) fn did_change_configuration() -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidChangeConfiguration(DidChangeConfigurationParams {
+            settings: serde_json::Value::Null,
+        }),
+    ))
 }
 
 pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {

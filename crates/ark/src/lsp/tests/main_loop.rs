@@ -124,7 +124,7 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
 
     let mut state = GlobalState::from_parts(
         test_client(),
-        world_with_source_fetching(db, true),
+        world_with_source_fetching(db),
         LspState::new(
             tokio::sync::mpsc::unbounded_channel().0,
             source_scheduler_for_test(handler),
