@@ -23,13 +23,19 @@ pub fn env_flag_opt(name: &str) -> Option<bool> {
 }
 
 pub fn is_ci() -> bool {
-    env_flag("CI")
+    match env_flag_opt("CI") {
+        Some(on) => on,
+        // providers set `CI` to their own name as well as to a truthy value.
+        // Only treat empty values as non-CI.
+        None => std::env::var("CI").is_ok_and(|value| !value.trim().is_empty()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::env_flag;
     use super::env_flag_opt;
+    use super::is_ci;
 
     /// Preserve the distinction between an absent override and an explicit
     /// false override.
@@ -56,6 +62,24 @@ mod tests {
         }
 
         unsafe { std::env::remove_var(name) };
+    }
+
+    /// A provider naming itself in `CI`, such as Drone or Woodpecker, still
+    /// counts as CI.
+    #[test]
+    fn test_is_ci_treats_any_non_empty_value_as_ci() {
+        for value in ["1", "true", "TRUE", "yes", "drone", "woodpecker"] {
+            unsafe { std::env::set_var("CI", value) };
+            assert!(is_ci());
+        }
+
+        for value in ["0", "false", "FALSE", "", "  "] {
+            unsafe { std::env::set_var("CI", value) };
+            assert!(!is_ci());
+        }
+
+        unsafe { std::env::remove_var("CI") };
+        assert!(!is_ci());
     }
 
     #[test]
