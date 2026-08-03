@@ -30,7 +30,6 @@ pub use diagnostic::Annotation;
 pub use diagnostic::Diagnostic;
 pub use diagnostic::DiagnosticKind;
 pub use diagnostic::Severity;
-pub use file::warm_file;
 pub use file::File;
 pub use file_exports::ExportEntry;
 pub use file_exports::FileExports;

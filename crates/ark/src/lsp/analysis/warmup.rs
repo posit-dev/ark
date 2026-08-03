@@ -5,9 +5,6 @@
 //
 //
 
-use oak_db::all_used_files;
-use oak_db::warm_file;
-
 use super::pool::AnalysisPool;
 use crate::lsp;
 use crate::lsp::indexer;
@@ -31,23 +28,5 @@ pub(crate) fn warm_workspace_index(state: &WorldState, pool: &AnalysisPool) {
         lsp::log_info!("Starting workspace index warmup");
         indexer::warm(snapshot.db());
         lsp::log_info!("Finished workspace index warmup ({:.0?})", now.elapsed());
-    })
-}
-
-/// Warm the oak `semantic_index` of every file the workspace depends on, on a
-/// background thread.
-///
-/// Idempotent, so re-running on every revision is cheap once a file's index is
-/// already warm (salsa cache hit). A concurrent write just cancels the
-/// in-flight warm; the next revision re-runs it, which is what carries warmup
-/// through the startup write-storm and warms a freshly-typed `pkg::`
-/// dependency as soon as its sources land.
-pub(crate) fn warm_semantic_indexes(state: &WorldState, pool: &AnalysisPool) {
-    pool.spawn(state.snapshot(), |snapshot| {
-        let now = std::time::Instant::now();
-        for &file in all_used_files(snapshot.db()) {
-            warm_file(snapshot.db(), file);
-        }
-        lsp::log_info!("Warmed semantic indexes ({:.0?})", now.elapsed());
     })
 }
