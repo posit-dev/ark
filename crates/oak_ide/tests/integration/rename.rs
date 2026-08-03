@@ -85,6 +85,22 @@ fn test_rename_def_and_use() {
 }
 
 #[test]
+fn test_rename_includes_bquote_hole_use() {
+    // The `x` inside `bquote`'s `.()` hole is a real use, so renaming the
+    // definition rewrites it along with the def.
+    let source = "x <- 1\nbquote(.(x))\n";
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", source);
+
+    let hole = source.rfind('x').unwrap() as u32;
+    let targets = rename(&db, file, offset(0), "y").unwrap();
+    assert_eq!(edit_ranges(&targets), vec![
+        range(0, 1),
+        range(hole, hole + 1),
+    ]);
+}
+
+#[test]
 fn test_rename_excludes_shadowed_outer() {
     let source = "x <- 1\nf <- function() {\n  x <- 2\n  x\n}\n";
     let mut db = OakDatabase::new();
