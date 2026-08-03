@@ -6,6 +6,7 @@ mod rlang;
 mod s7;
 mod shiny;
 mod testthat;
+mod withr;
 
 // Fields are read by the query API (`lookup`, `annotates`) in the parent
 // `effects` module, hence `pub(super)`.
@@ -131,4 +132,5 @@ pub(super) static REGISTRY: &[&[Entry]] = &[
     s7::ENTRIES,
     shiny::ENTRIES,
     testthat::ENTRIES,
+    withr::ENTRIES,
 ];
