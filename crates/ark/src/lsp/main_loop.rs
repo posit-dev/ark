@@ -633,7 +633,7 @@ impl GlobalState {
 
             // Re-warm the oak semantic indexes on every revision, counting on
             // idempotence (warm files are salsa cache hits). Takes care of
-            // warmin up the initial workspace as well as any new dependency
+            // warming up the initial workspace as well as any new dependency
             // introduced by user edits.
             analysis::warm_semantic_indexes(&self.world, &self.lsp_state.analysis_pool);
         }
