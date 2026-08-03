@@ -292,16 +292,15 @@ impl File {
             return Cow::Borrowed(self.cross_file_layers(db, view));
         }
 
-        let own = self.cross_file_layers(db, view);
-        let mut enclosing = own.enclosing.clone();
-        let mut attaches = own.attaches.clone();
-        for site in inherited {
-            enclosing.extend(site.layers.enclosing.iter().cloned());
-            attaches.extend(site.layers.attaches.iter().cloned());
+        let mut enclosing = Vec::new();
+        let mut attaches = Vec::new();
+        for layers in self.layers_by_sourcing_file(db, view) {
+            enclosing.extend(layers.enclosing.iter().cloned());
+            attaches.extend(layers.attaches.iter().cloned());
         }
 
-        // Source-site inheritance requires `LoadKind::Session`, which uses the default
-        // session search path.
+        // `LoadKind::Namespace` excludes source-site inheritance, leaving only
+        // contexts with the default session search path.
         Cow::Owned(CrossFileLayers {
             enclosing,
             attaches,
@@ -361,13 +360,27 @@ impl File {
 
     /// The file's own layers, plus one alternative per file that sources it.
     fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
-        let mut alternatives = vec![self.cross_file_layers(db, view)];
+        let mut alternatives: Vec<&CrossFileLayers> =
+            self.own_layers(db, view).into_iter().collect();
         alternatives.extend(
             self.inherited_layers(db, view)
                 .iter()
                 .map(|site| &site.layers),
         );
         alternatives
+    }
+
+    /// [`File::cross_file_layers`], unless an inherited source site replaces a
+    /// [`LoadKind::Fallback`] context.
+    ///
+    /// The fallback assumes a non-package `R/` directory collates. An explicit
+    /// source site supplies the actual context and overrides the fallback.
+    /// Retain the fallback when cycle recovery leaves no inherited source sites.
+    fn own_layers(self, db: &dyn Db, view: CollationView) -> Option<&CrossFileLayers> {
+        if self.has_fallback_context(db, view) && !self.inherited_layers(db, view).is_empty() {
+            return None;
+        }
+        Some(self.cross_file_layers(db, view))
     }
 
     /// The layers `self` inherits from each file that sources it, one entry per
@@ -437,6 +450,15 @@ impl File {
         lower_load_context(db, load_context(db, self, view))
     }
 
+    /// Whether [`File::cross_file_layers`] uses the `R/`-directory fallback.
+    ///
+    /// Tracking avoids loader detection for every [`File::imports_at`] cursor
+    /// position.
+    #[salsa::tracked(returns(copy))]
+    pub(crate) fn has_fallback_context(self, db: &dyn Db, view: CollationView) -> bool {
+        load_context(db, self, view).kind.is_fallback()
+    }
+
     /// The collation members of `self`'s own `R/` directory, in load order.
     ///
     /// Path-based only. The scan-time resolver
@@ -477,7 +499,7 @@ fn build_inherited_layers(
         CollationView::Eager => source_offsets(db, source_site, file),
     };
 
-    let own_cross = source_site.cross_file_layers(db, view);
+    let own_cross = source_site.own_layers(db, view);
     let grandparents = source_site.inherited_layers(db, view);
 
     let (own_attach, exports_so_far) = match offsets.as_deref() {
@@ -510,7 +532,9 @@ fn build_inherited_layers(
     };
 
     enclosing.push(source_layer);
-    enclosing.extend(own_cross.enclosing.iter().cloned());
+    if let Some(own_cross) = own_cross {
+        enclosing.extend(own_cross.enclosing.iter().cloned());
+    }
     enclosing.extend(
         grandparents
             .iter()
@@ -523,14 +547,16 @@ fn build_inherited_layers(
             .iter()
             .flat_map(|site| site.layers.attaches.iter().cloned()),
     );
-    attaches.extend(own_cross.attaches.iter().cloned());
+    if let Some(own_cross) = own_cross {
+        attaches.extend(own_cross.attaches.iter().cloned());
+    }
 
     InheritedLayers {
         file: source_site,
         layers: CrossFileLayers {
             enclosing,
             attaches,
-            tail: own_cross.tail,
+            tail: own_cross.map_or(SearchPathTail::Default, |layers| layers.tail),
         },
     }
 }

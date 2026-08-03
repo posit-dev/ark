@@ -759,11 +759,10 @@ fn test_multiple_sourcing_files_appear_ordered_by_path() {
 }
 
 #[test]
-fn test_inheritance_adds_to_collation_instead_of_replacing_it() {
-    // `a.R` and `b.R` collate together as a non-package `R/` directory (see
-    // `test_script_r_directory_siblings_see_each_other`). `main.R` sourcing
-    // `a.R` is a second plausible execution, not a replacement for the first,
-    // so `b.R` stays alongside the inherited band.
+fn test_inheritance_replaces_the_r_directory_fallback() {
+    // A non-package `R/` directory only implies collation. Because `main.R`
+    // explicitly sources `a.R` but not `b.R`, the inferred context is replaced
+    // and `b.R` drops out.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
     let a = File::new(
@@ -790,10 +789,7 @@ fn test_inheritance_adds_to_collation_instead_of_replacing_it() {
     root.set_scripts(&mut db).to(vec![a, b, main]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    assert_eq!(shape(&db, a.imports(&db)), vec![
-        "File(b.R)".to_string(),
-        "File(main.R)".to_string(),
-    ]);
+    assert_eq!(shape(&db, a.imports(&db)), vec!["File(main.R)".to_string()]);
 }
 
 #[test]
@@ -918,13 +914,19 @@ fn test_inherited_default_search_path_is_not_duplicated() {
 
 #[test]
 fn test_collation_attach_outranks_the_search_path_under_inheritance() {
-    // `dplyr` reaches `a.R` through its collation sibling, `tibble` through the
-    // file that sources it. Both contexts end in the default search path, so
-    // hoisting it to the tail of the union is what keeps `tibble` off the far
-    // side of `base`.
+    // `loadSupport()` is a detected loader, so `a.R` retains its collation
+    // context alongside `main.R`'s sourced context. Merging their search-path
+    // tails at the bottom keeps `tibble` above `base`.
     let mut db = TestDb::new();
-    install_packages(&mut db, &["base", "dplyr", "tibble"]);
+    install_packages(&mut db, &["base", "dplyr", "shiny", "tibble"]);
     let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let a = File::new(
         &db,
         file_path("ws/R/a.R"),
@@ -946,13 +948,14 @@ fn test_collation_attach_outranks_the_search_path_under_inheritance() {
         Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![a, b, main]);
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     assert_eq!(shape(&db, a.imports(&db)), vec![
         "File(b.R)".to_string(),
         "File(main.R)".to_string(),
         "Package(dplyr)".to_string(),
+        "Package(shiny)".to_string(),
         "Package(tibble)".to_string(),
         "Package(base)".to_string(),
     ]);
@@ -963,8 +966,15 @@ fn test_attach_to_a_default_search_path_package_keeps_its_priority() {
     // `stats` is already on the default search path. Removing that path by
     // value would also remove `b.R`'s explicit attach and let `tibble` outrank it.
     let mut db = TestDb::new();
-    install_packages(&mut db, &["base", "stats", "tibble"]);
+    install_packages(&mut db, &["base", "shiny", "stats", "tibble"]);
     let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let a = File::new(
         &db,
         file_path("ws/R/a.R"),
@@ -986,14 +996,14 @@ fn test_attach_to_a_default_search_path_package_keeps_its_priority() {
         Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![a, b, main]);
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    // The two `stats` layers distinguish the explicit attach from the default search path.
     assert_eq!(shape(&db, a.imports(&db)), vec![
         "File(b.R)".to_string(),
         "File(main.R)".to_string(),
         "Package(stats)".to_string(),
+        "Package(shiny)".to_string(),
         "Package(tibble)".to_string(),
         "Package(stats)".to_string(),
         "Package(base)".to_string(),
@@ -1006,8 +1016,15 @@ fn test_transitive_inheritance_keeps_attaches_above_the_search_path() {
     // from `aaa.R`. Removing only the combined suffix would leave that tail
     // above `dplyr`, making it rank below `base`.
     let mut db = TestDb::new();
-    install_packages(&mut db, &["base", "dplyr", "tibble"]);
+    install_packages(&mut db, &["base", "dplyr", "shiny", "tibble"]);
     let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let sibling = File::new(
         &db,
         file_path("ws/R/aaa.R"),
@@ -1037,7 +1054,7 @@ fn test_transitive_inheritance_keeps_attaches_above_the_search_path() {
         None,
     );
     root.set_scripts(&mut db)
-        .to(vec![sibling, setup, helpers, main]);
+        .to(vec![app, sibling, setup, helpers, main]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     assert_eq!(shape(&db, helpers.imports(&db)), vec![
@@ -1046,6 +1063,97 @@ fn test_transitive_inheritance_keeps_attaches_above_the_search_path() {
         "File(main.R)".to_string(),
         "Package(tibble)".to_string(),
         "Package(dplyr)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_shiny_autoload_survives_an_explicit_source() {
+    // `loadSupport()` supplies an explicit loader context, so `main.R` sourcing
+    // `R/a.R` adds an execution rather than replacing the autoload context.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_source_cycle_keeps_the_r_directory_fallback() {
+    // Cycle recovery leaves no inherited source sites, so `a.R` keeps its
+    // fallback collation context and still sees `b.R`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("source(\"R/c.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let c = File::new(
+        &db,
+        file_path("ws/R/c.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
+
+    // Per-sourcing-file resolution retains one fallback context when recovery
+    // removes every inherited source site.
+    let contexts = a.imports_by_sourcing_file(&db);
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(shape(&db, &contexts[0]), vec![
+        "File(c.R)".to_string(),
+        "File(b.R)".to_string(),
         "Package(base)".to_string(),
     ]);
 }

@@ -41,6 +41,10 @@ pub(crate) enum LoadKind {
 
     /// Use the default session search path and allow source-site inheritance.
     Session,
+
+    /// Session-like context inferred from a non-package `R/` layout. An explicit
+    /// source site supplies the actual context, so it replaces this fallback.
+    Fallback,
 }
 
 impl LoadKind {
@@ -50,10 +54,15 @@ impl LoadKind {
         matches!(self, LoadKind::Namespace(_))
     }
 
+    /// Whether source-site inheritance replaces this context instead of joining it.
+    pub fn is_fallback(self) -> bool {
+        matches!(self, LoadKind::Fallback)
+    }
+
     pub fn search_path_tail(self) -> SearchPathTail {
         match self {
             LoadKind::Namespace(_) => SearchPathTail::Base,
-            LoadKind::Session => SearchPathTail::Default,
+            LoadKind::Session | LoadKind::Fallback => SearchPathTail::Default,
         }
     }
 }
@@ -112,14 +121,14 @@ fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<
     })
 }
 
-/// A non-package script in an `R/` directory, collated alphabetically, exactly
-/// like a package `R/` with no `Collate:`.
+/// A non-package script in an `R/` directory, collated alphabetically, like a
+/// package `R/` directory without `Collate:`.
 fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
     if !in_r_directory(file, db) {
         return None;
     }
     Some(LoadContext {
-        kind: LoadKind::Session,
+        kind: LoadKind::Fallback,
         visible_files: collation_visible_files(db, file, view),
         implicit_attaches: Vec::new(),
     })

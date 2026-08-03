@@ -452,6 +452,36 @@ fn test_diagnostic_inherited_attach_shadows_a_callee() {
 }
 
 #[test]
+fn test_diagnostic_replaced_fallback_false_positive_on_a_successor() {
+    // Known false positive. The lazy standalone view includes successor
+    // `zzz-shadow.R`, but runtime lookup sees `base::library()` under collation
+    // and `main.R`'s binding under `source()`.
+    //
+    // A predecessor would shadow `library()` in the eager scan, preventing
+    // `library(dplyr)` from reaching `semantic_calls()`.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source", "library"]);
+    install_package_binding(&mut db, "dplyr", &[]);
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "library <- identity\nsource(\"R/helpers.R\")\n",
+    );
+    let helpers_source = "library(dplyr)\n";
+    let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
+    let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/R/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
 fn test_diagnostic_inherited_namespace_import_shadows_a_callee() {
     // Same shape as `test_diagnostic_inherited_attach_shadows_a_callee`, but the
     // sourcing side reaches `library` through `mypkg`'s NAMESPACE
