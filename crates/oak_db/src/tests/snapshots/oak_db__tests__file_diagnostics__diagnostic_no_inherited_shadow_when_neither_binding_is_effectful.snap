@@ -1,0 +1,6 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/R/helpers.R\", helpers_source, helpers.diagnostics(&db))"
+---
+w/R/helpers.R
+(no diagnostics)

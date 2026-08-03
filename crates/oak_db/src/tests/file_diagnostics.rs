@@ -452,13 +452,12 @@ fn test_diagnostic_inherited_attach_shadows_a_callee() {
 }
 
 #[test]
-fn test_diagnostic_replaced_fallback_false_positive_on_a_successor() {
-    // Known false positive. The lazy standalone view includes successor
-    // `zzz-shadow.R`, but runtime lookup sees `base::library()` under collation
-    // and `main.R`'s binding under `source()`.
+fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
+    // `zzz-shadow.R` and `main.R` both bind `library` to a plain function, so
+    // either winner leaves the call equally non-NSE.
     //
-    // A predecessor would shadow `library()` in the eager scan, preventing
-    // `library(dplyr)` from reaching `semantic_calls()`.
+    // The shadow must be a successor. A predecessor prevents `library(dplyr)`
+    // from reaching `semantic_calls()` during the eager scan.
     let mut db = TestDb::new();
     install_package_binding(&mut db, "base", &["source", "library"]);
     install_package_binding(&mut db, "dplyr", &[]);

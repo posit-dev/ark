@@ -185,8 +185,9 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
 
 /// What a package layer contributes for `name` as the walk reaches it.
 enum PackageBinding {
-    /// Binds `name` and it carries an effect.
-    Effect(EffectsHandlers),
+    /// Binds `name` to a registry effect. The reference preserves its canonical
+    /// identity for comparison.
+    Effect(&'static EffectsHandlers),
     /// Binds `name` (exports it) but with no known effect, e.g. a plain
     /// exported function. It still shadows any same-named effect deeper on the
     /// search path, so the walk stops here with no effect.
@@ -231,8 +232,8 @@ impl<'db> SalsaImportsResolver<'db> {
             .collect();
 
         for layer in layers.lookup_order(self.db, &own) {
-            if let ControlFlow::Break(effect) = self.layer_effect(&layer, name) {
-                return effect;
+            if let ControlFlow::Break(effect) = layer_effect(self.db, &layer, name) {
+                return effect.copied();
             }
         }
 
@@ -243,100 +244,109 @@ impl<'db> SalsaImportsResolver<'db> {
         // above already handled before falling through.
         effects::lookup("base", name).copied()
     }
+}
 
-    /// Project one import layer to an NSE effect, the effects-side twin of
-    /// `resolve_import_layer` in `file_resolve`. Both reduce the layer to the
-    /// package it binds `name` to and split on the same cases. Only the
-    /// projection differs (definition there, effect here).
-    ///
-    /// Shadowing is export-driven, matching how the definition side stops at the
-    /// first package that resolves `name`. `Break(Some(effect))` found an
-    /// effect. `Break(None)` hit a binding with no effect (a sibling definition,
-    /// a plain package export, a namespace import), which shadows any deeper
-    /// effect, so the bare call is not NSE. `Continue` means the layer doesn't
-    /// bind `name`; keep walking.
-    fn layer_effect(
-        &self,
-        layer: &ImportLayer,
-        name: &str,
-    ) -> ControlFlow<Option<EffectsHandlers>> {
-        match layer {
-            // A definition shadows any deeper effect. Own-file definitions never
-            // reach here, the builder handles them before calling us.
-            ImportLayer::File(file) => match file.exports(self.db).get(name).is_some() {
-                true => ControlFlow::Break(None),
-                false => ControlFlow::Continue(()),
-            },
-            // Unreachable today: only `build_inherited_layers()` makes these,
-            // and it runs once the file's index exists, while we walk
-            // `cross_file_layers()` during the build.
-            ImportLayer::SourcingFile {
-                file,
-                exports_so_far,
-            } => {
-                let binds =
-                    exports_so_far.contains(name) && file.exports(self.db).get(name).is_some();
-                match binds {
-                    true => ControlFlow::Break(None),
-                    false => ControlFlow::Continue(()),
-                }
-            },
-            ImportLayer::Package(package) => match self.package_binding(*package, name) {
-                PackageBinding::Effect(effects) => ControlFlow::Break(Some(effects)),
-                PackageBinding::Shadow => ControlFlow::Break(None),
-                PackageBinding::Absent => ControlFlow::Continue(()),
-            },
-            // A NAMESPACE `importFrom` binds `name` unconditionally (that's what
-            // the directive asserts), so it always shadows the search path
-            // below. Its effect, if any, comes from the source package.
-            ImportLayer::From(importer) => match importer.imported_from(self.db).get(name) {
-                Some(source) => {
-                    let effect = self.db.package_by_name(source).and_then(|package| {
-                        match self.package_binding(package, name) {
-                            PackageBinding::Effect(effects) => Some(effects),
-                            PackageBinding::Shadow | PackageBinding::Absent => None,
-                        }
-                    });
-                    ControlFlow::Break(effect)
-                },
-                None => ControlFlow::Continue(()),
-            },
+/// Resolves a bare `name` call to its NSE effect through `layers`.
+///
+/// Falls through to base's builtins when no layer binds `name`, matching
+/// [`SalsaImportsResolver::resolve_effects_uncached`].
+pub(crate) fn resolve_effect(
+    db: &dyn Db,
+    layers: &[ImportLayer],
+    name: &str,
+) -> Option<&'static EffectsHandlers> {
+    for layer in layers {
+        if let ControlFlow::Break(effect) = layer_effect(db, layer, name) {
+            return effect;
         }
     }
+    effects::lookup("base", name)
+}
 
-    /// How `package` binds `name`: a direct registry effect, a plain export that
-    /// only shadows, or nothing. The re-export chase is one hop through an
-    /// `importFrom`, since a re-exported function's annotation lives under its
-    /// original package, not the re-exporter.
-    fn package_binding(&self, package: Package, name: &str) -> PackageBinding {
-        let package_name = package.name(self.db).as_str();
-        if let Some(effects) = effects::lookup(package_name, name) {
-            return PackageBinding::Effect(*effects);
-        }
-        // base is the terminal layer, so it has nothing below to shadow, and we
-        // don't carry its full builtin export list. Treat it as unbound here;
-        // its effects resolve through the registry lookup above (and the base
-        // fallthrough in `resolve_effects`).
-        if package_name == "base" {
-            return PackageBinding::Absent;
-        }
-        // The package binds `name` only when it exports it. This is the same
-        // export gate `Package::resolve` applies. A name it `importFrom`s
-        // without re-exporting isn't visible to a caller that attaches or
-        // imports this package (R errors "could not find function").
-        let namespace = package.namespace(self.db);
-        if !namespace.exports.contains_str(name) {
-            return PackageBinding::Absent;
-        }
-        // Exports `name`, so it binds. Chase a re-export for the effect; a plain
-        // own definition (no matching `importFrom`) only shadows.
-        match package.imported_from(self.db).get(name) {
-            Some(source) => match effects::lookup(source, name) {
-                Some(effects) => PackageBinding::Effect(*effects),
-                None => PackageBinding::Shadow,
+/// Resolve NSE effect in a layer.
+///
+/// A binding without an effect stops the search because it shadows deeper
+/// layers. A nonbinding layer continues the search.
+fn layer_effect(
+    db: &dyn Db,
+    layer: &ImportLayer,
+    name: &str,
+) -> ControlFlow<Option<&'static EffectsHandlers>> {
+    match layer {
+        // A definition shadows any deeper effect. Own-file definitions never
+        // reach here, the builder handles them before calling us.
+        ImportLayer::File(file) => match file.exports(db).get(name).is_some() {
+            true => ControlFlow::Break(None),
+            false => ControlFlow::Continue(()),
+        },
+        // Unreachable today: only `build_inherited_layers()` makes these,
+        // and it runs once the file's index exists, while we walk
+        // `cross_file_layers()` during the build.
+        ImportLayer::SourcingFile {
+            file,
+            exports_so_far,
+        } => {
+            let binds = exports_so_far.contains(name) && file.exports(db).get(name).is_some();
+            match binds {
+                true => ControlFlow::Break(None),
+                false => ControlFlow::Continue(()),
+            }
+        },
+        ImportLayer::Package(package) => match package_binding(db, *package, name) {
+            PackageBinding::Effect(effects) => ControlFlow::Break(Some(effects)),
+            PackageBinding::Shadow => ControlFlow::Break(None),
+            PackageBinding::Absent => ControlFlow::Continue(()),
+        },
+        // A NAMESPACE `importFrom` binds `name` unconditionally (that's what
+        // the directive asserts), so it always shadows the search path
+        // below. Its effect, if any, comes from the source package.
+        ImportLayer::From(importer) => match importer.imported_from(db).get(name) {
+            Some(source) => {
+                let effect = db.package_by_name(source).and_then(|package| {
+                    match package_binding(db, package, name) {
+                        PackageBinding::Effect(effects) => Some(effects),
+                        PackageBinding::Shadow | PackageBinding::Absent => None,
+                    }
+                });
+                ControlFlow::Break(effect)
             },
+            None => ControlFlow::Continue(()),
+        },
+    }
+}
+
+/// How `package` binds `name`: a direct registry effect, a plain export that
+/// only shadows, or nothing. The re-export chase is one hop through an
+/// `importFrom`, since a re-exported function's annotation lives under its
+/// original package, not the re-exporter.
+fn package_binding(db: &dyn Db, package: Package, name: &str) -> PackageBinding {
+    let package_name = package.name(db).as_str();
+    if let Some(effects) = effects::lookup(package_name, name) {
+        return PackageBinding::Effect(effects);
+    }
+    // base is the terminal layer, so it has nothing below to shadow, and we
+    // don't carry its full builtin export list. Treat it as unbound here;
+    // its effects resolve through the registry lookup above (and the base
+    // fallthrough in `resolve_effects`).
+    if package_name == "base" {
+        return PackageBinding::Absent;
+    }
+    // The package binds `name` only when it exports it. This is the same
+    // export gate `Package::resolve` applies. A name it `importFrom`s
+    // without re-exporting isn't visible to a caller that attaches or
+    // imports this package (R errors "could not find function").
+    let namespace = package.namespace(db);
+    if !namespace.exports.contains_str(name) {
+        return PackageBinding::Absent;
+    }
+    // Exports `name`, so it binds. Chase a re-export for the effect; a plain
+    // own definition (no matching `importFrom`) only shadows.
+    match package.imported_from(db).get(name) {
+        Some(source) => match effects::lookup(source, name) {
+            Some(effects) => PackageBinding::Effect(effects),
             None => PackageBinding::Shadow,
-        }
+        },
+        None => PackageBinding::Shadow,
     }
 }
 

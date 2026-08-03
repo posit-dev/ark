@@ -1,3 +1,6 @@
+use std::ptr;
+
+use oak_semantic::EffectsHandlers;
 use rustc_hash::FxHashSet;
 
 use crate::diagnostic::Diagnostic;
@@ -5,6 +8,7 @@ use crate::diagnostic::DiagnosticKind;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::file_resolve::resolve_import_layer;
+use crate::imports::resolve_effect;
 use crate::Db;
 use crate::File;
 use crate::Name;
@@ -22,9 +26,8 @@ use crate::Name;
 /// sourcing `helpers.R`, so at runtime that call might do nothing at all.
 /// We report this ambiguity with a diagnostic.
 ///
-/// A call is ambiguous when its callee resolves through [`File::imports`] (which
-/// includes context inherited from the sourcing files) to a layer absent from
-/// [`File::standalone_imports`] (the narrower view without inheritance).
+/// A call is ambiguous when [`File::imports`] resolves it to a different effect
+/// than [`File::standalone_imports`].
 pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagnostic> {
     if file.inherited_layers(db, CollationView::Lazy).is_empty() {
         return Vec::new();
@@ -54,16 +57,18 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
             continue;
         }
 
+        let callee_text = name.text(db);
+        if same_effect(
+            resolve_effect(db, inherited, callee_text.as_str()),
+            resolve_effect(db, &standalone, callee_text.as_str()),
+        ) {
+            continue;
+        }
+
         let Some(resolved_layer) = resolve_layer(db, inherited, name) else {
             continue;
         };
 
-        if standalone.contains(&resolved_layer) {
-            continue;
-        }
-
-        // A layer the standalone view lacks can only have come from an
-        // inherited band, so the site is always there to find.
         let Some(sourcing) = sourcing_file(db, file, &resolved_layer) else {
             continue;
         };
@@ -89,6 +94,26 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
     }
 
     diagnostics
+}
+
+/// Whether two layer chains resolve a bare call to the same effect.
+///
+/// The effect registry provides one static [`EffectsHandlers`] per
+/// `(package, function)`, so pointer identity is sufficient.
+///
+/// TODO(declarations): Only attach and source callees reach this comparison,
+/// and no two packages currently register the same callee. Because of this,
+/// we're missing test coverage. We should complete test coverage once local
+/// declaration of effects lands.
+fn same_effect(
+    left: Option<&'static EffectsHandlers>,
+    right: Option<&'static EffectsHandlers>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => ptr::eq(left, right),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// The first layer that binds `name`, i.e. the one a lookup would settle on.
