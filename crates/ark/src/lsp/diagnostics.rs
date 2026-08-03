@@ -282,11 +282,6 @@ pub(crate) fn generate_diagnostics(
 }
 
 /// Convert `oak_db`'s file-level diagnostics into LSP diagnostics.
-///
-/// `experimental` gates the ones whose `DiagnosticKind::is_experimental()` is
-/// `true`, following rust-analyzer's
-/// `rust-analyzer.diagnostics.experimental.enable`. The gate is per diagnostic,
-/// so a stable oak lint would publish even with the setting off.
 fn oak_diagnostics(
     context: &DiagnosticContext,
     experimental: bool,

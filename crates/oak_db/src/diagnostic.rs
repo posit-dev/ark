@@ -77,9 +77,6 @@ impl DiagnosticKind {
         }
     }
 
-    /// Whether consumers should gate this diagnostic behind a user setting
-    /// for experimental diagnostics, following rust-analyzer's
-    /// `Diagnostic::experimental` / `DiagnosticsConfig::disable_experimental`.
     pub fn is_experimental(&self) -> bool {
         match self {
             DiagnosticKind::AmbiguousEffect => true,

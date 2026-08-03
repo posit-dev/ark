@@ -27,9 +27,8 @@ pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
                 .unwrap_or_else(|| DiagnosticsConfig::default().enable)
         },
     },
-    // TODO: Move to OakConfig after rebase
     Setting {
-        key: "oak.diagnostics.experimental.enable",
+        key: "oak.diagnostics.experimental.enabled",
         set: |cfg, v| {
             cfg.diagnostics.experimental = v
                 .as_bool()
