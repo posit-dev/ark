@@ -1,6 +1,7 @@
 use biome_rowan::TextSize;
 use salsa::Setter;
 
+use crate::search::DEFAULT_SEARCH_PATH_PACKAGES;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
@@ -77,13 +78,24 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
     pkg
 }
 
-fn attached_packages(layers: &[ImportLayer]) -> Vec<Package> {
+/// The package names of all `Package` layers, in layer order.
+fn attach_names(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
     layers
         .iter()
         .filter_map(|layer| match layer {
-            ImportLayer::Package(p) => Some(*p),
+            ImportLayer::Package(p) => Some(p.name(db).to_string()),
             _ => None,
         })
+        .collect()
+}
+
+/// User `library()` / `require()` attaches, with the always-present default
+/// search path dropped so a narrowing assertion sees only what the cursor's
+/// position changes.
+fn library_attaches(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
+    attach_names(db, layers)
+        .into_iter()
+        .filter(|name| !DEFAULT_SEARCH_PATH_PACKAGES.contains(&name.as_str()))
         .collect()
 }
 
@@ -107,15 +119,13 @@ fn test_script_cursor_before_any_attach_sees_no_attached_packages() {
     let file = make_file(&mut db, "/a.R", source);
 
     let layers = file.imports_at(&db, TextSize::from(0));
-    assert_eq!(attached_packages(&layers), Vec::<Package>::new());
+    assert_eq!(library_attaches(&db, &layers), Vec::<String>::new());
 }
 
 #[test]
 fn test_script_cursor_after_all_attaches_sees_all_in_lifo_order() {
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["dplyr", "ggplot2"]);
-    let dplyr = packages[0];
-    let ggplot2 = packages[1];
+    install_packages(&mut db, &["dplyr", "ggplot2"]);
 
     let source = "library(dplyr)\nlibrary(ggplot2)\nx <- 1\n";
     let file = make_file(&mut db, "/a.R", source);
@@ -123,21 +133,23 @@ fn test_script_cursor_after_all_attaches_sees_all_in_lifo_order() {
     let offset = TextSize::from(source.len() as u32);
     let layers = file.imports_at(&db, offset);
     // LIFO: latest `library()` call comes first.
-    assert_eq!(attached_packages(&layers), vec![ggplot2, dplyr]);
+    assert_eq!(library_attaches(&db, &layers), vec![
+        "ggplot2".to_string(),
+        "dplyr".to_string()
+    ]);
 }
 
 #[test]
 fn test_script_cursor_between_attaches_sees_only_earlier_ones() {
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["dplyr", "ggplot2"]);
-    let dplyr = packages[0];
+    install_packages(&mut db, &["dplyr", "ggplot2"]);
 
     let source = "library(dplyr)\nlibrary(ggplot2)\nx <- 1\n";
     let file = make_file(&mut db, "/a.R", source);
 
     let offset = TextSize::from(source.find("library(ggplot2)").unwrap() as u32);
     let layers = file.imports_at(&db, offset);
-    assert_eq!(attached_packages(&layers), vec![dplyr]);
+    assert_eq!(library_attaches(&db, &layers), vec!["dplyr".to_string()]);
 }
 
 #[test]
@@ -147,15 +159,14 @@ fn test_function_body_sees_file_scope_attaches_even_if_after_function_in_source(
     // order. The offset filter must override its "before cursor" rule for
     // file-scope attaches when the cursor is inside a function body.
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["dplyr"]);
-    let dplyr = packages[0];
+    install_packages(&mut db, &["dplyr"]);
 
     let source = "f <- function() {\n  x\n}\nlibrary(dplyr)\n";
     let file = make_file(&mut db, "/a.R", source);
 
     let offset = TextSize::from(source.find("x\n}").unwrap() as u32);
     let layers = file.imports_at(&db, offset);
-    assert!(attached_packages(&layers).contains(&dplyr));
+    assert!(library_attaches(&db, &layers).contains(&"dplyr".to_string()));
 }
 
 #[test]
@@ -221,15 +232,14 @@ fn test_package_top_level_predecessors_appear_in_lifo_order() {
 #[test]
 fn test_package_namespace_and_base_layers_always_visible() {
     let mut db = TestDb::new();
-    let packages = install_packages(&mut db, &["base"]);
-    let base = packages[0];
+    install_packages(&mut db, &["base"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
     let file = make_package_file(&mut db, "/w/pkg/R/a.R", "x <- 1\n", pkg);
     pkg.set_files(&mut db).to(vec![file]);
 
     let layers = file.imports_at(&db, TextSize::from(0));
-    assert!(attached_packages(&layers).contains(&base));
+    assert!(attach_names(&db, &layers).contains(&"base".to_string()));
 }
 
 #[test]
@@ -239,7 +249,7 @@ fn test_package_script_top_level_resolves_as_standalone_script() {
     // script and never take the package path, which would log the spurious
     // "back-pointer but not in its files" warning from #1270.
     let mut db = TestDb::new();
-    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+    install_packages(&mut db, &["dplyr"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
     let r_file = make_package_file(&mut db, "/workspace/pkg/R/a.R", "internal <- 1\n", pkg);
@@ -251,12 +261,12 @@ fn test_package_script_top_level_resolves_as_standalone_script() {
     // Before the `library()` call: nothing attached, and no `R/` `File`
     // layers (the script isn't part of the package's namespace).
     let before = data_raw.imports_at(&db, TextSize::from(0));
-    assert_eq!(attached_packages(&before), Vec::<Package>::new());
+    assert_eq!(library_attaches(&db, &before), Vec::<String>::new());
     assert_eq!(package_files(&before), Vec::<File>::new());
 
     // After the call: dplyr attached, still no `R/` `File` layers.
     let after = data_raw.imports_at(&db, TextSize::from(source.len() as u32));
-    assert_eq!(attached_packages(&after), vec![dplyr]);
+    assert_eq!(library_attaches(&db, &after), vec!["dplyr".to_string()]);
     assert_eq!(package_files(&after), Vec::<File>::new());
 }
 
@@ -266,7 +276,7 @@ fn test_testthat_top_level_library_narrows_by_offset() {
     // invisible before the call, visible after. Helpers, the package, and
     // testthat (omitted here) stay visible at any offset.
     let mut db = TestDb::new();
-    let cli = install_packages(&mut db, &["cli", "testthat", "base"])[0];
+    install_packages(&mut db, &["cli"]);
     let pkg = install_workspace_package(&mut db, "pkg");
 
     let source = "library(cli)\ntest_that('x', expect_true(TRUE))\n";
@@ -279,20 +289,20 @@ fn test_testthat_top_level_library_narrows_by_offset() {
     pkg.set_scripts(&mut db).to(vec![test_file]);
 
     let before = test_file.imports_at(&db, TextSize::from(0));
-    assert!(!attached_packages(&before).contains(&cli));
+    assert!(!library_attaches(&db, &before).contains(&"cli".to_string()));
 
     let after = test_file.imports_at(&db, TextSize::from(source.len() as u32));
-    assert!(attached_packages(&after).contains(&cli));
+    assert!(library_attaches(&db, &after).contains(&"cli".to_string()));
 }
 
 #[test]
 fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     // A `library()` inside a file that's `source()`d from a function body is
     // forwarded by the builder as an `Attach` scoped to that `source()` call,
-    // so its `Package` layer is visible inside the function (the lazy / EOF
-    // view) but not at file scope before or after it.
+    // so its attach layer is visible inside the function (the lazy / EOF view)
+    // but not at file scope before or after it.
     let mut db = TestDb::new();
-    let dplyr = install_packages(&mut db, &["dplyr"])[0];
+    install_packages(&mut db, &["dplyr"]);
 
     let helpers = make_file(&mut db, "w/helpers.R", "library(dplyr)\n");
     let script_src = "before\nf <- function() {\n  source(\"helpers.R\")\n}\nafter\n";
@@ -304,10 +314,10 @@ fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
 
     let at = |needle: &str| {
         let offset = TextSize::from(script_src.find(needle).unwrap() as u32);
-        attached_packages(&script.imports_at(&db, offset))
+        library_attaches(&db, &script.imports_at(&db, offset))
     };
 
-    assert!(!at("before").contains(&dplyr));
-    assert!(at("source").contains(&dplyr));
-    assert!(!at("after").contains(&dplyr));
+    assert!(!at("before").contains(&"dplyr".to_string()));
+    assert!(at("source").contains(&"dplyr".to_string()));
+    assert!(!at("after").contains(&"dplyr".to_string()));
 }

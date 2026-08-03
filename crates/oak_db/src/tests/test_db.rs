@@ -10,12 +10,17 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use aether_path::FilePath;
+use oak_package_metadata::namespace::Namespace;
+use salsa::Setter;
 use url::Url;
 
 use crate::Db;
 use crate::DbInputs;
+use crate::File;
+use crate::FileRevision;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
+use crate::Package;
 use crate::Root;
 use crate::RootKind;
 use crate::StaleRoot;
@@ -138,4 +143,41 @@ pub(super) fn workspace_root(db: &impl Db, path: &str) -> Root {
 /// Build a fresh empty `RootKind::Library` `Root` at `path`.
 pub(super) fn library_root(db: &impl Db, path: &str) -> Root {
     Root::new(db, file_path(path), RootKind::Library, vec![], vec![])
+}
+
+/// Build a package `pkg_name` with the given namespace and `R/` files (each
+/// back-pointing to it), rooted under `ws/{pkg_name}`. Not registered on any
+/// root, so callers can assemble several packages into one workspace. Returns
+/// the package and its files in the given order.
+pub(super) fn make_package(
+    db: &mut TestDb,
+    pkg_name: &str,
+    namespace: Namespace,
+    files: &[(&str, &str)],
+) -> (Package, Vec<File>) {
+    let pkg = Package::new(
+        db,
+        file_path(&format!("ws/{pkg_name}/DESCRIPTION")),
+        pkg_name.to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(namespace),
+        Vec::new(),
+        Vec::new(),
+    );
+    let entities: Vec<File> = files
+        .iter()
+        .map(|(path, contents)| {
+            File::new(
+                db,
+                file_path(path),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                Some(pkg),
+            )
+        })
+        .collect();
+    pkg.set_files(db).to(entities.clone());
+    (pkg, entities)
 }
