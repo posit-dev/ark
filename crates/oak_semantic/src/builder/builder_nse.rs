@@ -192,9 +192,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Recognize a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`)
-    /// as an assign effect and build its bindings, or `None` for any other binary
-    /// operator.
+    /// Resolve a binding operator's definitions.
     fn resolve_operator_assign(&mut self, bin: &RBinaryExpression) -> Option<Vec<AssignBinding>> {
         let op = bin.operator().ok()?;
 

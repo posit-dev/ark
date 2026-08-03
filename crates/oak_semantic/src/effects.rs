@@ -41,11 +41,13 @@ pub struct Effects {
 ///   be matched against a cursor (e.g. for goto/rename).
 /// - `value_expr` is what a type checker infers the binding's type from (`None`
 ///   with no value argument).
+/// - `target` tells the walk whether the bound name is also read here.
 #[derive(Debug, Clone)]
 pub struct AssignBinding {
     pub name: String,
     pub name_expr: RangedAstPtr<AnyRExpression>,
     pub value_expr: Option<AstPtr<AnyRExpression>>,
+    pub target: TargetAccess,
 }
 
 /// The handlers that compute a function's effects.
@@ -91,6 +93,16 @@ pub enum EffectSite<'a> {
 /// registry `static`s.
 pub trait AssignHandler: std::fmt::Debug + Sync {
     fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>>;
+}
+
+/// Whether an assign effect reads its target before writing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetAccess {
+    /// Writes the target without reading it, as in `x <- value`.
+    Write,
+    /// Reads the target before rebinding it. `x %<>% f()` expands to
+    /// `x <- x %>% f()`, so `x` is a use and a definition.
+    ReadWrite,
 }
 
 /// Context for effect handlers.
@@ -538,15 +550,17 @@ impl AssignHandler for AssignAnnotation {
             name,
             name_expr,
             value_expr,
+            target: TargetAccess::Write,
         }])
     }
 }
 
 /// Handler for a binding operator (`x %<>% f()`, `x %<~% expr`, `x := expr`).
-///
-/// The operator captures its LHS unevaluated.
 #[derive(Debug, Clone, Copy)]
-pub struct BindingOperatorHandler;
+pub struct BindingOperatorHandler {
+    /// Whether the target is also read (compound operators like `%<>%`).
+    pub target: TargetAccess,
+}
 
 impl AssignHandler for BindingOperatorHandler {
     fn resolve(&self, site: EffectSite, ctx: &CallContext) -> Option<Vec<AssignBinding>> {
@@ -562,6 +576,7 @@ impl AssignHandler for BindingOperatorHandler {
             name,
             name_expr: RangedAstPtr::new(&left),
             value_expr: Some(AstPtr::new(&right)),
+            target: self.target,
         }])
     }
 }

@@ -12,6 +12,7 @@ use oak_semantic::effects::EffectHandler;
 use oak_semantic::effects::EffectSite;
 use oak_semantic::effects::RangedAstPtr;
 use oak_semantic::effects::SourceAnnotation;
+use oak_semantic::effects::TargetAccess;
 use oak_semantic::effects_registry;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
@@ -1807,11 +1808,7 @@ fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIndex {
 
 #[test]
 fn test_magrittr_compound_assignment_binds_lhs() {
-    // `x %<>% f()` binds `x`. The left operand is a definition target, not a
-    // read, the same as `<-`, so only `f` (the right operand) is a use.
-    //
-    // `%<>%` is compound (`x <- f(x)`), so `x` is conceptually read too, but we
-    // don't record that read yet. See the `TODO(nse)` in the walk's binary arm.
+    // `%<>%` expands to `x <- x %>% f()`, so it reads and rebinds `x`.
     let index = index_with_attached("x %<>% f()", &["magrittr"]);
     let file = ScopeId::from(0);
 
@@ -1820,15 +1817,33 @@ fn test_magrittr_compound_assignment_binds_lhs() {
         Some(DefinitionKind::Assign { .. })
     ));
 
-    // Only the right operand `f` is a use; the target `x` is not recorded.
-    assert_eq!(index.uses(file).len(), 1);
+    assert_eq!(index.uses(file).len(), 2);
     let symbols = index.symbols(file);
     assert_eq!(
         symbols
             .symbol(index.uses(file)[UseId::from(0)].symbol())
             .name(),
+        "x"
+    );
+    assert_eq!(
+        symbols
+            .symbol(index.uses(file)[UseId::from(1)].symbol())
+            .name(),
         "f"
     );
+}
+
+#[test]
+fn test_magrittr_compound_assignment_target_read_resolves_to_prior_binding() {
+    // `%<>%` reads `x` before rebinding it, so this use reaches `x <- 1`.
+    let index = index_with_attached("x <- 1\nx %<>% f()", &["magrittr"]);
+    let file = ScopeId::from(0);
+
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert_eq!(def.range(), biome_rowan::TextRange::new(0.into(), 1.into()));
 }
 
 #[test]
@@ -1934,10 +1949,9 @@ fn test_compound_assignment_use_resolves_to_binding() {
     let index = index_with_attached("y %<>% f()\ny", &["magrittr"]);
     let file = ScopeId::from(0);
 
-    // Uses in order: `f` (right operand), then the trailing `y`. The left
-    // operand `y` is the binding target, not a use.
+    // The trailing `y` is use 2 because `%<>%` first reads its target and `f`.
     let map = index.use_def_map(file);
-    let bindings = map.bindings_at_use(UseId::from(1));
+    let bindings = map.bindings_at_use(UseId::from(2));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(file)[bindings.definitions()[0]];
     assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
@@ -2352,11 +2366,13 @@ impl AssignHandler for MultiAssignHandler {
                 name: "a".into(),
                 name_expr: ptr.clone(),
                 value_expr: None,
+                target: TargetAccess::Write,
             },
             AssignBinding {
                 name: "b".into(),
                 name_expr: ptr,
                 value_expr: None,
+                target: TargetAccess::Write,
             },
         ])
     }

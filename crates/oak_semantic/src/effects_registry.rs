@@ -7,6 +7,8 @@ use crate::effects::BindingOperatorHandler;
 use crate::effects::BquoteHandler;
 use crate::effects::EffectsHandlers;
 use crate::effects::SourceAnnotation;
+use crate::effects::TargetAccess::ReadWrite;
+use crate::effects::TargetAccess::Write;
 use crate::semantic_index::NseScope::Current;
 use crate::semantic_index::NseScope::Nested;
 use crate::semantic_index::NseTiming::Eager;
@@ -139,11 +141,10 @@ macro_rules! assign {
     };
 }
 
-/// An assign-operator entry: a binding operator (`x %<>% f`, `x := v`) that binds
-/// a name in the current scope. It captures its LHS unevaluated, so the name
-/// comes from the LHS text rather than a positional argument, hence no position.
+/// Register a binding operator and whether it reads its LHS before rebinding
+/// it. Its unevaluated LHS supplies the bound name.
 macro_rules! assign_op {
-    ($pkg:literal, $func:literal) => {
+    ($pkg:literal, $func:literal, $target:expr) => {
         Entry {
             package: $pkg,
             function: $func,
@@ -151,7 +152,7 @@ macro_rules! assign_op {
                 arguments: None,
                 attach: None,
                 source: None,
-                assign: Some(&BindingOperatorHandler),
+                assign: Some(&BindingOperatorHandler { target: $target }),
             },
         }
     };
@@ -188,9 +189,9 @@ static REGISTRY: &[Entry] = &[
     assign!("base", "assign", 0),
     assign!("base", "delayedAssign", 0),
     // magrittr / rlang / S7 binding operators
-    assign_op!("magrittr", "%<>%"),
-    assign_op!("rlang", "%<~%"),
-    assign_op!("S7", ":="),
+    assign_op!("magrittr", "%<>%", ReadWrite),
+    assign_op!("rlang", "%<~%", Write),
+    assign_op!("S7", ":=", Write),
     // rlang
     nse!("rlang", "on_load", ("expr", 0, Current, Lazy)),
     // shiny
