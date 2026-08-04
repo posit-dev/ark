@@ -42,6 +42,7 @@ mod kernel_variables;
 mod lsp;
 mod lsp_completions;
 mod options;
+mod packages_pane;
 mod plots;
 mod repos_auto;
 mod repos_conf_file;

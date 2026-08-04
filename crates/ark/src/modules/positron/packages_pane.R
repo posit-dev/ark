@@ -192,8 +192,24 @@
 # cannot guarantee.
 #' @export
 .ps.rpc.pkg_outdated <- function() {
-    outdated <- utils::old.packages()
+    pkg_outdated_result(utils::old.packages())
+}
+
+# Turn an `old.packages()` matrix into the pane's outdated-package list. Split
+# out from the RPC so the filtering and formatting can be tested without
+# querying live repositories.
+pkg_outdated_result <- function(outdated) {
     if (is.null(outdated) || nrow(outdated) == 0) {
+        return(list())
+    }
+    # Since R 4.6, `old.packages()` also reports equal-version packages with
+    # newer `Built` or `Published` timestamps, which flags hundreds of packages
+    # right after an R minor upgrade rebuilds CRAN's binaries. The pane promises
+    # a newer package version, so exclude those entries.
+    newer <- package_version(outdated[, "ReposVer"]) >
+        package_version(outdated[, "Installed"])
+    outdated <- outdated[newer, , drop = FALSE]
+    if (nrow(outdated) == 0) {
         return(list())
     }
     unname(Map(
