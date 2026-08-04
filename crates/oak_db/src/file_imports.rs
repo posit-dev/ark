@@ -358,6 +358,23 @@ impl File {
             .collect()
     }
 
+    /// Returns one import chain for each inherited sourcing context, paired with
+    /// its direct sourcing file. It excludes this file's own context because
+    /// callers compare each inherited chain with [`File::standalone_imports()`].
+    ///
+    /// Not tracked. [`File::diagnostics()`] already reads the `no_eq` semantic
+    /// index, so this query cannot add a tracked cache boundary.
+    pub(crate) fn inherited_imports_by_sourcing_file(
+        self,
+        db: &dyn Db,
+    ) -> Vec<(File, Vec<ImportLayer>)> {
+        let own = self.attach_layers(db, AttachView::Anywhere);
+        self.inherited_layers(db, CollationView::Lazy)
+            .iter()
+            .map(|site| (site.file, site.layers.lookup_order(db, &own).collect()))
+            .collect()
+    }
+
     /// The file's own layers, plus one alternative per file that sources it.
     fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
         let mut alternatives: Vec<&CrossFileLayers> =

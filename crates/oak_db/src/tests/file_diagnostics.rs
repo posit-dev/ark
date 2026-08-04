@@ -566,6 +566,133 @@ fn test_diagnostic_no_inherited_shadow_for_own_attach_ordering() {
     ));
 }
 
+#[test]
+fn test_diagnostic_inherited_shadow_not_masked_by_an_agreeing_context() {
+    // `mypkg/R/main.R` agrees through `importFrom(base, library)`, but
+    // `zzscript.R` resolves `library` through `shadowr`. The contexts are
+    // alternative runtimes, so flattening them would hide this disagreement.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source", "library"]);
+    install_package_binding(&mut db, "shadowr", &["library"]);
+    install_package_binding(&mut db, "dplyr", &[]);
+
+    let root = workspace_root(&db, "w");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "library".to_string(),
+            package: "base".to_string(),
+        }],
+        ..Default::default()
+    };
+    let pkg = Package::new(
+        &db,
+        file_path("w/mypkg/DESCRIPTION"),
+        "mypkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(namespace),
+        Vec::new(),
+        Vec::new(),
+    );
+    let main = File::new(
+        &db,
+        file_path("w/mypkg/R/main.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![main]);
+    root.set_packages(&mut db).to(vec![pkg]);
+
+    let helpers_source = "library(dplyr)\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let script = new_file(
+        &db,
+        "w/zzscript.R",
+        "library(shadowr)\nbase::source(\"helpers.R\")\n",
+    );
+    root.set_scripts(&mut db).to(vec![helpers, script]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // Require both source edges. This masking case needs one matching and one
+    // differing context.
+    assert_eq!(helpers.sourced_by(&db).as_slice(), [main, script]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_names_every_differing_context() {
+    // `a.R` shadows `source` locally and `b.R` resolves it through `shadowr`, so
+    // both differ from the standalone effect. Report one diagnostic with both
+    // contexts rather than two squiggles on one call.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source"]);
+    install_package_binding(&mut db, "shadowr", &["source"]);
+    let root = workspace_root(&db, "w");
+    let a = new_file(&db, "w/a.R", "source <- identity\nbase::source(\"c.R\")\n");
+    let b = new_file(&db, "w/b.R", "library(shadowr)\nbase::source(\"c.R\")\n");
+    let c_source = "source(\"d.R\")\n";
+    let c = new_file(&db, "w/c.R", c_source);
+    let d = new_file(&db, "w/d.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![a, b, c, d]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render("w/c.R", c_source, c.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_when_only_the_standalone_view_binds() {
+    // Standalone `helpers.R` resolves `library` through the later `R/` sibling.
+    // The inherited context excludes that collation fallback and reaches base's
+    // builtin without a scanned base root.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "dplyr", &[]);
+    let root = workspace_root(&db, "w");
+    let main = new_file(&db, "w/main.R", "source(\"R/helpers.R\")\n");
+    let helpers_source = "library(dplyr)\n";
+    let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
+    let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/R/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_loader_only_sibling_attach() {
+    // Standalone `helpers.R` sees `shadowr` through `loadSupport()` and its `R/`
+    // sibling. The `run.R` context excludes that sibling and falls through to
+    // base.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source", "library"]);
+    install_package_binding(&mut db, "shadowr", &["library"]);
+    install_package_binding(&mut db, "dplyr", &[]);
+    let root = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
+    let run = new_file(&db, "w/run.R", "source(\"R/helpers.R\")\n");
+    let helpers_source = "library(dplyr)\n";
+    let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
+    let zzz = new_file(&db, "w/R/zzz.R", "library(shadowr)\n");
+    root.set_scripts(&mut db).to(vec![app, run, helpers, zzz]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/R/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
 /// Register an installed package that really binds and exports `symbols`, so
 /// `Package::resolve` finds them. `install_packages` registers packages with no
 /// files, which makes every `Package` layer inert. Additive across calls, so

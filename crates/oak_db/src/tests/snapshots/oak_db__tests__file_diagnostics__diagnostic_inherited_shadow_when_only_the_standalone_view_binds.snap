@@ -1,0 +1,10 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/R/helpers.R\", helpers_source, helpers.diagnostics(&db))"
+---
+info[inherited-shadow]: This `library` call has an ambiguous effect.
+                        It resolves through a binding in `zzz-shadow.R` when the file is sourced on its own, and to package `base` when sourced by `main.R`.
+ --> w/R/helpers.R:1:1
+  |
+1 | library(dplyr)
+  | ^^^^^^^^^^^^^^
