@@ -841,17 +841,18 @@ impl DeviceContext {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
         });
 
-        let mut map = serde_json::Map::new();
-        map.insert("image/png".to_string(), serde_json::to_value(data)?);
+        let mime_type = Self::get_mime_type(&settings.format);
+
+        let data = json!({ mime_type: data });
 
         let metadata = json!({
-            "image/png": {
+            mime_type: {
                 "width": settings.size.width,
                 "height": settings.size.height,
             }
         });
 
-        Ok((serde_json::Value::Object(map), metadata))
+        Ok((data, metadata))
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
