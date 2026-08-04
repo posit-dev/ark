@@ -406,6 +406,30 @@ impl File {
             .collect()
     }
 
+    /// Returns the union of this file's top-level bindings visible at `offsets`.
+    /// Reads the file's own semantic index.
+    ///
+    /// Returns `None` when an offset lacks a load-time export snapshot.
+    fn exports_at_sources(
+        self,
+        db: &dyn Db,
+        offsets: &[TextSize],
+    ) -> Option<Arc<FxHashSet<String>>> {
+        let index = self.semantic_index(db);
+
+        // Preserve the index's `Arc` for one call rather than rebuilding its set.
+        if let [offset] = offsets {
+            return index.exports_at_source(*offset).cloned();
+        }
+
+        let mut union = FxHashSet::default();
+        for &offset in offsets {
+            union.extend(index.exports_at_source(offset)?.iter().cloned());
+        }
+
+        Some(Arc::new(union))
+    }
+
     /// The cross-file layers this file sees at load time, excluding its own
     /// attaches (see [`CrossFileLayers`]). Never reads the file's own semantic
     /// index, so it's safe to call while that index is being built.
@@ -514,7 +538,7 @@ fn build_inherited_layers(
     let (own_attach, exports_so_far) = match offsets.as_deref() {
         Some(offsets) => (
             source_site.attach_layers(db, AttachView::Eager(offsets)),
-            exports_at_sources(db, source_site, offsets),
+            source_site.exports_at_sources(db, offsets),
         ),
         None => (source_site.attach_layers(db, AttachView::Anywhere), None),
     };
@@ -575,29 +599,6 @@ fn source_offsets(db: &dyn Db, sourcing_file: File, file: File) -> Option<Vec<Te
         true => None,
         false => Some(offsets),
     }
-}
-
-/// Returns the union of top-level bindings visible at `offsets`.
-///
-/// Returns `None` when an offset lacks a load-time export snapshot.
-fn exports_at_sources(
-    db: &dyn Db,
-    file: File,
-    offsets: &[TextSize],
-) -> Option<Arc<FxHashSet<String>>> {
-    let index = file.semantic_index(db);
-
-    // Preserve the index's `Arc` for one call rather than rebuilding its set.
-    if let [offset] = offsets {
-        return index.exports_at_source(*offset).cloned();
-    }
-
-    let mut union = FxHashSet::default();
-    for &offset in offsets {
-        union.extend(index.exports_at_source(offset)?.iter().cloned());
-    }
-
-    Some(Arc::new(union))
 }
 
 fn package_load_layers(
