@@ -805,12 +805,10 @@ impl DeviceContext {
             .log_err();
     }
 
-    /// Render a plot for the Jupyter protocol, returning the display data and
-    /// its metadata.
+    /// Renders a plot for Jupyter and returns its display data and metadata.
     ///
-    /// The metadata reports the logical size of the image so that frontends
-    /// display high-DPI renders (`pixel_ratio > 1`) at the intended size
-    /// rather than at their physical pixel size (posit-dev/positron#15261).
+    /// The image metadata contains logical dimensions so frontends display HiDPI
+    /// renders at their intended size rather than at their physical pixel dimensions.
     fn create_display_data_plot(
         &self,
         id: &PlotId,

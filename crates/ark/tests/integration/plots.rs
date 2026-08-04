@@ -688,9 +688,8 @@ fn test_plot_with_lone_fig_height_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that plots rendered with a high device pixel ratio report their
-/// logical size in the display_data metadata, so frontends don't display them
-/// at their physical pixel size (posit-dev/positron#15261).
+/// Verifies that a HiDPI plot reports logical dimensions in `display_data`
+/// metadata while the PNG uses physical pixel dimensions.
 #[test]
 fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -718,11 +717,11 @@ fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
     let logical_width = (4.0 * dpi).round() as u32;
     let logical_height = (3.0 * dpi).round() as u32;
 
-    // The PNG itself is rendered at 2x the logical size
+    // A 2x pixel ratio doubles the PNG's physical dimensions.
     assert_eq!(width, logical_width * 2);
     assert_eq!(height, logical_height * 2);
 
-    // The metadata reports the logical size
+    // The metadata preserves the requested logical dimensions.
     let image_metadata = &display.metadata["image/png"];
     assert_eq!(image_metadata["width"], logical_width);
     assert_eq!(image_metadata["height"], logical_height);
