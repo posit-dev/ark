@@ -1294,9 +1294,11 @@ fn test_package_r_file_ignores_source_sites() {
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
-    // `dev.R` really does source `b.R`, but `Collate:` already says when `b.R`
-    // loads, so it keeps its predecessor and NAMESPACE context. Inheriting
-    // `dev.R`'s instead would drop `File(a.R)`.
+    // `dev.R` really does source `b.R`, but `b.R` is collated and so has to
+    // resolve under package load, where `dev.R`'s bindings don't exist. Adding
+    // `dev.R`'s context would also swap the namespace tail, `base` alone, for
+    // the default search path, losing the check that a package file declares
+    // its imports.
     assert_eq!(b.sourced_by(&db), &vec![dev]);
     assert_eq!(shape(&db, b.imports(&db)), vec![
         "File(a.R)".to_string(),
