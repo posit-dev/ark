@@ -295,6 +295,57 @@ fn test_testthat_top_level_library_narrows_by_offset() {
     assert!(library_attaches(&db, &after).contains(&"cli".to_string()));
 }
 
+/// Creates a `tests/testthat/` fixture with three support files and one test.
+/// Returns `(helper_a, helper_b, setup_c, test_x)`.
+fn testthat_support_workspace(db: &mut TestDb, helper_b: &str) -> (File, File, File, File) {
+    let pkg = install_workspace_package(db, "pkg");
+    let path = |name: &str| format!("workspace/pkg/tests/testthat/{name}");
+
+    let helper_a = make_package_file(db, &path("helper-a.R"), "a_val <- 1\n", pkg);
+    let helper_b = make_package_file(db, &path("helper-b.R"), helper_b, pkg);
+    let setup_c = make_package_file(db, &path("setup-c.R"), "c_val <- 3\n", pkg);
+    let test_x = make_package_file(db, &path("test-x.R"), "x <- 1\n", pkg);
+
+    pkg.set_scripts(db)
+        .to(vec![helper_a, helper_b, setup_c, test_x]);
+    (helper_a, helper_b, setup_c, test_x)
+}
+
+#[test]
+fn test_testthat_support_file_top_level_sees_only_earlier_support_files() {
+    // testthat sources support files in lexical order. `helper-b.R` runs before
+    // `setup-c.R`, so its top-level code cannot see that file.
+    let mut db = TestDb::new();
+    let (helper_a, helper_b, _setup_c, _test_x) =
+        testthat_support_workspace(&mut db, "b_val <- 2\n");
+
+    let layers = helper_b.imports_at(&db, TextSize::from(0));
+    assert_eq!(package_files(&layers), vec![helper_a]);
+}
+
+#[test]
+fn test_testthat_support_file_body_sees_every_support_file() {
+    // The function body runs after every support file is sourced. LIFO lookup
+    // therefore puts `setup-c.R` before `helper-a.R`.
+    let mut db = TestDb::new();
+    let source = "f <- function() {\n  inside\n}\n";
+    let (helper_a, helper_b, setup_c, _test_x) = testthat_support_workspace(&mut db, source);
+
+    let offset = TextSize::from(source.find("inside").unwrap() as u32);
+    let layers = helper_b.imports_at(&db, offset);
+    assert_eq!(package_files(&layers), vec![setup_c, helper_a]);
+}
+
+#[test]
+fn test_testthat_test_file_top_level_sees_every_support_file() {
+    // `test-x.R` runs after every support file, so its eager view retains all of them.
+    let mut db = TestDb::new();
+    let (helper_a, helper_b, setup_c, test_x) = testthat_support_workspace(&mut db, "b_val <- 2\n");
+
+    let layers = test_x.imports_at(&db, TextSize::from(0));
+    assert_eq!(package_files(&layers), vec![setup_c, helper_b, helper_a]);
+}
+
 #[test]
 fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     // A sourced `library()` becomes an `Attach` in `source()`'s calling scope.

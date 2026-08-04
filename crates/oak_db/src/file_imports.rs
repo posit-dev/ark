@@ -247,7 +247,9 @@ impl File {
         match self.package(db) {
             // A `tests/testthat/` file: sees the whole package plus sourced
             // helpers, with testthat attached.
-            Some(package) if is_testthat_file(self, db) => testthat_load_layers(self, db, package),
+            Some(package) if is_testthat_file(self, db) => {
+                testthat_load_layers(self, db, package, view)
+            },
             // A loadable `R/` file: sees collation siblings and the package
             // NAMESPACE.
             Some(package) if self.is_package_source(db, package) => {
@@ -365,15 +367,15 @@ fn script_collation_layers(file: File, db: &dyn Db, view: CollationView) -> Cros
     CrossFileLayers { above, below }
 }
 
-/// The sibling files visible to `file`, in LIFO order (latest-sourced first):
-/// a name defined late in the collation shadows the same name defined earlier.
-/// Self is excluded, its own top-level bindings come from `exports`, and
-/// including it here would cycle in `resolve` for unbound names.
+/// Files visible to `file`, ordered for LIFO lookup. A later-loaded collation
+/// sibling shadows names from an earlier sibling.
 ///
-/// `prefix_len` is how many of `collation` load before `file`, which is all the
-/// `Eager` view keeps. `None` means the caller couldn't place `file` in the
-/// collation at all, so it falls back to the full LIFO view, over-approximating
-/// in the safe direction.
+/// Excludes `file` because its top-level bindings come from `exports()`.
+/// Including it would make `resolve()` cycle for unbound names.
+///
+/// `prefix_len` counts collation files loaded before `file`, which an `Eager`
+/// view retains. `None` means `file` is absent from the collation, so every
+/// non-self sibling is returned in LIFO order to over-approximate visibility.
 fn visible_siblings(
     file: File,
     collation: &[File],
@@ -404,7 +406,7 @@ fn visible_siblings(
 ///
 /// A test file runs with the package loaded and `testthat` attached, after
 /// testthat has sourced the package's `helper*.R` and `setup*.R` files into
-/// the test environment. So the layering, highest priority first, is:
+/// the test environment. The layering, highest priority first, is:
 ///
 /// 1. helper/setup files (sourced into the test env, shadow everything),
 /// 2. the whole package's `R/` code,
@@ -412,18 +414,30 @@ fn visible_siblings(
 /// 4. the file's own top-level `library()` calls (spliced in by the caller),
 /// 5. helper/setup and package attaches, then `testthat`, on the search path,
 /// 6. base.
-fn testthat_load_layers(file: File, db: &dyn Db, package: Package) -> CrossFileLayers {
-    // testthat sources `helper*.R` / `setup*.R` sorted, so reversing gives LIFO
-    // precedence. Self is dropped when the file being analysed is itself a
-    // helper/setup file, same self-exclusion reasoning as `package_load_layers`.
+///
+/// Support files form their own collation. An `Eager` view keeps only
+/// source-order predecessors, while a `Lazy` view keeps every support file.
+/// Every `R/` file remains visible because package loading finishes first.
+fn testthat_load_layers(
+    file: File,
+    db: &dyn Db,
+    package: Package,
+    view: CollationView,
+) -> CrossFileLayers {
     let mut support: Vec<File> = package
         .scripts(db)
         .iter()
         .copied()
-        .filter(|f| *f != file && is_testthat_support_file(*f, db))
+        .filter(|script| is_testthat_support_file(*script, db))
         .collect();
-    support.sort_by_cached_key(|f| testthat_support_key(*f, db));
-    support.reverse();
+    support.sort_by_cached_key(|script| testthat_support_key(*script, db));
+
+    // Test files run after every support file, so they use the full support prefix.
+    let prefix_len = support
+        .iter()
+        .position(|script| *script == file)
+        .unwrap_or(support.len());
+    let support = visible_siblings(file, &support, view, Some(prefix_len));
 
     // The whole package is loaded when tests run, so every `R/` file is visible.
     // Collation order reversed for LIFO, same as `package_load_layers`.
