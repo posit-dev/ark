@@ -1,0 +1,13 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"a.R\", source, file.diagnostics(&db))"
+---
+info[ambiguous-effect]: Ambiguous reading of effectful `test_that()`.
+                        A conditional assignment could shadow `test_that` on some paths and change its effect.
+ --> a.R:5:1
+  |
+3 |     test_that <- identity
+  |     --------- conditional assignment to `test_that`
+4 | }
+5 | test_that({ x <- 1 }, desc = "d")
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

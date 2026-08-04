@@ -7,7 +7,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
-use crate::effects::Formal;
+use crate::effects::Formals;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 
@@ -22,19 +22,8 @@ impl EffectHandler for BquoteHandler {
     type Output = ResolvedArgumentEffects;
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
-        // `bquote(expr, where, splice)`: only `expr` (the first positional) is
-        // quoted. The other arguments are ordinary values.
-        let formals = [
-            Formal {
-                name: "expr",
-                position: 0,
-            },
-            Formal {
-                name: "splice",
-                position: 2,
-            },
-        ];
-        let matched = ctx.match_arguments(call, &formals);
+        let formals: Formals = &["expr", "where", "splice"];
+        let matched = ctx.match_arguments(call, formals);
 
         let args = call.arguments().ok()?;
         let values: Vec<Option<AnyRExpression>> = args
@@ -46,7 +35,7 @@ impl EffectHandler for BquoteHandler {
         // `..()` only splices under `splice = TRUE`.
         let splice = matched
             .iter()
-            .position(|formal| *formal == Some(1))
+            .position(|formal| *formal == Some(2))
             .and_then(|i| values.get(i))
             .and_then(|value| value.as_ref())
             .and_then(|value| ctx.resolve_static_bool(value))

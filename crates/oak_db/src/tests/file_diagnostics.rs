@@ -208,17 +208,10 @@ f <- function() reactive({ x <- 1 })
 }
 
 #[test]
-fn test_diagnostic_gap_named_arg_before_block() {
-    // R matches named arguments first, so `desc = "d"` binds to the `desc`
-    // formal, and the unnamed block then fills the remaining `code` formal,
-    // which is formal position 1, even though the block sits at call
-    // position 0. `match_positional()` in `crates/oak_semantic/src/effects.rs`
-    // only matches a positional argument to a formal declared at that exact
-    // call position, so it never finds `code` here and no scope gets pushed
-    // for `x <- 1`. Confirmed by direct comparison: this source yields one
-    // scope, versus two for the same call with `code` in its normal
-    // position, so `x` resolves at file scope instead of inside
-    // `test_that()`.
+fn test_diagnostic_named_arg_before_block_scopes_correctly() {
+    // After `desc` binds by name, the block fills `code` despite appearing first.
+    // Its `test_that()` resolution is conditionally shadowed and must still gain
+    // the `code` scope.
     let mut db = TestDb::new();
     install_packages(&mut db, &["testthat"]);
     let source = "\

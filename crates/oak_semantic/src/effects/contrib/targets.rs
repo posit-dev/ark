@@ -13,7 +13,8 @@ pub(super) static ENTRIES: &[Entry] = &[
     // The scanner reads one literal even though `files` is a character vector.
     source!(
         "tar_source",
-        0,
+        ["files"],
+        "files",
         SourceTarget::FileOrDir(DirWalk::Recursive),
         Some("R")
     ),

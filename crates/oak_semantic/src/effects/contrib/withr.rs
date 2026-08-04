@@ -7,5 +7,5 @@ pub(crate) static ENTRIES: &[Entry] = &[
     // `defer(expr, envir = parent.frame())` runs `expr` in the caller frame when
     // it exits, the same `Current + Lazy` shape as `on.exit`. A non-default
     // `envir` isn't modeled.
-    nse!("defer", ("expr", 0, Current, Lazy)),
+    nse!("defer", ("expr", Current, Lazy)),
 ];

@@ -122,13 +122,40 @@ fn test_tar_source_path_naming_a_script_resolves_as_a_file() {
 }
 
 #[test]
-fn test_tar_source_named_files_argument_is_not_recognized() {
-    // `files = "code"` isn't read yet (the path is matched positionally), and
-    // the default must not step in for it. Inventing `"R"` here would source a
-    // directory the call explicitly overrode.
-    let files = vec![resolution("file:///R/a.R", "a_name")];
+fn test_tar_source_named_files_argument_is_recognized() {
+    let files = vec![resolution("file:///code/a.R", "a_name")];
     let index = index(
         "tar_source(files = \"code\")\n",
+        TargetsResolver::with_dir(files),
+    );
+
+    assert_eq!(semantic_call_kinds(&index), [&sourced(
+        "code",
+        "file:///code/a.R"
+    )]);
+}
+
+#[test]
+fn test_tar_source_change_directory_false_uses_the_default_directory() {
+    // `change_directory` does not bind `files`, so `files` uses its `"R"` default.
+    let files = vec![resolution("file:///R/a.R", "a_name")];
+    let index = index(
+        "tar_source(change_directory = FALSE)\n",
+        TargetsResolver::with_dir(files),
+    );
+
+    assert_eq!(semantic_call_kinds(&index), [&sourced(
+        "R",
+        "file:///R/a.R"
+    )]);
+}
+
+#[test]
+fn test_tar_source_dynamic_files_argument_is_not_recognized() {
+    // A dynamic `files` value overrides the `"R"` default but produces no source call.
+    let files = vec![resolution("file:///R/a.R", "a_name")];
+    let index = index(
+        "tar_source(files = some_var)\n",
         TargetsResolver::with_dir(files),
     );
 

@@ -131,12 +131,12 @@ impl ImportsResolver for MultiFileResolver {
     }
 }
 
-/// Resolves `source` to a [`SourceAnnotation`] whose path sits at the second
-/// positional slot, exercising the configurable `position`.
+/// Provides a `source()` annotation whose `file` path formal is second.
 struct PositionResolver;
 
-static SOURCE_AT_POSITION_1: SourceAnnotation = SourceAnnotation {
-    position: 1,
+static SOURCE_PATH_SECOND: SourceAnnotation = SourceAnnotation {
+    formals: &["ignored", "file"],
+    path: "file",
     target: SourceTarget::File,
     default_path: None,
 };
@@ -151,7 +151,7 @@ impl ImportsResolver for PositionResolver {
             return Some(EffectsHandlers {
                 arguments: None,
                 attach: None,
-                source: Some(&SOURCE_AT_POSITION_1),
+                source: Some(&SOURCE_PATH_SECOND),
                 assign: None,
             });
         }
@@ -1347,9 +1347,7 @@ fn test_source_dir_with_no_files_records_the_path_unresolved() {
 }
 
 #[test]
-fn test_source_resolver_honors_configured_path_position() {
-    // A `SourceAnnotation` with `position: 1` takes the path from the second
-    // positional argument, not the first.
+fn test_source_resolver_finds_path_formal_not_first() {
     let index = build_test_index("source(\"ignored\", \"real.R\")", PositionResolver);
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "real.R".into(),
