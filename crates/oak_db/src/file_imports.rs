@@ -1,16 +1,15 @@
 use std::borrow::Cow;
 use std::slice;
-use std::sync::Arc;
 
 use biome_rowan::TextSize;
 use camino::Utf8Path;
 use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::ExportsAtSource;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
-use rustc_hash::FxHashSet;
 
 use crate::Db;
 use crate::File;
@@ -31,7 +30,7 @@ pub enum ImportLayer {
     /// counts.
     SourcingFile {
         file: File,
-        exports_so_far: Arc<FxHashSet<String>>,
+        exports_so_far: ExportsAtSource,
     },
     /// The package whose NAMESPACE declares `importFrom(pkg, name)` entries.
     /// [`Package::import_index`] says which entry, if any, binds a given name.
@@ -406,30 +405,6 @@ impl File {
             .collect()
     }
 
-    /// Returns the union of this file's top-level bindings visible at `offsets`.
-    /// Reads the file's own semantic index.
-    ///
-    /// Returns `None` when an offset lacks a load-time export snapshot.
-    fn exports_at_sources(
-        self,
-        db: &dyn Db,
-        offsets: &[TextSize],
-    ) -> Option<Arc<FxHashSet<String>>> {
-        let index = self.semantic_index(db);
-
-        // Preserve the index's `Arc` for one call rather than rebuilding its set.
-        if let [offset] = offsets {
-            return index.exports_at_source(*offset).cloned();
-        }
-
-        let mut union = FxHashSet::default();
-        for &offset in offsets {
-            union.extend(index.exports_at_source(offset)?.iter().cloned());
-        }
-
-        Some(Arc::new(union))
-    }
-
     /// The cross-file layers this file sees at load time, excluding its own
     /// attaches (see [`CrossFileLayers`]). Never reads the file's own semantic
     /// index, so it's safe to call while that index is being built.
@@ -538,7 +513,7 @@ fn build_inherited_layers(
     let (own_attach, exports_so_far) = match offsets.as_deref() {
         Some(offsets) => (
             source_site.attach_layers(db, AttachView::Eager(offsets)),
-            source_site.exports_at_sources(db, offsets),
+            source_site.semantic_index(db).exports_at_sources(offsets),
         ),
         None => (source_site.attach_layers(db, AttachView::Anywhere), None),
     };

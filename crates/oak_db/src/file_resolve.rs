@@ -272,13 +272,13 @@ pub(crate) fn resolve_import_layer<'db>(
 /// Resolve `name` in every context of [`File::imports_by_sourcing_file`] and
 /// union the results.
 ///
-/// Within one sourcing context, first hit wins as usual. On the other hands,
+/// Within one sourcing context, first hit wins as usual. On the other hand,
 /// two files sourcing the same target do not mask each other, they provide
 /// alternative contexts. Contexts converging on one binding (a shared sourced
 /// file, a search-path package) dedupe.
 ///
-/// `Vec::contains()` over a `HashSet` keeps the order deterministic, and both the
-/// contexts and the definitions per context are few.
+/// `Vec::contains()` preserves deterministic insertion order. The linear scan
+/// is acceptable because each context yields few definitions.
 fn resolve_per_sourcing_file<'db>(
     db: &'db dyn Db,
     contexts: &[Vec<ImportLayer>],

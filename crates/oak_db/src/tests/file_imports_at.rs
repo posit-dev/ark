@@ -125,7 +125,7 @@ fn layer_key(db: &TestDb, layer: &ImportLayer) -> String {
             file,
             exports_so_far,
         } => {
-            let mut names: Vec<&str> = exports_so_far.iter().map(String::as_str).collect();
+            let mut names: Vec<&str> = exports_so_far.names().collect();
             names.sort();
             format!("SourcingFile({}, {names:?})", file.path(db))
         },
@@ -318,6 +318,31 @@ fn test_testthat_top_level_library_narrows_by_offset() {
 
     let after = test_file.imports_at(&db, TextSize::from(source.len() as u32));
     assert!(library_attaches(&db, &after).contains(&"cli".to_string()));
+}
+
+#[test]
+fn test_edit_above_a_source_call_backdates_the_eager_inherited_view() {
+    // An offset-only edit leaves `mid.R`'s inherited layers equal, so Salsa
+    // backdates them without re-resolving `leaf.R`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = make_file(&mut db, "w/main.R", "a_val <- 1\nsource(\"mid.R\")\n");
+    let mid = make_file(&mut db, "w/mid.R", "source(\"leaf.R\")\n");
+    let leaf = make_file(&mut db, "w/leaf.R", "use <- a_val\n");
+    root.set_scripts(&mut db).to(vec![main, mid, leaf]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let at_use = TextSize::from(7);
+    let before = layer_keys(&db, &leaf.imports_at(&db, at_use));
+    let executions = db.executions("File::inherited_layers");
+
+    main.set_source_text_override(&mut db).to(Some(
+        "# a comment\na_val <- 1\nsource(\"mid.R\")\n".to_string(),
+    ));
+
+    assert_eq!(layer_keys(&db, &leaf.imports_at(&db, at_use)), before);
+
+    assert_eq!(db.executions("File::inherited_layers"), executions + 1);
 }
 
 /// Creates a `tests/testthat/` fixture with three support files and one test.

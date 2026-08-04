@@ -2,8 +2,6 @@
 //! symbols, definitions, uses, use-def maps), reusing the scan's decisions.
 //! See the module docs on [`super`] for the scan/walk split.
 
-use std::sync::Arc;
-
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
 use aether_syntax::RArgumentList;
@@ -565,10 +563,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         if self.enclosing_lazy_scope(self.current_scope).is_none() {
             let file_scope = ScopeId::from(0);
             let symbols = &self.walk.symbol_tables[file_scope];
-            let visible = self.walk.use_def_maps[file_scope].bound_names(symbols);
+            let bound = self.walk.use_def_maps[file_scope]
+                .bound_symbol_ids()
+                .map(|symbol_id| symbols.symbol(symbol_id).name());
             self.walk
-                .exports_at_source
-                .insert(call_offset, Arc::new(visible));
+                .bindings_at_sources
+                .record_source_call(call_offset, bound);
         }
 
         for SourcedFile { path, resolution } in sourced {

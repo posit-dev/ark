@@ -41,7 +41,6 @@ use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
 use scan::BindingSites;
 use scan::BodyScan;
 use scan::CallResolution;
@@ -51,6 +50,7 @@ use scan::FlowState;
 use scan::OpenScope;
 
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::BindingTimelineBuilder;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -183,9 +183,7 @@ struct WalkState {
     lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
-    // File-scope names bound at each `source()` call that runs at load time,
-    // keyed by the call's offset. See `SemanticIndex::exports_at_source`.
-    exports_at_source: FxHashMap<TextSize, Arc<FxHashSet<String>>>,
+    bindings_at_sources: BindingTimelineBuilder,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -242,7 +240,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 lazy_snapshots: FxHashMap::default(),
                 semantic_calls: Vec::new(),
                 namespace_accesses: Vec::new(),
-                exports_at_source: FxHashMap::default(),
+                bindings_at_sources: BindingTimelineBuilder::default(),
             },
         }
     }
@@ -382,7 +380,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.walk.namespace_accesses,
             self.diagnostics,
             file_final_bindings,
-            self.walk.exports_at_source,
+            self.walk.bindings_at_sources,
         )
     }
 }

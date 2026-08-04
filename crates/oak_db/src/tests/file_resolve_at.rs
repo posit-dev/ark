@@ -984,3 +984,22 @@ fn test_source_twice_with_an_attach_between_keeps_both_packages() {
         file_b
     );
 }
+
+#[test]
+fn test_source_call_in_an_else_arm_does_not_see_the_if_arm() {
+    // Restoring the pre-`if` flow state before the `else` arm leaves `x` unbound
+    // when `b.R` is sourced, so source-call visibility cannot be a prefix by rank.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "if (cond) {\n  x <- 1\n  source(\"a.R\")\n} else {\n  source(\"b.R\")\n}\n",
+        ),
+        ("w/a.R", "x\n"),
+        ("w/b.R", "x\n"),
+    ]);
+    let (main, a, b) = (files[0], files[1], files[2]);
+
+    assert_eq!(resolve_one(&db, a, TextSize::from(0)).file(&db), main);
+    assert!(b.resolve_at(&db, TextSize::from(0)).is_empty());
+}

@@ -13,7 +13,7 @@ use oak_core::range::Ranged;
 use oak_index_vec::define_index;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use url::Url;
 
 use crate::use_def_map::Bindings;
@@ -97,10 +97,123 @@ pub struct SemanticIndex {
     // ever needed, so we keep this one copy rather than per-scope state.
     final_bindings: IndexVec<SymbolId, Bindings>,
 
-    // For each `source()` call that runs at load time (see
-    // `SemanticIndexBuilder::walk_source_call`), the file-scope names exported
-    // at that point. Pins the context inherited in sourced files.
-    exports_at_source: FxHashMap<TextSize, Arc<FxHashSet<String>>>,
+    bindings_at_sources: Arc<BindingTimeline>,
+
+    // Ranks load-time `source()` calls without storing offsets in import layers.
+    // The map and timeline are built together, so a lookup cannot mix versions.
+    source_ranks: FxHashMap<TextSize, SourceRank>,
+}
+
+/// Zero-based source-order position of a load-time `source()` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SourceRank(u32);
+
+/// Maps each file-scope name to the load-time `source()` calls that can see it.
+///
+/// Use a bitmap rather than a low-water mark because visibility can be
+/// nonmonotone in source order. Restoring the pre-branch flow state before
+/// `else` hides `if`-arm bindings from calls in the `else` arm.
+///
+/// Ranks avoid invalidating the timeline when text above a `source()` call
+/// shifts offsets without changing bindings. Salsa backdates the equal value,
+/// avoiding re-resolution of every transitively sourced file.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct BindingTimeline {
+    visible_at: FxHashMap<String, RankSet>,
+}
+
+/// Stores [`SourceRank`]s as a bitmap. The first 64 ranks remain inline,
+/// avoiding a name set for every load-time `source()` call.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RankSet {
+    words: SmallVec<[u64; 1]>,
+}
+
+impl RankSet {
+    fn insert(&mut self, rank: SourceRank) {
+        let (word, bit) = rank.position();
+        if self.words.len() <= word {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] |= 1 << bit;
+    }
+
+    fn contains(&self, rank: SourceRank) -> bool {
+        let (word, bit) = rank.position();
+        self.words
+            .get(word)
+            .is_some_and(|word| word & (1 << bit) != 0)
+    }
+}
+
+impl SourceRank {
+    fn position(self) -> (usize, u32) {
+        (self.0 as usize / 64, self.0 % 64)
+    }
+}
+
+/// Builds a [`BindingTimeline`] and maps source offsets to timeline ranks.
+#[derive(Debug, Default)]
+pub(crate) struct BindingTimelineBuilder {
+    timeline: BindingTimeline,
+    ranks: FxHashMap<TextSize, SourceRank>,
+}
+
+impl BindingTimelineBuilder {
+    pub(crate) fn record_source_call<'a>(
+        &mut self,
+        offset: TextSize,
+        bound: impl Iterator<Item = &'a str>,
+    ) {
+        let rank = SourceRank(self.ranks.len() as u32);
+        self.ranks.insert(offset, rank);
+
+        for name in bound {
+            match self.timeline.visible_at.get_mut(name) {
+                Some(ranks) => ranks.insert(rank),
+                None => {
+                    let mut ranks = RankSet::default();
+                    ranks.insert(rank);
+                    self.timeline.visible_at.insert(name.to_owned(), ranks);
+                },
+            }
+        }
+    }
+
+    pub(crate) fn finish(self) -> (BindingTimeline, FxHashMap<TextSize, SourceRank>) {
+        (self.timeline, self.ranks)
+    }
+}
+
+/// File-scope names visible at one or more load-time `source()` calls.
+///
+/// Import layers retain the shared timeline and source-call ranks instead of
+/// copying visible names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportsAtSource {
+    timeline: Arc<BindingTimeline>,
+    ranks: SmallVec<[SourceRank; 1]>,
+}
+
+impl ExportsAtSource {
+    pub fn contains(&self, name: &str) -> bool {
+        self.timeline
+            .visible_at
+            .get(name)
+            .is_some_and(|visible| self.sees(visible))
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.timeline
+            .visible_at
+            .iter()
+            .filter(|(_, visible)| self.sees(visible))
+            .map(|(name, _)| name.as_str())
+    }
+
+    fn sees(&self, visible: &RankSet) -> bool {
+        self.ranks.iter().any(|&rank| visible.contains(rank))
+    }
 }
 
 impl SemanticIndex {
@@ -115,8 +228,10 @@ impl SemanticIndex {
         namespace_accesses: Vec<NamespaceAccess>,
         diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
-        exports_at_source: FxHashMap<TextSize, Arc<FxHashSet<String>>>,
+        bindings_at_sources: BindingTimelineBuilder,
     ) -> Self {
+        let (timeline, source_ranks) = bindings_at_sources.finish();
+
         Self {
             scopes,
             symbol_tables,
@@ -128,7 +243,8 @@ impl SemanticIndex {
             namespace_accesses,
             diagnostics,
             final_bindings,
-            exports_at_source,
+            bindings_at_sources: Arc::new(timeline),
+            source_ranks,
         }
     }
 
@@ -263,11 +379,26 @@ impl SemanticIndex {
         &self.diagnostics
     }
 
-    /// The file-scope names bound by the time the `source()` call at `offset`
-    /// runs, or `None` if that call sits in a lazy context (a function body),
-    /// where nothing pins down when it runs.
-    pub fn exports_at_source(&self, offset: TextSize) -> Option<&Arc<FxHashSet<String>>> {
-        self.exports_at_source.get(&offset)
+    /// Returns file-scope names visible at any load-time `source()` call in
+    /// `offsets`.
+    ///
+    /// Returns `None` if `offsets` is empty or an offset is not a load-time
+    /// `source()` call. Lazy calls can run after the file has finished, so their
+    /// view is not fixed.
+    pub fn exports_at_sources(&self, offsets: &[TextSize]) -> Option<ExportsAtSource> {
+        if offsets.is_empty() {
+            return None;
+        }
+
+        let ranks: Option<SmallVec<[SourceRank; 1]>> = offsets
+            .iter()
+            .map(|offset| self.source_ranks.get(offset).copied())
+            .collect();
+
+        Some(ExportsAtSource {
+            timeline: Arc::clone(&self.bindings_at_sources),
+            ranks: ranks?,
+        })
     }
 
     /// Find the innermost scope containing `offset`.
@@ -1042,5 +1173,39 @@ impl<'a> Iterator for AncestorScopeIdsIter<'a> {
         let id = self.current?;
         self.current = self.index.scopes[id].parent;
         Some(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(exports: &ExportsAtSource) -> Vec<&str> {
+        let mut names: Vec<&str> = exports.names().collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn test_a_call_sees_only_the_names_recorded_against_it() {
+        let mut builder = BindingTimelineBuilder::default();
+        builder.record_source_call(TextSize::from(10), ["a"].into_iter());
+        builder.record_source_call(TextSize::from(20), ["a", "b"].into_iter());
+        let (timeline, ranks) = builder.finish();
+        let timeline = Arc::new(timeline);
+
+        let early = ExportsAtSource {
+            timeline: Arc::clone(&timeline),
+            ranks: [ranks[&TextSize::from(10)]].into_iter().collect(),
+        };
+        let late = ExportsAtSource {
+            timeline,
+            ranks: [ranks[&TextSize::from(20)]].into_iter().collect(),
+        };
+
+        assert_eq!(names(&early), vec!["a"]);
+        assert_eq!(names(&late), vec!["a", "b"]);
+        assert!(!early.contains("b"));
+        assert!(late.contains("b"));
     }
 }
