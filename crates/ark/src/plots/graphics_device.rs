@@ -678,12 +678,10 @@ impl DeviceContext {
         let ctx = self.capture_execution_context();
         self.store_plot_context(id, &ctx);
 
-        let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
+        let (data, metadata) = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
         });
-
-        let metadata = json!({});
 
         // For `DisplayData`, the `transient` slot is a simple `Value`,
         // but we can use the `TransientValue` required by `UpdateDisplayData`
@@ -786,12 +784,10 @@ impl DeviceContext {
         log::trace!("Notifying Jupyter frontend of plot update");
 
         let ctx = self.capture_execution_context();
-        let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
+        let (data, metadata) = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
         });
-
-        let metadata = json!({});
 
         let transient = TransientValue {
             display_id: id.to_string(),
@@ -809,11 +805,15 @@ impl DeviceContext {
             .log_err();
     }
 
+    /// Renders a plot for Jupyter and returns its display data and metadata.
+    ///
+    /// The image metadata contains logical dimensions so frontends display HiDPI
+    /// renders at their intended size rather than at their physical pixel dimensions.
     fn create_display_data_plot(
         &self,
         id: &PlotId,
         ctx: &ExecutionContext,
-    ) -> Result<serde_json::Value, anyhow::Error> {
+    ) -> Result<(serde_json::Value, serde_json::Value), anyhow::Error> {
         let base = ctx.render_settings.unwrap_or(PlotRenderSettings {
             size: PlotSize {
                 width: 800,
@@ -841,10 +841,18 @@ impl DeviceContext {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
         });
 
-        let mut map = serde_json::Map::new();
-        map.insert("image/png".to_string(), serde_json::to_value(data)?);
+        let mime_type = Self::get_mime_type(&settings.format);
 
-        Ok(serde_json::Value::Object(map))
+        let data = json!({ mime_type: data });
+
+        let metadata = json!({
+            mime_type: {
+                "width": settings.size.width,
+                "height": settings.size.height,
+            }
+        });
+
+        Ok((data, metadata))
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
