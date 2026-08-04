@@ -29,6 +29,12 @@ Overridden by the `OAK_SOURCE_FETCHING_ENABLED` environment variable.
 
 To avoid unnecessary traffic on CI, source fetching is disabled when the `CI` environment variable is set. Set `OAK_SOURCE_FETCHING_ENABLED=1` to opt back into fetching sources in a CI job.
 
+## `oak.diagnostics.experimental.enabled`
+
+A boolean, default `false`.
+
+Whether to publish diagnostics that are still experimental: ambiguous effects (like Attach or Source), and uninstalled package.
+
 # Package sources
 
 When Oak detects that your code uses an external package, it tries to recover that package's R sources to index them and infer types and effects. It stops at the first thing that works:
