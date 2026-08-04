@@ -944,3 +944,23 @@ fn test_source_path_with_parent_dir_segments() {
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));
 }
+
+#[test]
+fn test_sourced_names_are_minted_in_sorted_order() {
+    // `source_resolution()` sorts the names it forwards, so the `Import`
+    // definitions a sourcing file mints for them land in the arena in name
+    // order rather than in the target's `FileExports` hash order.
+    let mut db = TestDb::new();
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("helpers.R", "zeta <- 1\nalpha <- 2\nmu <- 3\n"),
+        ("main.R", "source(\"helpers.R\")\n"),
+    ]);
+    let main = scripts[1];
+
+    let index = main.semantic_index(&db);
+    let exports = index.exports();
+    let def_id = |name: &str| exports.get(name).unwrap()[0].0;
+
+    assert!(def_id("alpha") < def_id("mu"));
+    assert!(def_id("mu") < def_id("zeta"));
+}

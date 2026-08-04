@@ -63,11 +63,15 @@ impl<'db> SalsaImportsResolver<'db> {
     /// What sourcing `file` brings in. The two reads this makes are the ones
     /// described on [`SalsaImportsResolver`].
     fn source_resolution(&self, file: File) -> SourceResolution {
-        let names: Vec<String> = file
+        // Sort to prevent an unrelated export from renumbering `Import`
+        // definitions. `record_binding()` anchors every name at the same
+        // `source()` call, so the original order has no semantic meaning.
+        let mut names: Vec<String> = file
             .exports(self.db)
             .iter()
             .map(|(name, _)| name.to_string())
             .collect();
+        names.sort();
 
         let packages: Vec<String> = file
             .attached_packages(self.db)

@@ -334,3 +334,30 @@ fn test_editing_function_body_keeps_exports_stable() {
     // `exports` re-executes (its input `semantic_index` changed) but
     // downstream consumers see the same value via salsa backdating.
 }
+
+#[test]
+fn test_iteration_order_is_stable_across_databases() {
+    // `FileExports` must not use std's `HashMap`: its per-instance random seed
+    // gives each rebuild a different `iter()` order, and a sourcing file mints
+    // its `Import` definitions in that order.
+    let script = (
+        "w/a.R",
+        "one <- 1\ntwo <- 2\nthree <- 3\nfour <- 4\nfive <- 5\nsix <- 6\nseven <- 7\neight <- 8\n",
+    );
+
+    let order = |db: &TestDb, file: File| -> Vec<String> {
+        file.exports(db)
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect()
+    };
+
+    let mut first_db = TestDb::new();
+    let first = setup_workspace(&mut first_db, &[script]);
+
+    let mut second_db = TestDb::new();
+    let second = setup_workspace(&mut second_db, &[script]);
+
+    assert_eq!(order(&first_db, first[0]).len(), 8);
+    assert_eq!(order(&first_db, first[0]), order(&second_db, second[0]));
+}

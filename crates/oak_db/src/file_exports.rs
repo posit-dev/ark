@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use aether_path::FilePath;
 use oak_semantic::semantic_index::DefinitionKind;
+use rustc_hash::FxHashMap;
 
 use crate::Db;
 use crate::File;
@@ -15,7 +14,9 @@ use crate::File;
 /// internal edits.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FileExports {
-    entries: HashMap<String, Vec<ExportEntry>>,
+    /// `FxHashMap` keeps [`FileExports::iter()`] stable across rebuilds. A
+    /// sourcing file uses that order to mint `Import` definitions.
+    entries: FxHashMap<String, Vec<ExportEntry>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +65,7 @@ impl File {
     /// chains by returning empty exports for every cycle participant.
     #[salsa::tracked(returns(ref), cycle_result = exports_cycle_result)]
     pub fn exports(self, db: &dyn Db) -> FileExports {
-        let mut entries: HashMap<String, Vec<ExportEntry>> = HashMap::new();
+        let mut entries: FxHashMap<String, Vec<ExportEntry>> = FxHashMap::default();
 
         for (name, defs) in self.semantic_index(db).exports() {
             let list = entries.entry(name.to_string()).or_default();
