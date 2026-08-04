@@ -836,9 +836,10 @@ fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
     file.path(db).file_name().unwrap_or_default()
 }
 
-/// The workspace files sitting directly in `dir`, in load order: sorted by
-/// basename, ASCII case-insensitively, the same order a package `R/` with no
-/// `Collate:` gets from `oak_scan::packages::order_alphabetically`.
+/// Returns workspace scripts directly under `dir`, in `list.files()` load order.
+///
+/// `sourceDir()`, Shiny's `loadSupport()`, and non-package `R/` collation use
+/// this order. [`collation_basename_key()`] mirrors their session-locale sort.
 pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
     let mut files: Vec<File> = workspace_scripts(db)
         .iter()
@@ -850,8 +851,10 @@ pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
     files
 }
 
-/// The workspace files anywhere under `dir`, approximating the order returned by
-/// `list.files(dir, recursive = TRUE)`.
+/// Returns workspace scripts below `dir` in `targets::tar_source()` load order.
+///
+/// `list.files(recursive = TRUE)` sorts nested scripts by relative path. Case
+/// folding matches [`collation_basename_key()`].
 pub(crate) fn files_in_directory_recursive(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
     let mut keyed: Vec<(String, File)> = workspace_scripts(db)
         .iter()
@@ -866,10 +869,11 @@ pub(crate) fn files_in_directory_recursive(db: &dyn Db, dir: &Utf8Path) -> Vec<F
     keyed.into_iter().map(|(_, file)| file).collect()
 }
 
-/// Case-insensitive basename sort key for [`files_in_directory`], matching
-/// `oak_scan::packages::order_alphabetically`'s `basename_key` so a
-/// non-package `R/` collates the same way as a package `R/` with no
-/// `Collate:`.
+/// ASCII-case-folded basename key approximating `list.files()` session-locale
+/// ordering.
+///
+/// Package installation instead forces `LC_COLLATE=C`, where raw byte order
+/// determines collation.
 fn collation_basename_key(file: File, db: &dyn Db) -> Option<String> {
     file.path(db)
         .file_name()

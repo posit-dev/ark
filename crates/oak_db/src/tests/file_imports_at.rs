@@ -862,9 +862,9 @@ fn test_script_r_directory_top_level_sees_only_alphabetic_predecessor() {
 
 #[test]
 fn test_script_r_directory_collation_is_case_insensitive() {
-    // Matches `oak_scan::packages::order_alphabetically`: basenames sort
-    // case-insensitively, so `a.R` collates before `Z.R` even though it's
-    // lexically greater in byte order.
+    // Non-package `R/` files use `list.files()` collation, so `a.R` precedes
+    // `Z.R` in a UTF-8 session locale. Package installation's `LC_COLLATE=C`
+    // reverses them.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
     let z_source = "z_val <- 1\n";
