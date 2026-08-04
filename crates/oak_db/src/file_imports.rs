@@ -208,6 +208,45 @@ pub(crate) enum CollationView {
     Eager,
 }
 
+/// An import view combines the collation files that have loaded with the file's
+/// attaches that have run. Keeping them together ensures offset-based and
+/// offset-independent lookups use the same visibility rules.
+#[derive(Clone, Copy)]
+struct ImportView<'a> {
+    collation: CollationView,
+    attaches: AttachView<'a>,
+}
+
+impl<'a> ImportView<'a> {
+    /// This view includes every collation sibling and attach, regardless of
+    /// cursor position.
+    const ANYWHERE: Self = Self {
+        collation: CollationView::Lazy,
+        attaches: AttachView::Anywhere,
+    };
+
+    /// Eager scopes see preceding collation files and attaches that have run.
+    /// Lazy scopes see the complete collation and attaches visible from their
+    /// containing scope.
+    fn at(index: &SemanticIndex, offset: &'a TextSize) -> Self {
+        let (cursor_scope, _) = index.scope_at(*offset);
+
+        match index.scope_is_eager(cursor_scope) {
+            true => Self {
+                collation: CollationView::Eager,
+                attaches: AttachView::Eager(slice::from_ref(offset)),
+            },
+            false => Self {
+                collation: CollationView::Lazy,
+                attaches: AttachView::Lazy {
+                    offset: *offset,
+                    scope_id: cursor_scope,
+                },
+            },
+        }
+    }
+}
+
 #[salsa::tracked]
 impl File {
     /// Every import layer this file could see, in R's lookup (LIFO) priority
@@ -228,9 +267,7 @@ impl File {
     /// of imports.
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
-        let layers = self.resolution_layers(db, CollationView::Lazy);
-        let own = self.attach_layers(db, AttachView::Anywhere);
-        layers.lookup_order(db, &own).collect()
+        self.imports_in(db, ImportView::ANYWHERE)
     }
 
     /// Import layers visible at an `offset` in a file:
@@ -255,28 +292,12 @@ impl File {
     /// subqueries (`cross_file_layers`, `semantic_index`) and applies an O(n)
     /// filter.
     pub fn imports_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
-        let index = self.semantic_index(db);
-        let (cursor_scope, _) = index.scope_at(offset);
+        self.imports_in(db, ImportView::at(self.semantic_index(db), &offset))
+    }
 
-        // An eager scope runs during the file's own top-level execution, so a
-        // cursor in a `local()` block sees the search path as of that point,
-        // the same as one at file scope.
-        let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
-            // Predecessors only, and own attaches narrowed to the calls that
-            // have run by `offset`.
-            (
-                CollationView::Eager,
-                AttachView::Eager(slice::from_ref(&offset)),
-            )
-        } else {
-            (CollationView::Lazy, AttachView::Lazy {
-                offset,
-                scope_id: cursor_scope,
-            })
-        };
-
-        let layers = self.resolution_layers(db, collation);
-        let own = self.attach_layers(db, attaches);
+    fn imports_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
+        let layers = self.resolution_layers(db, view.collation);
+        let own = self.attach_layers(db, view.attaches);
         layers.lookup_order(db, &own).collect()
     }
 
@@ -319,11 +340,7 @@ impl File {
     /// `semantic_index` read by `attach_layers()`.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> {
-        let own = self.attach_layers(db, AttachView::Anywhere);
-        self.layers_by_sourcing_file(db, CollationView::Lazy)
-            .into_iter()
-            .map(|layers| layers.lookup_order(db, &own).collect())
-            .collect()
+        self.imports_by_sourcing_file_in(db, ImportView::ANYWHERE)
     }
 
     /// [`File::imports_by_sourcing_file`], narrowed to `offset` the way
@@ -336,23 +353,16 @@ impl File {
         db: &dyn Db,
         offset: TextSize,
     ) -> Vec<Vec<ImportLayer>> {
-        let index = self.semantic_index(db);
-        let (cursor_scope, _) = index.scope_at(offset);
+        self.imports_by_sourcing_file_in(db, ImportView::at(self.semantic_index(db), &offset))
+    }
 
-        let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
-            (
-                CollationView::Eager,
-                AttachView::Eager(slice::from_ref(&offset)),
-            )
-        } else {
-            (CollationView::Lazy, AttachView::Lazy {
-                offset,
-                scope_id: cursor_scope,
-            })
-        };
-
-        let own = self.attach_layers(db, attaches);
-        self.layers_by_sourcing_file(db, collation)
+    fn imports_by_sourcing_file_in(
+        self,
+        db: &dyn Db,
+        view: ImportView<'_>,
+    ) -> Vec<Vec<ImportLayer>> {
+        let own = self.attach_layers(db, view.attaches);
+        self.layers_by_sourcing_file(db, view.collation)
             .into_iter()
             .map(|layers| layers.lookup_order(db, &own).collect())
             .collect()
