@@ -14,6 +14,7 @@ use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 /// Capabilities negotiated with [lsp_types::ClientCapabilities]
 #[derive(Debug, Default)]
 pub(crate) struct Capabilities {
+    workspace_configuration: bool,
     dynamic_registration_for_did_change_configuration: bool,
     code_action_literal_support: bool,
     workspace_edit_document_changes: bool,
@@ -21,6 +22,12 @@ pub(crate) struct Capabilities {
 
 impl Capabilities {
     pub(crate) fn new(client_capabilities: lsp_types::ClientCapabilities) -> Self {
+        let workspace_configuration = client_capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.configuration)
+            .unwrap_or(false);
+
         let dynamic_registration_for_did_change_configuration = client_capabilities
             .workspace
             .as_ref()
@@ -47,10 +54,16 @@ impl Capabilities {
             .is_some_and(|document_changes| document_changes);
 
         Self {
+            workspace_configuration,
             dynamic_registration_for_did_change_configuration,
             code_action_literal_support,
             workspace_edit_document_changes,
         }
+    }
+
+    /// Whether the client answers `workspace/configuration` requests.
+    pub(crate) fn workspace_configuration(&self) -> bool {
+        self.workspace_configuration
     }
 
     pub(crate) fn dynamic_registration_for_did_change_configuration(&self) -> bool {

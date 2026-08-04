@@ -82,7 +82,9 @@ impl LspClient {
         let response = self.send_request(
             "initialize",
             json!({
-                "capabilities": {}
+                // `configuration` is advertised because `recv_server_request()`
+                // answers `workspace/configuration`.
+                "capabilities": { "workspace": { "configuration": true } }
             }),
         );
 
@@ -90,8 +92,10 @@ impl LspClient {
 
         self.send_notification("initialized", json!({}));
 
-        // The server sends `client/registerCapability` after `initialized`
+        // After `initialized`, the server registers capabilities and requests
+        // configuration before scheduling source fetches.
         self.recv_server_request("client/registerCapability");
+        self.recv_server_request("workspace/configuration");
 
         self.initialized = true;
         self.server_capabilities = Some(result.capabilities.clone());
@@ -391,14 +395,14 @@ impl LspClient {
     }
 
     /// Receive the next server-to-client request, assert its method, and
-    /// auto-reply with an empty success so the server doesn't block.
+    /// auto-reply with a response the server accepts, so it doesn't block.
     ///
     /// Skips benign server notifications. Panics on unexpected messages.
     #[track_caller]
     fn recv_server_request(&mut self, expected_method: &str) {
         loop {
             match self.recv_any() {
-                LspMessage::ServerRequest { id, method } => {
+                LspMessage::ServerRequest { id, method, params } => {
                     assert_eq!(
                         method, expected_method,
                         "Expected server request `{expected_method}`, got `{method}`"
@@ -406,7 +410,7 @@ impl LspClient {
                     let response = json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "result": null,
+                        "result": Self::reply_to_server_request(&method, &params),
                     });
                     self.send_raw(&response);
                     return;
@@ -422,6 +426,19 @@ impl LspClient {
             }
         }
     }
+
+    /// Reply to a server request without blocking the test client.
+    /// `workspace/configuration` requires one response per requested item,
+    /// while `null` selects each setting's default.
+    fn reply_to_server_request(method: &str, params: &Value) -> Value {
+        match method {
+            "workspace/configuration" => {
+                let n_items = params["items"].as_array().map_or(0, Vec::len);
+                Value::Array(vec![Value::Null; n_items])
+            },
+            _ => Value::Null,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -434,6 +451,7 @@ enum LspMessage {
     ServerRequest {
         id: Value,
         method: String,
+        params: Value,
     },
     Notification {
         diagnostics: Option<lsp_types::PublishDiagnosticsParams>,
@@ -459,6 +477,7 @@ impl LspClient {
             (true, true, false) => LspMessage::ServerRequest {
                 id: message["id"].clone(),
                 method: message["method"].as_str().unwrap_or("unknown").to_string(),
+                params: message.get("params").cloned().unwrap_or(Value::Null),
             },
 
             (false, true, false) => {

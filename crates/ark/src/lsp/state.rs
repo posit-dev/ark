@@ -8,7 +8,9 @@ use oak_db::OakDatabase;
 use salsa::Database;
 use tower_lsp_server::ls_types::Uri;
 
+use crate::lsp::config::env_settings;
 use crate::lsp::config::LspConfig;
+use crate::lsp::config::LspSettings;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::url::UrlExt;
 
@@ -66,6 +68,10 @@ pub(crate) struct WorldState {
     pub(crate) installed_packages: Vec<String>,
 
     pub(crate) config: LspConfig,
+
+    /// Persist `initializationOptions` so omitted settings in later pulls can
+    /// fall through to it.
+    pub(crate) initialization_options: LspSettings,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -75,10 +81,23 @@ pub(crate) struct Workspace {
 
 impl WorldState {
     pub(crate) fn new(db: OakDatabase) -> Self {
-        Self {
+        let mut state = Self {
             db,
             ..Default::default()
-        }
+        };
+
+        state.resolve_config(LspSettings::default());
+        state
+    }
+
+    /// Resolve [`Self::config`] from environment, pulled client, and
+    /// initialization options. Earlier layers override later ones, and missing
+    /// values use defaults.
+    pub(crate) fn resolve_config(&mut self, client_settings: LspSettings) {
+        env_settings()
+            .or(client_settings)
+            .or(self.initialization_options.clone())
+            .resolve_into(&mut self.config);
     }
 
     /// Advance the oak revision without changing any oak input.

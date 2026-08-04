@@ -121,6 +121,7 @@ syn = { version = "2.0.117", features = ["full"] }
 tar = "0.4.45"
 tempfile = "3.27.0"
 tokio = { version = "1.52.1", features = ["full"] }
+tower = { version = "0.5.3", default-features = false }
 tower-lsp-server = "0.23.0"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"

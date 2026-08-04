@@ -14,14 +14,11 @@ use tower_lsp_server::ls_types::CodeActionResponse;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::CompletionResponse;
-use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingParams;
 use tower_lsp_server::ls_types::DocumentSymbolParams;
 use tower_lsp_server::ls_types::DocumentSymbolResponse;
-use tower_lsp_server::ls_types::FileSystemWatcher;
 use tower_lsp_server::ls_types::FoldingRange;
 use tower_lsp_server::ls_types::FoldingRangeParams;
-use tower_lsp_server::ls_types::GlobPattern;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
 use tower_lsp_server::ls_types::Hover;
@@ -31,7 +28,6 @@ use tower_lsp_server::ls_types::Location;
 use tower_lsp_server::ls_types::MessageType;
 use tower_lsp_server::ls_types::PrepareRenameResponse;
 use tower_lsp_server::ls_types::ReferenceParams;
-use tower_lsp_server::ls_types::Registration;
 use tower_lsp_server::ls_types::RenameParams;
 use tower_lsp_server::ls_types::SelectionRange;
 use tower_lsp_server::ls_types::SelectionRangeParams;
@@ -43,7 +39,6 @@ use tower_lsp_server::ls_types::TextEdit;
 use tower_lsp_server::ls_types::WorkspaceEdit;
 use tower_lsp_server::ls_types::WorkspaceSymbolParams;
 use tower_lsp_server::Client;
-use tracing::Instrument;
 
 use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
@@ -92,70 +87,6 @@ pub(crate) type VirtualDocumentResponse = String;
 
 // Handlers that do not mutate the world state. They take a sharing reference or
 // a clone of the state.
-
-pub(crate) async fn handle_initialized(
-    client: &Client,
-    lsp_state: &LspState,
-) -> anyhow::Result<()> {
-    let span = tracing::info_span!("handle_initialized").entered();
-
-    // Register capabilities to the client
-    let mut regs: Vec<Registration> = vec![];
-
-    // Watch R files and DESCRIPTION. We get notified on any disk change;
-    // the handler skips editor-owned URLs since those are tracked via
-    // `textDocument/did*` instead.
-    let watchers = vec![
-        FileSystemWatcher {
-            glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
-            kind: None,
-        },
-        FileSystemWatcher {
-            glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
-            kind: None,
-        },
-    ];
-    regs.push(Registration {
-        id: uuid::Uuid::new_v4().to_string(),
-        method: String::from("workspace/didChangeWatchedFiles"),
-        register_options: Some(
-            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
-        ),
-    });
-
-    if lsp_state
-        .capabilities
-        .dynamic_registration_for_did_change_configuration()
-    {
-        // The `didChangeConfiguration` request instructs the client to send
-        // a notification when the tracked settings have changed.
-        //
-        // Note that some settings, such as editor indentation properties, may be
-        // changed by extensions or by the user without changing the actual
-        // underlying setting. Unfortunately we don't receive updates in that case.
-
-        for setting in crate::lsp::config::GLOBAL_SETTINGS {
-            regs.push(Registration {
-                id: uuid::Uuid::new_v4().to_string(),
-                method: String::from("workspace/didChangeConfiguration"),
-                register_options: Some(serde_json::json!({ "section": setting.key })),
-            });
-        }
-        for setting in crate::lsp::config::DOCUMENT_SETTINGS {
-            regs.push(Registration {
-                id: uuid::Uuid::new_v4().to_string(),
-                method: String::from("workspace/didChangeConfiguration"),
-                register_options: Some(serde_json::json!({ "section": setting.key })),
-            });
-        }
-    }
-
-    client
-        .register_capability(regs)
-        .instrument(span.exit())
-        .await?;
-    Ok(())
-}
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_symbol(

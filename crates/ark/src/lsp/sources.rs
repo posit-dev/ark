@@ -9,9 +9,13 @@ use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
 use oak_srcref::SrcrefCache;
+use stdext::env_flag;
+use stdext::is_ci;
 use stdext::result::ResultExt;
+use tokio::sync::watch;
 
-use crate::lsp;
+use crate::lsp::config::OakConfig;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -64,20 +68,21 @@ impl SourceHandler for OakSourceHandler {
         // Base packages are served from a downloaded base R source archive, keyed by R
         // version
         if matches!(request.priority(), Some(Priority::Base)) {
-            return self
-                .source
-                .get_r(version)
-                .or_else(|| self.source.insert_r(version))
-                .map(|root| SourceResponse::Success(r_dir_for_base(&root, name)))
-                .unwrap_or(SourceResponse::Failure);
+            if let Some(root) = self.source.get_r(version) {
+                return SourceResponse::cached(r_dir_for_base(&root, name));
+            }
+            if let Some(root) = self.source.insert_r(version) {
+                return SourceResponse::fetched(r_dir_for_base(&root, name));
+            }
+            return SourceResponse::Failure;
         }
 
         // Try to "get" from all sources before doing an expensive "insert"
         if let Some(dir) = self.srcref.get(name, version, request.built()) {
-            return SourceResponse::Success(dir);
+            return SourceResponse::cached(dir);
         }
         if let Some(root) = self.source.get_cran(name, version) {
-            return SourceResponse::Success(r_dir_for_cran(&root));
+            return SourceResponse::cached(r_dir_for_cran(&root));
         }
 
         // Prefer `srcref` to CRAN download since it doesn't require internet and would
@@ -86,14 +91,19 @@ impl SourceHandler for OakSourceHandler {
             self.srcref
                 .insert(name, version, request.built(), request.library_path())
         {
-            return SourceResponse::Success(dir);
+            return SourceResponse::fetched(dir);
         }
         if let Some(root) = self.source.insert_cran(name, version) {
-            return SourceResponse::Success(r_dir_for_cran(&root));
+            return SourceResponse::fetched(r_dir_for_cran(&root));
         }
 
         SourceResponse::Failure
     }
+}
+
+/// Whether source fetching is disabled due to to CI env.
+pub(crate) fn source_fetching_disabled_by_ci() -> bool {
+    is_ci() && !env_flag(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR)
 }
 
 /// Find `R/` from a CRAN package tarball
@@ -117,8 +127,41 @@ pub(crate) struct SourceRequest {
 
 #[derive(Debug)]
 pub(crate) enum SourceResponse {
-    Success(PathBuf),
+    Success {
+        directory: PathBuf,
+        origin: SourceOrigin,
+    },
     Failure,
+
+    /// Fetching was turned off while the job waited in the pool's queue, so no
+    /// handler ran. Never returned by a [`SourceHandler`].
+    Skipped,
+}
+
+/// Whether a successful response used cached sources or recovered them.
+#[derive(Debug)]
+pub(crate) enum SourceOrigin {
+    /// An existing source-cache entry, with no network request.
+    Cached,
+
+    /// Recovered from a local `srcref` or downloaded source archive.
+    Fetched,
+}
+
+impl SourceResponse {
+    pub(crate) fn cached(directory: PathBuf) -> Self {
+        Self::Success {
+            directory,
+            origin: SourceOrigin::Cached,
+        }
+    }
+
+    pub(crate) fn fetched(directory: PathBuf) -> Self {
+        Self::Success {
+            directory,
+            origin: SourceOrigin::Fetched,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -144,6 +187,12 @@ enum SourceState {
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
     state: HashMap<Package, SourceState>,
+
+    /// Blocks initial fetches until client configuration is resolved.
+    awaiting_config: bool,
+
+    /// Read by queued jobs to check for skip updates before starting.
+    enabled_tx: watch::Sender<bool>,
 }
 
 impl SourceScheduler {
@@ -151,7 +200,22 @@ impl SourceScheduler {
         Self {
             handler,
             state: HashMap::new(),
+            awaiting_config: true,
+            enabled_tx: watch::Sender::new(OakConfig::default().source_fetching_enabled),
         }
+    }
+
+    /// Release fetches after attempting to load client configuration. While
+    /// blocked, [`Self::schedule()`] leaves packages unrecorded so it can queue
+    /// them later.
+    pub(crate) fn config_arrived(&mut self) {
+        self.awaiting_config = false;
+    }
+
+    /// Whether a handler was built at all. `false` means fetching is off for a
+    /// reason that predates any setting, such as running on CI or a missing R.
+    pub(crate) fn has_handler(&self) -> bool {
+        self.handler.is_some()
     }
 
     /// Run a fetch for each package we haven't seen before on `pool`, shipping
@@ -164,9 +228,25 @@ impl SourceScheduler {
     pub(crate) fn schedule(
         &mut self,
         db: &dyn Db,
+        config: &OakConfig,
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
     ) {
+        // Publish before returning to inform queued jobs of new setting value.
+        self.enabled_tx.send_replace(config.source_fetching_enabled);
+
+        // Wait for client configuration so `oak.sourceFetching.enabled = false`
+        // may prevent startup fetches.
+        if self.awaiting_config {
+            return;
+        }
+
+        // Check every time so re-enabling source fetching queues packages left
+        // unhandled while disabled.
+        if !config.source_fetching_enabled {
+            return;
+        }
+
         let Some(handler) = &self.handler else {
             return;
         };
@@ -189,19 +269,22 @@ impl SourceScheduler {
             };
 
             let handler = Arc::clone(handler);
+            let enabled_rx = self.enabled_tx.subscribe();
             let tx = events_tx.clone();
 
             // Mark as `Pending` just before launching the job
             self.state.insert(package, SourceState::Pending);
 
-            lsp::log_info!(
-                "Fetching sources for package {name}, {n} pending",
-                name = request.name(),
-                n = self.pending_count(),
-            );
-
             pool.submit(move || {
-                let response = handler.handle(&request);
+                // Copy the value before fetching so the `borrow()` guard does
+                // not span `handle()`.
+                let enabled = *enabled_rx.borrow();
+
+                let response = if enabled {
+                    handler.handle(&request)
+                } else {
+                    SourceResponse::Skipped
+                };
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
                     package,
@@ -214,19 +297,21 @@ impl SourceScheduler {
 
     #[must_use]
     pub(crate) fn finish(&mut self, package: Package, response: SourceResponse) -> Option<PathBuf> {
-        self.state.insert(package, SourceState::Finished);
         match response {
-            SourceResponse::Success(directory) => Some(directory),
-            SourceResponse::Failure => None,
+            SourceResponse::Success { directory, .. } => {
+                self.state.insert(package, SourceState::Finished);
+                Some(directory)
+            },
+            SourceResponse::Failure => {
+                self.state.insert(package, SourceState::Finished);
+                None
+            },
+            SourceResponse::Skipped => {
+                // Forget the package, so turning fetching back on queues it again.
+                self.state.remove(&package);
+                None
+            },
         }
-    }
-
-    /// How many source requests are in flight
-    fn pending_count(&self) -> usize {
-        self.state
-            .values()
-            .filter(|state| matches!(state, SourceState::Pending))
-            .count()
     }
 
     /// Whether any source request is in flight. Allows tests to deterministically "wait"

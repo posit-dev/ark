@@ -17,6 +17,7 @@ use std::sync::RwLock;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
+use oak_db::Package;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
@@ -48,11 +49,14 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
+use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
 use crate::lsp::sources::SourceHandler;
+use crate::lsp::sources::SourceOrigin;
 use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
@@ -165,6 +169,10 @@ pub(crate) struct LoopHandles {
     _aux_loop: tokio::task::JoinSet<()>,
 }
 
+/// Workers on [`LspState::source_pool`]. We never have more than this many
+/// package downloads in flight.
+pub(crate) const SOURCE_POOL_THREADS: usize = 2;
+
 /// Non-cloneable, per-session state mutated only by exclusive handlers.
 /// Sits alongside [`WorldState`], which the main loop owns. State that can't
 /// travel with a snapshot lives here instead.
@@ -222,10 +230,13 @@ impl LspState {
             // `ignore::Walk` and `WalkDir`, both iterative, and parses
             // DESCRIPTION line by line.
             scan_pool: IoPool::new("oak-scan", 1, stdext::SMALL_STACK_SIZE),
-            // Two threads, so we never have more than two package downloads in flight.
             // Full stack because a fetch runs a rustls handshake, zstd and tar
             // decoding, and an R subprocess.
-            source_pool: IoPool::new("oak-source", 2, stdext::DEFAULT_STACK_SIZE),
+            source_pool: IoPool::new(
+                "oak-source",
+                SOURCE_POOL_THREADS,
+                stdext::DEFAULT_STACK_SIZE,
+            ),
             watchdog: Watchdog::new(),
         }
     }
@@ -416,13 +427,13 @@ impl GlobalState {
 
                     match notif {
                         LspNotification::Initialized(_params) => {
-                            handlers::handle_initialized(&self.client, &self.lsp_state).await?;
+                            state_handlers::handle_initialized(&self.client, &mut self.lsp_state, &mut self.world, &self.events_tx).await;
                         },
                         LspNotification::DidChangeWorkspaceFolders(params) => {
                             state_handlers::did_change_workspace_folders(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
                         },
                         LspNotification::DidChangeConfiguration(params) => {
-                            state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
+                            state_handlers::did_change_configuration(params, &self.client, &self.lsp_state.capabilities, &mut self.world).await?;
                         },
                         LspNotification::DidChangeWatchedFiles(params) => {
                             state_handlers::did_change_watched_files(params, &mut self.world, &mut self.lsp_state, &self.events_tx)?;
@@ -580,17 +591,19 @@ impl GlobalState {
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
-                let outcome = match &response {
-                    SourceResponse::Success(_) => "completed",
-                    SourceResponse::Failure => "failed",
-                };
-                lsp::log_info!(
-                    "Source fetch for package {name} {outcome}",
-                    name = package.name(&self.world.db)
-                );
+                self.log_source_completed(package, &response);
+
+                let skipped = matches!(response, SourceResponse::Skipped);
 
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
                     self.world.db.set_package_sources(package, &directory);
+                }
+
+                // Schedule a skipped package immediately. `finish()` removes it
+                // without advancing the revision, so tick-end scheduling cannot
+                // retry it after fetching is re-enabled.
+                if skipped {
+                    self.schedule_sources();
                 }
             },
 
@@ -625,19 +638,58 @@ impl GlobalState {
                 &self.lsp_state.analysis_pool,
                 &self.events_tx,
             );
-            self.lsp_state.source_scheduler.schedule(
-                &self.world.db,
-                &self.lsp_state.source_pool,
-                &self.events_tx,
-            );
+            self.schedule_sources();
         }
 
         Ok(())
+    }
+
+    fn schedule_sources(&mut self) {
+        self.lsp_state.source_scheduler.schedule(
+            &self.world.db,
+            &self.world.config.oak,
+            &self.lsp_state.source_pool,
+            &self.events_tx,
+        );
+    }
+
+    fn log_source_completed(&self, package: Package, response: &SourceResponse) {
+        let name = package.name(&self.world.db);
+
+        match response {
+            SourceResponse::Success {
+                origin: SourceOrigin::Cached,
+                ..
+            } => {
+                // Cache hits use trace logging because they do not make a network request.
+                tracing::trace!("Sources for package {name} came from the cache")
+            },
+            SourceResponse::Success {
+                origin: SourceOrigin::Fetched,
+                ..
+            } => {
+                lsp::log_info!("Fetched sources for package {name}")
+            },
+            SourceResponse::Failure => {
+                lsp::log_info!("Found no sources for package {name}")
+            },
+            SourceResponse::Skipped => {
+                lsp::log_info!("Skipped sources for package {name}, source fetching was turned off")
+            },
+        }
     }
 }
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
+    // Also reported to the LSP output channel from `handle_initialized()`.
+    if source_fetching_disabled_by_ci() {
+        log::info!(
+            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."
+        );
+        return None;
+    }
+
     let Some(r) = harp::command::r_executable(r_home) else {
         log::warn!(
             "Can't locate an R executable under '{}', source fetching is disabled",
@@ -688,6 +740,27 @@ impl GlobalState {
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() {
             let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
+    /// Pump events until no source request is pending, ignoring pending scans.
+    pub(crate) async fn pump_sources_to_quiescence(&mut self) {
+        while self.lsp_state.source_scheduler.has_pending() {
+            let event = self.next_event().await;
+            self.handle_event(event).await.unwrap();
+        }
+    }
+
+    /// Pump events until one satisfies `wanted`, handling the others, and hand
+    /// that one back unhandled. Lets a test slip its own events in front of a
+    /// response that is already in flight.
+    pub(crate) async fn take_event(&mut self, wanted: impl Fn(&Event) -> bool) -> Event {
+        loop {
+            let event = self.next_event().await;
+            if wanted(&event) {
+                return event;
+            }
             self.handle_event(event).await.unwrap();
         }
     }
