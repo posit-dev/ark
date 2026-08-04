@@ -2,6 +2,7 @@ use aether_parser::parse;
 use aether_parser::RParserOptions;
 use oak_semantic::build_index;
 use oak_semantic::effects;
+use oak_semantic::effects::DirWalk;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::EffectsHandlers;
@@ -30,7 +31,9 @@ impl ImportsResolver for TargetsResolver {
         self.file.clone()
     }
 
-    fn resolve_source_dir(&mut self, _path: &str) -> Vec<SourceResolution> {
+    fn resolve_source_dir(&mut self, _path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        // `tar_source()` lists directory arguments with `recursive = TRUE`.
+        assert_eq!(walk, DirWalk::Recursive);
         self.files.clone()
     }
 

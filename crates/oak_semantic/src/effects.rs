@@ -105,6 +105,9 @@ pub fn annotates(name: &str) -> bool {
 /// https://github.com/search?q=sourceDir+language%3AR&type=code
 /// This is a stopgap workaround until we can infer source effects around a
 /// `list.files()` loop.
+///
+/// The copied `sourceDir()` idiom leaves `list.files()` at its
+/// `recursive = FALSE` default, so nested scripts are excluded.
 pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
     if name != "sourceDir" {
         return None;
@@ -114,7 +117,7 @@ pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
         attach: None,
         source: Some(&SourceAnnotation {
             position: 0,
-            target: SourceTarget::Dir,
+            target: SourceTarget::Dir(DirWalk::Shallow),
             default_path: None,
         }),
         assign: None,
@@ -402,11 +405,20 @@ pub struct SourcePath {
 pub enum SourceTarget {
     /// A single file, as base `source()` takes.
     File,
-    /// All R files in a directory (recursively).
-    Dir,
-    /// Either. Whereas `source()` only supports files, `targets::tar_source()`
-    /// supports both.
-    FileOrDir,
+    /// R files in a directory. [`DirWalk`] determines whether descendants count.
+    Dir(DirWalk),
+    /// A file or directory. `source()` takes only files, while
+    /// `targets::tar_source()` takes both.
+    FileOrDir(DirWalk),
+}
+
+/// Controls whether directory source targets include descendants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DirWalk {
+    /// Direct children only, matching `list.files()` without `recursive = TRUE`.
+    Shallow,
+    /// Every R file below the directory, matching `list.files(recursive = TRUE)`.
+    Recursive,
 }
 
 /// Declares how a source function (`source()`) names what it reads, and serves

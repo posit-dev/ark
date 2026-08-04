@@ -1,13 +1,20 @@
 use crate::effects::contrib::source;
 use crate::effects::contrib::Entry;
+use crate::effects::DirWalk;
+use crate::effects::SourceTarget;
 
 pub(super) static ENTRIES: &[Entry] = &[
-    // `tar_source(files = "R")` runs every R script under `files`, which is how
-    // a `_targets.R` pipeline sees its helper functions. Each element of
-    // `files` may be a script or a directory, and the bare `tar_source()` that
-    // most pipelines write relies on the default.
+    // `tar_source()` loads scripts from `files`, defaulting to `R`. A path may
+    // name a script or directory.
     //
-    // `files` is a character vector, so `tar_source(c("R", "utils"))` names
-    // several paths. Only a single literal is read today.
-    source!("tar_source", 0, FileOrDir, Some("R")),
+    // Directory paths recurse because `file_list_files()` calls
+    // `list.files(recursive = TRUE)`.
+    //
+    // The scanner reads one literal even though `files` is a character vector.
+    source!(
+        "tar_source",
+        0,
+        SourceTarget::FileOrDir(DirWalk::Recursive),
+        Some("R")
+    ),
 ];

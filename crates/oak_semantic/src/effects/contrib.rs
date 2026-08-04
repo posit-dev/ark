@@ -72,16 +72,16 @@ macro_rules! quoted {
 }
 pub(crate) use quoted;
 
-/// A source entry: `(path-argument position)`, optionally what that argument
-/// names (a [`SourceTarget`] variant, `File` by default) and what the function
-/// reads when called with no arguments.
+/// Declares a source function's path argument, [`SourceTarget`], and
+/// no-argument default. The target defaults to [`SourceTarget::File`].
 ///
 /// [`SourceTarget`]: crate::effects::SourceTarget
+/// [`SourceTarget::File`]: crate::effects::SourceTarget::File
 macro_rules! source {
     ($func:literal, $pos:literal) => {
-        $crate::effects::contrib::source!($func, $pos, File, None)
+        $crate::effects::contrib::source!($func, $pos, $crate::effects::SourceTarget::File, None)
     };
-    ($func:literal, $pos:literal, $target:ident, $default:expr) => {
+    ($func:literal, $pos:literal, $target:expr, $default:expr) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
@@ -89,7 +89,7 @@ macro_rules! source {
                 attach: None,
                 source: Some(&$crate::effects::SourceAnnotation {
                     position: $pos,
-                    target: $crate::effects::SourceTarget::$target,
+                    target: $target,
                     default_path: $default,
                 }),
                 assign: None,

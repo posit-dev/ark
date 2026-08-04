@@ -3,6 +3,7 @@ use aether_parser::RParserOptions;
 use biome_rowan::AstNode;
 use oak_semantic::build_index;
 use oak_semantic::effects;
+use oak_semantic::effects::DirWalk;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects::SourceTarget;
 use oak_semantic::semantic_index::AmbiguityReason;
@@ -99,7 +100,9 @@ impl ImportsResolver for DirResolver {
         None
     }
 
-    fn resolve_source_dir(&mut self, _path: &str) -> Vec<SourceResolution> {
+    fn resolve_source_dir(&mut self, _path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        // `sourceDir()` leaves `list.files()` at its `recursive = FALSE` default.
+        assert_eq!(walk, DirWalk::Shallow);
         self.files.clone()
     }
 }

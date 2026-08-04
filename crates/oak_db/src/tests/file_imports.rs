@@ -1520,6 +1520,37 @@ fn source_dir_workspace() -> (TestDb, crate::Root, File, File, File) {
     (db, root, main, a, b)
 }
 
+/// Creates a bare `tar_source()` pipeline with `R/a.R` and `R/models/fit.R`.
+fn tar_source_workspace() -> (TestDb, crate::Root, File) {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["targets"]);
+    let root = workspace_root(&db, "ws");
+    let pipeline = File::new(
+        &db,
+        file_path("ws/_targets.R"),
+        FileRevision::zero(),
+        Some("library(targets)\ntar_source()\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let nested = File::new(
+        &db,
+        file_path("ws/R/models/fit.R"),
+        FileRevision::zero(),
+        Some("fit_val <- 4\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![pipeline, a, nested]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+    (db, root, pipeline)
+}
+
 #[test]
 fn test_source_dir_injects_every_file_in_the_directory() {
     let (db, _root, main, _a, _b) = source_dir_workspace();
@@ -1584,8 +1615,9 @@ fn test_source_dir_picks_up_a_file_added_inside_the_directory() {
 }
 
 #[test]
-fn test_source_dir_recurses_into_subdirectories() {
-    // `tar_source()` recurses, and the listing is shared with `sourceDir()`.
+fn test_source_dir_does_not_recurse_into_subdirectories() {
+    // `sourceDir()` leaves `list.files()` at its `recursive = FALSE` default,
+    // so `R/models/fit.R` is excluded.
     let (mut db, root, main, a, b) = source_dir_workspace();
     let nested = File::new(
         &db,
@@ -1598,5 +1630,16 @@ fn test_source_dir_recurses_into_subdirectories() {
 
     let mut names: Vec<&str> = main.exports(&db).iter().map(|(name, _)| name).collect();
     names.sort();
-    assert_eq!(names, vec!["a_val", "b_val", "fit_val"]);
+    assert_eq!(names, vec!["a_val", "b_val"]);
+}
+
+#[test]
+fn test_tar_source_recurses_into_subdirectories() {
+    // `tar_source()` includes nested scripts because `file_list_files()` calls
+    // `list.files(recursive = TRUE)` for directories.
+    let (db, _root, pipeline) = tar_source_workspace();
+
+    let mut names: Vec<&str> = pipeline.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "fit_val"]);
 }

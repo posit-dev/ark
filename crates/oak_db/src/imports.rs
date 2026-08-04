@@ -5,12 +5,14 @@ use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::effects;
+use oak_semantic::effects::DirWalk;
 use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
 use url::Url;
 
+use crate::file_imports::files_in_directory;
 use crate::file_imports::files_in_directory_recursive;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
@@ -81,8 +83,9 @@ impl<'db> SalsaImportsResolver<'db> {
     }
 }
 
-/// The workspace files a `SourceTarget::Dir` path names, in load order. Empty
-/// when the path doesn't anchor.
+/// Returns scripts from the workspace directory named by `path`, in load order.
+/// `walk` determines whether nested directories are included. Returns no files
+/// when `path` cannot resolve to a directory.
 ///
 /// Tracked to give the directory listing a backdating point, the role
 /// [`File::collation_siblings`] plays for the `R/` convention. The listing
@@ -93,7 +96,12 @@ impl<'db> SalsaImportsResolver<'db> {
 /// Reads only inputs, so it's safe to call while `file`'s own index is being
 /// built.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn source_dir_scripts(db: &dyn Db, file: File, path: String) -> Vec<File> {
+pub(crate) fn source_dir_scripts(
+    db: &dyn Db,
+    file: File,
+    path: String,
+    walk: DirWalk,
+) -> Vec<File> {
     let Some(anchor) = anchor_dir(db, file) else {
         return Vec::new();
     };
@@ -103,7 +111,10 @@ pub(crate) fn source_dir_scripts(db: &dyn Db, file: File, path: String) -> Vec<F
     let Some(dir) = target_path.as_path() else {
         return Vec::new();
     };
-    files_in_directory_recursive(db, dir)
+    match walk {
+        DirWalk::Shallow => files_in_directory(db, dir),
+        DirWalk::Recursive => files_in_directory_recursive(db, dir),
+    }
 }
 
 /// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
@@ -148,8 +159,8 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         Some(self.source_resolution(file))
     }
 
-    fn resolve_source_dir(&mut self, path: &str) -> Vec<SourceResolution> {
-        source_dir_scripts(self.db, self.file, path.to_string())
+    fn resolve_source_dir(&mut self, path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        source_dir_scripts(self.db, self.file, path.to_string(), walk)
             .iter()
             .copied()
             // Exclude sourcing file
