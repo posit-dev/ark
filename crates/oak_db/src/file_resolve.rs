@@ -204,7 +204,7 @@ impl<'db> File {
                     // minting one here would add a bogus target at the empty
                     // `source()` call span.
                     let index = self.semantic_index(db);
-                    for &(def_id, def) in index.exports().get(name.as_ref()).into_iter().flatten() {
+                    for (def_id, def) in index.export(name.as_ref()) {
                         if matches!(def.kind(), DefinitionKind::Import { .. }) {
                             continue;
                         }

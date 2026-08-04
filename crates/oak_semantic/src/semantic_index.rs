@@ -306,6 +306,23 @@ impl SemanticIndex {
         exports
     }
 
+    /// Returns file-scope definitions bound to `name` without building
+    /// [`Self::exports()`].
+    pub fn export(&self, name: &str) -> impl Iterator<Item = (DefinitionId, &Definition)> {
+        let file_scope = ScopeId::from(0);
+        let defs = &self.definitions[file_scope];
+
+        self.symbol_tables[file_scope]
+            .id(name)
+            // A use can intern a name without creating an entry in
+            // `final_bindings`.
+            .and_then(|symbol_id| self.final_bindings.get(symbol_id))
+            .map(Bindings::definitions)
+            .unwrap_or_default()
+            .iter()
+            .map(move |&def_id| (def_id, &defs[def_id]))
+    }
+
     /// Package names from `library()` / `require()` calls that run at the
     /// file's own top level.
     ///
