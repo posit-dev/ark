@@ -15,42 +15,39 @@ use harp::exec::RFunctionExt;
 
 use crate::r_task;
 
-/// Default DPI for converting inches to pixels.
-/// Matches R's default: 96 on macOS, 72 on Linux/Windows.
-/// See `default_resolution_in_pixels_per_inch()` in graphics.R.
+/// Default conversion from inches to logical pixels: 96 DPI on macOS and
+/// 72 DPI elsewhere, matching `default_resolution_in_pixels_per_inch()` in
+/// `graphics.R`.
 pub(crate) const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
     96.0
 } else {
     72.0
 };
 
-/// Default figure size in inches, matching Quarto's base/HTML format
-/// defaults (`fig-width: 7`, `fig-height: 5`). Other formats differ (e.g.
-/// pdf is 5.5 x 3.5), but Positron doesn't know the target format.
+/// Default figure dimensions for Quarto base and HTML formats, in inches.
+///
+/// Positron cannot account for format-specific defaults such as PDF's
+/// 5.5 × 3.5 inches, so Ark consistently uses 7 × 5 inches.
 const DEFAULT_FIG_WIDTH: f64 = 7.0;
 const DEFAULT_FIG_HEIGHT: f64 = 5.0;
 
-/// Plot sizing metadata from an execute request.
+/// Unresolved plot dimensions and pixel ratio from an execute request.
 ///
-/// Holds the *unresolved* sizing request: optional figure dimensions in
-/// inches, where "unset" survives until render time so the `ark.plot.*` R
-/// options can be layered per dimension. Contrast with [PlotRenderSettings],
-/// which describes a fully resolved render in concrete pixels.
+/// Keeping each dimension optional allows it to be resolved independently at
+/// render time. [`PlotRenderSettings`] instead represents fully resolved,
+/// pixel-based settings.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PlotSizing {
-    /// Figure width in inches requested by the execute request (Quarto's
-    /// `fig-width`), validated positive.
+    /// Requested `fig-width` in inches, if positive.
     pub(crate) fig_width: Option<f64>,
-    /// Figure height in inches requested by the execute request (Quarto's
-    /// `fig-height`), validated positive.
+    /// Requested `fig-height` in inches, if positive.
     pub(crate) fig_height: Option<f64>,
-    /// Device pixel ratio of the frontend's display (`output_pixel_ratio`).
+    /// Requested frontend device pixel ratio.
     pub(crate) pixel_ratio: Option<f64>,
 }
 
 impl PlotSizing {
-    /// Extract sizing metadata from an execute request, discarding
-    /// non-positive dimensions.
+    /// Extracts plot sizing metadata, ignoring non-positive figure dimensions.
     pub(crate) fn from_request(positron: Option<&ExecuteRequestPositron>) -> Self {
         let fig_width = positron
             .and_then(|req| req.fig_width)
@@ -67,11 +64,10 @@ impl PlotSizing {
         }
     }
 
-    /// Render settings at the requested figure size.
+    /// Resolves explicitly requested figure dimensions for prerendering.
     ///
-    /// Returns `None` when no figure size was requested, so the caller can
-    /// fall back to its own default (e.g. the frontend-driven prerender
-    /// settings).
+    /// Returns `None` if neither dimension was requested, allowing the caller to
+    /// use its frontend-driven prerender settings.
     pub(crate) fn requested_render_settings(&self) -> Option<PlotRenderSettings> {
         let (width, height) = self.fig_size()?;
 
@@ -82,13 +78,12 @@ impl PlotSizing {
         ))
     }
 
-    /// Resolve final render settings for the Jupyter protocol.
+    /// Resolves the final PNG render settings.
     ///
-    /// Each dimension resolves independently: the `ark.plot.*` R options
-    /// override the execute request's figure size, which overrides the
-    /// default figure size. Unsized plots deliberately render at the default
-    /// figure size rather than scaling with the output area
-    /// (posit-dev/positron#15260).
+    /// Each figure dimension independently uses the first positive value from its
+    /// `ark.plot.*` R option, the execute request, or the default figure size. The
+    /// pixel ratio follows the analogous option-request-default precedence.
+    /// `output_width_px` does not affect the rendered dimensions.
     pub(crate) fn resolved_render_settings(&self) -> PlotRenderSettings {
         let width = r_option_positive_f64("ark.plot.width")
             .or(self.fig_width)
@@ -103,9 +98,9 @@ impl PlotSizing {
         render_settings_from_inches(width, height, pixel_ratio)
     }
 
-    /// The requested figure size as an `IntrinsicSize` for the plot comm.
+    /// Returns the requested dimensions as plot-comm intrinsic-size metadata.
     ///
-    /// Returns `None` when no figure size was requested.
+    /// Returns `None` if neither dimension was requested.
     pub(crate) fn intrinsic_size(&self) -> Option<IntrinsicSize> {
         let (width, height) = self.fig_size()?;
 
@@ -117,11 +112,10 @@ impl PlotSizing {
         })
     }
 
-    /// The figure size requested via `fig-width`/`fig-height`, in inches.
+    /// Returns the requested figure dimensions in inches.
     ///
-    /// Either option may be set alone, matching `quarto render`; the missing
-    /// dimension falls back to the Quarto default. Returns `None` when
-    /// neither dimension is set.
+    /// A missing dimension uses its corresponding default. Returns `None` if
+    /// neither dimension was requested.
     fn fig_size(&self) -> Option<(f64, f64)> {
         if self.fig_width.is_none() && self.fig_height.is_none() {
             return None;
@@ -135,10 +129,9 @@ impl PlotSizing {
 }
 
 pub(crate) trait IntrinsicSizeExt {
-    /// Convert an intrinsic size to a logical-pixel-based `PlotSize`.
+    /// Converts intrinsic dimensions to logical pixels.
     ///
-    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
-    /// physical pixel scaling via the separate `pixel_ratio` parameter.
+    /// Physical pixel scaling is applied separately through `pixel_ratio`.
     fn to_plot_size(&self) -> PlotSize;
 }
 
@@ -157,11 +150,9 @@ impl IntrinsicSizeExt for IntrinsicSize {
     }
 }
 
-/// Build PNG render settings from a figure size in inches.
+/// Converts figure dimensions in inches into PNG settings in logical pixels.
 ///
-/// The size is converted to CSS/logical pixels (inches * DPI). The R
-/// rendering layer handles physical pixel scaling via the separate
-/// `pixel_ratio` parameter.
+/// Physical pixel scaling is applied separately through `pixel_ratio`.
 fn render_settings_from_inches(width: f64, height: f64, pixel_ratio: f64) -> PlotRenderSettings {
     PlotRenderSettings {
         size: PlotSize {
@@ -173,8 +164,9 @@ fn render_settings_from_inches(width: f64, height: f64, pixel_ratio: f64) -> Plo
     }
 }
 
-/// Read a positive `f64` from an R option. Returns `None` if the option is
-/// unset, not numeric, or not positive.
+/// Reads a positive numeric R option.
+///
+/// Returns `None` when the option is absent, non-numeric, or non-positive.
 fn r_option_positive_f64(name: &str) -> Option<f64> {
     let value = r_task(|| {
         RFunction::from("getOption")

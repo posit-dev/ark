@@ -53,11 +53,10 @@ pub struct ExecuteRequestPositron {
     #[serde(rename = "fig-height")]
     pub fig_height: Option<f64>,
 
-    /// Output area width in pixels.
+    /// Width of the frontend output area in pixels.
     ///
-    /// Currently unused: unsized plots deliberately render at the default
-    /// figure size rather than scaling with the output area
-    /// (posit-dev/positron#15260).
+    /// Retained for protocol compatibility but not used for plot sizing. Plots
+    /// without explicit dimensions use the default figure size.
     pub output_width_px: Option<f64>,
 
     /// Device pixel ratio of the output area

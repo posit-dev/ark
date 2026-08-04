@@ -730,9 +730,7 @@ fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that plots rendered with output_width_px (but no fig dimensions)
-/// produce a PNG at the default figure size, not sized to the output area
-/// (posit-dev/positron#15260).
+/// Verifies that `output_width_px` does not override the default figure dimensions.
 #[test]
 fn test_plot_with_output_width_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -755,7 +753,7 @@ fn test_plot_with_output_width_metadata() {
     let (width, height) = png_dimensions(png_data);
 
     let dpi = default_dpi();
-    // 7 inches (default) * DPI, 5 inches (default) * DPI
+    // The default 7 × 5 inch dimensions are converted at the platform DPI.
     assert_eq!(width, (7.0 * dpi).round() as u32);
     assert_eq!(height, (5.0 * dpi).round() as u32);
 
@@ -763,8 +761,7 @@ fn test_plot_with_output_width_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that plots without sizing metadata render at the default figure size
-/// (posit-dev/positron#15260).
+/// Verifies that plots without sizing metadata use the default figure dimensions.
 #[test]
 fn test_plot_default_size_without_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -781,7 +778,7 @@ fn test_plot_default_size_without_metadata() {
     let (width, height) = png_dimensions(png_data);
 
     let dpi = default_dpi();
-    // 7 inches (default) * DPI, 5 inches (default) * DPI
+    // The default 7 × 5 inch dimensions are converted at the platform DPI.
     assert_eq!(width, (7.0 * dpi).round() as u32);
     assert_eq!(height, (5.0 * dpi).round() as u32);
 
@@ -789,8 +786,8 @@ fn test_plot_default_size_without_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that output_pixel_ratio applies to unsized plots: the PNG is rendered
-/// at the default figure size scaled by the pixel ratio.
+/// Verifies that the device pixel ratio scales the physical PNG dimensions of
+/// an otherwise unsized plot.
 #[test]
 fn test_plot_with_pixel_ratio_metadata() {
     let frontend = DummyArkFrontend::lock();
@@ -814,8 +811,7 @@ fn test_plot_with_pixel_ratio_metadata() {
     let (width, height) = png_dimensions(png_data);
 
     let dpi = default_dpi();
-    // The PNG's physical size is the logical size (default figure size * DPI)
-    // scaled by the pixel ratio
+    // A 2x pixel ratio doubles the PNG's physical dimensions.
     assert_eq!(width, ((7.0 * dpi).round() as u32) * 2);
     assert_eq!(height, ((5.0 * dpi).round() as u32) * 2);
 

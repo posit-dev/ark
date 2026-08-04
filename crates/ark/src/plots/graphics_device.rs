@@ -93,7 +93,7 @@ struct ExecutionContext {
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
-    /// Plot sizing metadata from the execute request (e.g. Quarto's fig size).
+    /// Unresolved figure dimensions and pixel ratio from the execute request.
     sizing: PlotSizing,
 }
 
@@ -627,9 +627,7 @@ impl DeviceContext {
         let ctx = self.capture_execution_context();
         self.store_plot_context(id, &ctx);
 
-        // Pre-render at the requested figure size if the execute request
-        // specified one, otherwise fall back to the frontend-driven prerender
-        // settings.
+        // Prefer explicit figure dimensions; otherwise use the frontend's prerender settings.
         let settings = ctx
             .sizing
             .requested_render_settings()
@@ -787,9 +785,8 @@ impl DeviceContext {
             return;
         });
 
-        // Sizing follows the current execution (as in knitr, where a chunk's
-        // fig options apply to plots it modifies), so refresh the stored
-        // intrinsic size to match what was just rendered.
+        // A plot update inherits the current execution's figure dimensions, matching
+        // knitr's treatment of plots modified by a later chunk.
         if let Some(plot_ctx) = self.plot_contexts.borrow_mut().get_mut(id) {
             plot_ctx.intrinsic_size = ctx.sizing.intrinsic_size();
         }

@@ -1522,8 +1522,8 @@ impl Console {
                     reply_tx,
                 });
 
-                // Push execution context to graphics device for plot attribution
-                // and plot sizing metadata (e.g. Quarto's fig size).
+                // Make plot attribution and request-specific sizing available to the
+                // graphics device.
                 let code_location = exec_req.code_location().log_err().flatten();
                 self.graphics_on_execute_request(
                     originator.header.msg_id.clone(),

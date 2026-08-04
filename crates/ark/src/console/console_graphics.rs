@@ -12,11 +12,10 @@ use amalthea::wire::execute_request::ExecuteRequestPositron;
 use crate::console::Console;
 
 impl Console {
-    /// Push execution context to the graphics device when an execute request starts.
+    /// Pushes execution context to the graphics device when an execute request starts.
     ///
-    /// Stores the execution_id, code, code_location, and any plot sizing
-    /// metadata from the request (fig size, pixel ratio) so they can be
-    /// captured when new plots are created during execution.
+    /// The context attributes newly created plots to the execution and captures its
+    /// requested figure dimensions and device pixel ratio.
     pub(super) fn graphics_on_execute_request(
         &self,
         execution_id: String,
