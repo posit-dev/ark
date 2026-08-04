@@ -278,6 +278,55 @@ fn test_edit_above_a_source_call_does_not_invalidate_sourced_by() {
 }
 
 #[test]
+fn test_edit_above_a_source_call_does_not_rebuild_the_reverse_map() {
+    // Offset-only edits recompute `File::source_targets()` without invalidating
+    // `sourcing_files_by_target()`.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/a.R", "a_val <- 1\n"),
+        ("w/b.R", "source(\"a.R\")\n"),
+    ]);
+    let a = files[0];
+    let b = files[1];
+
+    let _ = a.sourced_by(&db);
+    assert_eq!(db.executions("sourcing_files_by_target"), 1);
+    assert_eq!(db.executions("File::source_targets"), 2);
+
+    b.set_source_text_override(&mut db)
+        .to(Some("library(dplyr)\nsource(\"a.R\")\n".to_string()));
+
+    let _ = a.sourced_by(&db);
+    assert_eq!(db.executions("sourcing_files_by_target"), 1);
+    assert_eq!(db.executions("File::source_targets"), 3);
+}
+
+#[test]
+fn test_retargeting_a_source_call_rebuilds_the_reverse_map() {
+    // A target change must invalidate `sourcing_files_by_target()` to remove the
+    // old reverse edge and add the new one.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[
+        ("w/a.R", "a_val <- 1\n"),
+        ("w/b.R", "source(\"a.R\")\n"),
+        ("w/c.R", "c_val <- 1\n"),
+    ]);
+    let a = files[0];
+    let b = files[1];
+    let c = files[2];
+
+    let _ = a.sourced_by(&db);
+    assert_eq!(db.executions("sourcing_files_by_target"), 1);
+
+    b.set_source_text_override(&mut db)
+        .to(Some("source(\"c.R\")\n".to_string()));
+
+    assert!(a.sourced_by(&db).is_empty());
+    assert_eq!(c.sourced_by(&db), &vec![b]);
+    assert_eq!(db.executions("sourcing_files_by_target"), 2);
+}
+
+#[test]
 fn test_sourcing_files_by_target_firewalls_file_additions_from_sourced_by() {
     // An unrelated body edit alone backdates all the way through (see the
     // previous test). Adding a file anywhere changes `workspace_files` for

@@ -79,6 +79,23 @@ impl File {
             .collect()
     }
 
+    /// The workspace files `self` sources, sorted by path and deduplicated.
+    ///
+    /// Omits source-call offsets so text edits that preserve targets do not
+    /// invalidate [`sourcing_files_by_target`].
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn source_targets(self, db: &dyn Db) -> Vec<File> {
+        let mut targets: Vec<File> = self
+            .source_sites(db)
+            .iter()
+            .filter_map(|site| site.target())
+            .collect();
+
+        targets.sort_by_cached_key(|target| target.path(db).to_string());
+        targets.dedup();
+        targets
+    }
+
     /// The workspace files that source `self`.
     ///
     /// Sorted by path and deduped. This is a firewall query that deliberately
@@ -105,14 +122,13 @@ fn sourcing_files_by_target(db: &dyn Db) -> FxHashMap<File, Vec<File>> {
     let mut by_target: FxHashMap<File, Vec<File>> = FxHashMap::default();
 
     for &file in crate::workspace_files(db) {
-        for site in file.source_sites(db) {
-            let Some(target) = site.target() else {
-                continue;
-            };
+        for &target in file.source_targets(db) {
             by_target.entry(target).or_default().push(file);
         }
     }
 
+    // Deduplicate because `workspace_files()` can include a file through its root
+    // and package.
     for files in by_target.values_mut() {
         files.sort_by_cached_key(|file| file.path(db).to_string());
         files.dedup();
