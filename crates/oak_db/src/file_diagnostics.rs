@@ -84,7 +84,7 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
         diagnostics.push(Diagnostic::new(
             DiagnosticKind::InheritedShadow,
             format!(
-                "This `{callee}` call has an ambiguous effect. It resolves through {alone} when \
+                "This `{callee}` call has an ambiguous effect.\nIt resolves through {alone} when \
                  the file is sourced on its own, and to {inherited} when sourced by `{sourcing}`.",
                 inherited = describe_source(db, &resolved_layer),
             ),

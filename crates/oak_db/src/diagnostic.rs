@@ -204,7 +204,7 @@ fn lower_uninstalled_package(package: &str, range: TextRange) -> Diagnostic {
 fn lower_source_cycle() -> Diagnostic {
     Diagnostic::new(
         DiagnosticKind::SourceCycle,
-        "This file takes part in a cycle of mutual `source()` calls. \
+        "This file takes part in a cycle of mutual `source()` calls.\n\
          Language analysis will be incomplete until the cycle is resolved."
             .to_string(),
         TextRange::empty(TextSize::from(0)),
