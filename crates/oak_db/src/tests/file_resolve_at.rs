@@ -827,3 +827,160 @@ fn test_narrowing_applies_at_each_hop_of_a_source_chain() {
         assert!(helpers.resolve_at(&db, TextSize::from(0)).is_empty());
     }
 }
+
+/// Installs two library packages. `install_library_package()` replaces the
+/// library-root list, so restore both roots after the second call.
+fn install_two_library_packages(
+    db: &mut TestDb,
+    first: (&str, &[&str]),
+    second: (&str, &[&str]),
+) -> (Package, Package) {
+    let bindings = |exports: &[&str]| {
+        exports
+            .iter()
+            .map(|name| format!("{name} <- function() 1\n"))
+            .collect::<String>()
+    };
+
+    let (first_root, first_pkg) = install_library_package(db, first.0, first.1, &[(
+        &format!("library/{}/R/a.R", first.0),
+        &bindings(first.1),
+    )]);
+    let (second_root, second_pkg) = install_library_package(db, second.0, second.1, &[(
+        &format!("library/{}/R/a.R", second.0),
+        &bindings(second.1),
+    )]);
+    db.library_roots()
+        .set_roots(db)
+        .to(vec![first_root, second_root]);
+
+    (first_pkg, second_pkg)
+}
+
+#[test]
+fn test_second_source_call_keeps_the_conditional_attach_of_the_first() {
+    // The first `source()` call must retain `pkga`. Its attachment is confined
+    // to the `if` arm and is not visible at the second call.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "pkga", &["foo"], &[(
+        "library/pkga/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "if (dev) {\n  library(pkga)\n  source(\"helpers.R\")\n}\nsource(\"helpers.R\")\n",
+        ),
+        ("w/helpers.R", "foo\n"),
+    ]);
+    let helpers = files[1];
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), pkg_file);
+}
+
+#[test]
+fn test_source_call_in_a_function_body_keeps_attaches_after_it() {
+    // `load()` can run after `library(pkga)`, so its `source()` call cannot be
+    // bounded by its textual offset.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "pkga", &["foo"], &[(
+        "library/pkga/R/a.R",
+        "foo <- function() 42\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "load <- function() source(\"helpers.R\")\nlibrary(pkga)\nload()\n",
+        ),
+        ("w/helpers.R", "foo\n"),
+    ]);
+    let helpers = files[1];
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), pkg_file);
+}
+
+#[test]
+fn test_source_call_in_a_function_body_unpins_a_later_top_level_one() {
+    // A `source()` call in `load()` can run after `after` is defined despite
+    // preceding the top-level call textually, so both calls remain unpinned.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "load <- function() source(\"helpers.R\")\nsource(\"helpers.R\")\nafter <- 1\n",
+        ),
+        ("w/helpers.R", "after\n"),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    let def = resolve_one(&db, helpers, TextSize::from(0));
+    assert_eq!(def.file(&db), main);
+}
+
+#[test]
+fn test_source_twice_sees_the_definitions_of_both_call_sites() {
+    // The combined context includes `first` and `second`, but not `third`,
+    // because each `source()` execution sees only earlier bindings.
+    let mut db = TestDb::new();
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "first <- 1\nsource(\"helpers.R\")\nsecond <- 2\nsource(\"helpers.R\")\nthird <- 3\n",
+        ),
+        ("w/helpers.R", "first\n"),
+    ]);
+    let (main, helpers) = (files[0], files[1]);
+
+    for name in ["first", "second"] {
+        helpers
+            .set_source_text_override(&mut db)
+            .to(Some(format!("{name}\n")));
+        assert_eq!(resolve_one(&db, helpers, TextSize::from(0)).file(&db), main);
+    }
+
+    helpers
+        .set_source_text_override(&mut db)
+        .to(Some("third\n".to_string()));
+    assert!(helpers.resolve_at(&db, TextSize::from(0)).is_empty());
+}
+
+#[test]
+fn test_source_twice_with_an_attach_between_keeps_both_packages() {
+    // The combined contexts retain `pkga` for `only_a` and place later-attached
+    // `pkgb` ahead of it for `shared`.
+    let mut db = TestDb::new();
+    let (pkg_a, pkg_b) = install_two_library_packages(
+        &mut db,
+        ("pkga", &["only_a", "shared"]),
+        ("pkgb", &["shared"]),
+    );
+    let (file_a, file_b) = (pkg_a.files(&db)[0], pkg_b.files(&db)[0]);
+
+    let files = setup_sourced(&mut db, &[
+        (
+            "w/main.R",
+            "library(pkga)\nsource(\"helpers.R\")\nlibrary(pkgb)\nsource(\"helpers.R\")\n",
+        ),
+        ("w/helpers.R", "only_a\n"),
+    ]);
+    let helpers = files[1];
+
+    assert_eq!(
+        resolve_one(&db, helpers, TextSize::from(0)).file(&db),
+        file_a
+    );
+
+    helpers
+        .set_source_text_override(&mut db)
+        .to(Some("shared\n".to_string()));
+    assert_eq!(
+        resolve_one(&db, helpers, TextSize::from(0)).file(&db),
+        file_b
+    );
+}

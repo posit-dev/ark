@@ -16,6 +16,7 @@ use oak_db::OakDatabase;
 use oak_ide::goto_definition;
 
 use crate::support::install_library_package;
+use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
 
@@ -253,4 +254,29 @@ fn test_navigates_from_assign_definition_site() {
     // yet, from a use or from its definition site. `SalsaImportsResolver` only
     // resolves `base`, so the operators aren't recognized at this layer until
     // the resolver walks the search path.
+}
+
+#[test]
+fn test_navigates_through_a_conditional_attach_at_one_of_two_source_calls() {
+    // The attach at the first `source()` call must remain available even though
+    // it is not visible at the second call. Otherwise `foo` has no target.
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+
+    let main = upsert(
+        &mut db,
+        "main.R",
+        "if (dev) {\n  library(mypkg)\n  source(\"helpers.R\")\n}\nsource(\"helpers.R\")\n",
+    );
+    let helpers = upsert(&mut db, "helpers.R", "foo\n");
+    place_in_workspace_scripts(&mut db, vec![main, helpers]);
+
+    let targets = goto_definition(&db, helpers, TextSize::from(0u32));
+    assert_eq!(targets.len(), 1);
+    let target = &targets[0];
+
+    assert_eq!(target.file, pkg_file);
+    assert_eq!(target.name, "foo");
+    assert_eq!(target.full_range, range(0, 3));
 }

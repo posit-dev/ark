@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::slice;
 use std::sync::Arc;
 
 use biome_rowan::TextSize;
@@ -77,18 +78,19 @@ impl CrossFileLayers {
 
 /// Which of a file's own `library()` attaches a caller sees.
 #[derive(Clone, Copy)]
-enum AttachView {
+enum AttachView<'a> {
     /// Every attach in the file.
     ///
     /// Over-approximates on two axes. An attach in a function body counts even
     /// though the body may never run, and a conditional one counts even though
     /// its branch may not have been taken.
     Anywhere,
-    /// Attaches visible at `offset` in lazy `scope`.
+    /// Attaches visible at `offset` in the lazy scope `scope_id`.
     ///
-    /// An attach in `scope_id` or an enclosing lazy body applies only after its
-    /// `library()` call. The lazy view treats an unconditional top-level attach
-    /// as visible regardless of position, which over-approximates this case:
+    /// An attach in `scope_id` itself or an enclosing lazy body applies only after its
+    /// `library()` call. On the other hand, the lazy view treats an
+    /// unconditional top-level attach as visible regardless of position, which
+    /// over-approximates this case:
     ///
     /// ```r
     /// f <- function() {
@@ -105,13 +107,40 @@ enum AttachView {
     /// Conditional attaches remain limited to their arm, and child or sibling
     /// bodies do not reach `scope_id`.
     Lazy { offset: TextSize, scope_id: ScopeId },
-    /// The attaches that have run and still hold at `offset` in an eagerly
-    /// evaluated scope. Calls reached only by running a lazy body are dropped,
-    /// as are calls after the offset.
-    Eager(TextSize),
+    /// Attaches in eager scopes that are visible at any of `offsets`.
+    ///
+    /// Attaches in lazy bodies and after every offset are excluded. Multiple
+    /// offsets represent distinct `source()` sites, which may have different
+    /// attach views.
+    ///
+    /// ```r
+    /// library(pkga)
+    /// source("init.R")
+    ///
+    /// library(pkgb)
+    /// source("init.R")
+    /// ```
+    ///
+    /// or
+    ///
+    /// ```r
+    /// library(pkga)
+    /// if (cond1) {
+    ///   source("init.R")
+    /// }
+    /// library(pkgb)
+    /// ...
+    /// if (cond2) {
+    ///   source("init.R")
+    /// }
+    /// ```
+    ///
+    /// `init.R` runs twice, represented by an offset for each `source()`
+    /// call. It sees `pkga` in both cases but only the second run sees `pkgb`.
+    Eager(&'a [TextSize]),
 }
 
-impl AttachView {
+impl AttachView<'_> {
     fn sees(&self, index: &SemanticIndex, call: &SemanticCall, region: &AttachRegion) -> bool {
         match *self {
             AttachView::Anywhere => true,
@@ -134,8 +163,9 @@ impl AttachView {
                         region.contains(call, offset)
                 },
             },
-            AttachView::Eager(offset) => {
-                index.scope_is_eager(call.scope()) && region.contains(call, offset)
+            AttachView::Eager(offsets) => {
+                index.scope_is_eager(call.scope()) &&
+                    offsets.iter().any(|&offset| region.contains(call, offset))
             },
         }
     }
@@ -216,7 +246,10 @@ impl File {
         let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
             // Predecessors only, and own attaches narrowed to the calls that
             // have run by `offset`.
-            (CollationView::Eager, AttachView::Eager(offset))
+            (
+                CollationView::Eager,
+                AttachView::Eager(slice::from_ref(&offset)),
+            )
         } else {
             (CollationView::Lazy, AttachView::Lazy {
                 offset,
@@ -281,7 +314,10 @@ impl File {
         let (cursor_scope, _) = index.scope_at(offset);
 
         let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
-            (CollationView::Eager, AttachView::Eager(offset))
+            (
+                CollationView::Eager,
+                AttachView::Eager(slice::from_ref(&offset)),
+            )
         } else {
             (CollationView::Lazy, AttachView::Lazy {
                 offset,
@@ -352,7 +388,7 @@ impl File {
     /// Reads the file's own semantic index.
     ///
     /// An attach to a package absent from every root is dropped (no entity).
-    fn attach_layers(self, db: &dyn Db, view: AttachView) -> Vec<ImportLayer> {
+    fn attach_layers(self, db: &dyn Db, view: AttachView<'_>) -> Vec<ImportLayer> {
         let index = self.semantic_index(db);
         index
             .semantic_calls()
@@ -467,33 +503,24 @@ fn build_inherited_layers(
     source_site: File,
     view: CollationView,
 ) -> InheritedLayers {
-    let offset = match view {
+    let offsets = match view {
         CollationView::Lazy => None,
-        CollationView::Eager => source_offset(db, source_site, file),
+        CollationView::Eager => source_offsets(db, source_site, file),
     };
 
-    // `Anywhere` when nothing pins the `source()` call to a program point, i.e.
-    // the lazy view or a sourcing file whose call we can't locate.
-    let attaches = match offset {
-        Some(offset) => AttachView::Eager(offset),
-        None => AttachView::Anywhere,
-    };
     let own_cross = source_site.cross_file_layers(db, view);
-    let own_attach = source_site.attach_layers(db, attaches);
     let grandparents = source_site.inherited_layers(db, view);
 
-    // For `Eager`, narrow to what `source_site` had bound by the time its
-    // `source()` call ran. `attach_layers` already reads `source_site`'s
-    // semantic index, so doing the same here doesn't cost an extra firewall.
-    let exports_so_far = offset.and_then(|offset| {
-        source_site
-            .semantic_index(db)
-            .exports_at_source(offset)
-            .cloned()
-    });
+    let (own_attach, exports_so_far) = match offsets.as_deref() {
+        Some(offsets) => (
+            source_site.attach_layers(db, AttachView::Eager(offsets)),
+            exports_at_sources(db, source_site, offsets),
+        ),
+        None => (source_site.attach_layers(db, AttachView::Anywhere), None),
+    };
 
-    // No exports snapshot means the call sits in a lazy scope. Include the
-    // whole file (over-approximation).
+    // An unpinned `source()` call may run after any top-level binding, so use
+    // the whole file as over-approximation.
     let source_layer = match exports_so_far {
         Some(exports_so_far) => ImportLayer::SourcingFile {
             file: source_site,
@@ -524,17 +551,53 @@ fn build_inherited_layers(
     }
 }
 
-/// The largest offset among `source_file`'s `source()` calls naming `file`,
-/// or `None` if none do. Several calls to the same target means the sourced
-/// code runs more than once. The latest call has the most context loaded, so
-/// taking the max over-approximates in the safe direction.
-fn source_offset(db: &dyn Db, source_file: File, file: File) -> Option<TextSize> {
-    source_file
-        .source_sites(db)
-        .iter()
-        .filter(|site| site.target() == Some(file))
-        .map(|site| site.offset())
-        .max()
+/// Returns source-order offsets for eager `source()` calls from `sourcing_file` to
+/// `file`.
+///
+/// `None` leaves the context unpinned when no calls target `file` or any call is
+/// lazy. A lazy call can run after the rest of `sourcing_file`, so no offset bounds
+/// its imports.
+fn source_offsets(db: &dyn Db, sourcing_file: File, file: File) -> Option<Vec<TextSize>> {
+    let index = sourcing_file.semantic_index(db);
+    let mut offsets = Vec::new();
+
+    for site in sourcing_file.source_sites(db) {
+        if site.target() != Some(file) {
+            continue;
+        }
+        if !index.scope_is_eager(site.scope()) {
+            return None;
+        }
+        offsets.push(site.offset());
+    }
+
+    match offsets.is_empty() {
+        true => None,
+        false => Some(offsets),
+    }
+}
+
+/// Returns the union of top-level bindings visible at `offsets`.
+///
+/// Returns `None` when an offset lacks a load-time export snapshot.
+fn exports_at_sources(
+    db: &dyn Db,
+    file: File,
+    offsets: &[TextSize],
+) -> Option<Arc<FxHashSet<String>>> {
+    let index = file.semantic_index(db);
+
+    // Preserve the index's `Arc` for one call rather than rebuilding its set.
+    if let [offset] = offsets {
+        return index.exports_at_source(*offset).cloned();
+    }
+
+    let mut union = FxHashSet::default();
+    for &offset in offsets {
+        union.extend(index.exports_at_source(offset)?.iter().cloned());
+    }
+
+    Some(Arc::new(union))
 }
 
 fn package_load_layers(

@@ -969,3 +969,28 @@ fn test_attach_under_a_lazy_ancestor_stays_invisible() {
     let after = TextSize::from(source.find("after").unwrap() as u32);
     assert!(!library_attaches(&db, &file.imports_at(&db, after)).contains(&"cli".to_string()));
 }
+
+#[test]
+fn test_inherited_attaches_rank_by_source_position_across_source_calls() {
+    // `pkgb` is visible only at the first `source()` call, but it attached after
+    // `pkga`. The merged contexts must preserve that precedence.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["pkga", "pkgb"]);
+    let root = workspace_root(&db, "w");
+
+    let main = make_file(
+        &mut db,
+        "w/main.R",
+        "library(pkga)\nif (dev) {\n  library(pkgb)\n  source(\"helpers.R\")\n}\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "top <- 1\n";
+    let helpers = make_file(&mut db, "w/helpers.R", helpers_source);
+
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let offset = TextSize::from(helpers_source.find("top").unwrap() as u32);
+    let attaches = library_attaches(&db, &helpers.imports_at(&db, offset));
+
+    assert_eq!(attaches, vec!["pkgb".to_string(), "pkga".to_string()]);
+}

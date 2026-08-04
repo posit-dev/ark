@@ -598,3 +598,25 @@ fn test_cross_package_references_via_library() {
         range(use_start, use_start + 3)
     )]);
 }
+
+#[test]
+fn test_cross_file_references_reach_past_a_lazy_source_call() {
+    // `load()` can source `helpers.R` after `after` is defined, so its context
+    // remains unpinned and references include `after` in `main.R`.
+    let mut db = OakDatabase::new();
+    let main_source =
+        "load <- function() source(\"helpers.R\")\nsource(\"helpers.R\")\nafter <- 1\nafter\n";
+    let main = upsert(&mut db, "main.R", main_source);
+    let helpers = upsert(&mut db, "helpers.R", "after\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, main]);
+
+    let def = main_source.find("after <- 1").unwrap() as u32;
+    let use_ = main_source.rfind("after").unwrap() as u32;
+
+    let refs = find_references(&db, helpers, offset(0), true);
+    assert_eq!(pairs(&refs), vec![
+        (helpers, range(0, 5)),
+        (main, range(def, def + 5)),
+        (main, range(use_, use_ + 5)),
+    ]);
+}
