@@ -2,7 +2,8 @@
 source: crates/oak_db/src/tests/file_diagnostics.rs
 expression: "render(\"w/b.R\", b_source, b.diagnostics(&db))"
 ---
-warning[source-cycle]: This file takes part in a cycle of mutual `source()` calls. Language analysis will be incomplete until the cycle is resolved.
+warning[source-cycle]: This file takes part in a cycle of mutual `source()` calls.
+                       Language analysis will be incomplete until the cycle is resolved.
  --> w/b.R:1:1
   |
 1 | source("a.R")

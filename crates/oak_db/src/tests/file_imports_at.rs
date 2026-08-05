@@ -972,8 +972,9 @@ fn test_imports_at_covers_the_same_layers_as_the_per_sourcing_file_view() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let offset = TextSize::from(0);
+    // `helpers.R`'s own standalone context, then one per sourcing file.
     let contexts = helpers.imports_by_sourcing_file_at(&db, offset);
-    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts.len(), 3);
 
     let flat = helpers.imports_at(&db, offset);
     let grouped: Vec<ImportLayer> = contexts.into_iter().flatten().collect();

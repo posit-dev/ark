@@ -38,7 +38,7 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
 
 /// Register a set of installed packages on `LibraryRoots`. Replaces any
 /// previously registered library roots.
-fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
+pub(super) fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
     let mut roots = Vec::new();
     let mut packages = Vec::new();
     for &name in names {
@@ -263,182 +263,6 @@ fn test_package_script_resolves_as_standalone_script() {
 }
 
 #[test]
-fn test_testthat_file_sees_helpers_package_and_testthat() {
-    let mut db = TestDb::new();
-    let installed = install_packages(&mut db, &["testthat", "base"]);
-    let testthat = installed[0];
-    let base = installed[1];
-
-    let workspace = workspace_root(&db, "w");
-    let pkg = Package::new(
-        &db,
-        file_path("w/pkg/DESCRIPTION"),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
-
-    let r_file = File::new(
-        &db,
-        file_path("w/pkg/R/a.R"),
-        FileRevision::zero(),
-        Some("f <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let helper = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/helper-b.R"),
-        FileRevision::zero(),
-        Some("h <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let setup = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/setup-c.R"),
-        FileRevision::zero(),
-        Some("s <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let test_foo = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/test-foo.R"),
-        FileRevision::zero(),
-        Some("test_that('x', expect_true(TRUE))\n".to_string()),
-        Some(pkg),
-    );
-    // A sibling test file. Each test file runs in its own environment, so
-    // it must not appear in `test_foo`'s imports.
-    let test_bar = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/test-bar.R"),
-        FileRevision::zero(),
-        Some("test_that('y', expect_true(TRUE))\n".to_string()),
-        Some(pkg),
-    );
-
-    pkg.set_files(&mut db).to(vec![r_file]);
-    pkg.set_scripts(&mut db)
-        .to(vec![helper, setup, test_foo, test_bar]);
-    workspace.set_packages(&mut db).to(vec![pkg]);
-    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
-
-    let _ = (testthat, base);
-    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
-        // helper/setup files come first (sourced into the test env). LIFO
-        // over byte-order basename sort, so `setup-c` (sourced last)
-        // outranks `helper-b`.
-        "File(setup-c.R)".to_string(),
-        "File(helper-b.R)".to_string(),
-        // Then the package's own R/ code.
-        "File(a.R)".to_string(),
-        // testthat is attached, base is always last.
-        "Package(testthat)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_package_r_file_does_not_take_testthat_path() {
-    let mut db = TestDb::new();
-    let installed = install_packages(&mut db, &["testthat", "base"]);
-    let base = installed[1];
-
-    let workspace = workspace_root(&db, "w");
-    let pkg = Package::new(
-        &db,
-        file_path("w/pkg/DESCRIPTION"),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
-    let r_file = File::new(
-        &db,
-        file_path("w/pkg/R/a.R"),
-        FileRevision::zero(),
-        Some("f <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let helper = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/helper-b.R"),
-        FileRevision::zero(),
-        Some("h <- 1\n".to_string()),
-        Some(pkg),
-    );
-    pkg.set_files(&mut db).to(vec![r_file]);
-    pkg.set_scripts(&mut db).to(vec![helper]);
-    workspace.set_packages(&mut db).to(vec![pkg]);
-    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
-
-    let _ = base;
-    // An `R/` file is not a testthat file: no helper layer, no testthat
-    // layer, just base (no other R/ files, empty namespace).
-    assert_eq!(shape(&db, r_file.imports(&db)), vec![
-        "Package(base)".to_string()
-    ]);
-}
-
-#[test]
-fn test_testthat_file_includes_top_level_library_calls() {
-    let mut db = TestDb::new();
-    let installed = install_packages(&mut db, &["cli", "testthat", "base"]);
-    let cli = installed[0];
-    let testthat = installed[1];
-    let base = installed[2];
-
-    let workspace = workspace_root(&db, "w");
-    let pkg = Package::new(
-        &db,
-        file_path("w/pkg/DESCRIPTION"),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
-    let r_file = File::new(
-        &db,
-        file_path("w/pkg/R/a.R"),
-        FileRevision::zero(),
-        Some("f <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let test_foo = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/test-foo.R"),
-        FileRevision::zero(),
-        Some("library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string()),
-        Some(pkg),
-    );
-    pkg.set_files(&mut db).to(vec![r_file]);
-    pkg.set_scripts(&mut db).to(vec![test_foo]);
-    workspace.set_packages(&mut db).to(vec![pkg]);
-    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
-
-    let _ = (cli, testthat, base);
-    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
-        // The package's own R/ code.
-        "File(a.R)".to_string(),
-        // The test file's own `library()` call sits below the package but
-        // above testthat (attached more recently than the runner attached
-        // testthat).
-        "Package(cli)".to_string(),
-        "Package(testthat)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
 fn test_package_file_includes_predecessor_attaches() {
     // A collation predecessor's own `library(dep)` puts dep on the search path
     // for files loaded after it, so `b.R`'s imports carry it as a `Package`
@@ -482,53 +306,9 @@ fn test_package_file_includes_predecessor_attaches() {
     ]);
 }
 
-#[test]
-fn test_testthat_file_includes_package_namespace_imports() {
-    // A test file runs under the package namespace, so the package's
-    // `importFrom(rlang, abort)` shows up as a `From` layer, ranked above the
-    // implicit testthat/base attaches.
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["testthat", "base"]);
-    let workspace = workspace_root(&db, "w");
-    let namespace = Namespace {
-        imports: vec![Import {
-            name: "abort".to_string(),
-            package: "rlang".to_string(),
-        }],
-        ..Default::default()
-    };
-    let pkg = Package::new(
-        &db,
-        file_path("w/pkg/DESCRIPTION"),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        Some(namespace),
-        Vec::new(),
-        Vec::new(),
-    );
-    let test_foo = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/test-foo.R"),
-        FileRevision::zero(),
-        Some("test_that('x', expect_true(TRUE))\n".to_string()),
-        Some(pkg),
-    );
-    pkg.set_scripts(&mut db).to(vec![test_foo]);
-    workspace.set_packages(&mut db).to(vec![pkg]);
-    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
-
-    assert_eq!(shape(&db, test_foo.imports(&db)), vec![
-        "From([(\"abort\", \"rlang\")])".to_string(),
-        "Package(testthat)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
 /// Render `ImportLayer`s to a stable, assertable shape. `File` layers
 /// collapse to their basename.
-fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
+pub(super) fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
     layers
         .iter()
         .map(|layer| match layer {
@@ -743,11 +523,8 @@ fn test_script_r_directory_predecessor_attach_reaches_sibling() {
 
 #[test]
 fn test_script_r_directory_below_uses_full_default_search_path() {
-    // Guards against reusing `package_load_layers`'s `base_layer` for the
-    // script path: a non-package script sees R's whole startup search path
-    // (stats, graphics, ..., base), not just `base`. `package_load_layers`
-    // uses `base_layer` because NAMESPACE supplies the rest for a package
-    // file; a script has no NAMESPACE.
+    // `SearchPathTail::Base` is for package code whose dependencies come from
+    // the NAMESPACE. A script needs the complete default search path.
     let mut db = TestDb::new();
     install_packages(&mut db, &[
         "stats",
@@ -982,11 +759,10 @@ fn test_multiple_sourcing_files_appear_ordered_by_path() {
 }
 
 #[test]
-fn test_inheritance_replaces_collation_instead_of_adding_to_it() {
-    // `a.R` and `b.R` would collate together as a non-package `R/` directory
-    // (see `test_script_r_directory_siblings_see_each_other`). Once `main.R`
-    // explicitly sources `a.R`, `b.R` may never load, so it must drop out of
-    // `a.R`'s imports entirely rather than sit alongside the inherited band.
+fn test_inheritance_replaces_the_r_directory_fallback() {
+    // A non-package `R/` directory only implies collation. Because `main.R`
+    // explicitly sources `a.R` but not `b.R`, the inferred context is replaced
+    // and `b.R` drops out.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
     let a = File::new(
@@ -1095,13 +871,13 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
         .any(|layer| { matches!(layer, ImportLayer::SourcingFile { file, .. } if *file == main) }));
 
     // The scan side has `File` layers but never a `SourcingFile`, either view.
-    for view in [CollationView::Eager, CollationView::Lazy] {
+    for view in [CollationView::Eager, CollationView::Deferred] {
         let scan_side = helpers.cross_file_layers(&db, view);
         assert!(scan_side
-            .lookup_order(&[])
-            .any(|layer| matches!(layer, ImportLayer::File(file) if *file == sibling)));
+            .lookup_order(&db, &[])
+            .any(|layer| matches!(layer, ImportLayer::File(file) if file == sibling)));
         assert!(!scan_side
-            .lookup_order(&[])
+            .lookup_order(&db, &[])
             .any(|layer| matches!(layer, ImportLayer::SourcingFile { .. })));
     }
 }
@@ -1128,10 +904,256 @@ fn test_inherited_default_search_path_is_not_duplicated() {
     root.set_scripts(&mut db).to(vec![main, helpers]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    // `base` comes once from `main.R`'s own `below` band, never duplicated by
-    // `helpers.R`'s own (replaced) `cross_file_layers`.
+    // Both `helpers.R`'s own context and the one inherited from `main.R` end
+    // their `below` band in the default search path. The union carries it once.
     assert_eq!(shape(&db, helpers.imports(&db)), vec![
         "File(main.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_collation_attach_outranks_the_search_path_under_inheritance() {
+    // `loadSupport()` is a detected loader, so `a.R` retains its collation
+    // context alongside `main.R`'s sourced context. Merging their search-path
+    // tails at the bottom keeps `tibble` above `base`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "shiny", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(dplyr)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_attach_to_a_default_search_path_package_keeps_its_priority() {
+    // `stats` is already on the default search path. Removing that path by
+    // value would also remove `b.R`'s explicit attach and let `tibble` outrank it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "stats", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("library(stats)\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(stats)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(stats)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_transitive_inheritance_keeps_attaches_above_the_search_path() {
+    // `setup.R` inherits `main.R`'s search-path tail before the `dplyr` attach
+    // from `aaa.R`. Removing only the combined suffix would leave that tail
+    // above `dplyr`, making it rank below `base`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "shiny", "tibble"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let sibling = File::new(
+        &db,
+        file_path("ws/R/aaa.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let setup = File::new(
+        &db,
+        file_path("ws/R/setup.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("ws/helpers.R"),
+        FileRevision::zero(),
+        Some("foo <- 1\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\nsource(\"R/setup.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db)
+        .to(vec![app, sibling, setup, helpers, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(setup.R)".to_string(),
+        "File(aaa.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(dplyr)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_shiny_autoload_survives_an_explicit_source() {
+    // `loadSupport()` supplies an explicit loader context, so `main.R` sourcing
+    // `R/a.R` adds an execution rather than replacing the autoload context.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(main.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_source_cycle_keeps_the_r_directory_fallback() {
+    // Cycle recovery leaves no inherited source sites, so `a.R` keeps its
+    // fallback collation context and still sees `b.R`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("source(\"R/c.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let c = File::new(
+        &db,
+        file_path("ws/R/c.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
+
+    // Per-sourcing-file resolution retains one fallback context when recovery
+    // removes every inherited source site.
+    let contexts = a.imports_by_sourcing_file(&db);
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(shape(&db, &contexts[0]), vec![
+        "File(c.R)".to_string(),
+        "File(b.R)".to_string(),
         "Package(base)".to_string(),
     ]);
 }
@@ -1272,65 +1294,14 @@ fn test_package_r_file_ignores_source_sites() {
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
-    // `dev.R` really does source `b.R`, but `Collate:` already says when `b.R`
-    // loads, so it keeps its predecessor and NAMESPACE context. Inheriting
-    // `dev.R`'s instead would drop `File(a.R)`.
+    // `dev.R` really does source `b.R`, but `b.R` is collated and so has to
+    // resolve under package load, where `dev.R`'s bindings don't exist. Adding
+    // `dev.R`'s context would also swap the namespace tail, `base` alone, for
+    // the default search path, losing the check that a package file declares
+    // its imports.
     assert_eq!(b.sourced_by(&db), &vec![dev]);
     assert_eq!(shape(&db, b.imports(&db)), vec![
         "File(a.R)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_testthat_file_ignores_source_sites() {
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["testthat", "base"]);
-
-    let workspace = workspace_root(&db, "w");
-    let pkg = Package::new(
-        &db,
-        file_path("w/pkg/DESCRIPTION"),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-    );
-    let r_file = File::new(
-        &db,
-        file_path("w/pkg/R/a.R"),
-        FileRevision::zero(),
-        Some("f <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let helper = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/helper-b.R"),
-        FileRevision::zero(),
-        Some("h <- 1\n".to_string()),
-        Some(pkg),
-    );
-    let test_foo = File::new(
-        &db,
-        file_path("w/pkg/tests/testthat/test-foo.R"),
-        FileRevision::zero(),
-        Some("source(\"pkg/tests/testthat/helper-b.R\")\n".to_string()),
-        Some(pkg),
-    );
-    pkg.set_files(&mut db).to(vec![r_file]);
-    pkg.set_scripts(&mut db).to(vec![helper, test_foo]);
-    workspace.set_packages(&mut db).to(vec![pkg]);
-    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
-
-    // testthat sources helpers itself, before any test file runs, so an
-    // explicit `source()` in a test file doesn't change what the helper sees.
-    assert_eq!(helper.sourced_by(&db), &vec![test_foo]);
-    assert_eq!(shape(&db, helper.imports(&db)), vec![
-        "File(a.R)".to_string(),
-        "Package(testthat)".to_string(),
         "Package(base)".to_string(),
     ]);
 }

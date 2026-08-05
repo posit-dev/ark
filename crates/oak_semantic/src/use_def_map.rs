@@ -79,8 +79,8 @@ use crate::semantic_index::UseId;
 // ## Retroactive fixups
 //
 // The snapshot/restore/merge model is forward-only: a use sees definitions
-// recorded before it. Two situations need the opposite: definitions that
-// are recorded *after* a use must retroactively reach it. Without this,
+// recorded before it. One situation needs the opposite: a definition that
+// is recorded *after* a use must retroactively reach it. Without this,
 // features like rename and jump-to-definition would miss connections.
 //
 // ### Loop-carried definitions (`finish_loop_defs()`)
@@ -101,28 +101,40 @@ use crate::semantic_index::UseId;
 // symbol recorded during the body (identified via the scope's `uses`
 // list). Result: `print(x)` sees `{A, B}`.
 //
-// ### Deferred definitions (`record_deferred_definition()`)
+// ## Non-shadowing definitions
+//
+// Two recording modes add to a symbol's candidate set without killing what's
+// already live, because the write's runtime timing is not pinned to its source
+// position. Neither is a retroactive fixup: uses recorded before them never
+// see them.
+//
+// ### Super-assignment definitions (`record_super_definition()`)
 //
 // `<<-` modifies a symbol that should already be bound in an ancestor scope (if
 // there is no existing definition, R stores in the global environment, but
 // we'll lint about it). For this reason, `<<-` _adds_ to the set of potential
-// definitions reaching uses of that symbols, it doesn't overwrite like `<-`
+// definitions reaching uses of that symbol, it doesn't overwrite like `<-`
 // would.
 //
 // ```r
 // x <- 0           # def A
-// print(x)         # should see def A AND def B
 // f <- function() {
 //     x <<- 1      # def B (targets file scope)
 // }
+// f()
+// print(x)         # sees def A AND def B
 // ```
 //
-// Here the `<<-` creates a definition in the file scope, but it's encountered
-// during the function body walk, after `print(x)` was already recorded.
-// `record_deferred_definition()` adds it to the live state (so future uses
-// see it) and also stashes it. At finalization, `finish_deferred_defs()`
-// retroactively adds it to all uses of that symbol (iterating the scope's
-// `uses` list), including `print(x)`.
+// `record_super_definition()` adds the `<<-` assignment when the builder reaches
+// `f <- function() ...`, without shadowing existing definitions. A preceding use
+// cannot reach it because `f()` cannot run before `f` is defined. In a loop, a
+// later iteration can call `f()` before the next iteration reaches that use, so
+// `finish_loop_defs()` adds the assignment to loop-carried uses.
+//
+// ### Lazy-only definitions (`record_lazy_definition()`)
+//
+// `Current + Lazy` assignments run after the owner's eager execution. They
+// reach lazy snapshots and final bindings, but never eager use bindings.
 //
 // ## Interpreting `Bindings`
 //
@@ -270,8 +282,7 @@ impl Bindings {
     }
 
     /// Add a definition to the live set without clearing existing ones and
-    /// without changing `may_be_unbound`. Used for loop-carried definitions
-    /// and scope-wide definitions (`<<-`).
+    /// without changing `may_be_unbound`.
     fn add_definition(&mut self, def_id: DefinitionId) {
         let pos = self.definitions.partition_point(|&id| id < def_id);
         if pos >= self.definitions.len() || self.definitions[pos] != def_id {
@@ -305,9 +316,9 @@ fn sorted_union(a: &[DefinitionId], b: &[DefinitionId]) -> SmallVec<[DefinitionI
 pub(crate) struct UseDefMapBuilder {
     symbol_states: IndexVec<SymbolId, Bindings>,
     bindings_by_use: IndexVec<UseId, Bindings>,
-    // Definitions whose effect on past uses is deferred to `finish()`.
-    // Currently used for `<<-` extra definitions in ancestor scopes.
-    deferred_defs: Vec<(SymbolId, DefinitionId)>,
+    /// `Current + Lazy` assignments. They reach lazy snapshots and final
+    /// bindings, but not the eager `symbol_states` or `bindings_by_use`.
+    lazy_defs: FxHashMap<SymbolId, SmallVec<[DefinitionId; 2]>>,
     enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
     // Lazy snapshots (e.g. `reactive()`), notified of every definition of a
     // symbol so they fold in the whole union. Eager snapshots (e.g. `local()`)
@@ -320,7 +331,7 @@ impl UseDefMapBuilder {
         Self {
             symbol_states: IndexVec::new(),
             bindings_by_use: IndexVec::new(),
-            deferred_defs: Vec::new(),
+            lazy_defs: FxHashMap::default(),
             enclosing_snapshots: IndexVec::new(),
             lazy_watchers: FxHashMap::default(),
         }
@@ -403,23 +414,35 @@ impl UseDefMapBuilder {
         }
     }
 
-    /// Record a definition whose effect on past uses is deferred to
-    /// `finish()`. The definition is added to the current flow state
-    /// immediately (so future uses see it), but uses already recorded
-    /// are patched up at finalization time. Used for `<<-` extra
-    /// definitions.
-    pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+    /// Add a `<<-` assignment without shadowing existing definitions. It can
+    /// affect only uses after the function containing it is defined.
+    ///
+    /// ```r
+    /// x # Can't see the assignment below
+    /// f <- function() x <<- 1
+    /// ```
+    pub(crate) fn record_super_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
-        self.deferred_defs.push((symbol_id, def_id));
-        // A deferred def reaches lazy snapshots like any other def. Eager
-        // snapshots take no watcher, so a `<<-` inside an eager body reaches
-        // them only through the point-in-time clone of a use that follows it.
+        // The watcher adds `<<-` assignments to lazy snapshots. Eager snapshots
+        // see only assignments that precede their point-in-time capture.
         Self::notify_watchers(
             &mut self.enclosing_snapshots,
             &self.lazy_watchers,
             symbol_id,
             def_id,
         );
+    }
+
+    /// Keep a `Current + Lazy` assignment out of eager flow state because its
+    /// handler runs after the owner. Add it to lazy snapshots and final bindings.
+    pub(crate) fn record_lazy_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        Self::notify_watchers(
+            &mut self.enclosing_snapshots,
+            &self.lazy_watchers,
+            symbol_id,
+            def_id,
+        );
+        self.lazy_defs.entry(symbol_id).or_default().push(def_id);
     }
 
     /// Record a use of `symbol_id`. Clones the current live bindings for that
@@ -482,7 +505,13 @@ impl UseDefMapBuilder {
     /// encounter is conservatively merged in, because we can't know statically
     /// when the nested scope will be called.
     pub(crate) fn register_lazy_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
-        let bindings = self.symbol_states[symbol_id].clone();
+        let mut bindings = self.symbol_states[symbol_id].clone();
+        // Include assignments recorded before registration. The watcher adds later ones.
+        if let Some(defs) = self.lazy_defs.get(&symbol_id) {
+            for &def_id in defs {
+                bindings.add_definition(def_id);
+            }
+        }
         let id = self.enclosing_snapshots.push(bindings);
         self.lazy_watchers.entry(symbol_id).or_default().push(id);
         id
@@ -504,7 +533,7 @@ impl UseDefMapBuilder {
     /// x <- 1
     /// local({
     ///     x        # {1}: cloned before the `<<-`
-    ///     x <<- 2  # deferred def, now live in the enclosing state
+    ///     x <<- 2  # super def, now live in the enclosing state
     ///     x        # {1, 2}: cloned after the `<<-`
     /// })
     /// ```
@@ -537,6 +566,17 @@ impl UseDefMapBuilder {
         }
     }
 
+    /// Add lazy-only definitions to final bindings after eager uses and
+    /// mid-walk snapshots are complete.
+    pub(crate) fn fold_lazy_defs(&mut self) {
+        let lazy_defs = std::mem::take(&mut self.lazy_defs);
+        for (symbol_id, defs) in lazy_defs {
+            for def_id in defs {
+                self.symbol_states[symbol_id].add_definition(def_id);
+            }
+        }
+    }
+
     /// The scope's exit flow state: for each symbol, the definitions still in
     /// effect once the last statement has run
     pub(crate) fn final_bindings(&self) -> &IndexVec<SymbolId, Bindings> {
@@ -557,24 +597,10 @@ impl UseDefMapBuilder {
     }
 
     /// Finalize into an immutable [`UseDefMap`].
-    pub(crate) fn finish(mut self, uses: &IndexVec<UseId, Use>) -> UseDefMap {
-        self.finish_deferred_defs(uses);
+    pub(crate) fn finish(self) -> UseDefMap {
         UseDefMap {
             bindings_by_use: self.bindings_by_use,
             enclosing_snapshots: self.enclosing_snapshots,
-        }
-    }
-
-    /// Retroactively add deferred definitions (from `<<-`) to all
-    /// uses of the corresponding symbol, including uses that were
-    /// recorded before the definition was encountered in the walk.
-    fn finish_deferred_defs(&mut self, uses: &IndexVec<UseId, Use>) {
-        for &(symbol_id, def_id) in &self.deferred_defs {
-            for (use_id, use_site) in uses.iter() {
-                if use_site.symbol() == symbol_id {
-                    self.bindings_by_use[use_id].add_definition(def_id);
-                }
-            }
         }
     }
 }

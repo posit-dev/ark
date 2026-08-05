@@ -1242,6 +1242,49 @@ fn test_file_exports_sequential_redef_keeps_last() {
 }
 
 #[test]
+fn test_export_matches_the_exports_map() {
+    // Nested and unbound names are file-scope symbols, but must not be exports.
+    let index = index(
+        "x <- 1\nx <- 2\nif (cond) y <- 1 else y <- 2\nf <- function() { nested <- 1 }\nprint(z)\n",
+    );
+    let exports = index.exports();
+
+    for name in ["x", "y", "f", "nested", "z", "print", "cond", "absent"] {
+        let from_map: Vec<DefinitionId> = exports
+            .get(name)
+            .into_iter()
+            .flatten()
+            .map(|&(def_id, _)| def_id)
+            .collect();
+        let from_accessor: Vec<DefinitionId> =
+            index.export(name).map(|(def_id, _)| def_id).collect();
+        assert_eq!(from_accessor, from_map);
+    }
+
+    // Assert cardinalities separately so matching omissions cannot pass.
+    assert_eq!(index.export("x").count(), 1);
+    assert_eq!(index.export("y").count(), 2);
+    assert_eq!(index.export("f").count(), 1);
+    assert_eq!(index.export("nested").count(), 0);
+}
+
+#[test]
+fn test_export_of_a_used_but_unbound_name_is_empty() {
+    // A use interns a name without adding an entry to `final_bindings`.
+    let index = index("print(z)\n");
+    assert_eq!(index.export("print").count(), 0);
+    assert_eq!(index.export("z").count(), 0);
+}
+
+#[test]
+fn test_export_keeps_the_last_of_a_sequential_redef() {
+    let index = index("x <- 1\nx <- 2");
+    let defs: Vec<_> = index.export("x").collect();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].1.range().start(), biome_rowan::TextSize::from(7));
+}
+
+#[test]
 fn test_namespace_access_export() {
     let index = index("dplyr::filter");
     assert_eq!(accesses(&index), [(

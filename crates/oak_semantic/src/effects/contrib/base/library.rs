@@ -1,6 +1,4 @@
-use aether_syntax::AnyRExpression;
 use aether_syntax::RCall;
-use biome_rowan::AstSeparatedList;
 
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
@@ -20,26 +18,11 @@ impl EffectHandler for LibraryHandler {
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<String> {
         let formals: Formals = &["package", "help", "pos", "lib.loc", "character.only"];
-        let matched = ctx.match_arguments(call, formals);
+        let bound = ctx.bind_arguments(call, formals);
 
-        let args = call.arguments().ok()?;
-        let values: Vec<Option<AnyRExpression>> = args
-            .items()
-            .iter()
-            .map(|item| item.ok().and_then(|arg| arg.value()))
-            .collect();
-
-        let package = matched
-            .iter()
-            .position(|formal| *formal == Some(0))
-            .and_then(|i| values.get(i))
-            .and_then(|value| value.as_ref())?;
-
-        let character_only = matched
-            .iter()
-            .position(|formal| *formal == Some(4))
-            .and_then(|i| values.get(i))
-            .and_then(|value| value.as_ref())
+        let package = bound.get("package")?;
+        let character_only = bound
+            .get("character.only")
             .and_then(|value| ctx.resolve_static_bool(value))
             .unwrap_or(false);
 

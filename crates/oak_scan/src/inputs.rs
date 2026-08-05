@@ -345,6 +345,13 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     entry: FileEntry,
 ) -> File {
     if let Some(existing) = db.file_by_path(&entry.path) {
+        // Rescans repair missed watcher events by updating `revision`, which
+        // invalidates disk-backed `source_text()`. An editor override still wins
+        // in `source_text()`, so leave it intact.
+        if existing.revision(db) != entry.revision {
+            existing.set_revision(db).to(entry.revision);
+        }
+
         // The new container is owned by the caller. What needs active cleanup
         // is the OLD container:
         //

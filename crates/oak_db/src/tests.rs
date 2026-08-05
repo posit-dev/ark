@@ -1,3 +1,4 @@
+mod contrib;
 mod db;
 mod diagnostic_render;
 mod file;

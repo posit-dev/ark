@@ -220,6 +220,17 @@ pub(crate) fn workspace_scripts(db: &dyn Db) -> Vec<File> {
         .collect()
 }
 
+/// Every file owned by a workspace root, including package files. Orphan
+/// buffers are excluded because directory loading is rooted on disk.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_root_files(db: &dyn Db) -> Vec<File> {
+    let mut files: Vec<File> = Vec::new();
+    for &root in db.workspace_roots().roots(db) {
+        collect_root_files(db, &mut files, root);
+    }
+    files
+}
+
 fn collect_root_files(db: &dyn Db, files: &mut Vec<File>, r: Root) {
     let owned = |f: File| root_by_file(db, f) == Some(r);
     files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));

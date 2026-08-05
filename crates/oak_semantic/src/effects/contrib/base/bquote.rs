@@ -23,36 +23,22 @@ impl EffectHandler for BquoteHandler {
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let formals: Formals = &["expr", "where", "splice"];
-        let matched = ctx.match_arguments(call, formals);
-
-        let args = call.arguments().ok()?;
-        let values: Vec<Option<AnyRExpression>> = args
-            .items()
-            .iter()
-            .map(|item| item.ok().and_then(|arg| arg.value()))
-            .collect();
+        let bound = ctx.bind_arguments(call, formals);
 
         // `..()` only splices under `splice = TRUE`.
-        let splice = matched
-            .iter()
-            .position(|formal| *formal == Some(2))
-            .and_then(|i| values.get(i))
-            .and_then(|value| value.as_ref())
+        let splice = bound
+            .get("splice")
             .and_then(|value| ctx.resolve_static_bool(value))
             .unwrap_or(false);
 
         Some(
-            matched
-                .into_iter()
-                .enumerate()
-                .map(|(i, formal)| {
-                    // Only `expr` (formal 0) is quoted
-                    if formal != Some(0) {
+            bound
+                .arguments()
+                .map(|(formal, value)| {
+                    if formal != Some("expr") {
                         return None;
                     }
-                    let holes = values
-                        .get(i)
-                        .and_then(|value| value.as_ref())
+                    let holes = value
                         .map(|expr| unquote_holes(expr, splice))
                         .unwrap_or_default();
                     Some(ResolvedArgumentEffect::Quote { holes })

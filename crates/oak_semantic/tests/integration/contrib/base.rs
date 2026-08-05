@@ -848,6 +848,71 @@ fn test_assign_without_value_has_no_value_handle() {
     ));
 }
 
+#[test]
+fn test_assign_named_arguments_record_definition() {
+    let index = index_with_base("assign(value = 1, x = \"foo\")\nfoo");
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_assign_named_value_handle_points_at_value_expression() {
+    let parsed = parse(
+        "assign(value = 1 + 2, x = \"x\")",
+        RParserOptions::default(),
+    );
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
+
+    let kind = only_assign_def(&index).expect("assign def");
+    let DefinitionKind::Assign {
+        value: Some(value), ..
+    } = kind
+    else {
+        panic!("expected a value handle");
+    };
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "1 + 2"
+    );
+}
+
+#[test]
+fn test_assign_positional_envir_not_recorded() {
+    // `pos` and `envir` move the binding out of the current scope whether they
+    // arrive named or positionally.
+    let index = index_with_base("assign(\"x\", 1, 1, e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_delayed_assign_eval_env_recorded() {
+    // `eval.env` says where the promise's expression runs, so the binding still
+    // lands here. Only `assign.env` moves it.
+    let index = index_with_base("delayedAssign(\"x\", expensive(), eval.env = e)");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_delayed_assign_explicit_assign_env_not_recorded() {
+    let index = index_with_base("delayedAssign(\"x\", expensive(), assign.env = e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
 // --- source() semantic calls: bail paths ---
 //
 // Cases where the builder can't extract a statically-resolvable
@@ -2241,10 +2306,8 @@ f <- function() {
 
 #[test]
 fn test_nse_eager_snapshot_excludes_unrelated_routed_definition() {
-    // `on_load` is `Current + Lazy`, so its `x <- 2` routes to the file scope
-    // as a deferred def recorded after `local()`. The eager snapshot takes no
-    // watcher, so the routed def is excluded, correct since it can't reach the
-    // already-run body.
+    // An eager `local()` snapshot excludes `on_load()` assignments because
+    // namespace loading follows the already-completed body.
     let index = index_with_base(
         "\
 x <- 1
@@ -2259,7 +2322,31 @@ rlang::on_load({
     let file = ScopeId::from(0);
     let local_scope = ScopeId::from(1);
 
-    // Only `x <- 1` (DefinitionId 0). The routed `x <- 2` is excluded.
+    let (enclosing_scope, bindings) = index
+        .enclosing_bindings(local_scope, UseId::from(0))
+        .unwrap();
+    assert_eq!(enclosing_scope, file);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+}
+
+#[test]
+fn test_nse_eager_snapshot_after_on_load_excludes_routed_definition() {
+    // Source order does not make an `on_load()` assignment visible to an eager
+    // `local()` snapshot, because namespace loading follows file execution.
+    let index = index_with_base(
+        "\
+x <- 1
+rlang::on_load({
+    x <- 2
+})
+local({
+    x
+})
+",
+    );
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(2);
+
     let (enclosing_scope, bindings) = index
         .enclosing_bindings(local_scope, UseId::from(0))
         .unwrap();
@@ -3055,4 +3142,85 @@ f <- function() {
         DefinitionId::from(0),
         DefinitionId::from(1)
     ]);
+}
+
+#[test]
+fn test_nse_on_exit_write_invisible_to_eager_read() {
+    // Eager reads cannot see `on.exit()` assignments, which run only at frame exit.
+    let index = index_with_base(
+        "\
+f <- function() {
+    on.exit(x <- 1)
+    x
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+
+    let bindings = index.use_def_map(f_scope).bindings_at_use(UseId::from(0));
+    assert!(bindings.definitions().is_empty());
+    assert!(bindings.may_be_unbound());
+
+    assert!(index.enclosing_bindings(f_scope, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_nse_on_exit_write_invisible_to_earlier_eager_read() {
+    // `on.exit()` assignments do not retroactively reach earlier eager reads.
+    let index = index_with_base(
+        "\
+f <- function() {
+    x
+    on.exit(x <- 1)
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+
+    let bindings = index.use_def_map(f_scope).bindings_at_use(UseId::from(0));
+    assert!(bindings.definitions().is_empty());
+    assert!(bindings.may_be_unbound());
+    assert!(index.enclosing_bindings(f_scope, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_nse_on_exit_write_reaches_sibling_handler() {
+    // Later handlers use lazy snapshots, so they include earlier `on.exit()` assignments.
+    let index = index_with_base(
+        "\
+f <- function() {
+    on.exit(x <- 1)
+    on.exit(x, add = TRUE)
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let second_handler_scope = ScopeId::from(3);
+
+    let (enclosing_scope, bindings) = index
+        .enclosing_bindings(second_handler_scope, UseId::from(0))
+        .unwrap();
+    assert_eq!(enclosing_scope, f_scope);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+}
+
+#[test]
+fn test_nse_on_exit_write_reaches_closure() {
+    // Closure snapshots include `on.exit()` assignments, but execution can precede frame exit.
+    let index = index_with_base(
+        "\
+f <- function() {
+    on.exit(x <- 1)
+    g <- function() x
+    g
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let g_scope = ScopeId::from(3);
+
+    let (enclosing_scope, bindings) = index.enclosing_bindings(g_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, f_scope);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert!(bindings.may_be_unbound());
 }

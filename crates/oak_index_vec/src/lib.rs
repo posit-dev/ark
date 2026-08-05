@@ -29,6 +29,10 @@ impl<I: Idx, V> IndexVec<I, V> {
         id
     }
 
+    pub fn get(&self, id: I) -> Option<&V> {
+        self.raw.get(id.index())
+    }
+
     pub fn len(&self) -> usize {
         self.raw.len()
     }

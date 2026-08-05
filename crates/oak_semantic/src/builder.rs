@@ -26,6 +26,7 @@
 //! structures, such as the use-def map, where conditionality is recorded as
 //! `may_be_unbound`.
 
+use std::iter;
 use std::sync::Arc;
 
 use aether_syntax::AnyRExpression;
@@ -48,6 +49,7 @@ use scan::DeferredBody;
 use scan::FlowAttaches;
 use scan::FlowState;
 use scan::OpenScope;
+use smallvec::SmallVec;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::BindingTimelineBuilder;
@@ -177,10 +179,12 @@ struct WalkState {
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
-    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-    // Snapshots shared across every use of a free variable in lazy contexts,
-    // keyed by (nested scope, nested symbol).
-    lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
+    // The chain of binding ancestors for a use, innermost first.
+    enclosing_snapshots:
+        FxHashMap<EnclosingSnapshotKey, SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>>,
+    // Lazy uses share a growing snapshot per `(use scope, nested symbol,
+    // ancestor scope)`.
+    lazy_snapshots: FxHashMap<(ScopeId, SymbolId, ScopeId), EnclosingSnapshotId>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
     bindings_at_sources: BindingTimelineBuilder,
@@ -285,11 +289,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// scope kind (`File`, `Function`, `Nse(Nested, _)`) owns its definitions
     /// and stops the climb.
     fn enclosing_owner(&self) -> Option<ScopeId> {
-        let mut scope = self.scopes[self.current_scope].parent?;
-        while !self.scopes[scope].kind.owns_bindings() {
-            scope = self.scopes[scope].parent?;
-        }
-        Some(scope)
+        let parent = self.scopes[self.current_scope].parent?;
+        self.ancestor_scope_ids(parent)
+            .find(|&scope| self.scopes[scope].kind.owns_bindings())
     }
 
     /// The scan unit that controls when code in `scope` runs: that scope itself
@@ -299,27 +301,29 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Mid-build twin of [`SemanticIndex::enclosing_lazy_scope`], reading the
     /// arena the walk is still filling in.
     fn enclosing_lazy_scope(&self, scope: ScopeId) -> Option<ScopeId> {
-        let mut current = scope;
-        while !self.scopes[current].kind.is_lazy() {
-            current = self.scopes[current].parent?;
-        }
-        Some(current)
+        self.ancestor_scope_ids(scope)
+            .find(|&scope| self.scopes[scope].kind.is_lazy())
     }
 
-    /// Whether `scope` binds `name` anywhere, regardless of flow position: an
-    /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
-    /// pre-scan covers definitions the walk hasn't reached yet in this scope.
+    /// Returns `scope` and its ancestors, innermost first. Mirrors
+    /// [`SemanticIndex::ancestor_scope_ids`] while the index is still being built.
+    fn ancestor_scope_ids(&self, scope: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
+        iter::successors(Some(scope), |&scope| self.scopes[scope].parent)
+    }
+
+    /// Whether `scope` binds `name` anywhere, regardless of flow position.
+    /// `bound_anywhere` records syntactic bindings before the walk reaches
+    /// them. `walked_binding()` adds parameters and `<<-` targets after their
+    /// binding scope has been resolved.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         self.walked_binding(scope, name).is_some() || self.scan.bound_anywhere[scope].binds(name)
     }
 
-    /// The site where `scope` binds `name`, matching what
-    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere) counts as a binding
-    /// (so it returns `Some` on exactly the same names). Prefers the
-    /// scan-collected site in `bound_anywhere`, falling back to the range of an
-    /// already-walked `IS_BOUND` definition (e.g. a parameter, which the scan
-    /// seeds straight into `bound_so_far` without a `bound_anywhere` entry). Used to
-    /// point the lazy-shadow diagnostic at the overwrite.
+    /// The binding site for every name counted by
+    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere). Prefers the
+    /// scan-collected site in `bound_anywhere`, then falls back to an
+    /// already-walked parameter or `<<-` target. Points the lazy-shadow
+    /// diagnostic at the overwrite.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
         if let Some(range) = self.scan.bound_anywhere[scope].binding_range(name) {
             return Some(range);
@@ -355,8 +359,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .map(|b| Arc::new(b.build()))
             .collect();
 
-        // The file scope's exit flow state is the file's exports. Capture it
-        // before the builders are consumed below.
+        // Add `on.exit()`/`on_load()` assignments to exports only after eager
+        // uses and snapshots are complete, since these contexts are not live
+        // during initial execution.
+        self.walk.use_def_maps[ScopeId::from(0)].fold_lazy_defs();
         let file_final_bindings = self.walk.use_def_maps[ScopeId::from(0)]
             .final_bindings()
             .clone();
@@ -365,8 +371,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .walk
             .use_def_maps
             .into_iter()
-            .zip(self.walk.uses.iter())
-            .map(|(b, (_, uses))| Arc::new(b.finish(uses)))
+            .map(|b| Arc::new(b.finish()))
             .collect();
 
         SemanticIndex::new(

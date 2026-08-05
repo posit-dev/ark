@@ -1,10 +1,14 @@
+use std::borrow::Cow;
+use std::ptr;
+
+use oak_semantic::EffectsHandlers;
 use rustc_hash::FxHashSet;
 
 use crate::diagnostic::Diagnostic;
 use crate::diagnostic::DiagnosticKind;
-use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::file_resolve::resolve_import_layer;
+use crate::imports::resolve_effect;
 use crate::Db;
 use crate::File;
 use crate::Name;
@@ -22,15 +26,14 @@ use crate::Name;
 /// sourcing `helpers.R`, so at runtime that call might do nothing at all.
 /// We report this ambiguity with a diagnostic.
 ///
-/// A call is ambiguous when its callee resolves through [`File::imports`] (which
-/// includes context inherited from the sourcing files) to a layer absent from
-/// [`File::standalone_imports`] (the narrower view without inheritance).
+/// A call is ambiguous when any sourcing context resolves it to an effect
+/// different from [`File::standalone_imports()`].
 pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagnostic> {
-    if file.inherited_layers(db, CollationView::Lazy).is_empty() {
+    let contexts = file.inherited_imports_by_sourcing_file(db);
+    if contexts.is_empty() {
         return Vec::new();
     }
 
-    let inherited = file.imports(db);
     let standalone = file.standalone_imports(db);
 
     let mut reported = FxHashSet::default();
@@ -48,40 +51,25 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
 
         let name = Name::new(db, callee);
 
-        // A binding in this file wins on both sides, so there's nothing to
-        // disagree about. This is the same first step `File::resolve` takes.
+        // A binding defined in this file wins in every context, so its effect
+        // cannot differ.
         if !file.resolve_export(db, name).is_empty() {
             continue;
         }
 
-        let Some(resolved_layer) = resolve_layer(db, inherited, name) else {
-            continue;
-        };
-
-        if standalone.contains(&resolved_layer) {
+        let standalone_effect = resolve_effect(db, &standalone, name.text(db).as_str());
+        let clauses = sourcing_context_conflict_clauses(db, &contexts, standalone_effect, name);
+        if clauses.is_empty() {
             continue;
         }
-
-        // A layer the standalone view lacks can only have come from an
-        // inherited band, so the site is always there to find.
-        let Some(sourcing) = sourcing_file(db, file, &resolved_layer) else {
-            continue;
-        };
-
-        // When nothing on the standalone path binds the callee, the scan fell
-        // through to base's builtins, which resolve by name whether or not base
-        // was scanned into a root. See `SalsaImportsResolver`.
-        let alone = match resolve_layer(db, &standalone, name) {
-            Some(layer) => describe_source(db, &layer),
-            None => "package `base`".to_string(),
-        };
 
         diagnostics.push(Diagnostic::new(
             DiagnosticKind::InheritedShadow,
             format!(
-                "This `{callee}` call has an ambiguous effect. It resolves through {alone} when \
-                 the file is sourced on its own, and to {inherited} when sourced by `{sourcing}`.",
-                inherited = describe_source(db, &resolved_layer),
+                "This `{callee}` call has an ambiguous effect.\nIt resolves through {alone} when \
+                 the file is sourced on its own, {clauses}.",
+                alone = describe_resolution(db, &standalone, name),
+                clauses = join_clauses(&clauses),
             ),
             call.range(),
             Vec::new(),
@@ -89,6 +77,70 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
     }
 
     diagnostics
+}
+
+/// Builds one message clause for each sourcing context whose effect differs from
+/// `standalone_effect`.
+///
+/// Sourcing contexts are alternative runtimes, not lookup-priority bands.
+/// Combining them could let a matching context hide a differing one.
+fn sourcing_context_conflict_clauses<'db>(
+    db: &'db dyn Db,
+    contexts: &[(File, Vec<ImportLayer>)],
+    standalone_effect: Option<&'static EffectsHandlers>,
+    name: Name<'db>,
+) -> Vec<String> {
+    let callee_text = name.text(db);
+    contexts
+        .iter()
+        .filter(|(_, layers)| {
+            !same_effect(
+                resolve_effect(db, layers, callee_text.as_str()),
+                standalone_effect,
+            )
+        })
+        .map(|(sourcing, layers)| {
+            format!(
+                "to {resolution} when sourced by `{sourcing}`",
+                resolution = describe_resolution(db, layers, name),
+                sourcing = file_name(db, *sourcing),
+            )
+        })
+        .collect()
+}
+
+fn join_clauses(clauses: &[String]) -> String {
+    let mut joined = String::new();
+    for (position, clause) in clauses.iter().enumerate() {
+        if position > 0 {
+            joined.push_str(", ");
+        }
+        if position + 1 == clauses.len() {
+            joined.push_str("and ");
+        }
+        joined.push_str(clause);
+    }
+    joined
+}
+
+/// Whether two layer chains resolve a bare call to the same effect.
+///
+/// The effect registry provides one static [`EffectsHandlers`] per
+/// `(package, function)`, so pointer identity is sufficient.
+///
+/// TODO(declarations): Only attach and source callees reach this comparison,
+/// and no two packages currently register the same callee. Because of this,
+/// we're missing test coverage. We should complete test coverage once local
+/// declaration of effects lands.
+fn same_effect(
+    left: Option<&'static EffectsHandlers>,
+    right: Option<&'static EffectsHandlers>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => ptr::eq(left, right),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// The first layer that binds `name`, i.e. the one a lookup would settle on.
@@ -103,35 +155,27 @@ fn resolve_layer<'db>(
         .cloned()
 }
 
-/// The name of the file whose inherited band contributed `layer`.
+/// Describes the binding reached by looking up `name` in `layers`.
 ///
-/// Names the direct sourcing file even for a layer that reaches `file` from
-/// further up the chain, since [`build_inherited_layers`] folds each site's
-/// grandparents into that site's own bands.
-///
-/// [`build_inherited_layers`]: crate::file_imports
-fn sourcing_file(db: &dyn Db, file: File, layer: &ImportLayer) -> Option<String> {
-    file.inherited_layers(db, CollationView::Lazy)
-        .iter()
-        .find(|site| site.layers.above.contains(layer) || site.layers.below.contains(layer))
-        .map(|site| {
-            site.file
-                .path(db)
-                .file_name()
-                .unwrap_or_default()
-                .to_string()
-        })
+/// If no layer binds `name`, the lookup falls through to base builtins, which
+/// resolve by name without a scanned base root.
+fn describe_resolution<'db>(db: &'db dyn Db, layers: &[ImportLayer], name: Name<'db>) -> String {
+    match resolve_layer(db, layers, name) {
+        Some(layer) => describe_source(db, &layer),
+        None => "package `base`".to_string(),
+    }
 }
 
 fn describe_source(db: &dyn Db, layer: &ImportLayer) -> String {
     match layer {
         ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
-            format!(
-                "a binding in `{}`",
-                file.path(db).file_name().unwrap_or_default()
-            )
+            format!("a binding in `{}`", file_name(db, *file))
         },
         ImportLayer::Package(package) => format!("package `{}`", package.name(db)),
         ImportLayer::From(importer) => format!("an import of `{}`", importer.name(db)),
     }
+}
+
+fn file_name(db: &dyn Db, file: File) -> Cow<'_, str> {
+    file.path(db).file_name().unwrap_or_default()
 }

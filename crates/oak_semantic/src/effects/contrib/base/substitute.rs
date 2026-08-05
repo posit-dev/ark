@@ -5,7 +5,6 @@ use aether_syntax::RIdentifier;
 use aether_syntax::RParameter;
 use biome_rowan::AstNode;
 use biome_rowan::WalkEvent;
-use oak_core::syntax_ext::RCallExt;
 use oak_core::syntax_ext::RIdentifierExt;
 
 use crate::effects::CallContext;
@@ -26,11 +25,11 @@ impl EffectHandler for SubstituteHandler {
     type Output = ResolvedArgumentEffects;
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
-        // `substitute(expr, env)`: only `expr` (formal 0) is quoted, everything
-        // else is a plain value.
         let formals: Formals = &["expr", "env"];
-        let matched = ctx.match_arguments(call, formals);
-        let expr_pos = matched.iter().position(|formal| *formal == Some(0))?;
+        let bound = ctx.bind_arguments(call, formals);
+        let expr_pos = bound
+            .arguments()
+            .position(|(formal, _)| formal == Some("expr"))?;
 
         // Only the default `env`, the current frame, is one we can query. Any
         // explicit `env` names a frame we can't see into, so we bail to a plain
@@ -40,22 +39,19 @@ impl EffectHandler for SubstituteHandler {
         // `list(...)`, `new.env()`, `parent.frame()`, an env-typed variable) once
         // environment captures and argument resolution land, and substitute
         // against that instead of bailing.
-        let default_env = !matched.contains(&Some(1));
+        let default_env = bound.get("env").is_none();
 
         // Substitution is disabled in the global environment
         let substitutes = default_env && !ctx.current_scope_is_global();
 
-        let holes = if substitutes {
-            call.argument_value(expr_pos)
-                .map(|expr| substituted_symbols(&expr, ctx))
-                .unwrap_or_default()
-        } else {
-            Vec::new()
+        let holes = match bound.get("expr") {
+            Some(expr) if substitutes => substituted_symbols(expr, ctx),
+            _ => Vec::new(),
         };
 
         // Effects align 1:1 with the call's arguments. Only the `expr` slot is
         // quoted, the rest is plain.
-        let mut effects = vec![None; matched.len()];
+        let mut effects = vec![None; bound.len()];
         effects[expr_pos] = Some(ResolvedArgumentEffect::Quote { holes });
         Some(effects)
     }

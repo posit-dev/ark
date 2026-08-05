@@ -30,9 +30,9 @@ impl<'db> File {
     ///    `source()`-forwarded entries. `ExportEntry::Import` is chased
     ///    through `exports(target)` until it lands on a `Local`. Cycles in
     ///    `source()` resolve to empty exports via `exports`'s `cycle_fn`.
-    /// 2. **`imports_by_sourcing_file()` walk**: one context per file that
-    ///    sources this one, each checked in priority order and the results
-    ///    unioned across contexts. `File` siblings are checked via their
+    /// 2. **`imports_by_sourcing_file()` walk**: the file's own context plus
+    ///    one per file that sources it, each checked in priority order and the
+    ///    results unioned across contexts. `File` siblings are checked via their
     ///    exports chain only (not their full `resolve`), to avoid the cycle
     ///    that recursing would create. `Package` and `From` layers call
     ///    [`Package::resolve`] with `Exported` visibility.
@@ -50,8 +50,10 @@ impl<'db> File {
     /// a position or the bound expression read `def.kind(db)` and project
     /// per-variant.
     ///
-    /// For the offset-aware, sequential-semantics variant, see
-    /// [`File::resolve_at`].
+    /// Uses end-of-file visibility: every collation sibling and only
+    /// unconditional top-level attaches are visible, including `library()`
+    /// calls after the query's source position. [`File::resolve_at`] applies
+    /// position-specific visibility.
     #[salsa::tracked(returns(clone))]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let exported = self.resolve_export(db, name);
@@ -97,23 +99,29 @@ impl<'db> File {
         let reaching: Vec<(ScopeId, DefinitionId)> =
             index.reaching_definitions(use_scope, use_id).collect();
 
-        if !reaching.is_empty() {
-            return reaching
+        let mut definitions: Vec<Definition<'db>> = reaching
+            .into_iter()
+            .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
+            .collect();
+
+        if index.use_is_bound(use_scope, use_id) {
+            return definitions;
+        }
+
+        // At top level, `ImportView::at()` sees preceding collation files. In
+        // a function body, it sees the complete collation but keeps attaches
+        // offset- and scope-aware.
+        //
+        // An unbound path can resolve through imports, so retain in-file
+        // definitions and add distinct imported ones.
+        let imported: Vec<Definition<'db>> =
+            resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
                 .into_iter()
-                .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
+                .filter(|def| !definitions.contains(def))
                 .collect();
-        }
+        definitions.extend(imported);
 
-        // Nothing local reaches the use, so resolve across files.
-        if !index.scope_is_eager(use_scope) {
-            // Lazy body: the end-of-file view it sees when it actually runs.
-            return self.resolve(db, name);
-        }
-
-        // Eager scope: collation predecessors / other visible files
-        // (exports-only chase, same as `resolve`'s per-context walk). Avoids
-        // the sibling cycle and matches R's namespace semantics.
-        resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
+        definitions
     }
 
     fn resolve_definition(
@@ -204,7 +212,7 @@ impl<'db> File {
                     // minting one here would add a bogus target at the empty
                     // `source()` call span.
                     let index = self.semantic_index(db);
-                    for &(def_id, def) in index.exports().get(name.as_ref()).into_iter().flatten() {
+                    for (def_id, def) in index.export(name.as_ref()) {
                         if matches!(def.kind(), DefinitionKind::Import { .. }) {
                             continue;
                         }

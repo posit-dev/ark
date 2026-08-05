@@ -1,6 +1,7 @@
 mod db;
 mod definition;
 mod diagnostic;
+mod directory;
 mod file;
 mod file_diagnostics;
 mod file_exports;
@@ -11,6 +12,7 @@ mod file_source_site;
 mod identifier;
 mod imports;
 mod inputs;
+mod load_context;
 mod name;
 mod package;
 mod package_resolve;

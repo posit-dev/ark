@@ -1,10 +1,12 @@
 use aether_parser::RParserOptions;
 use aether_syntax::AnyRExpression;
+use aether_syntax::AnyRValue;
 use aether_syntax::RArgument;
 use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
 use oak_core::syntax_ext::RIdentifierExt;
+use oak_core::syntax_ext::RStringValueExt;
 use stdext::SortedVec;
 
 /// Parsed NAMESPACE file
@@ -98,18 +100,17 @@ fn collect_imports(args: impl Iterator<Item = SyntaxResult<RArgument>>, out: &mu
     let Some(Ok(first_arg)) = args.next() else {
         return;
     };
-    let Some(AnyRExpression::RIdentifier(pkg_ident)) = first_arg.value() else {
+    let Some(pkg_name) = first_arg.value().as_ref().and_then(directive_name) else {
         return;
     };
-    let pkg_name = pkg_ident.name_text();
 
     for item in args {
         let Ok(arg) = item else { continue };
-        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+        let Some(name) = arg.value().as_ref().and_then(directive_name) else {
             continue;
         };
         out.push(Import {
-            name: ident.name_text(),
+            name,
             package: pkg_name.clone(),
         });
     }
@@ -122,10 +123,18 @@ fn collect_arg_identifiers(
 ) {
     for item in args {
         let Ok(arg) = item else { continue };
-        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+        let Some(name) = arg.value().as_ref().and_then(directive_name) else {
             continue;
         };
-        out.push(ident.name_text());
+        out.push(name);
+    }
+}
+
+fn directive_name(value: &AnyRExpression) -> Option<String> {
+    match value {
+        AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
+        AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => string.string_text(),
+        _ => None,
     }
 }
 
@@ -242,5 +251,83 @@ mod tests {
             "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.exports.to_vec(), vec!["bar", "baz", "foo", "qux"]);
+    }
+
+    #[test]
+    fn parses_quoted_exports() {
+        let ns = r#"
+                export("foo", "bar")
+                exportClasses("baz")
+                exportMethods("qux")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.exports.to_vec(), vec!["bar", "baz", "foo", "qux"]);
+    }
+
+    #[test]
+    fn parses_exports_mixing_quoted_and_unquoted() {
+        let ns = r#"
+                export("toTitleCase", langElts, 'file_ext')
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.exports.to_vec(), vec![
+            "file_ext",
+            "langElts",
+            "toTitleCase"
+        ]);
+    }
+
+    #[test]
+    fn parses_non_syntactic_exports() {
+        let ns = r#"
+                export("%>%")
+                export("[.myclass", "+.money")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.exports.to_vec(), vec!["%>%", "+.money", "[.myclass"]);
+    }
+
+    #[test]
+    fn parses_quoted_importfrom() {
+        let ns = r#"
+                importFrom("stats", "median", head)
+                importFrom(utils, "tail")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.imports, vec![
+            Import {
+                name: "head".to_string(),
+                package: "stats".to_string()
+            },
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string()
+            },
+            Import {
+                name: "tail".to_string(),
+                package: "utils".to_string()
+            },
+        ]);
+    }
+
+    #[test]
+    fn parses_quoted_bulk_imports() {
+        let ns = r#"
+                import("rlang")
+                import(cli, "utils")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.package_imports, vec!["cli", "rlang", "utils"]);
+    }
+
+    #[test]
+    fn parses_directive_ignoring_non_name_arguments() {
+        let ns = r#"
+                import(rlang, except = c(abort))
+                export(foo, 42)
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.package_imports, vec!["rlang"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["foo"]);
     }
 }

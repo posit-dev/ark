@@ -13,9 +13,7 @@ use crate::Name;
 use crate::NamespaceVisibility;
 use crate::Package;
 
-/// Build a `pkg`-named workspace package with files at the given paths and
-/// contents. NAMESPACE exports are taken from `exports`. Returns the package
-/// and the files in input order.
+/// Build a workspace package in its own root and return its files in input order.
 fn setup_package(
     db: &mut TestDb,
     pkg_name: &str,
@@ -23,8 +21,30 @@ fn setup_package(
     files: &[(&str, &str)],
 ) -> (Package, Vec<File>) {
     let root = workspace_root(db, &format!("workspace/{pkg_name}"));
+    let (pkg, file_entities) = new_package(db, pkg_name, exports, &[], files);
+    root.set_packages(db).to(vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+
+    (pkg, file_entities)
+}
+
+/// Build a package without installing it in a workspace root.
+fn new_package(
+    db: &mut TestDb,
+    pkg_name: &str,
+    exports: &[&str],
+    imports: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> (Package, Vec<File>) {
     let namespace = Namespace {
-        exports: SortedVec::from_vec(exports.iter().map(|s| s.to_string()).collect()),
+        exports: SortedVec::from_vec(exports.iter().map(|export| export.to_string()).collect()),
+        imports: imports
+            .iter()
+            .map(|(name, package)| Import {
+                name: name.to_string(),
+                package: package.to_string(),
+            })
+            .collect(),
         ..Default::default()
     };
     let pkg = Package::new(
@@ -52,8 +72,6 @@ fn setup_package(
         })
         .collect();
     pkg.set_files(db).to(file_entities.clone());
-    root.set_packages(db).to(vec![pkg]);
-    db.workspace_roots().set_roots(db).to(vec![root]);
 
     (pkg, file_entities)
 }
@@ -198,65 +216,69 @@ fn test_reexport_via_import_from_resolves_to_source() {
     let mut db = TestDb::new();
     let root = workspace_root(&db, "workspace");
 
-    let tibble_ns = Namespace {
-        exports: SortedVec::from_vec(vec!["tibble".to_string()]),
-        ..Default::default()
-    };
-    let tibble = Package::new(
-        &db,
-        file_path("workspace/tibble/DESCRIPTION"),
-        "tibble".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        Some(tibble_ns),
-        Vec::new(),
-        Vec::new(),
-    );
-    let tibble_file = File::new(
-        &db,
-        file_path("workspace/tibble/R/tibble.R"),
-        FileRevision::zero(),
-        Some("tibble <- function() 1\n".to_string()),
-        Some(tibble),
-    );
-    tibble.set_files(&mut db).to(vec![tibble_file]);
-
-    let dplyr_ns = Namespace {
-        exports: SortedVec::from_vec(vec!["tibble".to_string()]),
-        imports: vec![Import {
-            name: "tibble".to_string(),
-            package: "tibble".to_string(),
-        }],
-        ..Default::default()
-    };
-    let dplyr = Package::new(
-        &db,
-        file_path("workspace/dplyr/DESCRIPTION"),
-        "dplyr".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        Some(dplyr_ns),
-        Vec::new(),
-        Vec::new(),
-    );
-    let dplyr_file = File::new(
-        &db,
-        file_path("workspace/dplyr/R/reexport.R"),
-        FileRevision::zero(),
-        Some("tibble::tibble\n".to_string()),
-        Some(dplyr),
-    );
-    dplyr.set_files(&mut db).to(vec![dplyr_file]);
+    let (tibble, tibble_files) = new_package(&mut db, "tibble", &["tibble"], &[], &[(
+        "workspace/tibble/R/tibble.R",
+        "tibble <- function() 1\n",
+    )]);
+    let (dplyr, _dplyr_files) =
+        new_package(&mut db, "dplyr", &["tibble"], &[("tibble", "tibble")], &[(
+            "workspace/dplyr/R/reexport.R",
+            "tibble::tibble\n",
+        )]);
 
     root.set_packages(&mut db).to(vec![tibble, dplyr]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let defs = dplyr.resolve(&db, name(&db, "tibble"), NamespaceVisibility::Exported);
     assert_eq!(defs.len(), 1);
-    assert_eq!(defs[0].file(&db), tibble_file);
+    assert_eq!(defs[0].file(&db), tibble_files[0]);
     assert_eq!(defs[0].name(&db).text(&db).as_str(), "tibble");
+}
+
+#[test]
+fn test_self_reexport_does_not_cycle() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "workspace");
+
+    let (pkg, _files) = new_package(&mut db, "pkg", &["foo"], &[("foo", "pkg")], &[(
+        "workspace/pkg/R/a.R",
+        "bar <- function() 1\n",
+    )]);
+
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(pkg
+        .resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported)
+        .is_empty());
+    assert!(pkg
+        .resolve(&db, name(&db, "foo"), NamespaceVisibility::Internal)
+        .is_empty());
+}
+
+#[test]
+fn test_mutual_reexport_does_not_cycle() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "workspace");
+
+    let (a, _a_files) = new_package(&mut db, "a", &["foo"], &[("foo", "b")], &[(
+        "workspace/a/R/a.R",
+        "b::foo\n",
+    )]);
+    let (b, _b_files) = new_package(&mut db, "b", &["foo"], &[("foo", "a")], &[(
+        "workspace/b/R/b.R",
+        "a::foo\n",
+    )]);
+
+    root.set_packages(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(a
+        .resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported)
+        .is_empty());
+    assert!(b
+        .resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported)
+        .is_empty());
 }
 
 #[test]

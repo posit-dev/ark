@@ -58,9 +58,9 @@ rlang::on_load({
 }
 
 #[test]
-fn test_nse_current_lazy_deferred_definition() {
-    // `on_load` definitions are deferred (like `<<-`): they add to the set
-    // of live definitions without shadowing what's already there.
+fn test_nse_current_lazy_definition_does_not_shadow() {
+    // A lazy snapshot retains the existing `x` binding and the `on_load()`
+    // assignment, which must not shadow the existing binding.
     let index = index(
         "\
 x <- 1
@@ -72,9 +72,6 @@ f <- function() x
     );
     let fun_scope = ScopeId::from(2);
 
-    // `f` is lazy, so its snapshot for `x` should include BOTH defs:
-    // `x <- 1` (file-level) and `x <- 2` (from on_load, deferred).
-    // If on_load's definition shadowed, we'd only see `x <- 2`.
     let (enclosing_scope, bindings) = index.enclosing_bindings(fun_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, ScopeId::from(0));
     assert_eq!(bindings.definitions(), &[
@@ -347,6 +344,30 @@ local({
 
     let (enclosing_scope, _bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
     assert_eq!(enclosing_scope, local_scope);
+}
+
+#[test]
+fn test_nse_on_load_write_invisible_to_eager_read() {
+    // Eager file-level reads cannot see `on_load()` assignments because
+    // namespace loading follows top-level execution.
+    let index = index(
+        "\
+rlang::on_load(x <- 1)
+x
+",
+    );
+    let file = ScopeId::from(0);
+
+    let bindings = index.use_def_map(file).bindings_at_use(UseId::from(0));
+    assert!(bindings.definitions().is_empty());
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_nse_on_load_binding_exported() {
+    // `on_load()` assignments are included in exports used to resolve other files.
+    let index = index("rlang::on_load(x <- 1)\n");
+    assert_eq!(index.export("x").count(), 1);
 }
 
 // --- `defer` (Current + Lazy) ---

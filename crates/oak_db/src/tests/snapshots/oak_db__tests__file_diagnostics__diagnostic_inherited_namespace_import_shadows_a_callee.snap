@@ -1,9 +1,9 @@
 ---
 source: crates/oak_db/src/tests/file_diagnostics.rs
-assertion_line: 493
 expression: "render(\"w/mypkg/helpers.R\", helpers_source, helpers.diagnostics(&db))"
 ---
-info[inherited-shadow]: This `library` call has an ambiguous effect. It resolves through package `base` when the file is sourced on its own, and to an import of `mypkg` when sourced by `main.R`.
+info[inherited-shadow]: This `library` call has an ambiguous effect.
+                        It resolves through package `base` when the file is sourced on its own, and to an import of `mypkg` when sourced by `main.R`.
  --> w/mypkg/helpers.R:1:1
   |
 1 | library(dplyr)
