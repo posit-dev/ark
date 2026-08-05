@@ -209,6 +209,17 @@ pub fn workspace_files(db: &dyn Db) -> Vec<File> {
     files
 }
 
+/// The scripts held directly by workspace roots, in root order.
+/// Like [`workspace_files`] but without package files.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_scripts(db: &dyn Db) -> Vec<File> {
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .flat_map(|root| root.scripts(db).iter().copied())
+        .collect()
+}
+
 fn collect_root_files(db: &dyn Db, files: &mut Vec<File>, r: Root) {
     let owned = |f: File| root_by_file(db, f) == Some(r);
     files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));

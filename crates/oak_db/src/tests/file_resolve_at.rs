@@ -1003,3 +1003,63 @@ fn test_source_call_in_an_else_arm_does_not_see_the_if_arm() {
     assert_eq!(resolve_one(&db, a, TextSize::from(0)).file(&db), main);
     assert!(b.resolve_at(&db, TextSize::from(0)).is_empty());
 }
+
+// --- ordered expansion of a directory source ---
+
+/// `main.R` sources the whole `R/` directory in one call, which loads `a.R`
+/// then `b.R`. Returns `(db, a, b)`.
+fn dir_source_workspace(a_contents: &str, b_contents: &str) -> (TestDb, File, File) {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let main = make_file(&mut db, "ws/main.R", "sourceDir(\"R\")\n");
+    let a = make_file(&mut db, "ws/R/a.R", a_contents);
+    let b = make_file(&mut db, "ws/R/b.R", b_contents);
+    root.set_scripts(&mut db).to(vec![main, a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+    (db, a, b)
+}
+
+#[test]
+fn test_dir_source_top_level_sees_a_file_loaded_earlier_in_the_call() {
+    // `a.R` has fully run by the time `b.R` starts, so a top-level use in
+    // `b.R` resolves. The sourcing file's snapshot is taken before the call
+    // and holds neither name, so this can only come from the call's own
+    // ordered target list.
+    let (db, a, b) = dir_source_workspace("a_val <- 1\n", "use <- a_val\n");
+    let def = resolve_one(&db, b, TextSize::from(7));
+    assert_eq!(def.file(&db), a);
+}
+
+#[test]
+fn test_dir_source_top_level_does_not_see_a_file_loaded_later_in_the_call() {
+    // The mirror image: `b.R` hasn't run when `a.R`'s top level does, so this
+    // stays unresolved. Without it the test above would pass just as well on
+    // an implementation that made every target visible to every other.
+    let (db, a, _b) = dir_source_workspace("use <- b_val\n", "b_val <- 2\n");
+    assert!(a.resolve_at(&db, TextSize::from(7)).is_empty());
+}
+
+#[test]
+fn test_dir_source_function_body_sees_a_file_loaded_later_in_the_call() {
+    // A body runs after the whole call, so the lazy view has everything.
+    let (db, a, b) = dir_source_workspace("f <- function() b_val\n", "b_val <- 2\n");
+    let def = resolve_one(&db, a, TextSize::from(17));
+    assert_eq!(def.file(&db), b);
+}
+
+#[test]
+fn test_dir_sourced_twice_still_sees_the_files_loaded_earlier_in_each_call() {
+    // Each `sourceDir()` call is its own group of same-offset targets. `b.R`
+    // must see `a.R` through the group it belongs to, so the earlier call can't
+    // be skipped just because a later one also loads both files.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let main = make_file(&mut db, "ws/main.R", "sourceDir(\"R\")\nsourceDir(\"R\")\n");
+    let a = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
+    let b = make_file(&mut db, "ws/R/b.R", "use <- a_val\n");
+    root.set_scripts(&mut db).to(vec![main, a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let def = resolve_one(&db, b, TextSize::from(7));
+    assert_eq!(def.file(&db), a);
+}

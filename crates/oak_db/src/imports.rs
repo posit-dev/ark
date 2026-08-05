@@ -5,12 +5,15 @@ use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::effects;
+use oak_semantic::effects::DirWalk;
 use oak_semantic::EffectsHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
 use url::Url;
 
+use crate::file_imports::files_in_directory;
+use crate::file_imports::files_in_directory_recursive;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::Db;
@@ -56,6 +59,62 @@ impl<'db> SalsaImportsResolver<'db> {
             cache: EffectsCache::default(),
         }
     }
+
+    /// What sourcing `file` brings in. The two reads this makes are the ones
+    /// described on [`SalsaImportsResolver`].
+    fn source_resolution(&self, file: File) -> SourceResolution {
+        let names: Vec<String> = file
+            .exports(self.db)
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        let packages: Vec<String> = file
+            .attached_packages(self.db)
+            .iter()
+            .map(|name| name.text(self.db).to_string())
+            .collect();
+
+        SourceResolution {
+            url: file.path(self.db).to_url(),
+            names,
+            packages,
+        }
+    }
+}
+
+/// Returns scripts from the workspace directory named by `path`, in load order.
+/// `walk` determines whether nested directories are included. Returns no files
+/// when `path` cannot resolve to a directory.
+///
+/// Tracked to give the directory listing a backdating point, the role
+/// [`File::collation_siblings`] plays for the `R/` convention. The listing
+/// filters every root's scripts, so without a memo here a file appearing
+/// anywhere in the workspace would re-run the whole `semantic_index` of every
+/// file holding a directory source, `_targets.R` being the one that hurts.
+///
+/// Reads only inputs, so it's safe to call while `file`'s own index is being
+/// built.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn source_dir_scripts(
+    db: &dyn Db,
+    file: File,
+    path: String,
+    walk: DirWalk,
+) -> Vec<File> {
+    let Some(anchor) = anchor_dir(db, file) else {
+        return Vec::new();
+    };
+    let Some(target_path) = resolve_relative_to(&anchor, &path) else {
+        return Vec::new();
+    };
+    let Some(dir) = target_path.as_path() else {
+        return Vec::new();
+    };
+    match walk {
+        DirWalk::Shallow => files_in_directory(db, dir),
+        DirWalk::Recursive => files_in_directory_recursive(db, dir),
+    }
 }
 
 /// Per-build memo for `resolve_effects`, keyed on `(name, attached)`.
@@ -97,24 +156,17 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         // TODO(diagnostics): Until we support out-of-workspace sourced files,
         // should we at least lint so user knows that we can't analyse the file?
         let file = self.db.file_by_path(&target_path)?;
+        Some(self.source_resolution(file))
+    }
 
-        let names: Vec<String> = file
-            .exports(self.db)
+    fn resolve_source_dir(&mut self, path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        source_dir_scripts(self.db, self.file, path.to_string(), walk)
             .iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-
-        let packages: Vec<String> = file
-            .attached_packages(self.db)
-            .iter()
-            .map(|name| name.text(self.db).to_string())
-            .collect();
-
-        Some(SourceResolution {
-            url: target_path.to_url(),
-            names,
-            packages,
-        })
+            .copied()
+            // Exclude sourcing file
+            .filter(|file| *file != self.file)
+            .map(|file| self.source_resolution(file))
+            .collect()
     }
 
     fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {

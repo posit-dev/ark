@@ -1486,3 +1486,160 @@ fn test_body_edit_in_a_sourcing_file_does_not_invalidate_imports() {
     assert_eq!(db.executions("File::inherited_layers"), 3);
     assert_eq!(db.executions("File::imports"), 1);
 }
+
+// --- `SourceTarget::Dir` invalidation ---
+
+/// A workspace with `main.R` sourcing an `R/` directory, plus `a.R` and `b.R`
+/// in it. Returns `(db, root, main, a, b)`.
+fn source_dir_workspace() -> (TestDb, crate::Root, File, File, File) {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("sourceDir(\"R\")\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- function() 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+    (db, root, main, a, b)
+}
+
+/// Creates a bare `tar_source()` pipeline with `R/a.R` and `R/models/fit.R`.
+fn tar_source_workspace() -> (TestDb, crate::Root, File) {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["targets"]);
+    let root = workspace_root(&db, "ws");
+    let pipeline = File::new(
+        &db,
+        file_path("ws/_targets.R"),
+        FileRevision::zero(),
+        Some("library(targets)\ntar_source()\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let nested = File::new(
+        &db,
+        file_path("ws/R/models/fit.R"),
+        FileRevision::zero(),
+        Some("fit_val <- 4\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![pipeline, a, nested]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+    (db, root, pipeline)
+}
+
+#[test]
+fn test_source_dir_injects_every_file_in_the_directory() {
+    let (db, _root, main, _a, _b) = source_dir_workspace();
+    let mut names: Vec<&str> = main.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "b_val"]);
+}
+
+#[test]
+fn test_source_dir_backdates_on_a_body_edit_in_the_directory() {
+    let (mut db, _root, main, a, _b) = source_dir_workspace();
+    let _ = main.exports(&db);
+    let before = db.executions("File::semantic_index");
+
+    // A body edit leaves `a.R`'s top-level names alone, so `exports` backdates
+    // and nothing demands `main.R`'s index again.
+    a.set_source_text_override(&mut db)
+        .to(Some("a_val <- function() 999\n".to_string()));
+    let _ = main.exports(&db);
+
+    assert_eq!(db.executions("File::semantic_index"), before + 1);
+}
+
+#[test]
+fn test_source_dir_backdates_on_a_file_added_outside_the_directory() {
+    let (mut db, root, main, a, b) = source_dir_workspace();
+    let _ = main.exports(&db);
+    let before = db.executions("File::semantic_index");
+
+    // The listing reads every root's scripts, so `source_dir_scripts` re-runs.
+    // It returns the same files, so `main.R`'s index is never demanded again.
+    let elsewhere = File::new(
+        &db,
+        file_path("ws/other/z.R"),
+        FileRevision::zero(),
+        Some("z_val <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, a, b, elsewhere]);
+    let _ = main.exports(&db);
+
+    assert_eq!(db.executions("File::semantic_index"), before);
+}
+
+#[test]
+fn test_source_dir_picks_up_a_file_added_inside_the_directory() {
+    let (mut db, root, main, a, b) = source_dir_workspace();
+    let _ = main.exports(&db);
+
+    let added = File::new(
+        &db,
+        file_path("ws/R/c.R"),
+        FileRevision::zero(),
+        Some("c_val <- 3\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, a, b, added]);
+
+    let mut names: Vec<&str> = main.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "b_val", "c_val"]);
+}
+
+#[test]
+fn test_source_dir_does_not_recurse_into_subdirectories() {
+    // `sourceDir()` leaves `list.files()` at its `recursive = FALSE` default,
+    // so `R/models/fit.R` is excluded.
+    let (mut db, root, main, a, b) = source_dir_workspace();
+    let nested = File::new(
+        &db,
+        file_path("ws/R/models/fit.R"),
+        FileRevision::zero(),
+        Some("fit_val <- 4\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, a, b, nested]);
+
+    let mut names: Vec<&str> = main.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "b_val"]);
+}
+
+#[test]
+fn test_tar_source_recurses_into_subdirectories() {
+    // `tar_source()` includes nested scripts because `file_list_files()` calls
+    // `list.files(recursive = TRUE)` for directories.
+    let (db, _root, pipeline) = tar_source_workspace();
+
+    let mut names: Vec<&str> = pipeline.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "fit_val"]);
+}

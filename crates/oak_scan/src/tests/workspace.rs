@@ -633,20 +633,20 @@ fn test_set_workspace_paths_stale_no_duplicates_across_cycles() {
 
 #[test]
 fn test_scan_orders_files_alphabetically_without_collate() {
-    // Default behavior: case-insensitive alphabetical filename order.
-    // Matches R's load order for packages without an explicit `Collate:`.
+    // Package installation uses raw basename byte order under `LC_COLLATE=C`
+    // when `Collate:` is absent.
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[
         ("zzz.R", "z <- 1\n"),
         ("aaa.R", "a <- 1\n"),
-        ("mmm.R", "m <- 1\n"),
+        ("Mmm.R", "m <- 1\n"),
     ]);
     let mut db = OakDatabase::new();
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
-    assert_eq!(file_basenames(&db, pkg), vec!["aaa.R", "mmm.R", "zzz.R"]);
+    assert_eq!(file_basenames(&db, pkg), vec!["Mmm.R", "aaa.R", "zzz.R"]);
 }
 
 #[test]

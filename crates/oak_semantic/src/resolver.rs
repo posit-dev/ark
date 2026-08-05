@@ -1,6 +1,7 @@
 use url::Url;
 
 use crate::effects;
+use crate::effects::DirWalk;
 use crate::effects::EffectsHandlers;
 
 /// The result of resolving a `source()` call. Returned by
@@ -49,6 +50,16 @@ pub trait ImportsResolver {
     /// anchoring it (workspace root, calling file's directory, ...).
     /// Returns `None` when the target can't be located.
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution>;
+
+    /// Resolve a directory path to one resolution per R file in load order.
+    /// `path` uses the same anchor as [`resolve_source`]. `walk` determines
+    /// whether nested directories are included.
+    ///
+    /// [`resolve_source`]: ImportsResolver::resolve_source
+    fn resolve_source_dir(&mut self, path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        let _ = (path, walk);
+        Vec::new()
+    }
 
     /// Resolve a bare callee `name` to its effects. `attached` is the packages
     /// attached at this point, in flow order. The builder passes it in because

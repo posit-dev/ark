@@ -30,6 +30,8 @@ use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::ScopeContext;
+use crate::effects::SourcePath;
+use crate::effects::SourceTarget;
 use crate::resolver::ImportsResolver;
 use crate::resolver::SourceResolution;
 use crate::semantic_index::AmbiguityReason;
@@ -446,14 +448,25 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // can see them.
         if let Some(paths) = source {
             let range = call.syntax().text_trimmed_range();
-            for path in paths {
-                let resolution = self.scan_source_call(&path, range);
-                self.scan
-                    .call_resolutions
-                    .entry(range)
-                    .or_default()
-                    .source
-                    .push(SourcedFile { path, resolution });
+            for sourced in paths {
+                let resolutions = self.scan_source_call(&sourced, range);
+                let entries = &mut self.scan.call_resolutions.entry(range).or_default().source;
+
+                // Nothing resolved, so keep the path as written for a consumer
+                // to report. A directory that holds no scanned R files lands
+                // here too.
+                if resolutions.is_empty() {
+                    entries.push(SourcedFile {
+                        path: sourced.path,
+                        resolution: None,
+                    });
+                    continue;
+                }
+
+                entries.extend(resolutions.into_iter().map(|resolution| SourcedFile {
+                    path: sourced.path.clone(),
+                    resolution: Some(resolution),
+                }));
             }
         }
 
@@ -753,22 +766,39 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    /// Resolve one sourced `path`, bind the names it brings in, and return its
-    /// resolution for the caller to cache.
-    ///
-    /// The binding is eager: `source()` runs at its position, so the sourced
-    /// names are bound afterwards and can shadow a later NSE callee (e.g. a
-    /// sourced `local` masking base `local`). Returns `None` when the resolver
+    /// Resolve one `sourced` path, bind the names it brings in, and return its
+    /// resolutions for the caller to cache. A directory yields one per R file
+    /// in it, in load order; a file yields at most one. Empty when the resolver
     /// can't locate the target.
     ///
     /// [`scan_call`]: Self::scan_call
     fn scan_source_call(
         &mut self,
-        path: &str,
+        sourced: &SourcePath,
         source_range: TextRange,
-    ) -> Option<SourceResolution> {
-        let resolution = self.resolver.resolve_source(path)?;
+    ) -> Vec<SourceResolution> {
+        let resolutions = match sourced.target {
+            SourceTarget::File => self
+                .resolver
+                .resolve_source(&sourced.path)
+                .into_iter()
+                .collect(),
+            SourceTarget::Dir(walk) => self.resolver.resolve_source_dir(&sourced.path, walk),
+            // A file has precedence over a directory of the same name.
+            SourceTarget::FileOrDir(walk) => match self.resolver.resolve_source(&sourced.path) {
+                Some(resolution) => vec![resolution],
+                None => self.resolver.resolve_source_dir(&sourced.path, walk),
+            },
+        };
 
+        for resolution in &resolutions {
+            self.record_source_resolution(resolution, source_range);
+        }
+        resolutions
+    }
+
+    /// Bind contributions of a sourced file.
+    fn record_source_resolution(&mut self, resolution: &SourceResolution, source_range: TextRange) {
         // Sourced names originate in another file, so they have no binding site
         // here. Anchor the overwrite range at the `source()` call instead.
         for name in &resolution.names {
@@ -788,8 +818,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     .push(pkg.clone(), source_range.start());
             }
         }
-
-        Some(resolution)
     }
 
     /// Whether the current evaluation frame binds `name` (see [`scan_scope`]).

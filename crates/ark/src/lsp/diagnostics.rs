@@ -995,7 +995,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package_name = package_node.get_identifier_or_string_text(context.contents())?;
     let attach_pos = node.end_position();
 
-    insert_package_exports(package_name, attach_pos, context)?;
+    insert_package_exports(package_name, attach_pos, context);
 
     // Also attach packages from `Depends` field, if any
     if let Some(package_names) = context
@@ -1004,7 +1004,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
         .and_then(|package| package.depends(context.db).as_ref())
     {
         for package_name in package_names.iter() {
-            insert_package_exports(package_name, attach_pos, context)?;
+            insert_package_exports(package_name, attach_pos, context);
         }
     }
 
@@ -1050,21 +1050,16 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
         _ => vec![],
     };
     for package_name in attach_field {
-        insert_package_exports(package_name, attach_pos, context)?;
+        insert_package_exports(package_name, attach_pos, context);
     }
 
     Ok(())
 }
 
-fn insert_package_exports(
-    package_name: &str,
-    attach_pos: Point,
-    context: &mut DiagnosticContext,
-) -> anyhow::Result<()> {
+fn insert_package_exports(package_name: &str, attach_pos: Point, context: &mut DiagnosticContext) {
     let Some(package) = context.db.package_by_name(package_name) else {
-        return Err(anyhow::anyhow!(
-            "Can't get exports from package {package_name} because it is not installed."
-        ));
+        // Package is not installed. This is linted via another path.
+        return;
     };
 
     // Start from explicit `NAMESPACE` exports
@@ -1083,8 +1078,6 @@ fn insert_package_exports(
         .entry(attach_pos)
         .or_default()
         .extend(exports);
-
-    Ok(())
 }
 
 fn recurse_subset_or_subset2(

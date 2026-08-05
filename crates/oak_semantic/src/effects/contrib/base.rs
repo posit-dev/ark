@@ -19,18 +19,22 @@ use crate::semantic_index::EvalTiming::Lazy;
 
 pub(crate) static ENTRIES: &[Entry] = &[
     // base NSE
-    nse!("evalq", ("expr", 0, Current, Eager)),
+    nse!("evalq", ("expr", Current, Eager)),
     // `on.exit(expr)` captures `expr` and runs it in the current function's
     // frame when the function exits. Bindings land in that frame (`Current`) at
     // an unknown later time (`Lazy`), the same shape as `rlang::on_load()`.
-    nse!("on.exit", ("expr", 0, Current, Lazy)),
-    nse!("local", ("expr", 0, Nested, Eager)),
-    nse!("with", ("expr", 1, Nested, Eager)),
-    nse!("with.default", ("expr", 1, Nested, Eager)),
-    nse!("within", ("expr", 1, Nested, Eager)),
-    nse!("within.data.frame", ("expr", 1, Nested, Eager)),
+    nse!("on.exit", ("expr", Current, Lazy)),
+    nse!("local", ("expr", Nested, Eager)),
+    nse!("with", ["data", "expr"], ("expr", Nested, Eager)),
+    nse!("with.default", ["data", "expr"], ("expr", Nested, Eager)),
+    nse!("within", ["data", "expr"], ("expr", Nested, Eager)),
+    nse!(
+        "within.data.frame",
+        ["data", "expr"],
+        ("expr", Nested, Eager)
+    ),
     // base quote
-    quoted!("quote", ("expr", 0)),
+    quoted!("quote", "expr"),
     // `bquote` quotes `expr` too, but its `.()` holes escape to evaluation, so
     // it needs a handler rather than a static per-argument effect.
     Entry {
@@ -58,7 +62,7 @@ pub(crate) static ENTRIES: &[Entry] = &[
     attach_entry("library"),
     attach_entry("require"),
     // base source
-    source!("source", 0),
+    source!("source", ["file", "local"], "file"),
     // base assign
     assign!("assign", 0),
     assign!("delayedAssign", 0),

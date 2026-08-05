@@ -51,17 +51,26 @@ fn test_empty_r_directory_yields_no_files() {
     assert!(scripts.is_empty());
 }
 
-/// Without `Collate:`, every R file is loadable, ordered case-insensitively by
-/// basename so the result doesn't depend on `read_dir` order.
+/// Without `Collate:`, R loads every file in raw basename byte order.
+/// Under `LC_COLLATE=C`, `AllGenerics.R` precedes `aaa-utils.R`, so S4 packages
+/// define generics before methods.
 #[test]
 fn test_without_collation_all_files_are_loadable_and_sorted() {
     let tmp = tempfile::tempdir().unwrap();
     let r = tmp.path().join("R");
-    write_r_dir(&r, &[("zebra.R", "1"), ("Apple.R", "1"), ("mango.R", "1")]);
+    write_r_dir(&r, &[
+        ("zebra.R", "1"),
+        ("aaa-utils.R", "1"),
+        ("AllGenerics.R", "1"),
+    ]);
 
     let (files, scripts) = read_package_sources(&r, None);
 
-    assert_eq!(names(&files), vec!["Apple.R", "mango.R", "zebra.R"]);
+    assert_eq!(names(&files), vec![
+        "AllGenerics.R",
+        "aaa-utils.R",
+        "zebra.R"
+    ]);
     assert!(scripts.is_empty());
 }
 

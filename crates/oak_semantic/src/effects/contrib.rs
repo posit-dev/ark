@@ -5,6 +5,7 @@ mod magrittr;
 mod rlang;
 mod s7;
 mod shiny;
+mod targets;
 mod testthat;
 mod withr;
 
@@ -21,17 +22,19 @@ pub(crate) struct PackageEntries {
     pub(super) functions: &'static [Entry],
 }
 
-/// An NSE entry. Each `(name, position, scope, laziness)` tuple is a scoped
-/// argument; list more than one for a function that scopes several.
+/// Declares non-standard evaluation effects.
 macro_rules! nse {
-    ($func:literal, $(($name:literal, $pos:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
+    ($func:literal, $(($name:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
+        $crate::effects::contrib::nse!($func, [$($name),+], $(($name, $scope, $timing)),+)
+    };
+    ($func:literal, [$($formal:literal),+ $(,)?], $(($name:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
                 arguments: Some(&$crate::effects::ArgumentsAnnotation {
+                    formals: &[$($formal),+],
                     arguments: &[$($crate::effects::Argument {
                         name: $name,
-                        position: $pos,
                         effect: $crate::effects::ArgumentEffect::EvalQ {
                             env: $scope,
                             timing: $timing,
@@ -47,18 +50,19 @@ macro_rules! nse {
 }
 pub(crate) use nse;
 
-/// A quoted entry. Each `(name, position)` names an argument captured
-/// unevaluated: its symbols aren't uses and nothing in it runs. `quote`,
-/// `bquote`.
+/// Declares arguments that remain unevaluated.
 macro_rules! quoted {
-    ($func:literal, $(($name:literal, $pos:literal)),+ $(,)?) => {
+    ($func:literal, $($name:literal),+ $(,)?) => {
+        $crate::effects::contrib::quoted!($func, [$($name),+], $($name),+)
+    };
+    ($func:literal, [$($formal:literal),+ $(,)?], $($name:literal),+ $(,)?) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
                 arguments: Some(&$crate::effects::ArgumentsAnnotation {
+                    formals: &[$($formal),+],
                     arguments: &[$($crate::effects::Argument {
                         name: $name,
-                        position: $pos,
                         effect: $crate::effects::ArgumentEffect::Quote,
                     }),+],
                 }),
@@ -71,16 +75,33 @@ macro_rules! quoted {
 }
 pub(crate) use quoted;
 
-/// A source entry: `(path-argument position)`. The function reads and evaluates
-/// another file, injecting its top-level names into the caller.
+/// Declares a source function's signature prefix, path formal, [`SourceTarget`],
+/// and no-argument default. The target defaults to [`SourceTarget::File`].
+///
+/// [`SourceTarget`]: crate::effects::SourceTarget
+/// [`SourceTarget::File`]: crate::effects::SourceTarget::File
 macro_rules! source {
-    ($func:literal, $pos:literal) => {
+    ($func:literal, [$($formal:literal),+ $(,)?], $path:literal) => {
+        $crate::effects::contrib::source!(
+            $func,
+            [$($formal),+],
+            $path,
+            $crate::effects::SourceTarget::File,
+            None
+        )
+    };
+    ($func:literal, [$($formal:literal),+ $(,)?], $path:literal, $target:expr, $default:expr) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
                 arguments: None,
                 attach: None,
-                source: Some(&$crate::effects::SourceAnnotation { position: $pos }),
+                source: Some(&$crate::effects::SourceAnnotation {
+                    formals: &[$($formal),+],
+                    path: $path,
+                    target: $target,
+                    default_path: $default,
+                }),
                 assign: None,
             },
         }
@@ -145,6 +166,10 @@ pub(super) static REGISTRY: &[PackageEntries] = &[
     PackageEntries {
         name: "shiny",
         functions: shiny::ENTRIES,
+    },
+    PackageEntries {
+        name: "targets",
+        functions: targets::ENTRIES,
     },
     PackageEntries {
         name: "testthat",

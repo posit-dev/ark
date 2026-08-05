@@ -11,6 +11,7 @@ use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 
+use crate::db::workspace_scripts;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -449,35 +450,18 @@ impl File {
         package.files(db).contains(&self)
     }
 
-    /// The collation members of `self`'s own `R/` directory, in load order:
-    /// sorted by basename, ASCII case-insensitively, the same order a
-    /// package `R/` with no `Collate:` gets from
-    /// `oak_scan::packages::order_alphabetically`.
+    /// The collation members of `self`'s own `R/` directory, in load order.
     ///
     /// Path-based only. The scan-time resolver
     /// ([`SalsaImportsResolver`](crate::imports::SalsaImportsResolver)) calls
     /// `cross_file_layers` while `self`'s own semantic index is still being
     /// built. The query can't recurse into the index.
-    ///
-    /// Gathers candidates from workspace roots only (`root.scripts(db)` for
-    /// each). `OrphanRoot`, library roots, and `StaleRoot` don't contribute
-    /// collation siblings.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn collation_siblings(self, db: &dyn Db) -> Vec<File> {
         let Some(dir) = self.path(db).as_path().and_then(Utf8Path::parent) else {
             return Vec::new();
         };
-
-        let mut siblings: Vec<File> = db
-            .workspace_roots()
-            .roots(db)
-            .iter()
-            .flat_map(|root| root.scripts(db).iter().copied())
-            .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
-            .collect();
-
-        siblings.sort_by_cached_key(|file| collation_basename_key(*file, db));
-        siblings
+        files_in_directory(db, dir)
     }
 }
 
@@ -528,7 +512,18 @@ fn build_inherited_layers(
         None => ImportLayer::File(source_site),
     };
 
-    let mut above = vec![source_layer];
+    // One Source effect can load several files (`sourceDir()`, `tar_source()`).
+    // Keep track of already sourced files, since their eager top-level context
+    // can see what's already been sourced.
+    let mut above: Vec<ImportLayer> = match offsets.as_deref() {
+        Some(offsets) => loaded_before(db, source_site, file, offsets)
+            .into_iter()
+            .map(ImportLayer::File)
+            .collect(),
+        None => Vec::new(),
+    };
+
+    above.push(source_layer);
     above.extend(own_cross.above.iter().cloned());
     above.extend(
         grandparents
@@ -574,6 +569,36 @@ fn source_offsets(db: &dyn Db, sourcing_file: File, file: File) -> Option<Vec<Te
         true => None,
         false => Some(offsets),
     }
+}
+
+/// The files the calls at `offsets` loaded before `file`, latest first.
+///
+/// One Source effect can expand to several targets (`sourceDir()`), which share
+/// the call's offset. Only the targets ahead of `file` in its own group have run
+/// by the time `file` does.
+fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize]) -> Vec<File> {
+    let sites = source_file.source_sites(db);
+    let mut loaded: Vec<File> = Vec::new();
+
+    // Descending, so the latest call's targets rank first.
+    for &offset in offsets.iter().rev() {
+        let targets: Vec<File> = sites
+            .iter()
+            .filter(|site| site.offset() == offset)
+            .filter_map(|site| site.target())
+            .collect();
+        let Some(own) = targets.iter().position(|target| *target == file) else {
+            continue;
+        };
+
+        for &target in targets[..own].iter().rev() {
+            if !loaded.contains(&target) {
+                loaded.push(target);
+            }
+        }
+    }
+
+    loaded
 }
 
 fn package_load_layers(
@@ -811,10 +836,44 @@ fn testthat_support_key(file: File, db: &dyn Db) -> Cow<'_, str> {
     file.path(db).file_name().unwrap_or_default()
 }
 
-/// Case-insensitive basename sort key for `collation_siblings`, matching
-/// `oak_scan::packages::order_alphabetically`'s `basename_key` so a
-/// non-package `R/` collates the same way as a package `R/` with no
-/// `Collate:`.
+/// Returns workspace scripts directly under `dir`, in `list.files()` load order.
+///
+/// `sourceDir()`, Shiny's `loadSupport()`, and non-package `R/` collation use
+/// this order. [`collation_basename_key()`] mirrors their session-locale sort.
+pub(crate) fn files_in_directory(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
+    let mut files: Vec<File> = workspace_scripts(db)
+        .iter()
+        .copied()
+        .filter(|file| file.path(db).as_path().and_then(Utf8Path::parent) == Some(dir))
+        .collect();
+
+    files.sort_by_cached_key(|file| collation_basename_key(*file, db));
+    files
+}
+
+/// Returns workspace scripts below `dir` in `targets::tar_source()` load order.
+///
+/// `list.files(recursive = TRUE)` sorts nested scripts by relative path. Case
+/// folding matches [`collation_basename_key()`].
+pub(crate) fn files_in_directory_recursive(db: &dyn Db, dir: &Utf8Path) -> Vec<File> {
+    let mut keyed: Vec<(String, File)> = workspace_scripts(db)
+        .iter()
+        .copied()
+        .filter_map(|file| {
+            let relative = file.path(db).as_path()?.strip_prefix(dir).ok()?;
+            Some((relative.as_str().to_ascii_lowercase(), file))
+        })
+        .collect();
+
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    keyed.into_iter().map(|(_, file)| file).collect()
+}
+
+/// ASCII-case-folded basename key approximating `list.files()` session-locale
+/// ordering.
+///
+/// Package installation instead forces `LC_COLLATE=C`, where raw byte order
+/// determines collation.
 fn collation_basename_key(file: File, db: &dyn Db) -> Option<String> {
     file.path(db)
         .file_name()

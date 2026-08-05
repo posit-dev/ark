@@ -10,7 +10,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
-use crate::effects::Formal;
+use crate::effects::Formals;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 
@@ -28,17 +28,8 @@ impl EffectHandler for SubstituteHandler {
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         // `substitute(expr, env)`: only `expr` (formal 0) is quoted, everything
         // else is a plain value.
-        let formals = [
-            Formal {
-                name: "expr",
-                position: 0,
-            },
-            Formal {
-                name: "env",
-                position: 1,
-            },
-        ];
-        let matched = ctx.match_arguments(call, &formals);
+        let formals: Formals = &["expr", "env"];
+        let matched = ctx.match_arguments(call, formals);
         let expr_pos = matched.iter().position(|formal| *formal == Some(0))?;
 
         // Only the default `env`, the current frame, is one we can query. Any

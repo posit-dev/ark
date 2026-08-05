@@ -192,11 +192,11 @@ fn read_workspace_package(package_dir: &Path) -> Option<PackageEntry> {
         }
     }
 
-    // `file_imports()` in `oak_db` reads `package.files` order as the collation
-    // chain, so a file only sees the files ordered before it. `Collate:` is R's
-    // explicit load order; without it R loads `R/` in case-insensitive
-    // alphabetical order. R/ files left out of a `Collate:` directive aren't
-    // loaded into the namespace, so they move to `scripts` rather than `files`.
+    // `package.files` supplies cross-file lookup order, so a file sees only its
+    // predecessors. `Collate:` supplies that order explicitly. Without it,
+    // `tools:::.install_package_code_files()` forces `LC_COLLATE=C` and lists
+    // `R/` in byte order. Files omitted from `Collate:` are not loaded into the
+    // namespace and become `scripts`.
     let (loadable, leftover) = match package.collation.as_deref() {
         Some(order) => order_by_collation(files, order),
         None => order_alphabetically(files),
@@ -308,8 +308,7 @@ fn order_by_collation(
     )
 }
 
-/// All files are loadable, in case-insensitive alphabetical order by basename.
-/// No leftover: without `Collate:`, R loads every R/ file.
+/// Without `Collate:`, every `R/` file is loadable in raw basename byte order.
 fn order_alphabetically(mut files: Vec<(PathBuf, FileEntry)>) -> (Vec<FileEntry>, Vec<FileEntry>) {
     files.sort_by_cached_key(|(path, _)| basename_key(path));
     (
@@ -318,9 +317,11 @@ fn order_alphabetically(mut files: Vec<(PathBuf, FileEntry)>) -> (Vec<FileEntry>
     )
 }
 
-/// Case-insensitive sort key from a path's basename.
+/// Raw basename byte-order key for R's `LC_COLLATE=C` package installation.
+/// `AllGenerics.R` precedes `aaa-utils.R`, letting S4 packages load generics
+/// before methods.
 fn basename_key(path: &Path) -> Option<std::ffi::OsString> {
-    path.file_name().map(|name| name.to_ascii_lowercase())
+    path.file_name().map(|name| name.to_os_string())
 }
 
 /// Walk a workspace root for its top-level scripts: every `.R` file that isn't

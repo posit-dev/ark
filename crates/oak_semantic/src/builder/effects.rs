@@ -77,6 +77,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         match &func {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
+                if let Some(effects) = effects::source_dir_idiom(&name) {
+                    return Some(*effects);
+                }
                 self.resolve_symbol_effects(&name, call.syntax().text_trimmed_range())
             },
 
