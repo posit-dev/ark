@@ -52,6 +52,26 @@ fn workspace_with_script(db: &mut TestDb, contents: &str) {
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
 
+/// Create a `proj` workspace root with editor overrides for `scripts`.
+/// Paths are relative to `proj`.
+fn workspace_with_scripts(db: &mut TestDb, scripts: &[(&str, &str)]) {
+    let root = workspace_root(&*db, "proj");
+    let files: Vec<File> = scripts
+        .iter()
+        .map(|(path, contents)| {
+            File::new(
+                &*db,
+                file_path(&format!("proj/{path}")),
+                FileRevision::zero(),
+                Some(contents.to_string()),
+                None,
+            )
+        })
+        .collect();
+    root.set_scripts(db).to(files);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+}
+
 fn all_package_dependencies_names(db: &TestDb) -> Vec<String> {
     all_package_dependencies(db)
         .iter()
@@ -225,4 +245,82 @@ fn test_default_search_path_packages_are_always_available_to_workspace_packages(
     assert_eq!(all_package_dependencies_names(&db), vec![
         "base", "rlang", "stats"
     ]);
+}
+
+#[test]
+fn test_shiny_app_depends_on_shiny_without_a_library_call() {
+    // `loadSupport()` attaches `shiny`, so Shiny apps do not call `library(shiny)`.
+    // Include its sources so definitions imported from `shiny` resolve.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["shiny"]);
+    workspace_with_scripts(&mut db, &[("app.R", "shinyApp(ui, server)\n")]);
+
+    assert_eq!(all_package_dependencies_names(&db), vec!["shiny"]);
+}
+
+#[test]
+fn test_shiny_support_files_depend_on_shiny() {
+    // `loadSupport()` also sources `global.R` and `R/` files with `shiny` attached.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["shiny"]);
+    workspace_with_scripts(&mut db, &[
+        ("app.R", "shinyApp(ui, server)\n"),
+        ("global.R", "app_title <- \"Playground\"\n"),
+        ("R/greet.R", "greet <- function(who) who\n"),
+    ]);
+
+    assert_eq!(all_package_dependencies_names(&db), vec!["shiny"]);
+}
+
+#[test]
+fn test_non_shiny_workspace_does_not_depend_on_shiny() {
+    // Only Shiny's app marker call enables its implicit attach.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["shiny"]);
+    workspace_with_scripts(&mut db, &[("app.R", "1 + 1\n")]);
+
+    assert!(all_package_dependencies_names(&db).is_empty());
+}
+
+#[test]
+fn test_uninstalled_implicit_attach_is_dropped() {
+    // Implicit attachments require an installed package, like explicitly named dependencies.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["foo"]);
+    workspace_with_scripts(&mut db, &[("app.R", "shinyApp(ui, server)\n")]);
+
+    assert!(all_package_dependencies_names(&db).is_empty());
+}
+
+#[test]
+fn test_testthat_file_depends_on_testthat() {
+    // testthat attaches itself while it runs test files, so unqualified expectations
+    // need its sources.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["testthat"]);
+
+    let root = workspace_root(&db, "proj");
+    let pkg = Package::new(
+        &db,
+        file_path("proj/DESCRIPTION"),
+        "mypkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        vec![],
+        Vec::new(),
+    );
+    let test = File::new(
+        &db,
+        file_path("proj/tests/testthat/test-greet.R"),
+        FileRevision::zero(),
+        Some("expect_equal(1, 1)\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_scripts(&mut db).to(vec![test]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(all_package_dependencies_names(&db), vec!["testthat"]);
 }

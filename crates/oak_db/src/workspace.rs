@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::file_imports::CollationView;
+use crate::load_context::load_context;
 use crate::workspace_files;
 use crate::Db;
 use crate::Package;
@@ -16,12 +18,15 @@ pub fn all_package_dependencies(db: &dyn Db) -> Vec<Package> {
     // Split into several queries to maximize backdating (changing a workspace file
     // shouldn't require re-querying `DESCRIPTION` dependencies)
     let from_files = all_workspace_file_dependencies(db);
+    let from_loaders = all_workspace_loader_dependencies(db);
     let from_packages = all_workspace_package_dependencies(db);
     let from_search = default_search_path_packages(db);
 
-    let mut packages: Vec<Package> =
-        Vec::with_capacity(from_files.len() + from_packages.len() + from_search.len());
+    let mut packages: Vec<Package> = Vec::with_capacity(
+        from_files.len() + from_loaders.len() + from_packages.len() + from_search.len(),
+    );
     packages.extend(from_files);
+    packages.extend(from_loaders);
     packages.extend(from_packages);
     packages.extend(from_search);
 
@@ -48,6 +53,27 @@ fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
                 .iter()
                 .map(|name| name.text(db).as_str()),
         );
+    }
+
+    as_packages(names, db)
+}
+
+/// Packages implicitly attached by loaders, including `shiny` for apps and
+/// `testthat` for test files.
+///
+/// These packages resolve through [`File::imports`](crate::File::imports) even
+/// when no source file explicitly mentions them.
+///
+/// Loader detection reads paths, directory listings, and `source_text()` rather
+/// than semantic indexes, so it cannot cycle through index construction.
+///
+/// Returned sorted on package name and unique, maximizing backdating potential.
+#[salsa::tracked(returns(ref))]
+fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> {
+    let mut names: BTreeSet<&'static str> = BTreeSet::new();
+
+    for &file in workspace_files(db) {
+        names.extend(load_context(db, file, CollationView::Deferred).implicit_attaches);
     }
 
     as_packages(names, db)
