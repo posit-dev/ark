@@ -52,8 +52,12 @@ use crate::tracing::trace_dap_event;
 use crate::tracing::trace_dap_request;
 use crate::tracing::trace_dap_response;
 
-/// Default timeout for receiving DAP messages
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Default timeout for receiving DAP messages.
+///
+/// Prevents tests from hanging when a DAP message never arrives. This is not
+/// a latency assertion, so it matches `crate::comm::RECV_TIMEOUT`.
+/// `assert_no_events()` uses 100ms to assert the absence of events.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A minimal DAP client for testing purposes.
 ///

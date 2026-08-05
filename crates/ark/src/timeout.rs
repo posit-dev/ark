@@ -38,8 +38,8 @@ use harp::raii::RLocalInterruptsSuspended;
 /// more heavily loaded runners (Windows in particular) risk flaking under the
 /// tighter deadline for unrelated reasons.
 ///
-/// The CI value must stay under the DAP test client's socket read timeout
-/// (`DEFAULT_TIMEOUT`, 5s in `ark_test::dap_client`).
+/// Must leave time for R to act on the interrupt before the DAP test client's
+/// socket read timeout expires.
 pub(crate) fn eval_timeout() -> Duration {
     static EVAL_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| {
         if std::env::var("CI").is_ok() {
