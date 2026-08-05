@@ -367,8 +367,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .walk
             .use_def_maps
             .into_iter()
-            .zip(self.walk.uses.iter())
-            .map(|(b, (_, uses))| Arc::new(b.finish(uses)))
+            .map(|b| Arc::new(b.finish()))
             .collect();
 
         SemanticIndex::new(

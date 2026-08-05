@@ -855,8 +855,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 range,
             });
             self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-            self.walk.use_def_maps[self.current_scope]
-                .record_deferred_definition(symbol_id, def_id);
+            self.walk.use_def_maps[self.current_scope].record_super_definition(symbol_id, def_id);
             return;
         };
 
@@ -878,8 +877,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             range,
         });
         self.walk.use_def_maps[target_scope].ensure_symbol(target_symbol);
-        self.walk.use_def_maps[target_scope]
-            .record_deferred_definition(target_symbol, target_def_id);
+        self.walk.use_def_maps[target_scope].record_super_definition(target_symbol, target_def_id);
     }
 
     fn add_assign_definitions(&mut self, node: &AnyRExpression, bindings: Vec<AssignBinding>) {

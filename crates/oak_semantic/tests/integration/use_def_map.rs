@@ -638,20 +638,20 @@ x                            # file: use 0 -> {def 0}, may_be_unbound
 }
 
 #[test]
-fn test_super_assignment_visible_before_function_def() {
+fn test_super_assignment_invisible_to_earlier_use() {
     let index = index(
         "\
-x                            # file: use 0 -> {def 0}, may_be_unbound
+x                            # file: use 0 -> {}, may_be_unbound
 f <- function() { x <<- 1 }  # file: def 0 (x <<- in parent), def 1 (f)
 ",
     );
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
 
-    // `<<-` definitions are scope-wide, so the use of `x` before the
-    // function definition still sees the `<<-` binding.
+    // `f()` cannot run before `f` is defined, so the earlier use cannot see its
+    // `<<-` assignment.
     let bindings = map.bindings_at_use(UseId::from(0));
-    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert!(bindings.definitions().is_empty());
     assert!(bindings.may_be_unbound());
 }
 
@@ -749,6 +749,31 @@ x                                            # file: use 0 -> {def 0} only
         .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(outer_defs.len(), 2);
+}
+
+#[test]
+fn test_super_assignment_loop_carried() {
+    let index = index(
+        "\
+x <- 0                        # file: def 0
+while (cond) {
+    x                          # file: use 1: sees {def 0, def 1} (loop-carried)
+    f <- function() x <<- 1    # file: def 1 (x <<-), def 2 (f)
+    f()
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // `finish_loop_defs()` adds the `<<-` assignment because a later loop
+    // iteration can execute it before this use.
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(1)
+    ]);
+    assert_not!(bindings.may_be_unbound());
 }
 
 // --- Combined control flow ---
