@@ -902,28 +902,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // Walk up from `start` to the first scope where `name` already has
-    // `IS_BOUND`. Returns that scope, or the file scope if no binding is found
-    // (mirroring R's assignment to the global environment). Reaching the file
-    // scope unbound ends the walk there, so its `parent` of `None` is the
-    // natural terminator.
+    // R's `<<-` targets the first ancestor with an `IS_BOUND` binding. Without
+    // one, it assigns in the global, file scope.
     fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
-        let mut scope = start;
-        loop {
-            if let Some(id) = self.walk.symbol_tables[scope].id(name) {
-                if self.walk.symbol_tables[scope]
-                    .symbol(id)
-                    .flags()
-                    .contains(SymbolFlags::IS_BOUND)
-                {
-                    return scope;
-                }
-            }
-            let Some(parent) = self.scopes[scope].parent else {
-                return scope;
-            };
-            scope = parent;
-        }
+        self.ancestor_scope_ids(start)
+            .find(|&scope| self.walked_binding(scope, name).is_some())
+            .unwrap_or(ScopeId::from(0))
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {

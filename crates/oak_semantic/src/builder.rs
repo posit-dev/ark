@@ -26,6 +26,7 @@
 //! structures, such as the use-def map, where conditionality is recorded as
 //! `may_be_unbound`.
 
+use std::iter;
 use std::sync::Arc;
 
 use aether_syntax::AnyRExpression;
@@ -288,11 +289,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// scope kind (`File`, `Function`, `Nse(Nested, _)`) owns its definitions
     /// and stops the climb.
     fn enclosing_owner(&self) -> Option<ScopeId> {
-        let mut scope = self.scopes[self.current_scope].parent?;
-        while !self.scopes[scope].kind.owns_bindings() {
-            scope = self.scopes[scope].parent?;
-        }
-        Some(scope)
+        let parent = self.scopes[self.current_scope].parent?;
+        self.ancestor_scope_ids(parent)
+            .find(|&scope| self.scopes[scope].kind.owns_bindings())
     }
 
     /// The scan unit that controls when code in `scope` runs: that scope itself
@@ -302,11 +301,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Mid-build twin of [`SemanticIndex::enclosing_lazy_scope`], reading the
     /// arena the walk is still filling in.
     fn enclosing_lazy_scope(&self, scope: ScopeId) -> Option<ScopeId> {
-        let mut current = scope;
-        while !self.scopes[current].kind.is_lazy() {
-            current = self.scopes[current].parent?;
-        }
-        Some(current)
+        self.ancestor_scope_ids(scope)
+            .find(|&scope| self.scopes[scope].kind.is_lazy())
+    }
+
+    /// Returns `scope` and its ancestors, innermost first. Mirrors
+    /// [`SemanticIndex::ancestor_scope_ids`] while the index is still being built.
+    fn ancestor_scope_ids(&self, scope: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
+        iter::successors(Some(scope), |&scope| self.scopes[scope].parent)
     }
 
     /// Whether `scope` binds `name` anywhere, regardless of flow position.
