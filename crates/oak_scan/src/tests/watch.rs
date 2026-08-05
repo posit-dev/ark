@@ -665,6 +665,30 @@ fn test_noop_rescan_does_not_bump_salsa_revision() {
 }
 
 #[test]
+fn test_rescan_refreshes_revision_of_known_file() {
+    // A rescan must refresh `source_text()` after a write with no watcher event.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let root = db.workspace_roots().roots(&db)[0];
+
+    let fs_path = tmp.path().join("pkg/R/a.R");
+    let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
+    let file = db.file_by_path(&path).unwrap();
+    assert_eq!(file.source_text(&db).as_str(), "x <- 1\n");
+
+    // Use a distinct mtime so the rescan detects the write on filesystems with
+    // coarse timestamp granularity.
+    fs::write(&fs_path, "x <- 2\n").unwrap();
+    set_file_mtime(&fs_path, FileTime::from_unix_time(1_000_000_000, 0)).unwrap();
+    assert_eq!(file.source_text(&db).as_str(), "x <- 1\n");
+
+    rescan_workspace_root(&mut db, root);
+    assert_eq!(file.source_text(&db).as_str(), "x <- 2\n");
+}
+
+#[test]
 fn test_watcher_reblip_same_mtime_does_not_bump_salsa_revision() {
     // Watchers coalesce and re-emit events, so one save can deliver a Changed
     // event whose re-stat matches the mtime we already stored.
