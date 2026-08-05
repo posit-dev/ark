@@ -48,6 +48,7 @@ use scan::DeferredBody;
 use scan::FlowAttaches;
 use scan::FlowState;
 use scan::OpenScope;
+use smallvec::SmallVec;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::BindingTimelineBuilder;
@@ -177,10 +178,12 @@ struct WalkState {
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
-    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-    // Snapshots shared across every use of a free variable in lazy contexts,
-    // keyed by (nested scope, nested symbol).
-    lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
+    // The chain of binding ancestors for a use, innermost first.
+    enclosing_snapshots:
+        FxHashMap<EnclosingSnapshotKey, SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>>,
+    // Lazy uses share a growing snapshot per `(use scope, nested symbol,
+    // ancestor scope)`.
+    lazy_snapshots: FxHashMap<(ScopeId, SymbolId, ScopeId), EnclosingSnapshotId>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
     bindings_at_sources: BindingTimelineBuilder,

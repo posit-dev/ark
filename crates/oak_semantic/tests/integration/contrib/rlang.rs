@@ -58,7 +58,7 @@ rlang::on_load({
 }
 
 #[test]
-fn test_nse_current_lazy_deferred_definition() {
+fn test_nse_current_lazy_definition_does_not_shadow() {
     // A lazy snapshot retains the existing `x` binding and the `on_load()`
     // assignment, which must not shadow the existing binding.
     let index = index(

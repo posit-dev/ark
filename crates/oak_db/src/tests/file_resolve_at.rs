@@ -359,6 +359,33 @@ fn test_conditional_local_does_not_shadow_package_sibling() {
 }
 
 #[test]
+fn test_unconditional_outer_binding_suppresses_package_sibling() {
+    // The file-scope binding is definite, so resolution cannot reach `a.R`
+    // even though `middle` binds `shared` conditionally.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+
+    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 99\n", pkg);
+    let b_source = "\
+shared <- 1
+middle <- function() {
+  if (cond) shared <- 2
+  inner <- function() shared
+  inner
+}
+";
+    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
+    pkg.set_files(&mut db).to(vec![a, b]);
+
+    let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
+    let defs = b.resolve_at(&db, offset);
+
+    let files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert_eq!(defs.len(), 2);
+    assert!(files.iter().all(|&file| file == b));
+}
+
+#[test]
 fn test_deferred_exit_write_does_not_shadow_package_sibling() {
     // The read runs before `on.exit()`, so it resolves to the sibling file,
     // not the handler assignment.

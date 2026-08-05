@@ -75,9 +75,10 @@ pub struct SemanticIndex {
     // during the tree walk. `Arc`-wrapped for fast Salsa comparisons.
     use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
 
-    // For each free variable in a nested scope, maps to the enclosing scope and
-    // snapshot where that symbol is bound.
-    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+    // For each free variable in a nested scope, the chain of ancestor scopes
+    // that bind it, innermost first, each paired with its snapshot.
+    enclosing_snapshots:
+        FxHashMap<EnclosingSnapshotKey, SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>>,
 
     // Cross-file call sites recorded during indexing, such as `library()`
     // attachments or `source()` injections.
@@ -223,7 +224,10 @@ impl SemanticIndex {
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
-        enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+        enclosing_snapshots: FxHashMap<
+            EnclosingSnapshotKey,
+            SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>,
+        >,
         semantic_calls: Vec<SemanticCall>,
         namespace_accesses: Vec<NamespaceAccess>,
         diagnostics: Vec<SemanticDiagnostic>,
@@ -534,32 +538,38 @@ impl SemanticIndex {
 
     /// All definitions that could reach the use at `(scope, use_id)`.
     ///
-    /// The local use-def bindings always count. The enclosing-scope snapshot
-    /// also counts when `may_be_unbound` is true. That happens when the local
-    /// binding doesn't cover every control-flow path, so execution can fall
-    /// through to the outer scope.
-    ///
-    /// When `may_be_unbound` is false we deliberately skip the enclosing scope.
-    /// Otherwise a shadowed inner use would also bind to the outer def of the
-    /// same name.
+    /// Local use-def bindings always count. If they may be unbound, add
+    /// ancestor snapshots innermost first and stop at the first definitely
+    /// bound ancestor, which shadows all outer scopes.
     pub fn reaching_definitions(
         &self,
         scope_id: ScopeId,
         use_id: UseId,
     ) -> impl Iterator<Item = (ScopeId, DefinitionId)> + '_ {
         let bindings = self.use_def_map(scope_id).bindings_at_use(use_id);
-        let local = bindings.definitions().iter().map(move |&d| (scope_id, d));
+        let mut defs: Vec<(ScopeId, DefinitionId)> = bindings
+            .definitions()
+            .iter()
+            .map(|&d| (scope_id, d))
+            .collect();
 
-        let enclosing = if bindings.may_be_unbound() {
-            self.enclosing_bindings(scope_id, use_id)
-        } else {
-            None
-        };
-        let enclosing_iter = enclosing.into_iter().flat_map(|(scope, bindings)| {
-            bindings.definitions().iter().map(move |&def| (scope, def))
-        });
+        if bindings.may_be_unbound() {
+            for (ancestor_scope, ancestor_bindings) in
+                self.enclosing_bindings_chain(scope_id, use_id)
+            {
+                defs.extend(
+                    ancestor_bindings
+                        .definitions()
+                        .iter()
+                        .map(|&def| (ancestor_scope, def)),
+                );
+                if !ancestor_bindings.may_be_unbound() {
+                    break;
+                }
+            }
+        }
 
-        local.chain(enclosing_iter)
+        defs.into_iter()
     }
 
     /// Whether every path reaching the use at `use_id` is bound by something in
@@ -573,6 +583,8 @@ impl SemanticIndex {
     /// Conditional locals and `<<-` writes can produce candidates while still
     /// leaving some paths unbound. An eager use never sees a lazy handler write
     /// such as `on.exit(x <- 1)`, so resolution continues outside this index.
+    /// A definitely-bound enclosing scope prevents cross-file resolution even
+    /// when nearer scopes bind only conditionally.
     pub fn use_is_bound(&self, scope: ScopeId, use_id: UseId) -> bool {
         if !self
             .use_def_map(scope)
@@ -581,43 +593,56 @@ impl SemanticIndex {
         {
             return true;
         }
-        match self.enclosing_bindings(scope, use_id) {
-            Some((_, enclosing)) => !enclosing.may_be_unbound(),
-            // Nothing up the chain binds it, so every path leaves the file.
-            None => false,
+        for (_, bindings) in self.enclosing_bindings_chain(scope, use_id) {
+            if !bindings.may_be_unbound() {
+                return true;
+            }
         }
+
+        false
     }
 
-    /// Resolve a free variable's bindings from the enclosing scope.
+    /// Returns the nearest enclosing binding snapshot for a use whose local
+    /// bindings may be unbound.
     ///
-    /// When the use `use_id` in `scope` may be unbound (`may_be_unbound: true`),
-    /// some control-flow paths fall through to an enclosing scope. This looks up
-    /// the enclosing snapshot that was registered for that use during the build
-    /// and returns the ancestor scope and its bindings. This covers both purely
-    /// free variables (no local definitions) and conditionally defined
-    /// variables (local definitions exist but don't cover all paths).
-    ///
-    /// Returns `None` if no enclosing snapshot was registered (e.g. the
-    /// variable is truly global or from the search path) and needs
-    /// cross-file resolution.
+    /// [`Self::reaching_definitions`] and [`Self::use_is_bound`] consult all
+    /// binding ancestors. Returns `None` when no lexical ancestor binds the
+    /// name, so resolution must continue across files.
     pub fn enclosing_bindings(
         &self,
         scope: ScopeId,
         use_id: UseId,
     ) -> Option<(ScopeId, &Bindings)> {
+        self.enclosing_bindings_chain(scope, use_id).next()
+    }
+
+    /// Binding ancestor snapshots for a use, innermost first.
+    fn enclosing_bindings_chain(
+        &self,
+        scope: ScopeId,
+        use_id: UseId,
+    ) -> impl Iterator<Item = (ScopeId, &Bindings)> {
         let key = EnclosingSnapshotKey {
             nested_scope: scope,
             nested_use: use_id,
         };
-        let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
-        let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
-        Some((enclosing_scope, bindings))
+        self.enclosing_snapshots
+            .get(&key)
+            .into_iter()
+            .flat_map(|chain| {
+                chain.iter().map(|&(ancestor_scope, snapshot_id)| {
+                    let bindings =
+                        self.use_def_maps[ancestor_scope].enclosing_snapshot(snapshot_id);
+                    (ancestor_scope, bindings)
+                })
+            })
     }
 }
 
 /// Key for looking up an enclosing snapshot. Keyed by the nested scope and the
 /// `UseId` of the free variable in that scope, so consumers do an O(1) lookup
-/// straight from a use without re-walking the ancestor chain.
+/// straight from a use without re-walking the ancestor chain. The lookup
+/// yields the chain of binding ancestors, innermost first.
 ///
 /// Keyed per use, not per symbol, because eager snapshots (e.g. `local()`) are
 /// point-in-time: two uses of the same free variable at different points in an

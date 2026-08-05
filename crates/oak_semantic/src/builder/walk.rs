@@ -24,6 +24,7 @@ use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::AnyRSelectorExt;
 use oak_core::syntax_ext::RIdentifierExt;
+use smallvec::SmallVec;
 
 use super::assignment_name;
 use super::is_assignment;
@@ -40,6 +41,7 @@ use crate::resolver::ImportsResolver;
 use crate::semantic_index::AttachRegion;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
+use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
 use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
@@ -966,6 +968,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // track with `all_eager`.
         let mut all_eager = !self.scopes[self.current_scope].kind.is_lazy();
 
+        // Register every binding ancestor. `scope_binds_anywhere()` cannot
+        // distinguish conditional bindings, and lazy ancestors can gain
+        // definitions after this walk. The query applies the stopping rule to
+        // this innermost-first chain once boundness is known.
+        let mut chain: SmallVec<[(ScopeId, EnclosingSnapshotId); 1]> = SmallVec::new();
+
         loop {
             if self.scope_binds_anywhere(current_scope, name) {
                 // Intern with empty flags: we just need a stable `SymbolId` for
@@ -985,29 +993,23 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         .register_eager_snapshot(enclosing_symbol_id);
                     (current_scope, snapshot_id)
                 } else {
-                    // Lazy: every use of this symbol resolves to the same
-                    // growing snapshot, so dedup on (nested scope, nested symbol)
-                    // and reuse it across uses.
-                    let dedup_key = (self.current_scope, nested_symbol);
+                    // Lazy uses share a growing snapshot per binding ancestor.
+                    // Key it by `(use scope, nested symbol, ancestor scope)`.
+                    let dedup_key = (self.current_scope, nested_symbol, current_scope);
 
-                    if let Some(&entry) = self.walk.lazy_snapshots.get(&dedup_key) {
-                        entry
-                    } else {
-                        let snapshot_id = self.walk.use_def_maps[current_scope]
-                            .register_lazy_snapshot(enclosing_symbol_id);
-                        let entry = (current_scope, snapshot_id);
-                        self.walk.lazy_snapshots.insert(dedup_key, entry);
-                        entry
-                    }
+                    let snapshot_id =
+                        if let Some(&snapshot_id) = self.walk.lazy_snapshots.get(&dedup_key) {
+                            snapshot_id
+                        } else {
+                            let snapshot_id = self.walk.use_def_maps[current_scope]
+                                .register_lazy_snapshot(enclosing_symbol_id);
+                            self.walk.lazy_snapshots.insert(dedup_key, snapshot_id);
+                            snapshot_id
+                        };
+                    (current_scope, snapshot_id)
                 };
 
-                let use_key = EnclosingSnapshotKey {
-                    nested_scope: self.current_scope,
-                    nested_use: use_id,
-                };
-                self.walk.enclosing_snapshots.insert(use_key, entry);
-
-                return;
+                chain.push(entry);
             }
 
             if self.scopes[current_scope].kind.is_lazy() {
@@ -1015,9 +1017,18 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             }
 
             let Some(parent) = self.scopes[current_scope].parent else {
-                return;
+                break;
             };
             current_scope = parent;
+        }
+
+        // Omit empty chains so no entry continues to signal cross-file resolution.
+        if !chain.is_empty() {
+            let use_key = EnclosingSnapshotKey {
+                nested_scope: self.current_scope,
+                nested_use: use_id,
+            };
+            self.walk.enclosing_snapshots.insert(use_key, chain);
         }
     }
 }

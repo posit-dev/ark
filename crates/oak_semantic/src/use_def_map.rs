@@ -101,6 +101,13 @@ use crate::semantic_index::UseId;
 // symbol recorded during the body (identified via the scope's `uses`
 // list). Result: `print(x)` sees `{A, B}`.
 //
+// ## Non-shadowing definitions
+//
+// Two recording modes add to a symbol's candidate set without killing what's
+// already live, because the write's runtime timing is not pinned to its source
+// position. Neither is a retroactive fixup: uses recorded before them never
+// see them.
+//
 // ### Super-assignment definitions (`record_super_definition()`)
 //
 // `<<-` modifies a symbol that should already be bound in an ancestor scope (if
@@ -275,8 +282,7 @@ impl Bindings {
     }
 
     /// Add a definition to the live set without clearing existing ones and
-    /// without changing `may_be_unbound`. Used for loop-carried definitions
-    /// and scope-wide definitions (`<<-`).
+    /// without changing `may_be_unbound`.
     fn add_definition(&mut self, def_id: DefinitionId) {
         let pos = self.definitions.partition_point(|&id| id < def_id);
         if pos >= self.definitions.len() || self.definitions[pos] != def_id {

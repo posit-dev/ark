@@ -1406,3 +1406,128 @@ g <- function() x
     assert_eq!(g_bindings.definitions(), &[DefinitionId::from(2)]);
     assert_not!(g_bindings.may_be_unbound());
 }
+
+#[test]
+fn test_conditional_ancestor_falls_through_to_outer_binding() {
+    let index = index(
+        "\
+shared <- 1
+middle <- function() {
+    if (cond) shared <- 2
+    inner <- function() shared
+    inner
+}
+",
+    );
+    let middle = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+    let file = ScopeId::from(0);
+
+    let defs: Vec<_> = index.reaching_definitions(inner, UseId::from(0)).collect();
+    assert_eq!(defs, vec![
+        (middle, DefinitionId::from(0)),
+        (file, DefinitionId::from(0))
+    ]);
+    assert!(index.use_is_bound(inner, UseId::from(0)));
+}
+
+#[test]
+fn test_three_level_conditional_chain_reaches_every_level() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    if (cond) x <- 2
+    g <- function() {
+        if (cond2) x <- 3
+        h <- function() x
+        h
+    }
+    g
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let f_scope = ScopeId::from(1);
+    let g_scope = ScopeId::from(2);
+    let h_scope = ScopeId::from(3);
+
+    let defs: Vec<_> = index
+        .reaching_definitions(h_scope, UseId::from(0))
+        .collect();
+    assert_eq!(defs, vec![
+        (g_scope, DefinitionId::from(0)),
+        (f_scope, DefinitionId::from(0)),
+        (file, DefinitionId::from(0))
+    ]);
+    assert!(index.use_is_bound(h_scope, UseId::from(0)));
+}
+
+#[test]
+fn test_unconditional_intermediate_binding_stops_the_chain() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    x <- 2
+    g <- function() x
+    g
+}
+",
+    );
+    let f_scope = ScopeId::from(1);
+    let g_scope = ScopeId::from(2);
+
+    let defs: Vec<_> = index
+        .reaching_definitions(g_scope, UseId::from(0))
+        .collect();
+    assert_eq!(defs, vec![(f_scope, DefinitionId::from(0))]);
+    assert!(index.use_is_bound(g_scope, UseId::from(0)));
+}
+
+#[test]
+fn test_conditional_chain_with_no_outer_binding_stays_unbound() {
+    let index = index(
+        "\
+middle <- function() {
+    if (cond) shared <- 2
+    inner <- function() shared
+    inner
+}
+",
+    );
+    let middle = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+
+    let defs: Vec<_> = index.reaching_definitions(inner, UseId::from(0)).collect();
+    assert_eq!(defs, vec![(middle, DefinitionId::from(0))]);
+    assert_not!(index.use_is_bound(inner, UseId::from(0)));
+}
+
+#[test]
+fn test_mixed_eager_lazy_chain_reaches_both_levels() {
+    // `local()` requires base R for recognition as an eager NSE scope.
+    let index = crate::common::index_with_base(
+        "\
+x <- 1
+f <- function() {
+    if (cond) x <- 2
+    local({ x })
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    // Crossing lazy `f` makes the file-scope snapshot lazy, while the
+    // snapshot in eager `local()` remains point-in-time.
+    let defs: Vec<_> = index
+        .reaching_definitions(local_scope, UseId::from(0))
+        .collect();
+    assert_eq!(defs, vec![
+        (f_scope, DefinitionId::from(0)),
+        (file, DefinitionId::from(0))
+    ]);
+    assert!(index.use_is_bound(local_scope, UseId::from(0)));
+}
