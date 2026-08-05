@@ -103,6 +103,11 @@ enum AttachView<'a> {
     /// though the body may never run, and a conditional one counts even though
     /// its branch may not have been taken.
     Anywhere,
+    /// Unconditional attaches in eager scopes, visible after the file finishes.
+    ///
+    /// Lazy bodies and conditional arms may not run, so their attaches are
+    /// excluded.
+    Eof,
     /// Attaches visible at `offset` in the lazy scope `scope_id`.
     ///
     /// An attach in `scope_id` itself or an enclosing lazy body applies only after its
@@ -162,6 +167,9 @@ impl AttachView<'_> {
     fn sees(&self, index: &SemanticIndex, call: &SemanticCall, region: &AttachRegion) -> bool {
         match *self {
             AttachView::Anywhere => true,
+            AttachView::Eof => {
+                index.scope_is_eager(call.scope()) && matches!(region, AttachRegion::Unconditional)
+            },
             AttachView::Lazy {
                 offset,
                 scope_id: scope,
@@ -200,12 +208,12 @@ pub(crate) struct InheritedLayers {
 /// The point in a package's load at which a file views its collation siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CollationView {
-    /// Deferred (a function body, or end-of-file): the code runs after the
-    /// whole collation has loaded, so every sibling is visible.
-    Lazy,
     /// In load order (a top-level statement): only siblings sourced before this
     /// point have loaded, so a name defined later in the collation isn't visible.
     Eager,
+    /// The code runs after the whole collation has loaded (a function body,
+    /// or end-of-file), so every sibling is visible.
+    Deferred,
 }
 
 /// An import view combines the collation files that have loaded with the file's
@@ -218,11 +226,11 @@ struct ImportView<'a> {
 }
 
 impl<'a> ImportView<'a> {
-    /// This view includes every collation sibling and attach, regardless of
-    /// cursor position.
-    const ANYWHERE: Self = Self {
-        collation: CollationView::Lazy,
-        attaches: AttachView::Anywhere,
+    /// Visibility after the file finishes: every collation sibling and its
+    /// unconditional top-level attaches.
+    const DEFERRED: Self = Self {
+        collation: CollationView::Deferred,
+        attaches: AttachView::Eof,
     };
 
     /// Eager scopes see preceding collation files and attaches that have run.
@@ -237,7 +245,7 @@ impl<'a> ImportView<'a> {
                 attaches: AttachView::Eager(slice::from_ref(offset)),
             },
             false => Self {
-                collation: CollationView::Lazy,
+                collation: CollationView::Deferred,
                 attaches: AttachView::Lazy {
                     offset: *offset,
                     scope_id: cursor_scope,
@@ -253,8 +261,10 @@ impl File {
     /// order. Symbols that don't have local bindings (are unbound in the file's
     /// semantic index) can be resolved against these imports.
     ///
-    /// Over-approximates: every attach in the file contributes a layer,
-    /// including ones in a function body or in a branch that wasn't taken.
+    /// Models code that runs after the file finishes. Every collation sibling
+    /// and unconditional top-level attach is visible, even when the
+    /// `library()` call appears later in the file. Attaches inside lazy bodies
+    /// or conditional arms do not contribute because their code may not run.
     ///
     /// `library()` calls further down the file come earlier in the returned
     /// `Vec`, and collation files later in the package come earlier too. The
@@ -263,11 +273,11 @@ impl File {
     ///
     /// Offset-independent and stable across cursor moves. Recomputed only when
     /// the file's package membership, NAMESPACE, or this file's semantic calls
-    /// actually change. See [`File::imports_at`] for the offset-narrowed subset
-    /// of imports.
+    /// actually change. See [`File::imports_at`] for the position-specific
+    /// variant.
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
-        self.imports_in(db, ImportView::ANYWHERE)
+        self.imports_in(db, ImportView::DEFERRED)
     }
 
     /// Import layers visible at an `offset` in a file:
@@ -340,7 +350,7 @@ impl File {
     /// `semantic_index` read by `attach_layers()`.
     #[salsa::tracked(returns(ref))]
     pub(crate) fn imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> {
-        self.imports_by_sourcing_file_in(db, ImportView::ANYWHERE)
+        self.imports_by_sourcing_file_in(db, ImportView::DEFERRED)
     }
 
     /// [`File::imports_by_sourcing_file`], narrowed to `offset` the way
@@ -379,7 +389,7 @@ impl File {
         db: &dyn Db,
     ) -> Vec<(File, Vec<ImportLayer>)> {
         let own = self.attach_layers(db, AttachView::Anywhere);
-        self.inherited_layers(db, CollationView::Lazy)
+        self.inherited_layers(db, CollationView::Deferred)
             .iter()
             .map(|site| (site.file, site.layers.lookup_order(db, &own).collect()))
             .collect()
@@ -436,7 +446,7 @@ impl File {
     /// Bare [`File::imports`], without inheritance.
     pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let own = self.attach_layers(db, AttachView::Anywhere);
-        self.cross_file_layers(db, CollationView::Lazy)
+        self.cross_file_layers(db, CollationView::Deferred)
             .lookup_order(db, &own)
             .collect()
     }
@@ -522,7 +532,7 @@ fn build_inherited_layers(
     view: CollationView,
 ) -> InheritedLayers {
     let offsets = match view {
-        CollationView::Lazy => None,
+        CollationView::Deferred => None,
         CollationView::Eager => source_offsets(db, source_site, file),
     };
 
@@ -534,7 +544,17 @@ fn build_inherited_layers(
             source_site.attach_layers(db, AttachView::Eager(offsets)),
             source_site.semantic_index(db).exports_at_sources(offsets),
         ),
-        None => (source_site.attach_layers(db, AttachView::Anywhere), None),
+        None => {
+            let attach_view = match view {
+                // `file` starts after `source_site` finishes, so it inherits only
+                // `source_site`'s unconditional top-level attaches.
+                CollationView::Deferred => AttachView::Eof,
+                // A `source()` call in a lazy body has no known call position, so
+                // any attach in `source_site` may have run first.
+                CollationView::Eager => AttachView::Anywhere,
+            };
+            (source_site.attach_layers(db, attach_view), None)
+        },
     };
 
     // An unpinned `source()` call may run after any top-level binding, so use
@@ -665,7 +685,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         extend_with_namespace_package_imports(db, namespace, &mut enclosing);
     }
 
-    // `Lazy` includes successor attaches that run later and should outrank this
+    // `Deferred` includes successor attaches that run later and should outrank this
     // file's own. Ranking them below loses only names shadowed by a package a
     // successor reattaches.
     let mut attaches = predecessor_attach_layers(db, &visible_files);

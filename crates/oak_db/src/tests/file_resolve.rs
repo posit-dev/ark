@@ -792,6 +792,152 @@ fn test_resolve_finds_definition_through_sibling_library_attach() {
 }
 
 #[test]
+fn test_resolve_does_not_see_a_library_call_in_a_function_body() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["dep_fn".to_string()]),
+        ..Default::default()
+    };
+    let (dep, _dep_files) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "dep_fn <- function() 1\n",
+    )]);
+    let a = File::new(
+        &db,
+        file_path("ws/a.R"),
+        FileRevision::zero(),
+        Some("f <- function() library(dep)\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a]);
+    root.set_packages(&mut db).to(vec![dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(a.resolve(&db, name(&db, "dep_fn")).is_empty());
+}
+
+#[test]
+fn test_resolve_does_not_see_a_conditional_top_level_library_call() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["dep_fn".to_string()]),
+        ..Default::default()
+    };
+    let (dep, _dep_files) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "dep_fn <- function() 1\n",
+    )]);
+    let a = File::new(
+        &db,
+        file_path("ws/a.R"),
+        FileRevision::zero(),
+        Some("if (cond) library(dep)\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a]);
+    root.set_packages(&mut db).to(vec![dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(a.resolve(&db, name(&db, "dep_fn")).is_empty());
+}
+
+#[test]
+fn test_resolve_sees_an_unconditional_library_call_at_the_end_of_the_file() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["dep_fn".to_string()]),
+        ..Default::default()
+    };
+    let (dep, dep_files) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "dep_fn <- function() 1\n",
+    )]);
+    let a = File::new(
+        &db,
+        file_path("ws/a.R"),
+        FileRevision::zero(),
+        Some("x <- 1\nlibrary(dep)\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a]);
+    root.set_packages(&mut db).to(vec![dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let def = resolve_one(&db, a, "dep_fn");
+    assert_eq!(def.file(&db), dep_files[0]);
+}
+
+#[test]
+fn test_resolve_does_not_see_a_sourcing_files_library_call_in_a_function_body() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["dep_fn".to_string()]),
+        ..Default::default()
+    };
+    let (dep, _dep_files) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "dep_fn <- function() 1\n",
+    )]);
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("f <- function() library(dep)\nsource(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("ws/helpers.R"),
+        FileRevision::zero(),
+        Some("dummy <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    root.set_packages(&mut db).to(vec![dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(helpers.resolve(&db, name(&db, "dep_fn")).is_empty());
+}
+
+#[test]
+fn test_resolve_sees_a_sourcing_files_library_call_placed_after_the_source_call() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let dep_ns = Namespace {
+        exports: SortedVec::from_vec(vec!["dep_fn".to_string()]),
+        ..Default::default()
+    };
+    let (dep, dep_files) = make_package(&mut db, "dep", dep_ns, &[(
+        "ws/dep/R/z.R",
+        "dep_fn <- function() 1\n",
+    )]);
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\nlibrary(dep)\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("ws/helpers.R"),
+        FileRevision::zero(),
+        Some("dummy <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    root.set_packages(&mut db).to(vec![dep]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let def = resolve_one(&db, helpers, "dep_fn");
+    assert_eq!(def.file(&db), dep_files[0]);
+}
+
+#[test]
 fn test_resolve_namespace_import_beats_attached_package() {
     // The package imports `foo` from `depA` via NAMESPACE, and `a.R` also
     // attaches `depB`, which exports `foo` too. R searches the namespace before

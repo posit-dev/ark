@@ -50,9 +50,10 @@ impl<'db> File {
     /// a position or the bound expression read `def.kind(db)` and project
     /// per-variant.
     ///
-    /// `library()` calls contribute imports even from function bodies and
-    /// untaken branches. [`File::resolve_at`] includes only attaches guaranteed
-    /// to have run at the requested offset.
+    /// Uses end-of-file visibility: every collation sibling and only
+    /// unconditional top-level attaches are visible, including `library()`
+    /// calls after the query's source position. [`File::resolve_at`] applies
+    /// position-specific visibility.
     #[salsa::tracked(returns(clone))]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let exported = self.resolve_export(db, name);

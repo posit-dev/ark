@@ -14,7 +14,7 @@ use crate::File;
 /// `setup*.R` files into the test environment.
 ///
 /// Support files form their own collation. An `Eager` view keeps only
-/// source-order predecessors, while a `Lazy` view keeps every support file.
+/// source-order predecessors, while a `Deferred` view keeps every support file.
 /// Every `R/` file remains visible because package loading finishes first.
 pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
     let package = file.package(db)?;

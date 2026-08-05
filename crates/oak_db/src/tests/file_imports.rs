@@ -871,7 +871,7 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
         .any(|layer| { matches!(layer, ImportLayer::SourcingFile { file, .. } if *file == main) }));
 
     // The scan side has `File` layers but never a `SourcingFile`, either view.
-    for view in [CollationView::Eager, CollationView::Lazy] {
+    for view in [CollationView::Eager, CollationView::Deferred] {
         let scan_side = helpers.cross_file_layers(&db, view);
         assert!(scan_side
             .lookup_order(&db, &[])

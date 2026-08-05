@@ -166,13 +166,13 @@ pub(crate) fn visible_siblings(
     prefix_len: usize,
 ) -> Vec<File> {
     match view {
-        CollationView::Lazy => collation
+        CollationView::Eager => collation[..prefix_len].iter().rev().copied().collect(),
+        CollationView::Deferred => collation
             .iter()
             .rev()
             .copied()
             .filter(|sibling| *sibling != file)
             .collect(),
-        CollationView::Eager => collation[..prefix_len].iter().rev().copied().collect(),
     }
 }
 
