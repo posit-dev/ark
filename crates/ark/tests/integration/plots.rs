@@ -585,6 +585,52 @@ fn test_plot_source_context_stacking() {
     assert!(result_a.contains(&format!("$origin_uri\n[1] \"{}\"", file_a.uri_id)));
 }
 
+/// Test that a plot created inside `source()` keeps its origin when rendering
+/// is held past the end of the `source()` call.
+///
+/// https://github.com/posit-dev/ark/issues/1334
+///
+/// While a hold is active, `process_changes()` deliberately leaves
+/// `has_changes` set so it can notify once the hold is released. That leaves
+/// `has_changes` already true when the next plot starts drawing, which skips
+/// the eager origin capture in `hook_mode()`. By the time the hold is released,
+/// `source()` has returned and its `defer()` has popped the source context, so
+/// the origin has nothing left to fall back to.
+#[test]
+fn test_plot_origin_survives_hold_across_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Two plots under a hold, with no `dev.flush()`, so the notification is
+    // deferred past the end of `source()`.
+    let file = SourceFile::new("invisible(dev.hold())\nplot(1:5)\nplot(1:3)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Release the hold in a separate request, after source() has returned.
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let display_id = frontend.recv_iopub_display_data_id();
+    assert!(!display_id.is_empty());
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let query = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    assert!(result.contains(&format!("$origin_uri\n[1] \"{}\"", file.uri_id)));
+}
+
 /// Test that plots rendered with fig-width/fig-height metadata produce
 /// a PNG at the expected pixel dimensions (inches * 96 DPI).
 #[test]

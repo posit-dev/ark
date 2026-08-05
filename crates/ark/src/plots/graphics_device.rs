@@ -277,7 +277,7 @@ impl DeviceContext {
     }
 
     /// Clear any unconsumed pending origin.
-    pub(crate) fn clear_pending_origin(&self) {
+    fn clear_pending_origin(&self) {
         self.pending_origin.replace(None);
     }
 
@@ -338,10 +338,13 @@ impl DeviceContext {
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
 
-        // Eagerly capture the plot origin when drawing first starts for this
-        // change set. The source context stack may be popped before
-        // `process_changes()` runs, so we snapshot it now while it's available.
-        if !old_has_changes && is_drawing {
+        // Eagerly capture the plot origin while the source context stack is still
+        // available, since `process_changes()` may not run until after `source()`
+        // popped it. Capture whenever we have no snapshot rather than only on the
+        // `has_changes` false->true edge, which never comes back around for a new
+        // page started while earlier changes are still pending (e.g. `dev.hold()`).
+        let needs_origin = self.pending_origin.borrow().is_none();
+        if is_drawing && needs_origin {
             let ctx = self.capture_execution_context();
             let origin = self.capture_plot_origin(&ctx);
             self.set_pending_origin(origin);
