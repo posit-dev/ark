@@ -360,9 +360,8 @@ fn test_conditional_local_does_not_shadow_package_sibling() {
 
 #[test]
 fn test_deferred_exit_write_does_not_shadow_package_sibling() {
-    // `on.exit()` runs while the function exits, so the read below it never sees
-    // that write and the sibling stays reachable. We report the deferred write
-    // too, which over-approximates, but it must not hide `a.R`.
+    // The read runs before `on.exit()`, so it resolves to the sibling file,
+    // not the handler assignment.
     let mut db = TestDb::new();
     let (_root, pkg) = install_workspace_package(&mut db, "pkg");
 
@@ -375,7 +374,8 @@ fn test_deferred_exit_write_does_not_shadow_package_sibling() {
     let defs = b.resolve_at(&db, offset);
 
     let files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
-    assert!(files.contains(&a));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(files, vec![a]);
 }
 
 // Package-layer resolution, remaining items. These need either installed-package

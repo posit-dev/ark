@@ -825,16 +825,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
 
         self.walk.use_def_maps[owner_scope].ensure_symbol(symbol_id);
 
-        // Deferred: the body executes at an unknown later time, so the
-        // definition shouldn't shadow what's already live. This is the same
-        // mechanism as `<<-`.
-        //
-        // Known imprecision: the deferred def is visible to ALL uses in
-        // the parent scope (with `may_be_unbound: true`), including
-        // file-level uses that run before the lazy body executes. Ideally
-        // these defs would only be reachable from lazy scopes (functions),
-        // not from eager/file-level code.
-        self.walk.use_def_maps[owner_scope].record_deferred_definition(symbol_id, def_id);
+        // `Current + Lazy` handlers run after the owner's eager execution, so
+        // their assignments only reach lazy snapshots and `exports()`, not
+        // eager uses.
+        self.walk.use_def_maps[owner_scope].record_lazy_definition(symbol_id, def_id);
     }
 
     // Super-assignment is lexically in the current scope but binds in an

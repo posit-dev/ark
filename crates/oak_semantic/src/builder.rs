@@ -355,8 +355,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .map(|b| Arc::new(b.build()))
             .collect();
 
-        // The file scope's exit flow state is the file's exports. Capture it
-        // before the builders are consumed below.
+        // Add `on.exit()`/`on_load()` assignments to exports only after eager
+        // uses and snapshots are complete, since these contexts are not live
+        // during initial execution.
+        self.walk.use_def_maps[ScopeId::from(0)].fold_lazy_defs();
         let file_final_bindings = self.walk.use_def_maps[ScopeId::from(0)]
             .final_bindings()
             .clone();

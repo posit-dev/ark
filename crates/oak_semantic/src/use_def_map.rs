@@ -124,6 +124,11 @@ use crate::semantic_index::UseId;
 // retroactively adds it to all uses of that symbol (iterating the scope's
 // `uses` list), including `print(x)`.
 //
+// ### Lazy-only definitions (`record_lazy_definition()`)
+//
+// `Current + Lazy` assignments run after the owner's eager execution. They
+// reach lazy snapshots and final bindings, but never eager use bindings.
+//
 // ## Interpreting `Bindings`
 //
 // Callers examine the two fields of `Bindings` at a use site to determine
@@ -308,6 +313,9 @@ pub(crate) struct UseDefMapBuilder {
     // Definitions whose effect on past uses is deferred to `finish()`.
     // Currently used for `<<-` extra definitions in ancestor scopes.
     deferred_defs: Vec<(SymbolId, DefinitionId)>,
+    /// `Current + Lazy` assignments. They reach lazy snapshots and final
+    /// bindings, but not the eager `symbol_states` or `bindings_by_use`.
+    lazy_defs: FxHashMap<SymbolId, SmallVec<[DefinitionId; 2]>>,
     enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
     // Lazy snapshots (e.g. `reactive()`), notified of every definition of a
     // symbol so they fold in the whole union. Eager snapshots (e.g. `local()`)
@@ -321,6 +329,7 @@ impl UseDefMapBuilder {
             symbol_states: IndexVec::new(),
             bindings_by_use: IndexVec::new(),
             deferred_defs: Vec::new(),
+            lazy_defs: FxHashMap::default(),
             enclosing_snapshots: IndexVec::new(),
             lazy_watchers: FxHashMap::default(),
         }
@@ -422,6 +431,18 @@ impl UseDefMapBuilder {
         );
     }
 
+    /// Keep a `Current + Lazy` assignment out of eager flow state because its
+    /// handler runs after the owner. Add it to lazy snapshots and final bindings.
+    pub(crate) fn record_lazy_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        Self::notify_watchers(
+            &mut self.enclosing_snapshots,
+            &self.lazy_watchers,
+            symbol_id,
+            def_id,
+        );
+        self.lazy_defs.entry(symbol_id).or_default().push(def_id);
+    }
+
     /// Record a use of `symbol_id`. Clones the current live bindings for that
     /// symbol and associates them with `use_id`.
     pub(crate) fn record_use(&mut self, symbol_id: SymbolId, use_id: UseId) {
@@ -482,7 +503,13 @@ impl UseDefMapBuilder {
     /// encounter is conservatively merged in, because we can't know statically
     /// when the nested scope will be called.
     pub(crate) fn register_lazy_snapshot(&mut self, symbol_id: SymbolId) -> EnclosingSnapshotId {
-        let bindings = self.symbol_states[symbol_id].clone();
+        let mut bindings = self.symbol_states[symbol_id].clone();
+        // Include assignments recorded before registration. The watcher adds later ones.
+        if let Some(defs) = self.lazy_defs.get(&symbol_id) {
+            for &def_id in defs {
+                bindings.add_definition(def_id);
+            }
+        }
         let id = self.enclosing_snapshots.push(bindings);
         self.lazy_watchers.entry(symbol_id).or_default().push(id);
         id
@@ -533,6 +560,17 @@ impl UseDefMapBuilder {
         if let Some(ids) = watchers.get(&symbol_id) {
             for &snapshot_id in ids {
                 enclosing_snapshots[snapshot_id].add_definition(def_id);
+            }
+        }
+    }
+
+    /// Add lazy-only definitions to final bindings after eager uses and
+    /// mid-walk snapshots are complete.
+    pub(crate) fn fold_lazy_defs(&mut self) {
+        let lazy_defs = std::mem::take(&mut self.lazy_defs);
+        for (symbol_id, defs) in lazy_defs {
+            for def_id in defs {
+                self.symbol_states[symbol_id].add_definition(def_id);
             }
         }
     }

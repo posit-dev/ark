@@ -570,9 +570,9 @@ impl SemanticIndex {
     /// resolving, even if [`Self::reaching_definitions`] already yielded
     /// candidates.
     ///
-    /// A conditional local (`if (cond) x <- 1`) and a deferred write
-    /// (`on.exit(x <- 1)`, `x <<- 1`) both bind on some paths and not others, so
-    /// they answer false while still producing candidates.
+    /// Conditional locals and `<<-` writes can produce candidates while still
+    /// leaving some paths unbound. An eager use never sees a lazy handler write
+    /// such as `on.exit(x <- 1)`, so resolution continues outside this index.
     pub fn use_is_bound(&self, scope: ScopeId, use_id: UseId) -> bool {
         if !self
             .use_def_map(scope)
