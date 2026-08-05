@@ -295,6 +295,57 @@ fn test_testthat_top_level_library_narrows_by_offset() {
     assert!(library_attaches(&db, &after).contains(&"cli".to_string()));
 }
 
+/// Creates a `tests/testthat/` fixture with three support files and one test.
+/// Returns `(helper_a, helper_b, setup_c, test_x)`.
+fn testthat_support_workspace(db: &mut TestDb, helper_b: &str) -> (File, File, File, File) {
+    let pkg = install_workspace_package(db, "pkg");
+    let path = |name: &str| format!("workspace/pkg/tests/testthat/{name}");
+
+    let helper_a = make_package_file(db, &path("helper-a.R"), "a_val <- 1\n", pkg);
+    let helper_b = make_package_file(db, &path("helper-b.R"), helper_b, pkg);
+    let setup_c = make_package_file(db, &path("setup-c.R"), "c_val <- 3\n", pkg);
+    let test_x = make_package_file(db, &path("test-x.R"), "x <- 1\n", pkg);
+
+    pkg.set_scripts(db)
+        .to(vec![helper_a, helper_b, setup_c, test_x]);
+    (helper_a, helper_b, setup_c, test_x)
+}
+
+#[test]
+fn test_testthat_support_file_top_level_sees_only_earlier_support_files() {
+    // testthat sources support files in lexical order. `helper-b.R` runs before
+    // `setup-c.R`, so its top-level code cannot see that file.
+    let mut db = TestDb::new();
+    let (helper_a, helper_b, _setup_c, _test_x) =
+        testthat_support_workspace(&mut db, "b_val <- 2\n");
+
+    let layers = helper_b.imports_at(&db, TextSize::from(0));
+    assert_eq!(package_files(&layers), vec![helper_a]);
+}
+
+#[test]
+fn test_testthat_support_file_body_sees_every_support_file() {
+    // The function body runs after every support file is sourced. LIFO lookup
+    // therefore puts `setup-c.R` before `helper-a.R`.
+    let mut db = TestDb::new();
+    let source = "f <- function() {\n  inside\n}\n";
+    let (helper_a, helper_b, setup_c, _test_x) = testthat_support_workspace(&mut db, source);
+
+    let offset = TextSize::from(source.find("inside").unwrap() as u32);
+    let layers = helper_b.imports_at(&db, offset);
+    assert_eq!(package_files(&layers), vec![setup_c, helper_a]);
+}
+
+#[test]
+fn test_testthat_test_file_top_level_sees_every_support_file() {
+    // `test-x.R` runs after every support file, so its eager view retains all of them.
+    let mut db = TestDb::new();
+    let (helper_a, helper_b, setup_c, test_x) = testthat_support_workspace(&mut db, "b_val <- 2\n");
+
+    let layers = test_x.imports_at(&db, TextSize::from(0));
+    assert_eq!(package_files(&layers), vec![setup_c, helper_b, helper_a]);
+}
+
 #[test]
 fn test_library_in_function_scoped_source_is_visible_only_in_that_function() {
     // A sourced `library()` becomes an `Attach` in `source()`'s calling scope.
@@ -734,4 +785,65 @@ fn test_attach_in_a_function_body_is_visible_later_in_that_body() {
     assert_eq!(attaches_at(&db, file, source, &["inside"]), vec![vec![
         "cli".to_string()
     ]]);
+}
+
+#[test]
+fn test_script_r_directory_top_level_sees_only_alphabetic_predecessor() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
+    let b_source = "x <- 1\n";
+    let b = make_file(&mut db, "ws/R/b.R", b_source);
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `b.R` is alphabetically after `a.R`, so `a.R` is its collation
+    // predecessor.
+    let offset = TextSize::from(b_source.find('x').unwrap() as u32);
+    assert_eq!(package_files(&b.imports_at(&db, offset)), vec![a]);
+
+    // `a.R` has no predecessor: it's first in collation order.
+    let offset = TextSize::from(0);
+    assert_eq!(
+        package_files(&a.imports_at(&db, offset)),
+        Vec::<File>::new()
+    );
+}
+
+#[test]
+fn test_script_r_directory_collation_is_case_insensitive() {
+    // Matches `oak_scan::packages::order_alphabetically`: basenames sort
+    // case-insensitively, so `a.R` collates before `Z.R` even though it's
+    // lexically greater in byte order.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let z_source = "z_val <- 1\n";
+    let z_file = make_file(&mut db, "ws/R/Z.R", z_source);
+    let a_file = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
+    root.set_scripts(&mut db).to(vec![z_file, a_file]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let offset = TextSize::from(z_source.len() as u32);
+    assert_eq!(package_files(&z_file.imports_at(&db, offset)), vec![a_file]);
+}
+
+#[test]
+fn test_script_r_directory_unplaced_file_still_sees_only_predecessors() {
+    // A file the editor opened before the scanner placed it sits in
+    // `OrphanRoot`, so it's missing from its own `collation_siblings`. Its
+    // collation position comes from its basename anyway, so the top-level view
+    // stays the strict predecessor prefix instead of widening to every sibling.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
+    let b_source = "x <- 1\n";
+    let b = make_file(&mut db, "ws/R/b.R", b_source);
+    let c = make_file(&mut db, "ws/R/c.R", "c_val <- 3\n");
+
+    // `b.R` is left out: unscanned, so it isn't a collation sibling of anyone.
+    root.set_scripts(&mut db).to(vec![a, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let offset = TextSize::from(b_source.find('x').unwrap() as u32);
+    assert_eq!(package_files(&b.imports_at(&db, offset)), vec![a]);
 }

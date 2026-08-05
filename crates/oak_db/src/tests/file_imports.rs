@@ -615,3 +615,234 @@ fn test_cross_file_layers_memoized_across_effect_calls() {
 
     assert_eq!(db.executions("cross_file_layers"), 1);
 }
+
+#[test]
+fn test_script_r_directory_siblings_see_each_other() {
+    // Non-package scripts in an `R/` directory are collated alphabetically,
+    // exactly like a package `R/` with no `Collate:` (#15144, #14790).
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec!["File(b.R)".to_string()]);
+    assert_eq!(shape(&db, b.imports(&db)), vec!["File(a.R)".to_string()]);
+}
+
+#[test]
+fn test_script_outside_r_directory_stays_standalone() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/scripts/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/scripts/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
+    assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
+}
+
+#[test]
+fn test_package_owned_r_file_excluded_from_collate_stays_standalone() {
+    // An `R/` file left out of `Collate:` carries a package back-pointer but
+    // isn't in `package.files()`, so it must keep resolving as a standalone
+    // script (same as `data-raw/`) and not take the new script-collation arm
+    // just because it sits in an `R/` directory. That arm is gated on
+    // `package(db) == None`.
+    let mut db = TestDb::new();
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("internal <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let extra = File::new(
+        &db,
+        file_path("w/pkg/R/extra.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![extra]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert_eq!(shape(&db, extra.imports(&db)), Vec::<String>::new());
+}
+
+#[test]
+fn test_script_r_directory_predecessor_attach_reaches_sibling() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr"]);
+
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(dplyr)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_script_r_directory_below_uses_full_default_search_path() {
+    // Guards against reusing `package_load_layers`'s `base_layer` for the
+    // script path: a non-package script sees R's whole startup search path
+    // (stats, graphics, ..., base), not just `base`. `package_load_layers`
+    // uses `base_layer` because NAMESPACE supplies the rest for a package
+    // file; a script has no NAMESPACE.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &[
+        "stats",
+        "graphics",
+        "grDevices",
+        "utils",
+        "datasets",
+        "methods",
+        "base",
+    ]);
+
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "Package(stats)".to_string(),
+        "Package(graphics)".to_string(),
+        "Package(grDevices)".to_string(),
+        "Package(utils)".to_string(),
+        "Package(datasets)".to_string(),
+        "Package(methods)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_separate_r_directories_do_not_cross_collate() {
+    // Each `R/` directory collates independently, keyed on its parent path,
+    // so a monorepo with several `R/` folders doesn't cross-collate.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/one/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/two/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
+    assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
+}
+
+#[test]
+fn test_cross_file_layers_backdates_on_unrelated_script_change() {
+    // `collation_siblings` reads every workspace root's `scripts`, so a
+    // script added anywhere forces it to re-execute. But the result filtered
+    // to `a`/`b`'s own `R/` directory is unchanged, so salsa backdates it and
+    // `cross_file_layers` never re-executes.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let _ = a.imports(&db);
+    assert_eq!(db.executions("cross_file_layers"), 1);
+
+    let elsewhere = File::new(
+        &db,
+        file_path("ws/other/z.R"),
+        FileRevision::zero(),
+        Some("z_val <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, elsewhere]);
+
+    let _ = a.imports(&db);
+    assert_eq!(db.executions("cross_file_layers"), 1);
+}
