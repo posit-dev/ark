@@ -309,20 +309,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         Some(current)
     }
 
-    /// Whether `scope` binds `name` anywhere, regardless of flow position: an
-    /// already-recorded `IS_BOUND` definition or a pre-scanned assignment. The
-    /// pre-scan covers definitions the walk hasn't reached yet in this scope.
+    /// Whether `scope` binds `name` anywhere, regardless of flow position.
+    /// `bound_anywhere` records syntactic bindings before the walk reaches
+    /// them. `walked_binding()` adds parameters and `<<-` targets after their
+    /// binding scope has been resolved.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         self.walked_binding(scope, name).is_some() || self.scan.bound_anywhere[scope].binds(name)
     }
 
-    /// The site where `scope` binds `name`, matching what
-    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere) counts as a binding
-    /// (so it returns `Some` on exactly the same names). Prefers the
-    /// scan-collected site in `bound_anywhere`, falling back to the range of an
-    /// already-walked `IS_BOUND` definition (e.g. a parameter, which the scan
-    /// seeds straight into `bound_so_far` without a `bound_anywhere` entry). Used to
-    /// point the lazy-shadow diagnostic at the overwrite.
+    /// The binding site for every name counted by
+    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere). Prefers the
+    /// scan-collected site in `bound_anywhere`, then falls back to an
+    /// already-walked parameter or `<<-` target. Points the lazy-shadow
+    /// diagnostic at the overwrite.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
         if let Some(range) = self.scan.bound_anywhere[scope].binding_range(name) {
             return Some(range);

@@ -1,3 +1,4 @@
+use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -546,30 +547,10 @@ impl SemanticIndex {
         scope_id: ScopeId,
         use_id: UseId,
     ) -> impl Iterator<Item = (ScopeId, DefinitionId)> + '_ {
-        let bindings = self.use_def_map(scope_id).bindings_at_use(use_id);
-        let mut defs: Vec<(ScopeId, DefinitionId)> = bindings
-            .definitions()
-            .iter()
-            .map(|&d| (scope_id, d))
-            .collect();
-
-        if bindings.may_be_unbound() {
-            for (ancestor_scope, ancestor_bindings) in
-                self.enclosing_bindings_chain(scope_id, use_id)
-            {
-                defs.extend(
-                    ancestor_bindings
-                        .definitions()
-                        .iter()
-                        .map(|&def| (ancestor_scope, def)),
-                );
-                if !ancestor_bindings.may_be_unbound() {
-                    break;
-                }
-            }
-        }
-
-        defs.into_iter()
+        self.reaching_bindings(scope_id, use_id)
+            .flat_map(|(scope, bindings)| {
+                bindings.definitions().iter().map(move |&def| (scope, def))
+            })
     }
 
     /// Whether every path reaching the use at `use_id` is bound by something in
@@ -586,20 +567,30 @@ impl SemanticIndex {
     /// A definitely-bound enclosing scope prevents cross-file resolution even
     /// when nearer scopes bind only conditionally.
     pub fn use_is_bound(&self, scope: ScopeId, use_id: UseId) -> bool {
-        if !self
-            .use_def_map(scope)
-            .bindings_at_use(use_id)
-            .may_be_unbound()
-        {
-            return true;
-        }
-        for (_, bindings) in self.enclosing_bindings_chain(scope, use_id) {
-            if !bindings.may_be_unbound() {
-                return true;
-            }
-        }
+        self.reaching_bindings(scope, use_id)
+            .any(|(_, bindings)| !bindings.may_be_unbound())
+    }
 
-        false
+    /// Yields bindings for the use at `(scope, use_id)`, from the local scope
+    /// outward while each closer scope may be unbound. Stops after the first
+    /// definitely-bound scope, which shadows every outer scope.
+    fn reaching_bindings(
+        &self,
+        scope: ScopeId,
+        use_id: UseId,
+    ) -> impl Iterator<Item = (ScopeId, &Bindings)> {
+        let local = self.use_def_map(scope).bindings_at_use(use_id);
+        let mut may_fall_through = local.may_be_unbound();
+        let mut chain = self.enclosing_bindings_chain(scope, use_id);
+
+        iter::once((scope, local)).chain(iter::from_fn(move || {
+            if !may_fall_through {
+                return None;
+            }
+            let (ancestor_scope, bindings) = chain.next()?;
+            may_fall_through = bindings.may_be_unbound();
+            Some((ancestor_scope, bindings))
+        }))
     }
 
     /// Returns the nearest enclosing binding snapshot for a use whose local
