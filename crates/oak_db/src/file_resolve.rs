@@ -50,8 +50,9 @@ impl<'db> File {
     /// a position or the bound expression read `def.kind(db)` and project
     /// per-variant.
     ///
-    /// For the offset-aware, sequential-semantics variant, see
-    /// [`File::resolve_at`].
+    /// `library()` calls contribute imports even from function bodies and
+    /// untaken branches. [`File::resolve_at`] includes only attaches guaranteed
+    /// to have run at the requested offset.
     #[salsa::tracked(returns(clone))]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let exported = self.resolve_export(db, name);
@@ -104,15 +105,9 @@ impl<'db> File {
                 .collect();
         }
 
-        // Nothing local reaches the use, so resolve across files.
-        if !index.scope_is_eager(use_scope) {
-            // Lazy body: the end-of-file view it sees when it actually runs.
-            return self.resolve(db, name);
-        }
-
-        // Eager scope: collation predecessors / other visible files
-        // (exports-only chase, same as `resolve`'s per-context walk). Avoids
-        // the sibling cycle and matches R's namespace semantics.
+        // At top level, `ImportView::at()` sees preceding collation files. In
+        // a function body, it sees the complete collation but keeps attaches
+        // offset- and scope-aware.
         resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
     }
 

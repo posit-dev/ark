@@ -311,12 +311,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // The `else` arm is the `if`'s final child, so its attach reaches the
         // closing brace. End the consequence attach at its arm so it cannot reach
         // the `else` arm.
-        let rejoined = |site: &AttachSite| {
+        let attached_in_consequence = |site: &AttachSite| {
             consequence
                 .iter()
                 .any(|other| other.package == site.package)
         };
-        let (rejoined, dropped): (Vec<_>, Vec<_>) = alternative.into_iter().partition(rejoined);
+        let (rejoined, dropped): (Vec<_>, Vec<_>) =
+            alternative.into_iter().partition(attached_in_consequence);
 
         self.record_attach_order_ambiguity(&consequence, &rejoined, range);
 

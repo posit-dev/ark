@@ -348,7 +348,7 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
     log::warn!(
-        "Cyclic `source()` Detected at {}. Rebuilding without cross-file resolution.",
+        "Cyclic `source()` detected at {}. Rebuilding without cross-file resolution.",
         file.path(db),
     );
     let parsed = file.parse(db);

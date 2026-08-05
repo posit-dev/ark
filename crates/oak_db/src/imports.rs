@@ -392,11 +392,9 @@ fn normalise_path(path: &Utf8Path) -> Utf8PathBuf {
         match component {
             Utf8Component::CurDir => {},
             Utf8Component::ParentDir => {
-                if !out.pop() {
-                    // Already at the root (or before the prefix /
-                    // root component); leading `..` has nothing to
-                    // pop, so drop it.
-                }
+                // A `..` with nothing to pop is at the root (or before the
+                // prefix / root component). Just drop.
+                out.pop();
             },
             other => out.push(other.as_str()),
         }

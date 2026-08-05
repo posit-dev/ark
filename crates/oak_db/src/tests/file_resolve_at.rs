@@ -628,6 +628,91 @@ fn test_local_block_sees_a_file_scope_binding_before_it() {
     assert_eq!(usize::from(range.start()), 0);
 }
 
+#[test]
+fn test_lazy_use_does_not_see_a_sibling_function_body_attach() {
+    // Nothing requires `g()` to run before `f()`, so its `library()` cannot
+    // make `filter()` visible in `f()`.
+    let mut db = TestDb::new();
+    install_library_package(&mut db, "dplyr", &["filter"], &[(
+        "library/dplyr/R/a.R",
+        "filter <- function() 1\n",
+    )]);
+
+    let source = "g <- function() library(dplyr)\nf <- function() filter(x)\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("filter").unwrap() as u32);
+    assert!(file.resolve_at(&db, offset).is_empty());
+}
+
+#[test]
+fn test_lazy_use_does_not_see_an_attach_later_in_the_same_body() {
+    // `library()` follows `filter()` in the same function body, so it is not
+    // visible at this use.
+    let mut db = TestDb::new();
+    install_library_package(&mut db, "dplyr", &["filter"], &[(
+        "library/dplyr/R/a.R",
+        "filter <- function() 1\n",
+    )]);
+
+    let source = "f <- function() {\n  filter(x)\n  library(dplyr)\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("filter").unwrap() as u32);
+    assert!(file.resolve_at(&db, offset).is_empty());
+}
+
+#[test]
+fn test_lazy_use_sees_an_attach_earlier_in_the_same_body() {
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "dplyr", &["filter"], &[(
+        "library/dplyr/R/a.R",
+        "filter <- function() 1\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let source = "f <- function() {\n  library(dplyr)\n  filter(x)\n}\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("filter").unwrap() as u32);
+    assert_eq!(resolve_one(&db, file, offset).file(&db), pkg_file);
+}
+
+#[test]
+fn test_lazy_use_sees_an_unconditional_top_level_attach_after_the_function() {
+    // An unconditional top-level `library()` is visible because the function
+    // body can run after the file reaches it.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_library_package(&mut db, "dplyr", &["filter"], &[(
+        "library/dplyr/R/a.R",
+        "filter <- function() 1\n",
+    )]);
+    let pkg_file = pkg.files(&db)[0];
+
+    let source = "f <- function() filter(x)\nlibrary(dplyr)\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("filter").unwrap() as u32);
+    assert_eq!(resolve_one(&db, file, offset).file(&db), pkg_file);
+}
+
+#[test]
+fn test_lazy_use_does_not_see_a_conditional_attach_outside_its_arm() {
+    // `library()` inside a conditional arm is not visible from a function body
+    // outside that arm.
+    let mut db = TestDb::new();
+    install_library_package(&mut db, "dplyr", &["filter"], &[(
+        "library/dplyr/R/a.R",
+        "filter <- function() 1\n",
+    )]);
+
+    let source = "if (cond) {\n  library(dplyr)\n}\nf <- function() filter(x)\n";
+    let file = make_file(&mut db, "a.R", source);
+
+    let offset = TextSize::from(source.find("filter").unwrap() as u32);
+    assert!(file.resolve_at(&db, offset).is_empty());
+}
+
 /// A workspace holding `main.R`, which sources `helpers.R`, plus whatever else
 /// the caller lists. Returns the files in the given order.
 fn setup_sourced(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {
@@ -764,10 +849,9 @@ fn test_offset_narrowing_applies_independently_per_sourcing_site() {
 
 #[test]
 fn test_lazy_view_sees_both_sourcing_files() {
-    // A function body runs after the whole file, so unlike the offset-narrowed
-    // top-level case, it sees both sourcing files' bindings regardless of
-    // where each `source()` call sits in its own file. Exercises the tracked
-    // `imports_by_sourcing_file` path (via `File::resolve`), not the `_at` one.
+    // A function body sees the complete collation, so each sourcing context
+    // includes bindings from `a.R` and `b.R` regardless of `source()` call
+    // positions.
     let mut db = TestDb::new();
     let helpers_source = "f <- function() foo\n";
     let files = setup_sourced(&mut db, &[
