@@ -1,9 +1,11 @@
 use std::borrow::Cow;
+use std::slice;
 
 use biome_rowan::TextSize;
 use camino::Utf8Path;
 use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::ExportsAtSource;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
@@ -19,9 +21,17 @@ use crate::Package;
 /// package-name strings cross out of `oak_db` for resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportLayer {
-    /// A predecessor file in a package's collation, or another workspace
-    /// file. Names are resolved through `file.exports(db)`.
+    /// A file whose top level has fully run by the time this layer is read: a
+    /// collation predecessor, or a sourcing file seen from a lazy context.
+    /// Names are resolved through `file.exports(db)`.
     File(File),
+    /// A file that sources the one being resolved, seen as of its `source()`
+    /// call. The rest of `file` hadn't run by then, so only `exports_so_far`
+    /// counts.
+    SourcingFile {
+        file: File,
+        exports_so_far: ExportsAtSource,
+    },
     /// The package whose NAMESPACE declares `importFrom(pkg, name)` entries.
     /// [`Package::import_index`] says which entry, if any, binds a given name.
     From(Package),
@@ -67,18 +77,19 @@ impl CrossFileLayers {
 
 /// Which of a file's own `library()` attaches a caller sees.
 #[derive(Clone, Copy)]
-enum AttachView {
+enum AttachView<'a> {
     /// Every attach in the file.
     ///
     /// Over-approximates on two axes. An attach in a function body counts even
     /// though the body may never run, and a conditional one counts even though
     /// its branch may not have been taken.
     Anywhere,
-    /// Attaches visible at `offset` in lazy `scope`.
+    /// Attaches visible at `offset` in the lazy scope `scope_id`.
     ///
-    /// An attach in `scope_id` or an enclosing lazy body applies only after its
-    /// `library()` call. The lazy view treats an unconditional top-level attach
-    /// as visible regardless of position, which over-approximates this case:
+    /// An attach in `scope_id` itself or an enclosing lazy body applies only after its
+    /// `library()` call. On the other hand, the lazy view treats an
+    /// unconditional top-level attach as visible regardless of position, which
+    /// over-approximates this case:
     ///
     /// ```r
     /// f <- function() {
@@ -95,13 +106,40 @@ enum AttachView {
     /// Conditional attaches remain limited to their arm, and child or sibling
     /// bodies do not reach `scope_id`.
     Lazy { offset: TextSize, scope_id: ScopeId },
-    /// The attaches that have run and still hold at `offset` in an eagerly
-    /// evaluated scope. Calls reached only by running a lazy body are dropped,
-    /// as are calls after the offset.
-    Eager(TextSize),
+    /// Attaches in eager scopes that are visible at any of `offsets`.
+    ///
+    /// Attaches in lazy bodies and after every offset are excluded. Multiple
+    /// offsets represent distinct `source()` sites, which may have different
+    /// attach views.
+    ///
+    /// ```r
+    /// library(pkga)
+    /// source("init.R")
+    ///
+    /// library(pkgb)
+    /// source("init.R")
+    /// ```
+    ///
+    /// or
+    ///
+    /// ```r
+    /// library(pkga)
+    /// if (cond1) {
+    ///   source("init.R")
+    /// }
+    /// library(pkgb)
+    /// ...
+    /// if (cond2) {
+    ///   source("init.R")
+    /// }
+    /// ```
+    ///
+    /// `init.R` runs twice, represented by an offset for each `source()`
+    /// call. It sees `pkga` in both cases but only the second run sees `pkgb`.
+    Eager(&'a [TextSize]),
 }
 
-impl AttachView {
+impl AttachView<'_> {
     fn sees(&self, index: &SemanticIndex, call: &SemanticCall, region: &AttachRegion) -> bool {
         match *self {
             AttachView::Anywhere => true,
@@ -124,11 +162,20 @@ impl AttachView {
                         region.contains(call, offset)
                 },
             },
-            AttachView::Eager(offset) => {
-                index.scope_is_eager(call.scope()) && region.contains(call, offset)
+            AttachView::Eager(offsets) => {
+                index.scope_is_eager(call.scope()) &&
+                    offsets.iter().any(|&offset| region.contains(call, offset))
             },
         }
     }
+}
+
+/// Layers that a sourcing file makes visible to the sourced file. `file` is the
+/// file holding the `source()` call.
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub(crate) struct InheritedLayers {
+    pub file: File,
+    pub layers: CrossFileLayers,
 }
 
 /// The point in a package's load at which a file views its collation siblings.
@@ -162,7 +209,7 @@ impl File {
     /// of imports.
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
-        let layers = self.cross_file_layers(db, CollationView::Lazy);
+        let layers = self.resolution_layers(db, CollationView::Lazy);
         let own = self.attach_layers(db, AttachView::Anywhere);
         layers.lookup_order(&own).cloned().collect()
     }
@@ -198,7 +245,10 @@ impl File {
         let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
             // Predecessors only, and own attaches narrowed to the calls that
             // have run by `offset`.
-            (CollationView::Eager, AttachView::Eager(offset))
+            (
+                CollationView::Eager,
+                AttachView::Eager(slice::from_ref(&offset)),
+            )
         } else {
             (CollationView::Lazy, AttachView::Lazy {
                 offset,
@@ -206,9 +256,130 @@ impl File {
             })
         };
 
-        let layers = self.cross_file_layers(db, collation);
+        let layers = self.resolution_layers(db, collation);
         let own = self.attach_layers(db, attaches);
         layers.lookup_order(&own).cloned().collect()
+    }
+
+    fn resolution_layers<'db>(
+        self,
+        db: &'db dyn Db,
+        view: CollationView,
+    ) -> Cow<'db, CrossFileLayers> {
+        let inherited = self.inherited_layers(db, view);
+        if inherited.is_empty() {
+            return Cow::Borrowed(self.cross_file_layers(db, view));
+        }
+
+        let mut above = Vec::new();
+        let mut below = Vec::new();
+        for site in inherited {
+            above.extend(site.layers.above.iter().cloned());
+            below.extend(site.layers.below.iter().cloned());
+        }
+        Cow::Owned(CrossFileLayers { above, below })
+    }
+
+    /// The lookup-ordered layers this file's lazy / end-of-file view sees, one
+    /// context per file that sources this one (see [`File::inherited_layers`]),
+    /// or a single context of [`File::cross_file_layers`] if no inheritance.
+    ///
+    /// The contexts of sourcing files are resolved as alternatives not as a
+    /// priority order. Symbols resolve in each context and are returned as a
+    /// union of results.
+    ///
+    /// Tracked query, firewall between `resolve()` and the `no_eq`
+    /// `semantic_index` read by `attach_layers()`.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> {
+        let own = self.attach_layers(db, AttachView::Anywhere);
+        self.layers_by_sourcing_file(db, CollationView::Lazy)
+            .into_iter()
+            .map(|context| context.lookup_order(&own).cloned().collect())
+            .collect()
+    }
+
+    /// [`File::imports_by_sourcing_file`], narrowed to `offset` the way
+    /// [`File::imports_at`] narrows [`File::imports`].
+    ///
+    /// Not tracked because keying a cache on `(self, offset)` would add an entry
+    /// per cursor position.
+    pub(crate) fn imports_by_sourcing_file_at(
+        self,
+        db: &dyn Db,
+        offset: TextSize,
+    ) -> Vec<Vec<ImportLayer>> {
+        let index = self.semantic_index(db);
+        let (cursor_scope, _) = index.scope_at(offset);
+
+        let (collation, attaches) = if index.scope_is_eager(cursor_scope) {
+            (
+                CollationView::Eager,
+                AttachView::Eager(slice::from_ref(&offset)),
+            )
+        } else {
+            (CollationView::Lazy, AttachView::Lazy {
+                offset,
+                scope_id: cursor_scope,
+            })
+        };
+
+        let own = self.attach_layers(db, attaches);
+        self.layers_by_sourcing_file(db, collation)
+            .into_iter()
+            .map(|context| context.lookup_order(&own).cloned().collect())
+            .collect()
+    }
+
+    /// One context per file that sources this one, or a single context when
+    /// nothing does.
+    fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
+        let inherited = self.inherited_layers(db, view);
+        if inherited.is_empty() {
+            return vec![self.cross_file_layers(db, view)];
+        }
+        inherited.iter().map(|site| &site.layers).collect()
+    }
+
+    /// The layers `self` inherits from each file that sources it, one entry per
+    /// file in `self.sourced_by(db)`, each recursively including what that file
+    /// itself inherits. That recursion is what makes inheritance transitive
+    /// across a `main.R -> setup.R -> helpers.R` chain.
+    ///
+    /// Empty for a file with an explicit load order.
+    ///
+    /// `cycle_result` is defensive. Resolving a source site reads the target's
+    /// `exports`, meaning that a source cycle is always also a `semantic_index`
+    /// cycle which has its own recovery.
+    #[salsa::tracked(returns(ref), cycle_result =
+    inherited_layers_cycle_result)]
+    pub(crate) fn inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> {
+        if self.has_explicit_load_order(db) {
+            return Vec::new();
+        }
+
+        self.sourced_by(db)
+            .iter()
+            .map(|&sourcing_file| build_inherited_layers(db, self, sourcing_file, view))
+            .collect()
+    }
+
+    /// Whether something other than a `source()` call fixes load order, e.g.
+    /// package or testthat collation.
+    fn has_explicit_load_order(self, db: &dyn Db) -> bool {
+        let Some(package) = self.package(db) else {
+            return false;
+        };
+        is_testthat_file(self, db) || self.is_package_source(db, package)
+    }
+
+    /// Bare [`File::imports`], without inheritance.
+    pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
+        let own = self.attach_layers(db, AttachView::Anywhere);
+        self.cross_file_layers(db, CollationView::Lazy)
+            .lookup_order(&own)
+            .cloned()
+            .collect()
     }
 
     /// This file's own `library()` / `require()` attaches as `Package` layers,
@@ -216,7 +387,7 @@ impl File {
     /// Reads the file's own semantic index.
     ///
     /// An attach to a package absent from every root is dropped (no entity).
-    fn attach_layers(self, db: &dyn Db, view: AttachView) -> Vec<ImportLayer> {
+    fn attach_layers(self, db: &dyn Db, view: AttachView<'_>) -> Vec<ImportLayer> {
         let index = self.semantic_index(db);
         index
             .semantic_calls()
@@ -307,6 +478,101 @@ impl File {
 
         siblings.sort_by_cached_key(|file| collation_basename_key(*file, db));
         siblings
+    }
+}
+
+fn inherited_layers_cycle_result(
+    _db: &dyn Db,
+    _id: salsa::Id,
+    _file: File,
+    _view: CollationView,
+) -> Vec<InheritedLayers> {
+    Vec::new()
+}
+
+/// What `sourcing_file` contributes to `target`, its own bands plus what it
+/// inherits in turn.
+///
+/// `sourcing_file`'s own `below` band goes last because the default search
+/// path lives at the end of it, and that has to stay at the bottom of the
+/// whole chain.
+fn build_inherited_layers(
+    db: &dyn Db,
+    file: File,
+    source_site: File,
+    view: CollationView,
+) -> InheritedLayers {
+    let offsets = match view {
+        CollationView::Lazy => None,
+        CollationView::Eager => source_offsets(db, source_site, file),
+    };
+
+    let own_cross = source_site.cross_file_layers(db, view);
+    let grandparents = source_site.inherited_layers(db, view);
+
+    let (own_attach, exports_so_far) = match offsets.as_deref() {
+        Some(offsets) => (
+            source_site.attach_layers(db, AttachView::Eager(offsets)),
+            source_site.semantic_index(db).exports_at_sources(offsets),
+        ),
+        None => (source_site.attach_layers(db, AttachView::Anywhere), None),
+    };
+
+    // An unpinned `source()` call may run after any top-level binding, so use
+    // the whole file as over-approximation.
+    let source_layer = match exports_so_far {
+        Some(exports_so_far) => ImportLayer::SourcingFile {
+            file: source_site,
+            exports_so_far,
+        },
+        None => ImportLayer::File(source_site),
+    };
+
+    let mut above = vec![source_layer];
+    above.extend(own_cross.above.iter().cloned());
+    above.extend(
+        grandparents
+            .iter()
+            .flat_map(|site| site.layers.above.iter().cloned()),
+    );
+
+    let mut below = own_attach;
+    below.extend(
+        grandparents
+            .iter()
+            .flat_map(|site| site.layers.below.iter().cloned()),
+    );
+    below.extend(own_cross.below.iter().cloned());
+
+    InheritedLayers {
+        file: source_site,
+        layers: CrossFileLayers { above, below },
+    }
+}
+
+/// Returns source-order offsets for eager `source()` calls from `sourcing_file` to
+/// `file`.
+///
+/// `None` leaves the context unpinned when no calls target `file` or any call is
+/// lazy. A lazy call can run after the rest of `sourcing_file`, so no offset bounds
+/// its imports.
+fn source_offsets(db: &dyn Db, sourcing_file: File, file: File) -> Option<Vec<TextSize>> {
+    let index = sourcing_file.semantic_index(db);
+    let mut offsets = Vec::new();
+
+    for site in sourcing_file.source_sites(db) {
+        if site.target() != Some(file) {
+            continue;
+        }
+        if !index.scope_is_eager(site.scope()) {
+            return None;
+        }
+        offsets.push(site.offset());
+    }
+
+    match offsets.is_empty() {
+        true => None,
+        false => Some(offsets),
     }
 }
 

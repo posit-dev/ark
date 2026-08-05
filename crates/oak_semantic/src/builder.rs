@@ -50,6 +50,7 @@ use scan::FlowState;
 use scan::OpenScope;
 
 use crate::resolver::ImportsResolver;
+use crate::semantic_index::BindingTimelineBuilder;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -182,6 +183,7 @@ struct WalkState {
     lazy_snapshots: FxHashMap<(ScopeId, SymbolId), (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     namespace_accesses: Vec<NamespaceAccess>,
+    bindings_at_sources: BindingTimelineBuilder,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
@@ -238,6 +240,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 lazy_snapshots: FxHashMap::default(),
                 semantic_calls: Vec::new(),
                 namespace_accesses: Vec::new(),
+                bindings_at_sources: BindingTimelineBuilder::default(),
             },
         }
     }
@@ -287,6 +290,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             scope = self.scopes[scope].parent?;
         }
         Some(scope)
+    }
+
+    /// The scan unit that controls when code in `scope` runs: that scope itself
+    /// when lazy, otherwise its nearest lazy ancestor. `None` means the code
+    /// runs while the file loads.
+    ///
+    /// Mid-build twin of [`SemanticIndex::enclosing_lazy_scope`], reading the
+    /// arena the walk is still filling in.
+    fn enclosing_lazy_scope(&self, scope: ScopeId) -> Option<ScopeId> {
+        let mut current = scope;
+        while !self.scopes[current].kind.is_lazy() {
+            current = self.scopes[current].parent?;
+        }
+        Some(current)
     }
 
     /// Whether `scope` binds `name` anywhere, regardless of flow position: an
@@ -363,6 +380,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             self.walk.namespace_accesses,
             self.diagnostics,
             file_final_bindings,
+            self.walk.bindings_at_sources,
         )
     }
 }

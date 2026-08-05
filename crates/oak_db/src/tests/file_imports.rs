@@ -1,7 +1,9 @@
+use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::file_imports::CollationView;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
@@ -186,8 +188,8 @@ fn test_package_file_emits_namespace_and_collation_layers() {
             ImportLayer::Package(p) => {
                 shape.push(format!("Package({})", p.name(&db)));
             },
-            ImportLayer::File(f) => {
-                let url = f.path(&db).to_url();
+            ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
+                let url = file.path(&db).to_url();
                 shape.push(format!(
                     "File({})",
                     url.path().rsplit('/').next().unwrap_or("?")
@@ -540,8 +542,8 @@ fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
                 format!("From({entries:?})")
             },
             ImportLayer::Package(p) => format!("Package({})", p.name(db)),
-            ImportLayer::File(f) => {
-                let url = f.path(db).to_url();
+            ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
+                let url = file.path(db).to_url();
                 format!("File({})", url.path().rsplit('/').next().unwrap_or("?"))
             },
         })
@@ -845,4 +847,642 @@ fn test_cross_file_layers_backdates_on_unrelated_script_change() {
 
     let _ = a.imports(&db);
     assert_eq!(db.executions("cross_file_layers"), 1);
+}
+
+#[test]
+fn test_sourced_file_inherits_sourcing_files_imports() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("x <- 1\nsource(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("y <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(main.R)".to_string()
+    ]);
+}
+
+#[test]
+fn test_inherited_attach_sits_below_sourced_files_own_attaches() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr", "tibble"]);
+    let root = workspace_root(&db, "w");
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\nsource(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("library(tibble)\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `helpers.R`'s own attach (tibble) outranks the inherited one (dplyr),
+    // same as a collation predecessor's attach would.
+    //
+    // Tibble appears twice because `source()` forwards a sourced file's own
+    // top-level attaches into the sourcing file's index, and that copy is
+    // indistinguishable from a `library()` written in `main.R`. The echo is
+    // unreachable under `resolve()`'s first-hit-wins search.
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(main.R)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(tibble)".to_string(),
+        "Package(dplyr)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_inherited_imports_are_transitive() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("source(\"setup.R\")\n".to_string()),
+        None,
+    );
+    let setup = File::new(
+        &db,
+        file_path("w/setup.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("z <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, setup, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `setup.R` outranks `main.R`: it's the more immediate source site.
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(setup.R)".to_string(),
+        "File(main.R)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_multiple_sourcing_files_appear_ordered_by_path() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let a_main = File::new(
+        &db,
+        file_path("w/a_main.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let b_main = File::new(
+        &db,
+        file_path("w/b_main.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("z <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a_main, b_main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(a_main.R)".to_string(),
+        "File(b_main.R)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_inheritance_replaces_collation_instead_of_adding_to_it() {
+    // `a.R` and `b.R` would collate together as a non-package `R/` directory
+    // (see `test_script_r_directory_siblings_see_each_other`). Once `main.R`
+    // explicitly sources `a.R`, `b.R` may never load, so it must drop out of
+    // `a.R`'s imports entirely rather than sit alongside the inherited band.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let main = File::new(
+        &db,
+        file_path("ws/main.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, main]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec!["File(main.R)".to_string()]);
+}
+
+#[test]
+fn test_file_nobody_sources_keeps_its_own_cross_file_layers() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr", "base"]);
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // Nobody sources `b.R`, so it keeps exactly the collation view
+    // `cross_file_layers` alone would give it.
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(dplyr)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_cross_file_layers_never_carries_inherited_layers() {
+    // The scan-time resolver walks `cross_file_layers` while a file's own index
+    // is still being built, so an inherited layer there would make every file's
+    // index demand the workspace reverse map. `resolution_layers` splices
+    // inheritance in afterwards instead, which is why the read side below sees
+    // `main.R` and `cross_file_layers` doesn't.
+    //
+    // This is what makes the `SourcingFile` arm of `layer_effect` unreachable.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "w");
+
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("cfg <- 1\nsource(\"R/helpers.R\")\n".to_string()),
+        None,
+    );
+    // Collates before `helpers.R`, so the scan side has a real `File` layer to
+    // tell apart from a `SourcingFile` one.
+    let sibling = File::new(
+        &db,
+        file_path("w/R/a_sib.R"),
+        FileRevision::zero(),
+        Some("sib <- 1\n".to_string()),
+        None,
+    );
+    let helpers_source = "top <- 2\n";
+    let helpers = File::new(
+        &db,
+        file_path("w/R/helpers.R"),
+        FileRevision::zero(),
+        Some(helpers_source.to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, sibling, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // The read side narrows `main.R` to what had run by its `source()` call.
+    let offset = TextSize::from(helpers_source.find("top").unwrap() as u32);
+    assert!(helpers
+        .imports_at(&db, offset)
+        .iter()
+        .any(|layer| { matches!(layer, ImportLayer::SourcingFile { file, .. } if *file == main) }));
+
+    // The scan side has `File` layers but never a `SourcingFile`, either view.
+    for view in [CollationView::Eager, CollationView::Lazy] {
+        let scan_side = helpers.cross_file_layers(&db, view);
+        assert!(scan_side
+            .lookup_order(&[])
+            .any(|layer| matches!(layer, ImportLayer::File(file) if *file == sibling)));
+        assert!(!scan_side
+            .lookup_order(&[])
+            .any(|layer| matches!(layer, ImportLayer::SourcingFile { .. })));
+    }
+}
+
+#[test]
+fn test_inherited_default_search_path_is_not_duplicated() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "w");
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("source(\"helpers.R\")\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("z <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    // `base` comes once from `main.R`'s own `below` band, never duplicated by
+    // `helpers.R`'s own (replaced) `cross_file_layers`.
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(main.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_mutual_sourcing_devolves_to_standalone_scripts() {
+    // A mutual pair cycles `semantic_index` through `exports`, and the cycling
+    // side is rebuilt with `NoopImportsResolver`, whose `resolve_effects`
+    // defaults to `None`. So a bare `source()` isn't recognized as effectful on
+    // either side and no `SourceSite` survives. The pair never reaches
+    // `inherited_layers`' own `cycle_result`, and both files fall back to the
+    // standalone-script context.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "w");
+    let a = File::new(
+        &db,
+        file_path("w/a.R"),
+        FileRevision::zero(),
+        Some("source(\"b.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("w/b.R"),
+        FileRevision::zero(),
+        Some("source(\"a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.source_sites(&db), &Vec::new());
+    assert_eq!(b.source_sites(&db), &Vec::new());
+    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
+    assert_eq!(b.sourced_by(&db), &Vec::<File>::new());
+    assert_eq!(
+        shape(&db, a.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
+    assert_eq!(
+        shape(&db, b.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
+}
+
+#[test]
+fn test_qualified_mutual_sourcing_records_sites_but_no_edges() {
+    // `base::source()` stays recognized under `NoopImportsResolver`, whose
+    // `resolve_qualified_effects` defaults to `effects::lookup`, so unlike the
+    // bare-call pair above both sites survive in the forward projection. They
+    // resolve to nothing, though: `resolve_source` reads the target's
+    // `exports`, which is the empty cycle fallback. No target means no reverse
+    // edge, so inheritance sees a cyclic pair as two standalone scripts.
+    //
+    // This is what makes `inherited_layers`' own `cycle_result` unreachable
+    // rather than load-bearing. Every resolved source site is also a
+    // `semantic_index -> exports -> semantic_index` edge in the same direction,
+    // so a cycle in source edges always wipes the very targets that would let
+    // `inherited_layers` recurse into itself.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let root = workspace_root(&db, "w");
+    let a = File::new(
+        &db,
+        file_path("w/a.R"),
+        FileRevision::zero(),
+        Some("base::source(\"b.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("w/b.R"),
+        FileRevision::zero(),
+        Some("base::source(\"a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.source_sites(&db).len(), 1);
+    assert_eq!(b.source_sites(&db).len(), 1);
+    assert_eq!(a.source_sites(&db)[0].target(), None);
+    assert_eq!(b.source_sites(&db)[0].target(), None);
+
+    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
+    assert_eq!(b.sourced_by(&db), &Vec::<File>::new());
+    assert_eq!(
+        shape(&db, a.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
+    assert_eq!(
+        shape(&db, b.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
+}
+
+#[test]
+fn test_package_r_file_ignores_source_sites() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let a = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("w/pkg/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        Some(pkg),
+    );
+    let dev = File::new(
+        &db,
+        file_path("w/pkg/data-raw/dev.R"),
+        FileRevision::zero(),
+        Some("source(\"pkg/R/b.R\")\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_scripts(&mut db).to(vec![dev]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    // `dev.R` really does source `b.R`, but `Collate:` already says when `b.R`
+    // loads, so it keeps its predecessor and NAMESPACE context. Inheriting
+    // `dev.R`'s instead would drop `File(a.R)`.
+    assert_eq!(b.sourced_by(&db), &vec![dev]);
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_testthat_file_ignores_source_sites() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["testthat", "base"]);
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let helper = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/helper-b.R"),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let test_foo = File::new(
+        &db,
+        file_path("w/pkg/tests/testthat/test-foo.R"),
+        FileRevision::zero(),
+        Some("source(\"pkg/tests/testthat/helper-b.R\")\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![helper, test_foo]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    // testthat sources helpers itself, before any test file runs, so an
+    // explicit `source()` in a test file doesn't change what the helper sees.
+    assert_eq!(helper.sourced_by(&db), &vec![test_foo]);
+    assert_eq!(shape(&db, helper.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(testthat)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_non_collated_package_file_still_inherits() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+    );
+    let r_file = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("f <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/pkg/data-raw/helpers.R"),
+        FileRevision::zero(),
+        Some("h <- 1\n".to_string()),
+        Some(pkg),
+    );
+    let dev = File::new(
+        &db,
+        file_path("w/pkg/data-raw/dev.R"),
+        FileRevision::zero(),
+        Some("source(\"pkg/data-raw/helpers.R\")\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_scripts(&mut db).to(vec![helpers, dev]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    // The gate is about load order, not about carrying a package back-pointer.
+    // A `data-raw/` script isn't loaded with the package, so a source site is
+    // the only thing that says anything about its environment.
+    assert_eq!(shape(&db, helpers.imports(&db)), vec![
+        "File(dev.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_shadowed_source_call_still_contributes_an_edge() {
+    // ```r
+    // # a.R                  # b.R              # c.R
+    // source <- identity      foo <- 1          foo
+    // base::source("b.R")     source("c.R")
+    // ```
+    //
+    // Entered through `a.R`, `b.R`'s `source("c.R")` calls `identity` and `c.R`
+    // never loads. But R declares no entry point, and `b.R` run on its own
+    // really does source `c.R`. Each file's effects resolve in its standalone
+    // context, the one context that assumes nothing about callers, so the edge
+    // goes in the map and `c.R` inherits from both files up the chain.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let a = File::new(
+        &db,
+        file_path("w/a.R"),
+        FileRevision::zero(),
+        Some("source <- identity\nbase::source(\"b.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("w/b.R"),
+        FileRevision::zero(),
+        Some("foo <- 1\nsource(\"c.R\")\n".to_string()),
+        None,
+    );
+    let c = File::new(
+        &db,
+        file_path("w/c.R"),
+        FileRevision::zero(),
+        Some("foo\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(b.sourced_by(&db), &vec![a]);
+    assert_eq!(c.sourced_by(&db), &vec![b]);
+
+    // `b.R` outranks `a.R`, being the more immediate source site. No packages
+    // are installed, so nothing follows the two `File` layers.
+    assert_eq!(shape(&db, c.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(a.R)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_body_edit_in_a_sourcing_file_does_not_invalidate_imports() {
+    // Inheritance reads the sourcing file's `attach_layers`, hence its `no_eq`
+    // `semantic_index`, so `inherited_layers` re-executes on any keystroke in
+    // `main.R`. The firewall is one level up: an edit that changes no attach and
+    // no source edge returns a value-equal `Vec`, so `helpers.R`'s `imports`
+    // backdates and everything downstream of it stays green.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr"]);
+    let root = workspace_root(&db, "w");
+    let main = File::new(
+        &db,
+        file_path("w/main.R"),
+        FileRevision::zero(),
+        Some("library(dplyr)\nsource(\"helpers.R\")\nf <- function() 1\n".to_string()),
+        None,
+    );
+    let helpers = File::new(
+        &db,
+        file_path("w/helpers.R"),
+        FileRevision::zero(),
+        Some("y <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let before = shape(&db, helpers.imports(&db));
+    assert_eq!(before, vec![
+        "File(main.R)".to_string(),
+        "Package(dplyr)".to_string(),
+    ]);
+    assert_eq!(db.executions("File::imports"), 1);
+    // One per file in the chain: `helpers.R`'s, and `main.R`'s own (empty)
+    // inheritance, which `build_inherited_layers` reads for transitivity.
+    assert_eq!(db.executions("File::inherited_layers"), 2);
+
+    // Rewrite `f`'s body, leaving the `library()` call and the `source()` call
+    // untouched.
+    main.set_source_text_override(&mut db).to(Some(
+        "library(dplyr)\nsource(\"helpers.R\")\nf <- function() 2 + 2\n".to_string(),
+    ));
+
+    assert_eq!(shape(&db, helpers.imports(&db)), before);
+    // `helpers.R`'s re-executed and backdated. `main.R`'s didn't: it reads only
+    // `sourced_by(main)`, which the edit left alone.
+    assert_eq!(db.executions("File::inherited_layers"), 3);
+    assert_eq!(db.executions("File::imports"), 1);
 }

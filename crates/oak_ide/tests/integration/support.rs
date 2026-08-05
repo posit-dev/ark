@@ -68,6 +68,21 @@ pub fn edit_pairs(edits: &[RenameEdit]) -> Vec<(File, TextRange)> {
     edits.iter().map(|e| (e.file, e.range)).collect()
 }
 
+pub fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
+    // Root path must be an ancestor of the files' URLs (see `file_url`), as a
+    // real scan guarantees: `File::root` resolves an unpackaged file to the
+    // root whose scan reached it, and `source()` anchoring reads that root's
+    // path.
+    let raw = if cfg!(windows) {
+        "file:///C:/project/R/"
+    } else {
+        "file:///project/R/"
+    };
+    let url = FilePath::from_url(&Url::parse(raw).unwrap());
+    let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+}
+
 /// Install `name` as a library package exporting `exports`, with one file at
 /// `R/{file_name}`. Returns the package file.
 pub fn install_library_package(

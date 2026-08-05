@@ -1,0 +1,10 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+assertion_line: 354
+expression: "render(\"w/b.R\", b_source, b.diagnostics(&db))"
+---
+info[inherited-shadow]: This `source` call has an ambiguous effect. It resolves through package `base` when the file is sourced on its own, and to a binding in `a.R` when sourced by `a.R`.
+ --> w/b.R:2:1
+  |
+2 | source("c.R")
+  | ^^^^^^^^^^^^^

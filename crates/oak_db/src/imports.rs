@@ -37,11 +37,10 @@ use crate::RootKind;
 ///
 /// Cycles in `source()` chains run through this resolver:
 /// `semantic_index(A)` reads `exports(B)`, which reads `semantic_index(B)`,
-/// which reads `exports(A)`, which reads `semantic_index(A)`. Each of
-/// `semantic_index()`, `exports()`, `imports()`, and `resolve()` carries its
-/// own `cycle_result`. See [`File::semantic_index`]'s doc for the asymmetric
-/// recovery behaviour (custom rebuild on `semantic_index()`, empty fallback
-/// on the narrow queries).
+/// which reads `exports(A)`, which reads `semantic_index(A)`. `semantic_index()`
+/// and `exports()` carry the `cycle_result` handlers that break it. See
+/// [`File::semantic_index`]'s doc for the recovery behaviour (custom rebuild on
+/// `semantic_index()`, empty fallback on `exports()`).
 pub(crate) struct SalsaImportsResolver<'db> {
     db: &'db dyn Db,
     /// The file currently being indexed.
@@ -215,6 +214,20 @@ impl<'db> SalsaImportsResolver<'db> {
             ImportLayer::File(file) => match file.exports(self.db).get(name).is_some() {
                 true => ControlFlow::Break(None),
                 false => ControlFlow::Continue(()),
+            },
+            // Unreachable today: only `build_inherited_layers()` makes these,
+            // and it runs once the file's index exists, while we walk
+            // `cross_file_layers()` during the build.
+            ImportLayer::SourcingFile {
+                file,
+                exports_so_far,
+            } => {
+                let binds =
+                    exports_so_far.contains(name) && file.exports(self.db).get(name).is_some();
+                match binds {
+                    true => ControlFlow::Break(None),
+                    false => ControlFlow::Continue(()),
+                }
             },
             ImportLayer::Package(package) => match self.package_binding(*package, name) {
                 PackageBinding::Effect(effects) => ControlFlow::Break(Some(effects)),

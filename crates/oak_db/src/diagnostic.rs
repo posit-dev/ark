@@ -1,4 +1,5 @@
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 
@@ -57,6 +58,8 @@ pub enum DiagnosticKind {
     AmbiguousEffect,
     AmbiguousAttachOrder,
     UninstalledPackage,
+    SourceCycle,
+    InheritedShadow,
 }
 
 impl DiagnosticKind {
@@ -66,6 +69,8 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousEffect => "ambiguous-effect",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
+            DiagnosticKind::SourceCycle => "source-cycle",
+            DiagnosticKind::InheritedShadow => "inherited-shadow",
         }
     }
 
@@ -74,6 +79,8 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousEffect => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
+            DiagnosticKind::SourceCycle => Severity::Warning,
+            DiagnosticKind::InheritedShadow => Severity::Info,
         }
     }
 
@@ -82,6 +89,8 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousEffect => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
             DiagnosticKind::UninstalledPackage => true,
+            DiagnosticKind::SourceCycle => true,
+            DiagnosticKind::InheritedShadow => true,
         }
     }
 }
@@ -108,6 +117,7 @@ pub(crate) fn lower_semantic_diagnostic(diagnostic: &SemanticDiagnostic) -> Diag
         SemanticDiagnostic::UninstalledPackage { package, range } => {
             lower_uninstalled_package(package, *range)
         },
+        SemanticDiagnostic::SourceCycle => lower_source_cycle(),
     }
 }
 
@@ -185,6 +195,19 @@ fn lower_uninstalled_package(package: &str, range: TextRange) -> Diagnostic {
         DiagnosticKind::UninstalledPackage,
         format!("Package `{package}` is not installed.\nLanguage analysis will be incomplete."),
         range,
+        Vec::new(),
+    )
+}
+
+/// Anchored at the start of the file because the record carries no range.
+/// Every file in the cycle gets its own diagnostic.
+fn lower_source_cycle() -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::SourceCycle,
+        "This file takes part in a cycle of mutual `source()` calls. \
+         Language analysis will be incomplete until the cycle is resolved."
+            .to_string(),
+        TextRange::empty(TextSize::from(0)),
         Vec::new(),
     )
 }

@@ -18,6 +18,7 @@ use crate::support::edit_ranges;
 use crate::support::install_library_package;
 use crate::support::install_workspace_package;
 use crate::support::offset;
+use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
 
@@ -258,6 +259,33 @@ fn test_rename_cross_file_workspace_scripts() {
     ]);
 }
 
+#[test]
+fn test_rename_spans_both_sourcing_files() {
+    // Same fixture as
+    // `find_references::test_cross_file_references_span_both_sourcing_files`.
+    // Leaving one sourcing file's `foo` untouched would break that file's own
+    // run of `helpers.R`, since it would still see the old name.
+    let mut db = OakDatabase::new();
+    let a_source = "foo <- 1\nsource(\"helpers.R\")\nfoo\n";
+    let b_source = "foo <- 2\nsource(\"helpers.R\")\nfoo\n";
+    let a = upsert(&mut db, "a.R", a_source);
+    let b = upsert(&mut db, "b.R", b_source);
+    let helpers = upsert(&mut db, "helpers.R", "foo\n");
+    place_in_workspace_scripts(&mut db, vec![a, b, helpers]);
+
+    let a_use = a_source.rfind("foo").unwrap() as u32;
+    let b_use = b_source.rfind("foo").unwrap() as u32;
+
+    let targets = rename(&db, helpers, offset(0), "bar").unwrap();
+    assert_eq!(edit_pairs(&targets), vec![
+        (helpers, range(0, 3)),
+        (a, range(0, 3)),
+        (a, range(a_use, a_use + 3)),
+        (b, range(0, 3)),
+        (b, range(b_use, b_use + 3)),
+    ]);
+}
+
 // --- rename: cross-file workspace package ---
 
 #[test]
@@ -337,21 +365,6 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
 }
 
 // --- helpers for root / package wiring ---
-
-fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
-    // Root path must be an ancestor of the files' URLs (see `file_url`), as a
-    // real scan guarantees: `File::root` resolves an unpackaged file to the
-    // root whose scan reached it, and `source()` anchoring reads that root's
-    // path.
-    let raw = if cfg!(windows) {
-        "file:///C:/project/R/"
-    } else {
-        "file:///project/R/"
-    };
-    let url = FilePath::from_url(&Url::parse(raw).unwrap());
-    let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
-    db.workspace_roots().set_roots(db).to(vec![root]);
-}
 
 /// Build a workspace package holding `files` (name, contents), each with the
 /// package back-pointer set, and register it under a workspace root. Returns

@@ -543,6 +543,19 @@ impl UseDefMapBuilder {
         &self.symbol_states
     }
 
+    /// Yields symbols with live definitions, matching
+    /// [`crate::semantic_index::SemanticIndex::exports()`]. Conditional bindings
+    /// such as `if (cond) foo <- 1` are included, which safely over-approximates.
+    ///
+    /// Yields IDs so callers borrow names until the timeline needs to retain a
+    /// new one.
+    pub(crate) fn bound_symbol_ids(&self) -> impl Iterator<Item = SymbolId> + '_ {
+        self.symbol_states
+            .iter()
+            .filter(|(_, bindings)| !bindings.definitions().is_empty())
+            .map(|(symbol_id, _)| symbol_id)
+    }
+
     /// Finalize into an immutable [`UseDefMap`].
     pub(crate) fn finish(mut self, uses: &IndexVec<UseId, Use>) -> UseDefMap {
         self.finish_deferred_defs(uses);

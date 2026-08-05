@@ -1,0 +1,7 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+assertion_line: 458
+expression: "render(\"w/helpers.R\", helpers_source, helpers.diagnostics(&db))"
+---
+w/helpers.R
+(no diagnostics)

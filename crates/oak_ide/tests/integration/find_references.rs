@@ -18,6 +18,7 @@ use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
 use crate::support::offset;
 use crate::support::pairs;
+use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::ranges;
 use crate::support::upsert;
@@ -404,6 +405,35 @@ fn test_locally_scoped_stays_in_file() {
     ]);
 }
 
+#[test]
+fn test_cross_file_references_span_both_sourcing_files() {
+    // `a.R` and `b.R` each define their own `foo`, source `helpers.R`, and use
+    // `foo` again. Both sourcing files are separate possible runtimes of
+    // `helpers.R`, so a references search from `helpers.R`'s `foo` must cover
+    // both, not just the alphabetically-first one.
+    let mut db = OakDatabase::new();
+    let a_source = "foo <- 1\nsource(\"helpers.R\")\nfoo\n";
+    let b_source = "foo <- 2\nsource(\"helpers.R\")\nfoo\n";
+    let a = upsert(&mut db, "a.R", a_source);
+    let b = upsert(&mut db, "b.R", b_source);
+    let helpers = upsert(&mut db, "helpers.R", "foo\n");
+    place_in_workspace_scripts(&mut db, vec![a, b, helpers]);
+
+    let a_use = a_source.rfind("foo").unwrap() as u32;
+    let b_use = b_source.rfind("foo").unwrap() as u32;
+
+    let refs = find_references(&db, helpers, offset(0), true);
+    // helpers.R (cursor's file) first, then a.R and b.R alphabetically by
+    // path, def before use within each sourcing file.
+    assert_eq!(pairs(&refs), vec![
+        (helpers, range(0, 3)),
+        (a, range(0, 3)),
+        (a, range(a_use, a_use + 3)),
+        (b, range(0, 3)),
+        (b, range(b_use, b_use + 3)),
+    ]);
+}
+
 // --- Bare name <-> namespace bridge ---
 
 #[test]
@@ -567,4 +597,26 @@ fn test_cross_package_references_via_library() {
         script,
         range(use_start, use_start + 3)
     )]);
+}
+
+#[test]
+fn test_cross_file_references_reach_past_a_lazy_source_call() {
+    // `load()` can source `helpers.R` after `after` is defined, so its context
+    // remains unpinned and references include `after` in `main.R`.
+    let mut db = OakDatabase::new();
+    let main_source =
+        "load <- function() source(\"helpers.R\")\nsource(\"helpers.R\")\nafter <- 1\nafter\n";
+    let main = upsert(&mut db, "main.R", main_source);
+    let helpers = upsert(&mut db, "helpers.R", "after\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, main]);
+
+    let def = main_source.find("after <- 1").unwrap() as u32;
+    let use_ = main_source.rfind("after").unwrap() as u32;
+
+    let refs = find_references(&db, helpers, offset(0), true);
+    assert_eq!(pairs(&refs), vec![
+        (helpers, range(0, 5)),
+        (main, range(def, def + 5)),
+        (main, range(use_, use_ + 5)),
+    ]);
 }

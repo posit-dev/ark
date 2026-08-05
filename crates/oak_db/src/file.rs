@@ -1,11 +1,13 @@
 use std::fs;
 
 use aether_path::FilePath;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::db::root_by_file;
 use crate::diagnostic::lower_semantic_diagnostic;
 use crate::diagnostic::Diagnostic;
+use crate::file_diagnostics::inherited_shadow_diagnostics;
 use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -153,24 +155,22 @@ impl File {
     /// dependency graph through both `semantic_index` and `exports`:
     /// `semantic_index(A) -> SalsaImportsResolver -> exports(B) ->
     /// semantic_index(B) -> SalsaImportsResolver -> exports(A) ->
-    /// semantic_index(A)`. Salsa picks one query to break the cycle and
-    /// panics with "set cycle_fn/cycle_initial" unless that query has a
-    /// handler. Both `semantic_index` and the narrow queries (`exports`,
-    /// `imports`, `resolve`) carry their own `cycle_result`.
+    /// semantic_index(A)`.
     ///
     /// The two handlers behave differently:
     ///
-    /// - `semantic_index` (this query, custom rebuild): the cycling
-    ///   side is rebuilt with `NoopImportsResolver`. Cross-file
-    ///   injection drops, but local analysis (scopes, use-def maps,
-    ///   function bodies) is preserved.
+    /// - `semantic_index` (this query, custom rebuild): the file is rebuilt
+    ///   with `NoopImportsResolver`. Cross-file injection drops, but local
+    ///   analysis (scopes, use-def maps, function bodies) is preserved.
     ///
-    /// - `exports` / `imports` / `resolve` (FallbackImmediate, empty):
-    ///   the cycling side gets an empty fallback for that query.
+    /// - `exports` (FallbackImmediate, empty): the file contributes no names
+    ///   for the revision.
     ///
-    /// Which handler fires depends on which query salsa first re-enters.
-    /// R doesn't allow cyclic `source()`, so the asymmetric recovery is
-    /// acceptable. TODO(diagnostics): Lint `source()` cycles.
+    /// `FallbackImmediate` causes *every* participant in the cycle to fall
+    /// back, not just the one salsa re-entered. This means both ends of a
+    /// mutual `source()` pair rebuild under Noop and none of the source effects
+    /// resolve. A [`SemanticDiagnostic::SourceCycle`] is raised to document
+    /// this state.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
@@ -252,7 +252,7 @@ impl File {
         names
     }
 
-    /// Diagnostics derived from this file's semantic index.
+    /// Diagnostics for this file.
     ///
     /// Not keyed on user configuration, so the memo isn't duplicated per
     /// setting combination. Consumers filter on severity and
@@ -262,11 +262,15 @@ impl File {
     /// `attached_packages()` and friends this query can't backdate.
     #[salsa::tracked(returns(ref))]
     pub fn diagnostics(self, db: &dyn Db) -> Vec<Diagnostic> {
-        self.semantic_index(db)
+        let mut diagnostics: Vec<Diagnostic> = self
+            .semantic_index(db)
             .diagnostics()
             .iter()
             .map(lower_semantic_diagnostic)
-            .collect()
+            .collect();
+
+        diagnostics.extend(inherited_shadow_diagnostics(db, self));
+        diagnostics
     }
 
     /// The root containing this file, if any.
@@ -349,6 +353,7 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
     );
     let parsed = file.parse(db);
     oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)
+        .with_diagnostic(SemanticDiagnostic::SourceCycle)
 }
 
 /// Test-only recorder for the deepest `build_semantic_index` nesting.
