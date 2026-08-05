@@ -109,18 +109,27 @@ macro_rules! source {
 }
 pub(crate) use source;
 
-/// An assign entry: `(name-argument position)`. The function binds a name in the
-/// current scope, naming it in a positional argument it evaluates (`assign("x",
-/// v)`).
+/// Declares an assign function and the formals needed to record its local binding.
 macro_rules! assign {
-    ($func:literal, $pos:literal) => {
+    (
+        $func:literal,
+        [$($formal:literal),+ $(,)?],
+        $name:literal,
+        $value:literal,
+        [$($target_env:literal),* $(,)?]
+    ) => {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
                 arguments: None,
                 attach: None,
                 source: None,
-                assign: Some(&$crate::effects::AssignAnnotation { position: $pos }),
+                assign: Some(&$crate::effects::AssignAnnotation {
+                    formals: &[$($formal),+],
+                    name: $name,
+                    value: $value,
+                    target_env: &[$($target_env),*],
+                }),
             },
         }
     };

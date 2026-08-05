@@ -20,9 +20,8 @@ use crate::semantic_index::EvalTiming::Lazy;
 pub(crate) static ENTRIES: &[Entry] = &[
     // base NSE
     nse!("evalq", ("expr", Current, Eager)),
-    // `on.exit(expr)` captures `expr` and runs it in the current function's
-    // frame when the function exits. Bindings land in that frame (`Current`) at
-    // an unknown later time (`Lazy`), the same shape as `rlang::on_load()`.
+    // `on.exit()` evaluates its captured `expr` in the function frame when it
+    // exits, so its effect is lazy in the current scope.
     nse!("on.exit", ("expr", Current, Lazy)),
     nse!("local", ("expr", Nested, Eager)),
     nse!("with", ["data", "expr"], ("expr", Nested, Eager)),
@@ -64,8 +63,20 @@ pub(crate) static ENTRIES: &[Entry] = &[
     // base source
     source!("source", ["file", "local"], "file"),
     // base assign
-    assign!("assign", 0),
-    assign!("delayedAssign", 0),
+    assign!(
+        "assign",
+        ["x", "value", "pos", "envir", "inherits", "immediate"],
+        "x",
+        "value",
+        ["pos", "envir"]
+    ),
+    assign!(
+        "delayedAssign",
+        ["x", "value", "eval.env", "assign.env"],
+        "x",
+        "value",
+        ["assign.env"]
+    ),
 ];
 
 /// Build the attach [`Entry`] for a base function served by [`LibraryHandler`].

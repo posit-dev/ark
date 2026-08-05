@@ -848,6 +848,71 @@ fn test_assign_without_value_has_no_value_handle() {
     ));
 }
 
+#[test]
+fn test_assign_named_arguments_record_definition() {
+    let index = index_with_base("assign(value = 1, x = \"foo\")\nfoo");
+    let file = ScopeId::from(0);
+
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(file)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assign { .. }));
+}
+
+#[test]
+fn test_assign_named_value_handle_points_at_value_expression() {
+    let parsed = parse(
+        "assign(value = 1 + 2, x = \"x\")",
+        RParserOptions::default(),
+    );
+    assert!(!parsed.has_error());
+    let root = parsed.tree().syntax().clone();
+    let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
+
+    let kind = only_assign_def(&index).expect("assign def");
+    let DefinitionKind::Assign {
+        value: Some(value), ..
+    } = kind
+    else {
+        panic!("expected a value handle");
+    };
+    assert_eq!(
+        value.to_node(&root).syntax().text_trimmed().to_string(),
+        "1 + 2"
+    );
+}
+
+#[test]
+fn test_assign_positional_envir_not_recorded() {
+    // `pos` and `envir` move the binding out of the current scope whether they
+    // arrive named or positionally.
+    let index = index_with_base("assign(\"x\", 1, 1, e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
+#[test]
+fn test_delayed_assign_eval_env_recorded() {
+    // `eval.env` says where the promise's expression runs, so the binding still
+    // lands here. Only `assign.env` moves it.
+    let index = index_with_base("delayedAssign(\"x\", expensive(), eval.env = e)");
+    assert!(matches!(
+        only_assign_def(&index),
+        Some(DefinitionKind::Assign { .. })
+    ));
+}
+
+#[test]
+fn test_delayed_assign_explicit_assign_env_not_recorded() {
+    let index = index_with_base("delayedAssign(\"x\", expensive(), assign.env = e)");
+    assert!(only_assign_def(&index).is_none());
+}
+
 // --- source() semantic calls: bail paths ---
 //
 // Cases where the builder can't extract a statically-resolvable

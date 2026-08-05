@@ -228,7 +228,7 @@ impl<'a> CallContext<'a> {
     /// Match `call` arguments to `formals`, returning a formal index for each
     /// call argument. Exact named matches consume slots first, then unnamed
     /// arguments fill unconsumed slots in signature order.
-    pub fn match_arguments(&self, call: &RCall, formals: Formals) -> Vec<Option<usize>> {
+    fn match_arguments(&self, call: &RCall, formals: Formals) -> Vec<Option<usize>> {
         let Ok(args) = call.arguments() else {
             return Vec::new();
         };
@@ -269,6 +269,24 @@ impl<'a> CallContext<'a> {
         matched
     }
 
+    /// Bind `call`'s arguments to `formals`, for handlers that read arguments by
+    /// formal name rather than by call position.
+    pub fn bind_arguments(&self, call: &RCall, formals: Formals) -> BoundArguments {
+        let matched = self.match_arguments(call, formals);
+        let values: Vec<Option<AnyRExpression>> = match call.arguments() {
+            Ok(args) => args
+                .items()
+                .iter()
+                .map(|item| item.ok().and_then(|arg| arg.value()))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        BoundArguments {
+            formals,
+            bound: matched.into_iter().zip(values).collect(),
+        }
+    }
+
     /// Statically evaluate an argument's value expression to a string. `None`
     /// when it's dynamic.
     pub fn resolve_static_string(&self, value: &AnyRExpression) -> Option<String> {
@@ -303,6 +321,41 @@ impl<'a> CallContext<'a> {
 /// Include every earlier slot so unnamed arguments bind correctly. Stop before
 /// `...`, because later R formals are matched by name rather than position.
 pub type Formals = &'static [&'static str];
+
+/// A call's arguments indexed by the formals they match.
+pub struct BoundArguments {
+    formals: Formals,
+    /// One entry per call argument, in call order: the formal it matched and its
+    /// value expression.
+    bound: Vec<(Option<usize>, Option<AnyRExpression>)>,
+}
+
+impl BoundArguments {
+    /// The expression bound to `formal`. Returns `None` when the call uses the
+    /// default or the handler did not declare the formal.
+    pub fn get(&self, formal: &str) -> Option<&AnyRExpression> {
+        let formal_idx = self.formals.iter().position(|name| *name == formal)?;
+        self.bound
+            .iter()
+            .find(|(matched_idx, _)| *matched_idx == Some(formal_idx))?
+            .1
+            .as_ref()
+    }
+
+    /// Returns each call argument's matched formal and expression in call order.
+    pub fn arguments(&self) -> impl Iterator<Item = (Option<&str>, Option<&AnyRExpression>)> + '_ {
+        self.bound
+            .iter()
+            .map(|(matched_idx, value)| (matched_idx.map(|idx| self.formals[idx]), value.as_ref()))
+    }
+
+    pub fn len(&self) -> usize {
+        self.bound.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.bound.is_empty()
+    }
+}
 
 /// A call's resolved argument effects: for each argument in call order, the
 /// effect it resolved to, or `None` for a plain (standard-eval) argument.
@@ -363,15 +416,15 @@ impl EffectHandler for ArgumentsAnnotation {
     type Output = ResolvedArgumentEffects;
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
-        let matched = ctx.match_arguments(call, self.formals);
+        let bound = ctx.bind_arguments(call, self.formals);
         Some(
-            matched
-                .into_iter()
-                .map(|formal_idx| {
-                    let name = self.formals[formal_idx?];
+            bound
+                .arguments()
+                .map(|(formal, _)| {
+                    let formal = formal?;
                     self.arguments
                         .iter()
-                        .find(|argument| argument.name == name)
+                        .find(|argument| argument.name == formal)
                         .map(|argument| argument.effect.resolve())
                 })
                 .collect(),
@@ -424,21 +477,9 @@ impl EffectHandler for SourceAnnotation {
     type Output = Vec<SourcePath>;
 
     fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
-        let matched = ctx.match_arguments(call, self.formals);
-        let args = call.arguments().ok()?;
-        let values: Vec<Option<AnyRExpression>> = args
-            .items()
-            .iter()
-            .map(|item| item.ok().and_then(|arg| arg.value()))
-            .collect();
+        let bound = ctx.bind_arguments(call, self.formals);
 
-        let bound_value = |formal_name: &str| -> Option<&AnyRExpression> {
-            let formal_idx = self.formals.iter().position(|name| *name == formal_name)?;
-            let call_idx = matched.iter().position(|idx| *idx == Some(formal_idx))?;
-            values[call_idx].as_ref()
-        };
-
-        if let Some(local) = bound_value("local") {
+        if let Some(local) = bound.get("local") {
             match local {
                 AnyRExpression::RTrueExpression(_) | AnyRExpression::RFalseExpression(_) => {},
                 // Only literal `TRUE` and `FALSE` make the source scope statically
@@ -447,7 +488,7 @@ impl EffectHandler for SourceAnnotation {
             }
         }
 
-        let path = match bound_value(self.path) {
+        let path = match bound.get(self.path) {
             // An explicit dynamic path suppresses the default.
             Some(value) => ctx.resolve_static_string(value)?,
             None => self.default_path?.to_string(),
@@ -465,9 +506,14 @@ impl EffectHandler for SourceAnnotation {
 /// pulling that name out of a call.
 #[derive(Debug, Clone, Copy)]
 pub struct AssignAnnotation {
-    /// Which positional argument holds the bound name, counting only unnamed
-    /// arguments (0 for base `assign`/`delayedAssign`).
-    pub position: usize,
+    pub formals: Formals,
+    /// Formal holding the bound name.
+    pub name: &'static str,
+    /// Formal holding the bound value.
+    pub value: &'static str,
+    /// Formals that select where the binding lands. `delayedAssign()` takes two
+    /// environments and only `assign.env` is one of these.
+    pub target_env: Formals,
 }
 
 impl AssignHandler for AssignAnnotation {
@@ -475,53 +521,25 @@ impl AssignHandler for AssignAnnotation {
         let EffectSite::Call(call) = site else {
             return None;
         };
-        let args = call.arguments().ok()?;
+        let bound = ctx.bind_arguments(call, self.formals);
 
-        // Matched positionally among unnamed arguments, same as `source`, so a
-        // leading named argument doesn't shift the count and a named `x =` isn't
-        // recognized. The value is the positional right after the name (base
-        // `assign(x, value, ...)`).
-        //
-        // FIXME: A named `value =` isn't captured yet.
-        let mut name: Option<(String, RangedAstPtr<AnyRExpression>)> = None;
-        let mut value_expr: Option<AstPtr<AnyRExpression>> = None;
-        let mut positional = 0;
-
-        for item in args.items().iter() {
-            let Ok(arg) = item else { continue };
-
-            if let Some(name_clause) = arg.name_clause() {
-                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
-                    continue;
-                };
-
-                // An explicit target environment means the binding lands
-                // somewhere other than the current scope, so it isn't a fact we
-                // can record here. In the future, we could statically recognise
-                // some environment selectors like `parent.frame()`.
-                if matches!(name_ident.name_text().as_str(), "envir" | "pos") {
-                    return None;
-                }
-                continue;
-            }
-
-            if positional == self.position {
-                if let Some(value) = arg.value() {
-                    if let Some(resolved) = ctx.resolve_static_string(&value) {
-                        name = Some((resolved, RangedAstPtr::new(&value)));
-                    }
-                }
-            } else if positional == self.position + 1 {
-                value_expr = arg.value().map(|value| AstPtr::new(&value));
-            }
-            positional += 1;
+        // An explicit target environment binds outside the current scope, which
+        // we don't currently support.
+        if self
+            .target_env
+            .iter()
+            .any(|formal| bound.get(formal).is_some())
+        {
+            return None;
         }
 
-        let (name, name_expr) = name?;
+        let name_expr = bound.get(self.name)?;
+        let name = ctx.resolve_static_string(name_expr)?;
+
         Some(vec![AssignBinding {
             name,
-            name_expr,
-            value_expr,
+            name_expr: RangedAstPtr::new(name_expr),
+            value_expr: bound.get(self.value).map(AstPtr::new),
             target: TargetAccess::Write,
         }])
     }
