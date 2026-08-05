@@ -337,6 +337,47 @@ fn test_top_level_conditional_reports_both_arm_defs() {
     assert!(starts.contains(&source.find("foo <- 2").unwrap()));
 }
 
+#[test]
+fn test_conditional_local_does_not_shadow_package_sibling() {
+    // The conditional local exists on one path. On the other, `shared` resolves
+    // to `a.R`, so both definitions are reachable.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+
+    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
+    let b_source = "f <- function() {\n  if (cond) shared <- 2\n  shared\n}\n";
+    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
+    pkg.set_files(&mut db).to(vec![a, b]);
+
+    let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
+    let defs = b.resolve_at(&db, offset);
+
+    let files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert_eq!(defs.len(), 2);
+    assert!(files.contains(&b));
+    assert!(files.contains(&a));
+}
+
+#[test]
+fn test_deferred_exit_write_does_not_shadow_package_sibling() {
+    // `on.exit()` runs while the function exits, so the read below it never sees
+    // that write and the sibling stays reachable. We report the deferred write
+    // too, which over-approximates, but it must not hide `a.R`.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+
+    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
+    let b_source = "f <- function() {\n  on.exit(shared <- 2)\n  shared\n}\n";
+    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
+    pkg.set_files(&mut db).to(vec![a, b]);
+
+    let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
+    let defs = b.resolve_at(&db, offset);
+
+    let files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert!(files.contains(&a));
+}
+
 // Package-layer resolution, remaining items. These need either installed-package
 // files as `oak_db::File` entities (for navigable locations) or a broader test
 // infrastructure:

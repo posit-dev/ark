@@ -99,17 +99,29 @@ impl<'db> File {
         let reaching: Vec<(ScopeId, DefinitionId)> =
             index.reaching_definitions(use_scope, use_id).collect();
 
-        if !reaching.is_empty() {
-            return reaching
-                .into_iter()
-                .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
-                .collect();
+        let mut definitions: Vec<Definition<'db>> = reaching
+            .into_iter()
+            .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
+            .collect();
+
+        if index.use_is_bound(use_scope, use_id) {
+            return definitions;
         }
 
         // At top level, `ImportView::at()` sees preceding collation files. In
         // a function body, it sees the complete collation but keeps attaches
         // offset- and scope-aware.
-        resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
+        //
+        // An unbound path can resolve through imports, so retain in-file
+        // definitions and add distinct imported ones.
+        let imported: Vec<Definition<'db>> =
+            resolve_per_sourcing_file(db, &self.imports_by_sourcing_file_at(db, offset), name)
+                .into_iter()
+                .filter(|def| !definitions.contains(def))
+                .collect();
+        definitions.extend(imported);
+
+        definitions
     }
 
     fn resolve_definition(

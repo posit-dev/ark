@@ -562,6 +562,32 @@ impl SemanticIndex {
         local.chain(enclosing_iter)
     }
 
+    /// Whether every path reaching the use at `use_id` is bound by something in
+    /// this index. A `source()`-forwarded `Import` also counts because
+    /// resolution continues through the sourced file's exports, not the search
+    /// path. When false, some path falls outside this index, so the caller has
+    /// to consult other files (collation siblings, attached packages) to finish
+    /// resolving, even if [`Self::reaching_definitions`] already yielded
+    /// candidates.
+    ///
+    /// A conditional local (`if (cond) x <- 1`) and a deferred write
+    /// (`on.exit(x <- 1)`, `x <<- 1`) both bind on some paths and not others, so
+    /// they answer false while still producing candidates.
+    pub fn use_is_bound(&self, scope: ScopeId, use_id: UseId) -> bool {
+        if !self
+            .use_def_map(scope)
+            .bindings_at_use(use_id)
+            .may_be_unbound()
+        {
+            return true;
+        }
+        match self.enclosing_bindings(scope, use_id) {
+            Some((_, enclosing)) => !enclosing.may_be_unbound(),
+            // Nothing up the chain binds it, so every path leaves the file.
+            None => false,
+        }
+    }
+
     /// Resolve a free variable's bindings from the enclosing scope.
     ///
     /// When the use `use_id` in `scope` may be unbound (`may_be_unbound: true`),
