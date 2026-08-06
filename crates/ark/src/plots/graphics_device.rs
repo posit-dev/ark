@@ -187,10 +187,10 @@ pub(crate) struct DeviceContext {
     /// provides the file attribution even though the execute_request came from the console.
     source_context_stack: RefCell<Vec<String>>,
 
-    /// The plot origin captured eagerly when drawing starts (i.e. when `has_changes`
-    /// transitions from false to true). This is necessary because the source context
-    /// stack may be popped before `process_changes()` runs (e.g. `source()` completes
-    /// before the execute request finishes), so we snapshot the origin at drawing time.
+    /// The plot origin for the current page, captured eagerly whenever drawing
+    /// starts and no snapshot is pending. This is necessary because the source
+    /// context stack may be popped before `process_changes()` runs (e.g. `source()`
+    /// completes before the execute request finishes).
     pending_origin: RefCell<Option<Option<PlotOrigin>>>,
 }
 
@@ -269,9 +269,8 @@ impl DeviceContext {
         self.source_context_stack.borrow().last().cloned()
     }
 
-    /// Eagerly capture the plot origin so it's available when `process_changes()` runs later.
-    /// Called when drawing first starts for a change set, since the source context stack
-    /// may be popped before we get a chance to consume it.
+    /// Eagerly capture the plot origin so it's available when `process_changes()`
+    /// runs later, since the source context stack may be popped before then.
     fn set_pending_origin(&self, origin: Option<PlotOrigin>) {
         self.pending_origin.replace(Some(origin));
     }
