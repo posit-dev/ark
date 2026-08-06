@@ -187,10 +187,10 @@ pub(crate) struct DeviceContext {
     /// provides the file attribution even though the execute_request came from the console.
     source_context_stack: RefCell<Vec<String>>,
 
-    /// The plot origin captured eagerly when drawing starts (i.e. when `has_changes`
-    /// transitions from false to true). This is necessary because the source context
-    /// stack may be popped before `process_changes()` runs (e.g. `source()` completes
-    /// before the execute request finishes), so we snapshot the origin at drawing time.
+    /// The plot origin for the current page, captured eagerly whenever drawing
+    /// starts and no snapshot is pending. This is necessary because the source
+    /// context stack may be popped before `process_changes()` runs (e.g. `source()`
+    /// completes before the execute request finishes).
     pending_origin: RefCell<Option<Option<PlotOrigin>>>,
 }
 
@@ -269,15 +269,14 @@ impl DeviceContext {
         self.source_context_stack.borrow().last().cloned()
     }
 
-    /// Eagerly capture the plot origin so it's available when `process_changes()` runs later.
-    /// Called when drawing first starts for a change set, since the source context stack
-    /// may be popped before we get a chance to consume it.
+    /// Eagerly capture the plot origin so it's available when `process_changes()`
+    /// runs later, since the source context stack may be popped before then.
     fn set_pending_origin(&self, origin: Option<PlotOrigin>) {
         self.pending_origin.replace(Some(origin));
     }
 
     /// Clear any unconsumed pending origin.
-    pub(crate) fn clear_pending_origin(&self) {
+    fn clear_pending_origin(&self) {
         self.pending_origin.replace(None);
     }
 
@@ -338,10 +337,13 @@ impl DeviceContext {
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
 
-        // Eagerly capture the plot origin when drawing first starts for this
-        // change set. The source context stack may be popped before
-        // `process_changes()` runs, so we snapshot it now while it's available.
-        if !old_has_changes && is_drawing {
+        // Eagerly capture the plot origin while the source context stack is still
+        // available, since `process_changes()` may not run until after `source()`
+        // popped it. Capture whenever we have no snapshot rather than only on the
+        // `has_changes` false->true edge, which never comes back around for a new
+        // page started while earlier changes are still pending (e.g. `dev.hold()`).
+        let needs_origin = self.pending_origin.borrow().is_none();
+        if is_drawing && needs_origin {
             let ctx = self.capture_execution_context();
             let origin = self.capture_plot_origin(&ctx);
             self.set_pending_origin(origin);
