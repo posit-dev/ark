@@ -1,3 +1,4 @@
+use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
@@ -728,6 +729,90 @@ fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+/// Rendering an inch-based (Quarto) intrinsic-size plot at its intrinsic size
+/// should produce a crisp, high-DPI PNG rather than one at the low base screen
+/// DPI. Regression test for posit-dev/positron#15026.
+#[test]
+fn test_render_intrinsic_size_uses_high_dpi() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    // Create a plot carrying a Quarto intrinsic size of 4x2 inches.
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            fig_width: Some(4.0),
+            fig_height: Some(2.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+
+    // In dynamic mode the plot arrives as a `positron.plot` comm open. Drain
+    // IOPub until we've seen both the plot comm and the idle status.
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+    let mut plot_comm_id = None;
+    let mut got_idle = false;
+    while plot_comm_id.is_none() || !got_idle {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let Some(msg) = frontend.recv_iopub_with_timeout(remaining) else {
+            panic!(
+                "Timed out waiting for plot comm (plot_comm_id={plot_comm_id:?}, got_idle={got_idle})"
+            );
+        };
+        match msg {
+            amalthea::wire::jupyter_message::Message::CommOpen(data)
+                if data.content.target_name == "positron.plot" =>
+            {
+                plot_comm_id = Some(data.content.comm_id);
+            },
+            amalthea::wire::jupyter_message::Message::Status(data)
+                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle =>
+            {
+                got_idle = true;
+            },
+            _ => {},
+        }
+    }
+    frontend.recv_shell_execute_reply();
+    let plot_comm_id = plot_comm_id.unwrap();
+
+    // Render at intrinsic size (size = null), as the plot pane does when the
+    // intrinsic sizing policy is selected. Use pixel_ratio 1 (a non-HiDPI
+    // display) to expose the low-resolution bug.
+    let data = serde_json::json!({
+        "method": "render",
+        "params": { "size": null, "pixel_ratio": 1.0, "format": "png" },
+        "id": "render-rpc",
+    });
+    frontend.send_shell_comm_msg(plot_comm_id.clone(), data);
+
+    // Drain until the plot comm's render reply arrives.
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+    let reply = loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let Some(msg) = frontend.recv_iopub_with_timeout(remaining) else {
+            panic!("Timed out waiting for render reply");
+        };
+        if let amalthea::wire::jupyter_message::Message::CommMsg(msg) = msg {
+            if msg.content.comm_id == plot_comm_id {
+                break msg.content.data;
+            }
+        }
+    };
+    frontend.recv_iopub_idle();
+
+    let reply: PlotBackendReply = serde_json::from_value(reply).unwrap();
+    let PlotBackendReply::RenderReply(result) = reply else {
+        panic!("Expected RenderReply, got {reply:?}");
+    };
+    let (width, height) = png_dimensions(&result.data);
+
+    // 4x2 inches at the intrinsic render DPI (192), independent of the OS base
+    // screen DPI. Before the fix this rendered at 288x144 (4x2 in at 72 DPI on
+    // Linux) or 384x192 (at 96 DPI on macOS).
+    assert_eq!((width, height), (768, 384));
 }
 
 /// Test that plots rendered with output_width_px (but no fig dimensions)

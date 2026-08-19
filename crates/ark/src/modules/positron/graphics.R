@@ -376,10 +376,11 @@ finalize_device_arguments <- function(format, width, height, pixel_ratio) {
         # values are upscaled by `pixel_ratio`.
         #
         # `res` is nominal resolution specified in pixels-per-inch (ppi).
+        # Round to whole pixels, since `pixel_ratio` can be fractional.
         return(list(
             res = default_resolution_in_pixels_per_inch() * pixel_ratio,
-            width = width * pixel_ratio,
-            height = height * pixel_ratio
+            width = round(width * pixel_ratio),
+            height = round(height * pixel_ratio)
         ))
     }
 

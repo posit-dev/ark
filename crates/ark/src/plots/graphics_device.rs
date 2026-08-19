@@ -481,6 +481,7 @@ impl DeviceContext {
             PlotBackendRequest::Render(plot_meta) => {
                 log::trace!("PlotBackendRequest::Render");
 
+                let mut pixel_ratio = plot_meta.pixel_ratio;
                 let size = match plot_meta.size {
                     Some(size) => size,
                     None => {
@@ -491,7 +492,12 @@ impl DeviceContext {
                             .get(id)
                             .and_then(|ctx| ctx.intrinsic_size.clone());
                         match intrinsic {
-                            Some(intrinsic) => intrinsic.to_plot_size(),
+                            Some(intrinsic) => {
+                                // Lift the resolution of physical (inch-based)
+                                // sizes so they stay crisp when scaled to fit.
+                                pixel_ratio = pixel_ratio.max(intrinsic.min_pixel_ratio());
+                                intrinsic.to_plot_size()
+                            },
                             None => {
                                 return Err(anyhow!(
                                     "No size provided for plot {id} and no intrinsic size available"
@@ -506,7 +512,7 @@ impl DeviceContext {
                         width: size.width,
                         height: size.height,
                     },
-                    pixel_ratio: plot_meta.pixel_ratio,
+                    pixel_ratio,
                     format: plot_meta.format,
                 };
 
@@ -992,6 +998,12 @@ const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
 
+/// Target DPI for rendering inch-based intrinsic sizes (e.g. Quarto figures).
+/// Quarto's HTML default renders figures at `fig-dpi` (96) scaled by
+/// `fig.retina` (2), i.e. 192 DPI. Matching it keeps intrinsic plots crisp when
+/// the plot pane scales them to fit, independent of the OS base screen DPI.
+const INTRINSIC_RENDER_DPI: f64 = 192.0;
+
 /// Default figure size in inches, matching Quarto's base/HTML format
 /// defaults (`fig-width: 7`, `fig-height: 5`). Other formats differ (e.g.
 /// pdf is 5.5 x 3.5), but Positron doesn't know the target format.
@@ -1004,6 +1016,14 @@ trait IntrinsicSizeExt {
     /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
     /// physical pixel scaling via the separate `pixel_ratio` parameter.
     fn to_plot_size(&self) -> PlotSize;
+
+    /// Minimum pixel ratio for rendering this intrinsic size crisply.
+    ///
+    /// An inch-based size (Quarto) is a physical size that the plot pane may
+    /// scale up to fit, so it needs enough resolution to lift the effective DPI
+    /// (`DEFAULT_DPI * pixel_ratio`) up to `INTRINSIC_RENDER_DPI`. A pixel-based
+    /// size already carries its own resolution, so no floor is applied.
+    fn min_pixel_ratio(&self) -> f64;
 }
 
 impl IntrinsicSizeExt for IntrinsicSize {
@@ -1017,6 +1037,13 @@ impl IntrinsicSizeExt for IntrinsicSize {
                 width: self.width.round() as i64,
                 height: self.height.round() as i64,
             },
+        }
+    }
+
+    fn min_pixel_ratio(&self) -> f64 {
+        match self.unit {
+            PlotUnit::Inches => INTRINSIC_RENDER_DPI / DEFAULT_DPI,
+            PlotUnit::Pixels => 1.0,
         }
     }
 }
