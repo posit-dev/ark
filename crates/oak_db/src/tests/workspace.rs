@@ -378,4 +378,3 @@ fn test_r_directory_collation_with_a_source_call_does_not_panic() {
     // all three packages and drop the spurious `SourceCycle` diagnostic.
     assert_eq!(all_package_dependencies_names(&db), vec!["pkgc"]);
 }
-
