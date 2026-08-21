@@ -160,8 +160,11 @@ impl File {
     /// The two handlers behave differently:
     ///
     /// - `semantic_index` (this query, custom rebuild): the file is rebuilt
-    ///   with `NoopImportsResolver`. Cross-file injection drops, but local
-    ///   analysis (scopes, use-def maps, function bodies) is preserved.
+    ///   with `NoopImportsResolver`. Scopes, use-def maps and function bodies
+    ///   survive, but everything that needs the resolver drops. That includes
+    ///   effect detection: the Noop resolver never resolves the `library()` or
+    ///   `source()` callee, so the rebuilt index records no attaches and no
+    ///   source sites at all.
     ///
     /// - `exports` (FallbackImmediate, empty): the file contributes no names
     ///   for the revision.
@@ -188,7 +191,15 @@ impl File {
     ///
     /// A `library()` in a function body does not count here; for every attach
     /// regardless of context see [`Self::attached_packages_anywhere`].
-    #[salsa::tracked(returns(ref))]
+    ///
+    /// `cycle_result` is required. In an `R/` directory,
+    /// [`File::cross_file_layers`] reads the `attached_packages` of each
+    /// collation predecessor, and building a predecessor's index resolves that
+    /// file's own `source()` sites, which reaches back into
+    /// `cross_file_layers` and asks for this same file again. Salsa re-enters
+    /// here rather than at `semantic_index`, so this query needs its own
+    /// recovery (#15631).
+    #[salsa::tracked(returns(ref), cycle_result = attached_packages_cycle_result)]
     pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
             .attached_packages()
@@ -204,7 +215,13 @@ impl File {
     /// Over-approximates the load-time search path. Used for workspace
     /// dependency discovery, where a package attached only inside a function
     /// still counts as a dependency.
-    #[salsa::tracked(returns(ref))]
+    ///
+    /// `cycle_result` is defensive here, and unreachable today. Nothing inside
+    /// `semantic_index` or `cross_file_layers` reads this query, so it can only
+    /// sit above a cycle head, never between the head and the re-entry. It
+    /// shares [`attached_packages_cycle_result`] so that a future edge into it
+    /// degrades like [`Self::attached_packages`] instead of panicking.
+    #[salsa::tracked(returns(ref), cycle_result = attached_packages_cycle_result)]
     pub fn attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
             .attached_packages_anywhere()
@@ -344,6 +361,20 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
     oak_semantic::build_index(&parsed.tree(), resolver)
+}
+
+/// A file caught in an attach cycle contributes no attaches for the revision.
+///
+/// This only restates what the file reports anyway. The cycle always also runs
+/// through `semantic_index`, and its Noop rebuild already records no attaches
+/// (see [`File::semantic_index`]). That recovery raises
+/// [`SemanticDiagnostic::SourceCycle`], so nothing is reported here.
+fn attached_packages_cycle_result<'db>(
+    _db: &'db dyn Db,
+    _id: salsa::Id,
+    _file: File,
+) -> Vec<Name<'db>> {
+    Vec::new()
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
