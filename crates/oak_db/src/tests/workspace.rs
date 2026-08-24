@@ -55,6 +55,12 @@ fn workspace_with_script(db: &mut TestDb, contents: &str) {
 /// Create a `proj` workspace root with editor overrides for `scripts`.
 /// Paths are relative to `proj`.
 fn workspace_with_scripts(db: &mut TestDb, scripts: &[(&str, &str)]) {
+    workspace_with_scripts_files(db, scripts);
+}
+
+/// Like [`workspace_with_scripts`] but hands back the files so a test can query
+/// a specific one first.
+fn workspace_with_scripts_files(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(&*db, "proj");
     let files: Vec<File> = scripts
         .iter()
@@ -68,8 +74,9 @@ fn workspace_with_scripts(db: &mut TestDb, scripts: &[(&str, &str)]) {
             )
         })
         .collect();
-    root.set_scripts(db).to(files);
+    root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
+    files
 }
 
 fn all_package_dependencies_names(db: &TestDb) -> Vec<String> {
@@ -323,4 +330,51 @@ fn test_testthat_file_depends_on_testthat() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     assert_eq!(all_package_dependencies_names(&db), vec!["testthat"]);
+}
+
+#[test]
+fn test_r_directory_collation_with_a_source_call_does_not_panic() {
+    // Three loose scripts in an `R/` directory, collated alphabetically, where
+    // `a.R` sources `b.R`. Touching `c.R` first is what makes salsa re-enter
+    // `attached_packages` instead of `semantic_index` (#15631).
+    //
+    // The cycling path resolves effects with `CollationView::Eager`, so each
+    // `cross_file_layers` sees only that file's collation predecessors:
+    //
+    //   semantic_index(c)
+    //     -> cross_file_layers(c)             predecessors a, b
+    //       -> attached_packages(a)           1st entry
+    //         -> semantic_index(a)
+    //           -> resolves `source("R/b.R")`
+    //             -> semantic_index(b)
+    //               -> cross_file_layers(b)   predecessor a
+    //                 -> attached_packages(a) 2nd entry, cycle
+    //
+    // `semantic_index` and `exports` carry `cycle_result` recovery, so a cycle
+    // re-entered at either of them degrades gracefully. Without recovery on
+    // `attached_packages` salsa panics, which killed the LSP main loop.
+    let mut db = TestDb::new();
+    register_library(&mut db, &["pkga", "pkgb", "pkgc"]);
+    let files = workspace_with_scripts_files(&mut db, &[
+        ("R/a.R", "library(pkga)\nsource(\"R/b.R\")\n"),
+        ("R/b.R", "library(pkgb)\n"),
+        ("R/c.R", "library(pkgc)\n"),
+    ]);
+
+    // `c.R` first.
+    let _ = files[2].used_packages(&db);
+
+    // `a.R` and `b.R` drop out of the dependency set, but the empty attach
+    // fallback is not what loses them. `semantic_index_cycle_result` rebuilds
+    // both files with `NoopImportsResolver`, which resolves no callee and so
+    // records no `library()` call at all. The same loss shows up in the
+    // orderings that never panicked.
+    //
+    // This assertion therefore pins down current behaviour, not intended
+    // behaviour. The cycle is a false one: `a.R` sources `b.R` and nothing
+    // sources back, and only `R/` collation puts `attached_packages(a)` on the
+    // stack twice. Breaking the cycle, by giving `predecessor_attach_layers` an
+    // attach query that does not read a sibling's semantic index, would keep
+    // all three packages and drop the spurious `SourceCycle` diagnostic.
+    assert_eq!(all_package_dependencies_names(&db), vec!["pkgc"]);
 }
