@@ -55,11 +55,13 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::config::combine_diagnostics_enable_settings;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::initialization_options;
 use crate::lsp::config::LspSettings;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
+use crate::lsp::config::LEGACY_R_DIAGNOSTICS_ENABLE_SETTING;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::content_changes::apply_content_changes;
 use crate::lsp::main_loop::dispatch_scan_requests;
@@ -251,6 +253,13 @@ pub(crate) async fn handle_initialized(
                 register_options: Some(serde_json::json!({ "section": setting.key })),
             });
         }
+        regs.push(Registration {
+            id: uuid::Uuid::new_v4().to_string(),
+            method: String::from("workspace/didChangeConfiguration"),
+            register_options: Some(
+                serde_json::json!({ "section": LEGACY_R_DIAGNOSTICS_ENABLE_SETTING }),
+            ),
+        });
         for setting in DOCUMENT_SETTINGS {
             regs.push(Registration {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -619,6 +628,11 @@ async fn pull_config(
             section: Some(mapping.key.to_string()),
         })
         .collect();
+    global_items.push(lsp_types::ConfigurationItem {
+        scope_uri: None,
+        section: Some(LEGACY_R_DIAGNOSTICS_ENABLE_SETTING.to_string()),
+    });
+    let global_items_len = global_items.len();
 
     // For document items we create a n_uris * n_document_settings array that we'll
     // handle by batch in a double loop over URIs and document settings
@@ -651,13 +665,21 @@ async fn pull_config(
         ));
     }
 
-    let document_configs = configs.split_off(GLOBAL_SETTINGS.len());
+    let document_configs = configs.split_off(global_items_len);
     let global_configs = configs;
 
     let mut global_options = LspSettings::default();
-    for (mapping, value) in GLOBAL_SETTINGS.iter().zip(global_configs) {
-        (mapping.set)(&mut global_options, value);
+    let mut global_config_values = global_configs.into_iter();
+    for setting in GLOBAL_SETTINGS {
+        let Some(value) = global_config_values.next() else {
+            break;
+        };
+        (setting.set)(&mut global_options, value);
     }
+    let legacy_diagnostics_enabled = global_config_values
+        .next()
+        .and_then(|value| value.as_bool());
+    combine_diagnostics_enable_settings(&mut global_options, legacy_diagnostics_enabled);
 
     let mut remaining = document_configs;
 

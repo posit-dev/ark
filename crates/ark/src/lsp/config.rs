@@ -61,7 +61,7 @@ global_settings! {
     OAK_DIAGNOSTICS_EXPERIMENTAL_ENABLED_SETTING
         => diagnostics_experimental: diagnostics.experimental,
     OAK_SOURCE_FETCHING_ENABLED_SETTING => source_fetching_enabled: oak.source_fetching_enabled,
-    "positron.r.diagnostics.enable" => diagnostics_enable: diagnostics.enable,
+    R_DIAGNOSTICS_ENABLED_SETTING => diagnostics_enable: diagnostics.enable,
     "positron.r.symbols.includeAssignmentsInBlocks"
         => include_assignments_in_blocks: symbols.include_assignments_in_blocks,
     "positron.r.workspaceSymbols.includeCommentSections"
@@ -79,7 +79,21 @@ pub(crate) fn initialization_options(options: &Value) -> LspSettings {
             (setting.set)(&mut layer, value.clone());
         }
     }
+    let legacy_diagnostics_enable =
+        nested_setting(options, LEGACY_R_DIAGNOSTICS_ENABLE_SETTING).and_then(Value::as_bool);
+    combine_diagnostics_enable_settings(&mut layer, legacy_diagnostics_enable);
     layer
+}
+
+pub(crate) fn combine_diagnostics_enable_settings(
+    settings: &mut LspSettings,
+    legacy_enable: Option<bool>,
+) {
+    settings.diagnostics_enable = match (settings.diagnostics_enable, legacy_enable) {
+        (Some(enabled), Some(legacy_enabled)) => Some(enabled && legacy_enabled),
+        (None, legacy_enabled) => legacy_enabled,
+        (enabled, None) => enabled,
+    };
 }
 
 fn nested_setting<'options>(options: &'options Value, key: &str) -> Option<&'options Value> {
@@ -93,6 +107,8 @@ fn nested_setting<'options>(options: &'options Value, key: &str) -> Option<&'opt
 pub(crate) const OAK_DIAGNOSTICS_EXPERIMENTAL_ENABLED_SETTING: &str =
     "oak.diagnostics.experimental.enabled";
 pub(crate) const OAK_SOURCE_FETCHING_ENABLED_SETTING: &str = "oak.sourceFetching.enabled";
+pub(crate) const R_DIAGNOSTICS_ENABLED_SETTING: &str = "positron.r.diagnostics.enabled";
+pub(crate) const LEGACY_R_DIAGNOSTICS_ENABLE_SETTING: &str = "positron.r.diagnostics.enable";
 
 /// Overrides [`OAK_SOURCE_FETCHING_ENABLED_SETTING`] when set to `1`, `true`,
 /// `0`, or `false`. Set to `1` or `true` to enable source fetching on CI.
