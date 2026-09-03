@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::HelpFrontendEvent;
+use amalthea::comm::help_comm::HelpTopicSuggestion;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use anyhow::anyhow;
@@ -74,6 +75,34 @@ impl RHelp {
                     Ok(found) => Ok(HelpBackendReply::ShowHelpTopicReply(found)),
                     Err(err) => Err(err),
                 }
+            },
+            HelpBackendRequest::SearchHelp(search) => {
+                let shown = r_task(|| {
+                    RFunction::from(".ps.help.searchHelp")
+                        .add(search.query)
+                        .call()?
+                        .to::<bool>()
+                })?;
+                Ok(HelpBackendReply::SearchHelpReply(shown))
+            },
+            HelpBackendRequest::GetHelpTopics => {
+                let topics = r_task(|| {
+                    RFunction::from(".ps.help.getHelpTopics")
+                        .call()?
+                        .to::<Vec<String>>()
+                })?;
+                let suggestions = topics
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let (package, topic) = entry.split_once('\u{1f}')?;
+                        Some(HelpTopicSuggestion {
+                            label: topic.to_string(),
+                            topic: format!("{package}::{topic}"),
+                            detail: Some(package.to_string()),
+                        })
+                    })
+                    .collect();
+                Ok(HelpBackendReply::GetHelpTopicsReply(suggestions))
             },
         }
     }
