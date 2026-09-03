@@ -77,7 +77,7 @@ help <- function(topic, package = NULL) {
 .ps.help.getHelpTopics <- function() {
     matches <- utils::help.search(".", fields = "alias", package = NULL)$matches
     matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
-    unique(paste(matches[, "Package"], matches[, "Topic"], sep = "\u001f"))
+    unique(paste(matches[, "Package"], matches[, "Entry"], sep = "\u001f"))
 }
 
 # Resolve the package specifier, if there is one
