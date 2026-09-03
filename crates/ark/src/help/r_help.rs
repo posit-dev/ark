@@ -77,20 +77,16 @@ impl RHelp {
                 }
             },
             HelpBackendRequest::SearchHelp(search) => {
-                let shown = r_task(|| {
-                    RFunction::from(".ps.help.searchHelp")
-                        .add(search.query)
-                        .call()?
-                        .to::<bool>()
-                })?;
+                let shown = RFunction::from(".ps.help.searchHelp")
+                    .add(search.query)
+                    .call()?
+                    .to::<bool>()?;
                 Ok(HelpBackendReply::SearchHelpReply(shown))
             },
             HelpBackendRequest::GetHelpTopics => {
-                let topics = r_task(|| {
-                    RFunction::from(".ps.help.getHelpTopics")
-                        .call()?
-                        .to::<Vec<String>>()
-                })?;
+                let topics = RFunction::from(".ps.help.getHelpTopics")
+                    .call()?
+                    .to::<Vec<String>>()?;
                 let suggestions = topics
                     .into_iter()
                     .filter_map(|entry| {

@@ -52,10 +52,7 @@ impl TestRHelp {
         Self { iopub_tx, iopub_rx }
     }
 
-    fn test_topic(&self, topic: &str, id: &str) {
-        let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
-            topic: String::from(topic),
-        });
+    fn request(&self, request: HelpBackendRequest, id: &str) -> HelpBackendReply {
         let data = serde_json::to_value(request).unwrap();
         let request_id = String::from(id);
         let msg = CommMsg::Rpc {
@@ -77,70 +74,35 @@ impl TestRHelp {
         });
 
         let response = self.iopub_rx.recv_comm_msg();
-        match response {
-            CommMsg::Rpc { id, data: val, .. } => {
-                let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
-                match response {
-                    HelpBackendReply::ShowHelpTopicReply(found) => {
-                        assert!(found);
-                        assert_eq!(id, request_id);
-                    },
-                    reply => panic!("Unexpected help reply: {reply:?}"),
-                }
-            },
-            _ => {
-                panic!("Unexpected response from help comm: {:?}", response);
-            },
-        }
+        let CommMsg::Rpc { id, data, .. } = response else {
+            panic!("Unexpected response from help comm: {response:?}");
+        };
+        assert_eq!(id, request_id);
+        serde_json::from_value(data).unwrap()
+    }
+
+    fn test_topic(&self, topic: &str, id: &str) {
+        let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
+            topic: String::from(topic),
+        });
+        assert_eq!(
+            self.request(request, id),
+            HelpBackendReply::ShowHelpTopicReply(true)
+        );
     }
 
     fn test_search(&self, query: &str, id: &str) {
         let request = HelpBackendRequest::SearchHelp(SearchHelpParams {
             query: String::from(query),
         });
-        let data = serde_json::to_value(request).unwrap();
-        let request_id = String::from(id);
-        self.comm
-            .incoming_tx
-            .send(CommMsg::Rpc {
-                id: request_id.clone(),
-                parent_header: dummy_jupyter_header(),
-                data,
-            })
-            .unwrap();
-
-        // Search results can be emitted before the RPC response. Consume the
-        // navigation event first when that happens.
-        let mut response = self.iopub_rx.recv_comm_msg();
-        while let CommMsg::Data(_) = response {
-            response = self.iopub_rx.recv_comm_msg();
-        }
-        let CommMsg::Rpc { id, data, .. } = response else {
-            panic!("Unexpected response from help comm: {response:?}");
-        };
-        assert_eq!(id, request_id);
         assert_eq!(
-            serde_json::from_value::<HelpBackendReply>(data).unwrap(),
+            self.request(request, id),
             HelpBackendReply::SearchHelpReply(true)
         );
     }
 
     fn get_topics(&self, id: &str) -> Vec<HelpTopicSuggestion> {
-        let data = serde_json::to_value(HelpBackendRequest::GetHelpTopics).unwrap();
-        self.comm
-            .incoming_tx
-            .send(CommMsg::Rpc {
-                id: String::from(id),
-                parent_header: dummy_jupyter_header(),
-                data,
-            })
-            .unwrap();
-
-        let response = self.iopub_rx.recv_comm_msg();
-        let CommMsg::Rpc { data, .. } = response else {
-            panic!("Unexpected response from help comm: {response:?}");
-        };
-        match serde_json::from_value::<HelpBackendReply>(data).unwrap() {
+        match self.request(HelpBackendRequest::GetHelpTopics, id) {
             HelpBackendReply::GetHelpTopicsReply(topics) => topics,
             reply => panic!("Unexpected help reply: {reply:?}"),
         }
@@ -183,7 +145,7 @@ fn test_help_comm() {
 
 #[test]
 fn test_help_search_comm() {
-    let r_help = TestRHelp::new(String::from("test-help-search-comm-id"));
+    let r_help = TestRHelp::new();
 
     r_help.test_search("linear model", "help-search-test-id");
     let topics = r_help.get_topics("help-topics-test-id");
