@@ -60,6 +60,26 @@ help <- function(topic, package = NULL) {
     length(results) > 0
 }
 
+# Search all installed help documentation and show R's native HTML results page.
+#' @export
+.ps.help.searchHelp <- function(query) {
+    results <- utils::help.search(query, package = NULL)
+
+    if (!in_ark_tests()) {
+        print(results)
+    }
+
+    TRUE
+}
+
+# Return package-qualified help aliases for frontend autocomplete.
+#' @export
+.ps.help.getHelpTopics <- function() {
+    matches <- utils::help.search(".", fields = "alias", package = NULL)$matches
+    matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
+    unique(paste(matches[, "Package"], matches[, "Topic"], sep = "\u001f"))
+}
+
 # Resolve the package specifier, if there is one
 split_topic <- function(topic) {
     # Try `:::` first, as `::` will match both
