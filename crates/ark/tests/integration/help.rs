@@ -13,6 +13,8 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
+use amalthea::comm::help_comm::HelpTopicSuggestion;
+use amalthea::comm::help_comm::SearchHelpParams;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::socket::comm::CommOutgoingTx;
@@ -83,11 +85,64 @@ impl TestRHelp {
                         assert!(found);
                         assert_eq!(id, request_id);
                     },
+                    reply => panic!("Unexpected help reply: {reply:?}"),
                 }
             },
             _ => {
                 panic!("Unexpected response from help comm: {:?}", response);
             },
+        }
+    }
+
+    fn test_search(&self, query: &str, id: &str) {
+        let request = HelpBackendRequest::SearchHelp(SearchHelpParams {
+            query: String::from(query),
+        });
+        let data = serde_json::to_value(request).unwrap();
+        let request_id = String::from(id);
+        self.comm
+            .incoming_tx
+            .send(CommMsg::Rpc {
+                id: request_id.clone(),
+                parent_header: dummy_jupyter_header(),
+                data,
+            })
+            .unwrap();
+
+        // Search results can be emitted before the RPC response. Consume the
+        // navigation event first when that happens.
+        let mut response = self.iopub_rx.recv_comm_msg();
+        while let CommMsg::Data(_) = response {
+            response = self.iopub_rx.recv_comm_msg();
+        }
+        let CommMsg::Rpc { id, data, .. } = response else {
+            panic!("Unexpected response from help comm: {response:?}");
+        };
+        assert_eq!(id, request_id);
+        assert_eq!(
+            serde_json::from_value::<HelpBackendReply>(data).unwrap(),
+            HelpBackendReply::SearchHelpReply(true)
+        );
+    }
+
+    fn get_topics(&self, id: &str) -> Vec<HelpTopicSuggestion> {
+        let data = serde_json::to_value(HelpBackendRequest::GetHelpTopics).unwrap();
+        self.comm
+            .incoming_tx
+            .send(CommMsg::Rpc {
+                id: String::from(id),
+                parent_header: dummy_jupyter_header(),
+                data,
+            })
+            .unwrap();
+
+        let response = self.iopub_rx.recv_comm_msg();
+        let CommMsg::Rpc { data, .. } = response else {
+            panic!("Unexpected response from help comm: {response:?}");
+        };
+        match serde_json::from_value::<HelpBackendReply>(data).unwrap() {
+            HelpBackendReply::GetHelpTopicsReply(topics) => topics,
+            reply => panic!("Unexpected help reply: {reply:?}"),
         }
     }
 }
@@ -124,6 +179,17 @@ fn test_help_comm() {
         r_help_port
     );
     assert!(RHelp::is_help_url(url.as_str(), r_help_port));
+}
+
+#[test]
+fn test_help_search_comm() {
+    let r_help = TestRHelp::new(String::from("test-help-search-comm-id"));
+
+    r_help.test_search("linear model", "help-search-test-id");
+    let topics = r_help.get_topics("help-topics-test-id");
+    assert!(topics
+        .iter()
+        .any(|topic| { topic.label == "plot" && topic.topic == "graphics::plot" }));
 }
 
 #[test]
