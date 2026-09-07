@@ -356,10 +356,14 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
 }
 
 fn attached_packages_cycle_result<'db>(
-    _db: &'db dyn Db,
+    db: &'db dyn Db,
     _id: salsa::Id,
-    _file: File,
+    file: File,
 ) -> Vec<Name<'db>> {
+    log::warn!(
+        "Cyclic attaches detected at {}. Reporting no attached packages.",
+        file.path(db),
+    );
     Vec::new()
 }
 
