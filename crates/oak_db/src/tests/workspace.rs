@@ -54,11 +54,7 @@ fn workspace_with_script(db: &mut TestDb, contents: &str) {
 
 /// Create a `proj` workspace root with editor overrides for `scripts`.
 /// Paths are relative to `proj`.
-fn workspace_with_scripts(db: &mut TestDb, scripts: &[(&str, &str)]) {
-    workspace_with_scripts_files(db, scripts);
-}
-
-fn workspace_with_scripts_files(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
+fn workspace_with_scripts(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
     let root = workspace_root(&*db, "proj");
     let files: Vec<File> = scripts
         .iter()
@@ -336,7 +332,7 @@ fn test_r_directory_collation_with_a_source_call_does_not_panic() {
     // when `a.R` sources `b.R`.
     let mut db = TestDb::new();
     register_library(&mut db, &["pkga", "pkgb", "pkgc"]);
-    let files = workspace_with_scripts_files(&mut db, &[
+    let files = workspace_with_scripts(&mut db, &[
         ("R/a.R", "library(pkga)\nsource(\"R/b.R\")\n"),
         ("R/b.R", "library(pkgb)\n"),
         ("R/c.R", "library(pkgc)\n"),
@@ -355,7 +351,7 @@ fn test_r_directory_collation_cycle_without_attaches_does_not_panic() {
     // needs an NSE-annotated call (`local()`) in the sourced predecessor to
     // reach `cross_file_layers()` and re-enter `attached_packages()`.
     let mut db = TestDb::new();
-    let files = workspace_with_scripts_files(&mut db, &[
+    let files = workspace_with_scripts(&mut db, &[
         ("R/a.R", "source(\"R/b.R\")\n"),
         ("R/b.R", "local({ 1 })\n"),
         ("R/c.R", "local({ 2 })\n"),
@@ -371,7 +367,7 @@ fn test_single_r_file_does_not_panic() {
     // Smoke test for https://github.com/posit-dev/positron/issues/15631#issuecomment-5437414045
     // We couldn't reproduce the reported panic but we keep that test as baseline.
     let mut db = TestDb::new();
-    let files = workspace_with_scripts_files(&mut db, &[("R/test.R", "x <- 1\n")]);
+    let files = workspace_with_scripts(&mut db, &[("R/test.R", "x <- 1\n")]);
 
     let _ = all_package_dependencies_names(&db);
     let _ = files[0].used_packages(&db);
