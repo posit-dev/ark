@@ -348,3 +348,33 @@ fn test_r_directory_collation_with_a_source_call_does_not_panic() {
     // their `library()` attachments. Only `c.R` remains a dependency.
     assert_eq!(all_package_dependencies_names(&db), vec!["pkgc"]);
 }
+
+#[test]
+fn test_r_directory_collation_cycle_without_attaches_does_not_panic() {
+    // No `library()` call and no installed package anywhere: the cycle only
+    // needs an NSE-annotated call (`local()`) in the sourced predecessor to
+    // reach `cross_file_layers()` and re-enter `attached_packages()`.
+    let mut db = TestDb::new();
+    let files = workspace_with_scripts_files(&mut db, &[
+        ("R/a.R", "source(\"R/b.R\")\n"),
+        ("R/b.R", "local({ 1 })\n"),
+        ("R/c.R", "local({ 2 })\n"),
+    ]);
+
+    let _ = files[2].used_packages(&db);
+
+    assert_eq!(all_package_dependencies_names(&db), Vec::<String>::new());
+}
+
+#[test]
+fn test_single_r_file_does_not_panic() {
+    // Smoke test for https://github.com/posit-dev/positron/issues/15631#issuecomment-5437414045
+    // We couldn't reproduce the reported panic but we keep that test as baseline.
+    let mut db = TestDb::new();
+    let files = workspace_with_scripts_files(&mut db, &[("R/test.R", "x <- 1\n")]);
+
+    let _ = all_package_dependencies_names(&db);
+    let _ = files[0].used_packages(&db);
+    let _ = files[0].imports(&db);
+    let _ = files[0].diagnostics(&db);
+}
