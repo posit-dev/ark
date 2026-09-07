@@ -187,11 +187,10 @@ pub(crate) struct DeviceContext {
     /// provides the file attribution even though the execute_request came from the console.
     source_context_stack: RefCell<Vec<String>>,
 
-    /// The plot origin for the current page, captured eagerly whenever drawing
-    /// starts and no snapshot is pending. This is necessary because the source
-    /// context stack may be popped before `process_changes()` runs (e.g. `source()`
-    /// completes before the execute request finishes).
-    pending_origin: RefCell<Option<Option<PlotOrigin>>>,
+    /// Snapshot the origin at draw time because `source()` can pop its context
+    /// before `process_changes()` runs. The snapshot is tagged with `PlotId` so a
+    /// stale origin can't be attributed to a later page.
+    pending_origin: RefCell<Option<(PlotId, Option<PlotOrigin>)>>,
 }
 
 impl std::fmt::Debug for DeviceContext {
@@ -269,15 +268,15 @@ impl DeviceContext {
         self.source_context_stack.borrow().last().cloned()
     }
 
-    /// Eagerly capture the plot origin so it's available when `process_changes()`
-    /// runs later, since the source context stack may be popped before then.
     fn set_pending_origin(&self, origin: Option<PlotOrigin>) {
-        self.pending_origin.replace(Some(origin));
+        self.pending_origin.replace(Some((self.id(), origin)));
     }
 
-    /// Clear any unconsumed pending origin.
-    fn clear_pending_origin(&self) {
-        self.pending_origin.replace(None);
+    fn has_pending_origin(&self) -> bool {
+        match self.pending_origin.borrow().as_ref() {
+            Some((page, _)) => *page == self.id(),
+            None => false,
+        }
     }
 
     /// Create a new id for this new plot page (from Positron's perspective)
@@ -285,7 +284,6 @@ impl DeviceContext {
     fn new_positron_page(&self) {
         self.is_new_page.replace(true);
         self.id.replace(Self::new_id());
-        self.clear_pending_origin();
     }
 
     /// Deactivation hook
@@ -337,13 +335,8 @@ impl DeviceContext {
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
 
-        // Eagerly capture the plot origin while the source context stack is still
-        // available, since `process_changes()` may not run until after `source()`
-        // popped it. Capture whenever we have no snapshot rather than only on the
-        // `has_changes` false->true edge, which never comes back around for a new
-        // page started while earlier changes are still pending (e.g. `dev.hold()`).
-        let needs_origin = self.pending_origin.borrow().is_none();
-        if is_drawing && needs_origin {
+        // Capture each page's origin before `source()` pops its context
+        if is_drawing && !self.has_pending_origin() {
             let ctx = self.capture_execution_context();
             let origin = self.capture_plot_origin(&ctx);
             self.set_pending_origin(origin);
@@ -405,13 +398,16 @@ impl DeviceContext {
             .map(Self::code_location_to_origin)
     }
 
-    /// Take the pending origin that was captured eagerly at drawing time.
-    /// Falls back to capturing the origin now if none was pending.
-    fn take_pending_origin(&self, ctx: &ExecutionContext) -> Option<PlotOrigin> {
-        self.pending_origin
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(|| self.capture_plot_origin(ctx))
+    /// Take the origin captured at drawing time for this page. Falls back to
+    /// capturing the origin now if the snapshot is missing or belongs to an
+    /// earlier page.
+    fn take_pending_origin(&self, id: &PlotId, ctx: &ExecutionContext) -> Option<PlotOrigin> {
+        let pending = self.pending_origin.borrow_mut().take();
+
+        match pending {
+            Some((page, origin)) if page == *id => origin,
+            _ => self.capture_plot_origin(ctx),
+        }
     }
 
     /// Detect the kind of plot from the recording.
@@ -714,7 +710,7 @@ impl DeviceContext {
     fn store_plot_context(&self, id: &PlotId, ctx: &ExecutionContext) {
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
-        let origin = self.take_pending_origin(ctx);
+        let origin = self.take_pending_origin(id, ctx);
 
         self.plot_contexts
             .borrow_mut()
