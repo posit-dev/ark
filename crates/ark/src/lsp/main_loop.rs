@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
@@ -22,16 +23,18 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use stdext::panic_message;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tower_lsp_server::jsonrpc;
 use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::request;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::ls_types::ShowMessageRequestParams;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::Client;
 
@@ -39,6 +42,7 @@ use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
+use crate::lsp::analysis::catch_cancellation;
 use crate::lsp::analysis::AnalysisPool;
 use crate::lsp::analysis::DiagnosticsReady;
 use crate::lsp::analysis::DiagnosticsState;
@@ -64,6 +68,8 @@ use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::watchdog::Watchdog;
+use crate::panic;
+use crate::panic::Recovery;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -329,7 +335,7 @@ impl GlobalState {
     ///
     /// The returned [`LoopHandles`] owns everything the loops need. Drop it to
     /// shut the loops down and release the owned state.
-    pub(crate) fn start(self) -> LoopHandles {
+    pub(crate) fn start(self, server_shutdown_tx: Sender<()>) -> LoopHandles {
         let mut aux = tokio::task::JoinSet::<()>::new();
 
         // The auxiliary loop is fully async and never blocks. Must be started
@@ -346,8 +352,20 @@ impl GlobalState {
         // thread that we're in control of.
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let handle = Handle::current();
+
         let main_loop = spawn!("oak-main-loop", move || {
-            handle.block_on(self.main_loop(shutdown_rx));
+            let outcome = panic::catch_unwind(Recovery::Always, {
+                let server_shutdown_tx = server_shutdown_tx.clone();
+                move || handle.block_on(self.main_loop(shutdown_rx, server_shutdown_tx))
+            });
+
+            // Handle panics that bypass `handle_event()`'s recovery boundary.
+            // Use `try_send()` because this thread's Tokio runtime may already be gone.
+            if let Err(msg) = outcome {
+                lsp::log_error!("Panic in the main loop: {msg}");
+                LSP_HAS_CRASHED.store(true, Ordering::Release);
+                server_shutdown_tx.try_send(()).log_err();
+            }
         });
 
         LoopHandles {
@@ -361,7 +379,11 @@ impl GlobalState {
     ///
     /// This takes ownership of all global state and handles one by one LSP
     /// requests, notifications, and other internal events.
-    async fn main_loop(mut self, mut shutdown_rx: oneshot::Receiver<()>) {
+    async fn main_loop(
+        mut self,
+        mut shutdown_rx: oneshot::Receiver<()>,
+        server_shutdown_tx: Sender<()>,
+    ) {
         loop {
             tokio::select! {
                 _ = &mut shutdown_rx => {
@@ -373,8 +395,22 @@ impl GlobalState {
                         lsp::log_info!("Main loop stopping: event channel closed");
                         break;
                     };
-                    if let Err(err) = self.handle_event(event).await {
-                        lsp::log_error!("Failure while handling event:\n{err:?}")
+
+                    let outcome =
+                        panic::catch_unwind_async(Recovery::Always, self.handle_event(event)).await;
+
+                    match outcome {
+                        Ok(Ok(())) => {},
+                        Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
+                        Err(msg) => {
+                            // `report_crash()` reads only the `Client` handle. Drop `self` after the
+                            // panic because a handler may have partially written its state.
+                            lsp::log_error!("Panic while handling event: {msg}");
+                            LSP_HAS_CRASHED.store(true, Ordering::Release);
+                            report_crash(&self.client).await;
+                            let _ = server_shutdown_tx.send(()).await;
+                            break;
+                        },
                     }
                 }
             }
@@ -458,7 +494,7 @@ impl GlobalState {
 
                     match request {
                         LspRequest::Initialize(params) => {
-                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?;
+                            respond_exclusive(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?;
                         },
                         LspRequest::WorkspaceSymbol(params) => {
                             respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
@@ -679,6 +715,37 @@ impl GlobalState {
     }
 }
 
+/// Send via `request::ShowMessageRequest` not `notification::ShowMessage` so
+/// that we can ensure that the message has been received on the frontend side.
+/// We are about to shut the LSP down, and sending out a fire-and-forget
+/// notification often won't get sent out before shutdown occurs. The request
+/// returns control to us when the user acknowledges the message. It doesn't
+/// matter if that takes awhile because we shut down right after, and we've
+/// already flipped the `LSP_HAS_CRASHED` global flag. We do bound it with a 5
+/// second timeout just in case the user ignores the message entirely, so we can
+/// still shutdown.
+async fn report_crash(client: &Client) {
+    let user_message = concat!(
+        "The R language server has crashed and has been disabled. ",
+        "Smart features such as completions will no longer work in this session. ",
+        "Please report this crash to https://github.com/posit-dev/positron/issues ",
+        "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
+    );
+    let request = client.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
+        typ: MessageType::ERROR,
+        message: String::from(user_message),
+        actions: None,
+    });
+    match tokio::time::timeout(Duration::from_secs(5), request).await {
+        Ok(result) => {
+            result.log_err();
+        },
+        Err(_) => {
+            log::warn!("Timed out waiting for frontend to acknowledge LSP crash notification");
+        },
+    }
+}
+
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
 fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     // Also reported to the LSP output channel from `handle_initialized()`.
@@ -809,28 +876,46 @@ fn respond<T>(
     response: impl FnOnce() -> LspResult<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
-    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
-        Ok(Ok(t)) => RequestResponse::Result(Ok(into_lsp_response(t))),
-        Ok(Err(e)) => RequestResponse::Result(Err(e)),
-        Err(err) if err.downcast_ref::<salsa::Cancelled>().is_some() => {
+    let response = match panic::catch_unwind(Recovery::Always, || catch_cancellation(response)) {
+        Ok(Some(Ok(value))) => RequestResponse::Result(Ok(into_lsp_response(value))),
+        Ok(Some(Err(err))) => RequestResponse::Result(Err(err)),
+        Ok(None) => {
             // A salsa write cancelled an oak query while the handler ran.
             // Report `ContentModified` so the client knows the content moved
             // under us and re-requests.
             RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified())))
         },
-        Err(err) => {
-            // Set global crash flag to disable the LSP
-            LSP_HAS_CRASHED.store(true, Ordering::Release);
-
-            let msg = panic_message(err.as_ref());
-
-            // This creates an uninformative backtrace that is reported in the
-            // LSP logs. Note that the relevant backtrace is the one created by
-            // our panic hook and reported via the _kernel_ logs.
-            RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}"))
-        },
+        Err(msg) => RequestResponse::Result(Err(LspError::Anyhow(anyhow!(
+            "Panic while handling request: {msg}"
+        )))),
     };
 
+    send_response(response_tx, response)
+}
+
+/// Run a handler that holds an exclusive world-state borrow.
+///
+/// We don't recover from panics in these handlers because they could leave
+/// leave the world state half-built. Let them reach `main_loop()`'s recovery
+/// boundary, which terminates the session.
+fn respond_exclusive<T>(
+    response_tx: TokioUnboundedSender<RequestResponse>,
+    response: impl FnOnce() -> LspResult<T>,
+    into_lsp_response: impl FnOnce(T) -> LspResponse,
+) -> anyhow::Result<()> {
+    let response = match catch_cancellation(response) {
+        Some(Ok(value)) => RequestResponse::Result(Ok(into_lsp_response(value))),
+        Some(Err(err)) => RequestResponse::Result(Err(err)),
+        None => RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified()))),
+    };
+
+    send_response(response_tx, response)
+}
+
+fn send_response(
+    response_tx: TokioUnboundedSender<RequestResponse>,
+    response: RequestResponse,
+) -> anyhow::Result<()> {
     let out = match response {
         RequestResponse::Result(Ok(_)) => Ok(()),
         RequestResponse::Result(Err(ref error)) => {
@@ -840,9 +925,6 @@ fn respond<T>(
             // backtrace) so server logs keep diagnostic context.
             lsp::log_info!("Error while handling request:\n{error:?}");
             Ok(())
-        },
-        RequestResponse::Crashed(ref error) => {
-            Err(anyhow!("Crashed while handling request:\n{error:?}"))
         },
         RequestResponse::Disabled => Err(anyhow!("Received impossible `Disabled` response state")),
     };

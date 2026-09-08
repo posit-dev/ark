@@ -10,6 +10,9 @@
 //! install it.
 
 use std::cell::Cell;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
+use std::task::Poll;
 
 use stdext::panic_message;
 
@@ -20,8 +23,6 @@ use stdext::panic_message;
 /// keeps running in an unstable state as all communications with this
 /// thread will error out or panic.
 /// https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
-///
-/// Log panics and abort the process unless a recovery boundary or Tokio handles them.
 pub fn install() {
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -114,6 +115,26 @@ pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Resu
         .map_err(|payload| panic_message(payload.as_ref()))
 }
 
+/// Recover panics while polling a future. Enter the recovery boundary for each poll so
+/// unrelated work on the polling thread cannot inherit it.
+pub(crate) async fn catch_unwind_async<T>(
+    recovery: Recovery,
+    future: impl Future<Output = T>,
+) -> Result<T, String> {
+    let mut future = Box::pin(future);
+
+    std::future::poll_fn(move |cx| {
+        let _boundary = catch_boundary(recovery);
+
+        match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
+            Err(payload) => Poll::Ready(Err(panic_message(payload.as_ref()))),
+        }
+    })
+    .await
+}
+
 /// Guard that preserves a `catch_unwind()` recovery boundary for the panic hook.
 ///
 /// Restores the preceding flag in `Drop::drop()` so a nested boundary cannot disable an
@@ -178,6 +199,18 @@ mod tests {
     #[test]
     fn test_catch_unwind_converts_panic_to_err() {
         let result = catch_unwind(Recovery::Always, || panic!("oh no"));
+        assert_eq!(result, Err(String::from("oh no")));
+    }
+
+    #[tokio::test]
+    async fn test_catch_unwind_async_passes_through_ok() {
+        let result = catch_unwind_async(Recovery::Always, async { 1 + 1 }).await;
+        assert_eq!(result, Ok(2));
+    }
+
+    #[tokio::test]
+    async fn test_catch_unwind_async_converts_panic_to_err() {
+        let result = catch_unwind_async(Recovery::Always, async { panic!("oh no") }).await;
         assert_eq!(result, Err(String::from("oh no")));
     }
 }
