@@ -28,6 +28,32 @@ pub(crate) struct LoadContext {
     /// Packages attached by the loader, omitting packages unavailable in every
     /// root during lowering.
     pub implicit_attaches: Vec<&'static str>,
+
+    /// Which loader produced this context. Resolution ignores it; diagnostics
+    /// use it to name what already loads the file.
+    pub loader: Option<LoaderInfo>,
+}
+
+/// How a loader names itself in user reports. Whichever module recognises the
+/// loader supplies it, so a new one doesn't touch this file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoaderInfo {
+    /// Sentence subject, e.g. `"testthat"`.
+    pub name: &'static str,
+
+    /// Completes "<name> already loads <loads>".
+    pub loads: &'static str,
+}
+
+const PACKAGE_LOADER: LoaderInfo = LoaderInfo {
+    name: "The package",
+    loads: "its `R/` files in collation order",
+};
+
+/// The loader that owns `file`, if one does. Reads only paths and source text,
+/// so it is safe to call while a semantic index is being built.
+pub(crate) fn loader(db: &dyn Db, file: File) -> Option<LoaderInfo> {
+    load_context(db, file, CollationView::Deferred).loader
 }
 
 /// Resolver context selected by the loader.
@@ -101,6 +127,7 @@ fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<
         kind: LoadKind::Namespace(package),
         visible_files: visible_siblings(file, files, view, prefix_len),
         implicit_attaches: Vec::new(),
+        loader: Some(PACKAGE_LOADER),
     })
 }
 
@@ -110,6 +137,7 @@ fn standalone_load_context() -> LoadContext {
         kind: LoadKind::Session,
         visible_files: Vec::new(),
         implicit_attaches: Vec::new(),
+        loader: None,
     }
 }
 

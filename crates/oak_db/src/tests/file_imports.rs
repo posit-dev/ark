@@ -1083,6 +1083,67 @@ fn test_qualified_mutual_sourcing_records_sites_but_no_edges() {
 }
 
 #[test]
+fn test_package_backward_source_into_collation_successor_cycles() {
+    // Same shape as Shiny's `R/` autoload, but through package collation:
+    // `a.R` precedes `b.R` and also sources it. `LoadKind::Namespace` fixes
+    // load order, so unlike the Shiny case there's no source-site
+    // inheritance to muddy the shape, but the cycle through
+    // `cross_file_layers` -> `attached_packages` -> `semantic_index` is the
+    // same, and recovery degrades both files identically: both attaches are
+    // lost, the source edge itself disappears, and both carry the same
+    // `SourceCycle` diagnostic even though only `a.R` calls `source()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "pkga", "pkgb"]);
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    );
+    let a = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkga)\nsource(\"pkg/R/b.R\")\n".to_string()),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("w/pkg/R/b.R"),
+        FileRevision::zero(),
+        Some("library(pkgb)\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert!(a.sourced_by(&db).is_empty());
+    assert!(b.sourced_by(&db).is_empty());
+
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert_eq!(
+        a.diagnostics(&db)[0].message(),
+        b.diagnostics(&db)[0].message()
+    );
+}
+
+#[test]
 fn test_package_r_file_ignores_source_sites() {
     let mut db = TestDb::new();
     install_packages(&mut db, &["base"]);

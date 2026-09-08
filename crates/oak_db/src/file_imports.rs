@@ -645,6 +645,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         kind,
         visible_files,
         implicit_attaches,
+        loader: _,
     } = context;
 
     let mut enclosing: Vec<ImportLayer> = visible_files

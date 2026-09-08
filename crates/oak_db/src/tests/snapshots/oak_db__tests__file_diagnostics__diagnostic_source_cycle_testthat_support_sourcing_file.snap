@@ -1,0 +1,11 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/pkg/tests/testthat/helper.R\", TESTTHAT_BACK_EDGE_SOURCING,\nhelper.diagnostics(&db))"
+---
+warning[source-cycle]: This file is part of a cycle in how the project's files load each other.
+                       testthat already loads `helper*.R` and `setup*.R` before your tests, so a `source()` call between them is redundant.
+                       Language analysis will be incomplete until the cycle is resolved.
+ --> w/pkg/tests/testthat/helper.R:1:1
+  |
+1 | library(pkga)
+  | ^

@@ -12,8 +12,14 @@ use crate::load_context::collation_visible_files;
 use crate::load_context::in_r_directory;
 use crate::load_context::LoadContext;
 use crate::load_context::LoadKind;
+use crate::load_context::LoaderInfo;
 use crate::Db;
 use crate::File;
+
+const LOADER: LoaderInfo = LoaderInfo {
+    name: "This Shiny app",
+    loads: "its `global.R` and `R/` files through `shiny::loadSupport()`",
+};
 
 /// A file `shiny::runApp()` loads through `loadSupport()` or as an entry point.
 /// `None` means Shiny does not load it, including `R/` files disabled by
@@ -49,6 +55,7 @@ fn autoload_context(
         kind: LoadKind::Session,
         visible_files,
         implicit_attaches: vec!["shiny"],
+        loader: Some(LOADER),
     }
 }
 
@@ -66,6 +73,7 @@ fn entry_context(file: File, autoload: &[File]) -> LoadContext {
             .filter(|support| *support != file)
             .collect(),
         implicit_attaches: vec!["shiny"],
+        loader: Some(LOADER),
     }
 }
 
@@ -74,6 +82,7 @@ fn global_context() -> LoadContext {
         kind: LoadKind::Session,
         visible_files: Vec::new(),
         implicit_attaches: vec!["shiny"],
+        loader: Some(LOADER),
     }
 }
 
