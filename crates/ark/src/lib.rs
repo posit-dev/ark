@@ -31,6 +31,7 @@ pub mod lsp;
 pub mod methods;
 pub mod modules;
 pub mod modules_utils;
+pub mod panic;
 pub mod plots;
 pub mod r_task;
 pub mod repos;

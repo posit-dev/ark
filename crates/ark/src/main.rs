@@ -7,15 +7,14 @@
 
 #![allow(unused_unsafe)]
 
-use std::cell::Cell;
 use std::env;
 
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use anyhow::Context;
-use ark::console::catching_panics;
 use ark::console::SessionMode;
 use ark::logger;
+use ark::panic;
 use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;
 use ark::start::start_kernel;
@@ -23,12 +22,7 @@ use ark::traps::register_trap_handlers;
 use crossbeam::channel::unbounded;
 use harp::command::r_home_setup;
 use notify::Watcher;
-use stdext::panic_message;
 use stdext::unwrap;
-
-thread_local! {
-    pub static ON_R_THREAD: Cell<bool> = const { Cell::new(false) };
-}
 
 fn print_usage() {
     println!("Ark {}, an R Kernel.", ark::BUILD_VERSION);
@@ -83,7 +77,7 @@ https://github.com/posit-dev/ark/blob/main/doc/configuration.md
 }
 
 fn main() -> anyhow::Result<()> {
-    ON_R_THREAD.set(true);
+    panic::mark_r_thread();
 
     // Block signals in this thread (and any child threads).
     initialize_signal_block();
@@ -381,60 +375,7 @@ fn main() -> anyhow::Result<()> {
         String::from("--no-restore-data"),
     ]);
 
-    // This causes panics on background threads to propagate on the main
-    // thread. If we don't propagate a background thread panic, the program
-    // keeps running in an unstable state as all communications with this
-    // thread will error out or panic.
-    // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
-    //
-    // A better way to manage panics on background threads would be to ensure
-    // that we join all spawned threads up to the main thread.
-    let old_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        let info = panic_info.payload();
-
-        let loc = if let Some(location) = panic_info.location() {
-            format!("In file '{}' at line {}:", location.file(), location.line(),)
-        } else {
-            String::from("No location information:")
-        };
-
-        let msg = panic_message(info);
-
-        // Top-level-exec and try-catch errors already contain a backtrace
-        // for the R thread so don't repeat it if we see one. Only perform
-        // this check on the R thread because we do want other threads'
-        // backtraces if the panic occurred elsewhere.
-        let trace = if ON_R_THREAD.get() && msg.contains("\n{R_BACKTRACE_HEADER}\n") {
-            String::new()
-        } else {
-            format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture())
-        };
-
-        log::error!("Panic! {loc} {msg}\n{trace}");
-
-        // `Console::with()` catches panics with `catch_unwind` in release
-        // builds. Return early so the catch handler can convert the panic
-        // to an `anyhow::Error`. The backtrace is already logged above.
-        if catching_panics() {
-            return;
-        }
-
-        // We don't want the threads managed by a Tokio runtime to `abort()` the
-        // process since their panics are caught and handled in other ways.
-        // This escape hatch is a hack that will also be activated by other
-        // Tokio contexts than just the LSP.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return;
-        }
-
-        // Give some time to flush log
-        log::logger().flush();
-        std::thread::sleep(std::time::Duration::from_millis(250));
-
-        old_hook(panic_info);
-        std::process::abort();
-    }));
+    panic::install();
 
     let Some(connection_file) = connection_file else {
         return Err(anyhow::anyhow!(

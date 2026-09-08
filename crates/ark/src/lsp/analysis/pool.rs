@@ -6,19 +6,19 @@
 //
 
 use std::collections::VecDeque;
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use aether_path::FilePath;
-use stdext::panic_message;
 use stdext::spawn;
 
 use super::catch_cancellation;
 use super::snapshot::WorldStateSnapshot;
 use crate::lsp;
+use crate::panic;
+use crate::panic::Recovery;
 
 /// Enough threads that a handful of open files all get diagnosed in parallel,
 /// few enough that they don't crowd out the main loop or the R session we share
@@ -202,12 +202,9 @@ fn run_entry(entry: Entry) {
         return;
     }
 
-    let task = AssertUnwindSafe(|| catch_cancellation(|| run(snapshot)));
-    if let Err(err) = std::panic::catch_unwind(task) {
-        lsp::log_error!(
-            "An analysis task panicked: {msg}",
-            msg = panic_message(err.as_ref())
-        );
+    if let Err(msg) = panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
+    {
+        lsp::log_error!("An analysis task panicked: {msg}");
     }
 }
 

@@ -5,13 +5,12 @@
 //
 //
 
-use std::panic::AssertUnwindSafe;
-
 use crossbeam::channel::Sender;
-use stdext::panic_message;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
+use crate::panic;
+use crate::panic::Recovery;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -54,10 +53,7 @@ impl IoPool {
 }
 
 fn run_job(job: Job) {
-    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(job)) {
-        lsp::log_error!(
-            "An I/O job panicked: {msg}",
-            msg = panic_message(err.as_ref())
-        );
+    if let Err(msg) = panic::catch_unwind(Recovery::Always, job) {
+        lsp::log_error!("An I/O job panicked: {msg}");
     }
 }
