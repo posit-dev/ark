@@ -7,6 +7,7 @@ use salsa::Setter;
 use stdext::SortedVec;
 
 use crate::tests::diagnostic_render::render;
+use crate::tests::file_imports::shape;
 use crate::tests::resolver::install_packages;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
@@ -868,6 +869,160 @@ fn test_diagnostic_source_cycle_testthat_support_successor() {
         BACK_EDGE_SUCCESSOR,
         setup.diagnostics(&db)
     ));
+}
+
+/// Query `first`'s diagnostics before anything else touches `db`, then read
+/// `second`'s diagnostics and both files' `imports()`. Returns rendered
+/// diagnostics and import shapes for `first` then `second`, so callers can
+/// compare across entry orders.
+fn probe_entry_order(
+    db: &TestDb,
+    first: File,
+    first_path: &str,
+    first_source: &str,
+    second: File,
+    second_path: &str,
+    second_source: &str,
+) -> (String, String, Vec<String>, Vec<String>) {
+    let first_render = render(first_path, first_source, first.diagnostics(db));
+    let second_render = render(second_path, second_source, second.diagnostics(db));
+    let first_shape = shape(db, first.imports(db));
+    let second_shape = shape(db, second.imports(db));
+    (first_render, second_render, first_shape, second_shape)
+}
+
+#[test]
+fn test_diagnostic_source_cycle_shiny_autoload_entry_order_does_not_matter() {
+    // PR 1393's central finding: which query salsa re-enters, and therefore
+    // which recovery handler fires, depends on which file is queried first.
+    // Build two separate databases, enter one via the sourcing file and the
+    // other via its successor, and require the same outcome either way.
+    let mut sourcing_first = TestDb::new();
+    let (a1, b1) = shiny_back_edge(&mut sourcing_first);
+    let (a1_render, b1_render, a1_shape, b1_shape) = probe_entry_order(
+        &sourcing_first,
+        a1,
+        "w/R/a.R",
+        BACK_EDGE_SOURCING,
+        b1,
+        "w/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (a2, b2) = shiny_back_edge(&mut successor_first);
+    let (b2_render, a2_render, b2_shape, a2_shape) = probe_entry_order(
+        &successor_first,
+        b2,
+        "w/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+        a2,
+        "w/R/a.R",
+        BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(a1_render, a2_render);
+    assert_eq!(b1_render, b2_render);
+    assert_eq!(a1_shape, a2_shape);
+    assert_eq!(b1_shape, b2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_package_collation_entry_order_does_not_matter() {
+    let mut sourcing_first = TestDb::new();
+    let (a1, b1) = package_back_edge(&mut sourcing_first);
+    let (a1_render, b1_render, a1_shape, b1_shape) = probe_entry_order(
+        &sourcing_first,
+        a1,
+        "w/pkg/R/a.R",
+        PKG_BACK_EDGE_SOURCING,
+        b1,
+        "w/pkg/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (a2, b2) = package_back_edge(&mut successor_first);
+    let (b2_render, a2_render, b2_shape, a2_shape) = probe_entry_order(
+        &successor_first,
+        b2,
+        "w/pkg/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+        a2,
+        "w/pkg/R/a.R",
+        PKG_BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(a1_render, a2_render);
+    assert_eq!(b1_render, b2_render);
+    assert_eq!(a1_shape, a2_shape);
+    assert_eq!(b1_shape, b2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_testthat_support_entry_order_does_not_matter() {
+    let mut sourcing_first = TestDb::new();
+    let (helper1, setup1) = testthat_back_edge(&mut sourcing_first);
+    let (helper1_render, setup1_render, helper1_shape, setup1_shape) = probe_entry_order(
+        &sourcing_first,
+        helper1,
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+        setup1,
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (helper2, setup2) = testthat_back_edge(&mut successor_first);
+    let (setup2_render, helper2_render, setup2_shape, helper2_shape) = probe_entry_order(
+        &successor_first,
+        setup2,
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+        helper2,
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(helper1_render, helper2_render);
+    assert_eq!(setup1_render, setup2_render);
+    assert_eq!(helper1_shape, helper2_shape);
+    assert_eq!(setup1_shape, setup2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_confined_to_its_own_workspace_root() {
+    // Two workspace roots: `w` runs a Shiny app with a back-edge cycle in its
+    // `R/` autoload, `h` is an unrelated healthy workspace. Recovery degrades
+    // every cycle participant, and `h`'s file is not one, so it must come out
+    // clean even though both roots share the same `WorkspaceRoots` and
+    // `LibraryRoots` inputs.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "pkga", "pkgb", "pkgc"]);
+
+    let cycling = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
+    let a = new_file(&db, "w/R/a.R", BACK_EDGE_SOURCING);
+    let b = new_file(&db, "w/R/b.R", BACK_EDGE_SUCCESSOR);
+    cycling.set_scripts(&mut db).to(vec![app, a, b]);
+
+    let healthy = workspace_root(&db, "h");
+    let healthy_source = "library(pkgc)\n";
+    let healthy_file = new_file(&db, "h/main.R", healthy_source);
+    healthy.set_scripts(&mut db).to(vec![healthy_file]);
+
+    db.workspace_roots()
+        .set_roots(&mut db)
+        .to(vec![cycling, healthy]);
+
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert!(healthy_file.diagnostics(&db).is_empty());
+    assert_eq!(shape(&db, healthy_file.imports(&db)), vec![
+        "Package(pkgc)".to_string(),
+        "Package(base)".to_string(),
+    ]);
 }
 
 /// A Shiny app whose autoloaded `R/a.R` sources its collation successor

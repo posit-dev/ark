@@ -424,6 +424,128 @@ fn test_script_outside_r_directory_stays_standalone() {
 }
 
 #[test]
+fn test_loose_r_directory_scripts_stay_standalone() {
+    // Same shape as `test_script_outside_r_directory_stays_standalone`, but
+    // under `R/` instead of `scripts/`. The implicit alphabetical `R/`
+    // collation fallback is gone, so the directory name carries no special
+    // meaning for a loose script.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
+    assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
+}
+
+/// One workspace root with a single loose script at `ws/{dir}/test.R`.
+/// Returns its `imports()` shape and diagnostics count.
+fn single_script_under(dir: &str) -> (Vec<String>, usize) {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let file = File::new(
+        &db,
+        file_path(&format!("ws/{dir}/test.R")),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![file]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    (shape(&db, file.imports(&db)), file.diagnostics(&db).len())
+}
+
+#[test]
+fn test_single_r_directory_script_matches_an_ordinary_directory() {
+    // https://github.com/posit-dev/positron/issues/15631: a lone script under
+    // `R/` was reported to crash, and renaming `R/` to `Code/` was reported to
+    // fix it (never reproduced; see `test_single_r_file_does_not_panic` in
+    // `tests/workspace.rs`). `R/` is not a recognized loader directory for a
+    // loose script, so it must behave exactly like any other directory name.
+    let under_r = single_script_under("R");
+
+    // Pin the absolute result too, so the comparison can't pass by both sides
+    // breaking the same way.
+    assert_eq!(under_r, (Vec::new(), 0));
+    assert_eq!(under_r, single_script_under("Code"));
+}
+
+#[test]
+fn test_separate_shiny_apps_in_different_workspace_roots_do_not_cross_collate() {
+    // Loader-based replacement for `test_separate_r_directories_do_not_cross_collate`,
+    // deleted along with the implicit alphabetical `R/` fallback it exercised.
+    // Two workspace roots, each running its own Shiny app with an `R/`
+    // autoload directory of the same basename, so a file in one root's `R/`
+    // never sees the other root's file of the same name.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "pkga", "pkgb"]);
+
+    let one = workspace_root(&db, "ws/one");
+    let app_one = File::new(
+        &db,
+        file_path("ws/one/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a_one = File::new(
+        &db,
+        file_path("ws/one/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkga)\n".to_string()),
+        None,
+    );
+    one.set_scripts(&mut db).to(vec![app_one, a_one]);
+
+    let two = workspace_root(&db, "ws/two");
+    let app_two = File::new(
+        &db,
+        file_path("ws/two/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a_two = File::new(
+        &db,
+        file_path("ws/two/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkgb)\n".to_string()),
+        None,
+    );
+    two.set_scripts(&mut db).to(vec![app_two, a_two]);
+
+    db.workspace_roots().set_roots(&mut db).to(vec![one, two]);
+
+    assert_eq!(shape(&db, app_one.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(pkga)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, app_two.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(pkgb)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
 fn test_package_owned_r_file_excluded_from_collate_stays_standalone() {
     // An `R/` file left out of `Collate:` carries a package back-pointer but
     // isn't in `package.files()`, so it must keep resolving as a standalone
