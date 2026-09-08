@@ -10,6 +10,7 @@ use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
+use crate::DiagnosticKind;
 use crate::File;
 use crate::FileRevision;
 use crate::ImportLayer;
@@ -1106,6 +1107,85 @@ fn test_shiny_autoload_survives_an_explicit_source() {
     assert_eq!(shape(&db, a.imports(&db)), vec![
         "File(b.R)".to_string(),
         "File(main.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_cold_entry_to_cross_file_layers_recovers() {
+    // A cold `cross_file_layers(b.R, Eager)` entry re-enters through `a.R`'s
+    // `source("R/b.R")` call. The fallback keeps `a.R` visible and omits its
+    // attached package, the dependency that cycles.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "pkga"]);
+    let (pkg, files) = make_package(&mut db, "mypkg", Namespace::default(), &[
+        ("ws/mypkg/R/a.R", "library(pkga)\nsource(\"R/b.R\")\n"),
+        ("ws/mypkg/R/b.R", "library(pkga)\n"),
+    ]);
+    let root = workspace_root(&db, "ws/mypkg");
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let layers = files[1].cross_file_layers(&db, CollationView::Eager);
+    assert_eq!(shape(&db, &layers.enclosing), vec!["File(a.R)".to_string()]);
+    assert_eq!(shape(&db, &layers.attaches), Vec::<String>::new());
+
+    let diagnostics = files[1].diagnostics(&db);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].kind(), DiagnosticKind::SourceCycle);
+}
+
+#[test]
+fn test_source_cycle_keeps_shiny_autoload_visible() {
+    // Loader-based replacement for `test_source_cycle_keeps_the_r_directory_fallback`,
+    // deleted along with the implicit alphabetical `R/` fallback it exercised.
+    // The `a.R` <-> `c.R` source cycle wipes both `SourceSite`s through
+    // `semantic_index`'s own cycle recovery (see
+    // `test_mutual_sourcing_devolves_to_standalone_scripts`), so `a.R` never
+    // inherits from `c.R`. It still sees `b.R` because Shiny's `R/` autoload
+    // collation comes from directory listing, not source-site inheritance.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny"]);
+    let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("source(\"R/c.R\")\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    let c = File::new(
+        &db,
+        file_path("ws/R/c.R"),
+        FileRevision::zero(),
+        Some("source(\"R/a.R\")\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![app, a, b, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
+
+    let contexts = a.imports_by_sourcing_file(&db);
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(shape(&db, &contexts[0]), vec![
+        "File(c.R)".to_string(),
+        "File(b.R)".to_string(),
         "Package(shiny)".to_string(),
         "Package(base)".to_string(),
     ]);

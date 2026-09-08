@@ -28,7 +28,7 @@ This list is not exhaustive. Analyze any recursion introduced by the changed que
 
 - `semantic_index()`, `exports()`, `attached_packages()`, and `cross_file_layers()` can call back into each other while resolving `source()` and attach effects.
 - `source()` site resolution and attach-effect resolution can re-enter those queries.
-- `cross_file_layers()` re-enters through `attached_packages()`, so `attached_packages()` handles that cycle.
+- `cross_file_layers()` can re-enter while resolving a collation predecessor's `source()` call. Its cycle handler omits predecessor attaches when `cross_file_layers()` is the repeated key.
 - `Package::resolve()` can recurse through NAMESPACE re-exports.
 
 When a query changes, state whether it can participate in a cycle, why, and which production paths were examined.
