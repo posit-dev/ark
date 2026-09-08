@@ -453,8 +453,9 @@ fn test_diagnostic_inherited_attach_shadows_a_callee() {
 
 #[test]
 fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
-    // `zzz-shadow.R` and `main.R` both bind `library` to a plain function, so
-    // either winner leaves the call equally non-NSE.
+    // `zzz-shadow.R` (autoloaded alongside `helpers.R` by the Shiny app) and
+    // `main.R` both bind `library` to a plain function, so either winner leaves
+    // the call equally non-NSE.
     //
     // The shadow must be a successor. A predecessor prevents `library(dplyr)`
     // from reaching `semantic_calls()` during the eager scan.
@@ -462,6 +463,7 @@ fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
     install_package_binding(&mut db, "base", &["source", "library"]);
     install_package_binding(&mut db, "dplyr", &[]);
     let root = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
     let main = new_file(
         &db,
         "w/main.R",
@@ -470,7 +472,8 @@ fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
     let helpers_source = "library(dplyr)\n";
     let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
     let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
-    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    root.set_scripts(&mut db)
+        .to(vec![app, main, helpers, shadow]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     insta::assert_snapshot!(render(
@@ -648,17 +651,19 @@ fn test_diagnostic_inherited_shadow_names_every_differing_context() {
 
 #[test]
 fn test_diagnostic_inherited_shadow_when_only_the_standalone_view_binds() {
-    // Standalone `helpers.R` resolves `library` through the later `R/` sibling.
-    // The inherited context excludes that collation fallback and reaches base's
-    // builtin without a scanned base root.
+    // Standalone `helpers.R` resolves `library` through its Shiny-autoloaded
+    // `R/` sibling. The `main.R` source-site context excludes that sibling and
+    // reaches base's builtin without a scanned base root.
     let mut db = TestDb::new();
     install_package_binding(&mut db, "dplyr", &[]);
     let root = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
     let main = new_file(&db, "w/main.R", "source(\"R/helpers.R\")\n");
     let helpers_source = "library(dplyr)\n";
     let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
     let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
-    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    root.set_scripts(&mut db)
+        .to(vec![app, main, helpers, shadow]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     insta::assert_snapshot!(render(
