@@ -2572,6 +2572,7 @@ dependencies = [
  "oak_core",
  "oak_package_metadata",
  "oak_semantic",
+ "oak_tidy",
  "rustc-hash",
  "salsa",
  "salsa-macros",
@@ -2641,10 +2642,12 @@ dependencies = [
  "camino",
  "filetime",
  "ignore",
+ "insta",
  "log",
  "oak_core",
  "oak_db",
  "oak_package_metadata",
+ "oak_tidy",
  "rustc-hash",
  "salsa",
  "stdext",
@@ -2701,6 +2704,15 @@ dependencies = [
  "oak_r_process",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "oak_tidy"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+ "walkdir",
 ]
 
 [[package]]

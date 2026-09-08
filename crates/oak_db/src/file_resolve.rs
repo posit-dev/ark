@@ -29,7 +29,7 @@ impl<'db> File {
     /// 1. **`exports()` chain**: file-top-level locals plus
     ///    `source()`-forwarded entries. `ExportEntry::Import` is chased
     ///    through `exports(target)` until it lands on a `Local`. Cycles in
-    ///    `source()` resolve to empty exports via `exports`'s `cycle_fn`.
+    ///    `source()` resolve to empty exports via `exports`'s `cycle_result`.
     /// 2. **`imports_by_sourcing_file()` walk**: the file's own context plus
     ///    one per file that sources it, each checked in priority order and the
     ///    results unioned across contexts. `File` siblings are checked via their
@@ -158,7 +158,7 @@ impl<'db> File {
     /// marker's position rather than each at its own offset, but the runtime
     /// winner is still last.
     ///
-    /// Cycles resolve to empty via `exports`'s `cycle_fn`.
+    /// Cycles resolve to empty via `exports`'s `cycle_result`.
     #[salsa::tracked(returns(clone))]
     pub(crate) fn resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> {
         let mut results = Vec::new();

@@ -1,0 +1,105 @@
+---
+source: crates/oak_db/src/tests/tidy.rs
+description: "Updating this snapshot means the Salsa query surface changed. This is a review backstop for additions, signature changes, options, and recovery handlers. It does not detect dependency-edge changes. Before accepting:\n- Determine whether the new or changed query can become Salsa's repeated key, not merely participate in a cycle. `semantic_index()`, `exports()`, `attached_packages()`, and `cross_file_layers()` re-enter each other while resolving `source()` and attach effects. `Package::resolve()` can recurse through NAMESPACE re-exports. `cross_file_layers()` re-enters at `attached_packages()`, so it has no handler of its own. Choose a fallback that is correct for the repeated query, which is often an empty value.\n- Trace every production root through non-tracked helpers, `SalsaImportsResolver`, and `Db` / `DbInputs`. A query body alone misses recursive paths.\n- These are known cycles, not an exhaustive list. Analyze any recursion the query introduces.\n- State in the PR whether the query can participate in a cycle, why, and which production roots were examined."
+expression: "oak_tidy::salsa_inventory(&source_dir)"
+---
+== inputs ==
+file.rs: struct File [debug]
+  path: FilePath [returns(ref)]
+  revision: FileRevision [returns(copy)]
+  source_text_override: Option<String> [returns(ref)]
+  package: Option<Package> [returns(copy)]
+inputs.rs: struct LibraryRoots
+  roots: Vec<Root> [returns(ref)]
+inputs.rs: struct OrphanRoot [debug]
+  files: HashSet<File> [returns(ref)]
+inputs.rs: struct Root [debug]
+  path: FilePath [returns(ref)]
+  kind: RootKind [returns(copy)]
+  scripts: Vec<File> [returns(ref)]
+  packages: Vec<Package> [returns(ref)]
+inputs.rs: struct StaleRoot
+  files: HashSet<File> [returns(ref)]
+  packages: Vec<Package> [returns(ref)]
+inputs.rs: struct WorkspaceRoots
+  roots: Vec<Root> [returns(ref)]
+package.rs: struct Package [debug]
+  description_path: FilePath [returns(ref)]
+  name: String [returns(ref)]
+  description_revision: FileRevision [returns(copy)]
+  namespace_revision: FileRevision [returns(copy)]
+  index_revision: Option<FileRevision> [returns(copy)]
+  namespace_override: Option<Namespace> [returns(ref)]
+  files: Vec<File> [returns(ref)]
+  scripts: Vec<File> [returns(ref)]
+
+== interned ==
+name.rs: struct Name<'db> [debug]
+  text: CompactString [returns(ref)]
+
+== tracked structs ==
+definition.rs: struct Definition<'db> [debug]
+  file: File [returns(copy)]
+  scope: ScopeId [returns(copy)]
+  name: Name<'db>
+  kind: DefinitionKind [tracked, no_eq]
+
+== tracked queries ==
+db.rs: fn all_known_files(db: &dyn Db) -> Vec<File> [returns(ref)]
+db.rs: fn all_used_files(db: &dyn Db) -> Vec<File> [returns(ref)]
+db.rs: fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> [returns(ref)]
+db.rs: fn orphan_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> [returns(ref)]
+db.rs: fn root_package_index(db: &dyn Db, root: Root) -> FxHashMap<String, Package> [returns(ref)]
+db.rs: fn root_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, File> [returns(ref)]
+db.rs: fn workspace_files(db: &dyn Db) -> Vec<File> [returns(ref)]
+db.rs: fn workspace_root_files(db: &dyn Db) -> Vec<File> [returns(ref)]
+db.rs: fn workspace_scripts(db: &dyn Db) -> Vec<File> [returns(ref)]
+definition.rs: fn File::definitions(self, db: &'db dyn Db) -> Definitions<'db> [returns(ref)]
+file.rs: fn File::attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref), cycle_result = attached_packages_cycle_result]
+file.rs: fn File::attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref), cycle_result = attached_packages_cycle_result]
+file.rs: fn File::diagnostics(self, db: &dyn Db) -> Vec<Diagnostic> [returns(ref)]
+file.rs: fn File::line_index(self, db: &dyn Db) -> biome_line_index::LineIndex [returns(ref)]
+file.rs: fn File::namespace_accessed_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref)]
+file.rs: fn File::parse(self, db: &dyn Db) -> OakParse [returns(ref), lru = 128]
+file.rs: fn File::root(self, db: &dyn Db) -> Option<Root> [returns(copy)]
+file.rs: fn File::semantic_index(self, db: &dyn Db) -> SemanticIndex [returns(ref), no_eq, cycle_result = semantic_index_cycle_result]
+file.rs: fn File::source_text(self, db: &dyn Db) -> String [returns(ref), lru = 128]
+file.rs: fn File::used_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref)]
+file_exports.rs: fn File::exports(self, db: &dyn Db) -> FileExports [returns(ref), cycle_result = exports_cycle_result]
+file_imports.rs: fn File::collation_siblings(self, db: &dyn Db) -> Vec<File> [returns(ref)]
+file_imports.rs: fn File::cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers [returns(ref)]
+file_imports.rs: fn File::has_fallback_context(self, db: &dyn Db, view: CollationView) -> bool [returns(copy)]
+file_imports.rs: fn File::imports(self, db: &dyn Db) -> Vec<ImportLayer> [returns(ref)]
+file_imports.rs: fn File::imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> [returns(ref)]
+file_imports.rs: fn File::inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> [returns(ref), cycle_result = inherited_layers_cycle_result]
+file_resolve.rs: fn File::resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> [returns(clone)]
+file_resolve.rs: fn File::resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> [returns(clone)]
+file_source_site.rs: fn File::source_sites(self, db: &dyn Db) -> Vec<SourceSite> [returns(ref)]
+file_source_site.rs: fn File::source_targets(self, db: &dyn Db) -> Vec<File> [returns(ref)]
+file_source_site.rs: fn File::sourced_by(self, db: &dyn Db) -> Vec<File> [returns(ref)]
+file_source_site.rs: fn sourcing_files_by_target(db: &dyn Db) -> FxHashMap<File, Vec<File>> [returns(ref)]
+imports.rs: fn source_dir_scripts(db: &dyn Db, file: File, path: String, walk: DirWalk) -> Vec<File> [returns(ref)]
+load_context/contrib/shiny.rs: fn is_shiny_entry_file(db: &dyn Db, file: File) -> bool [returns(copy)]
+load_context/contrib/shiny.rs: fn shiny_autoload(db: &dyn Db, file: File) -> Option<Vec<File>> [returns(ref)]
+package.rs: fn Package::collation(self, db: &dyn Db) -> Option<Vec<String>> [returns(ref)]
+package.rs: fn Package::depends(self, db: &dyn Db) -> Option<Vec<String>> [returns(ref)]
+package.rs: fn Package::description(self, db: &dyn Db) -> Option<Description> [returns(ref)]
+package.rs: fn Package::imported_from(self, db: &dyn Db) -> FxHashMap<String, String> [returns(ref)]
+package.rs: fn Package::index(self, db: &dyn Db) -> Option<Index> [returns(ref)]
+package.rs: fn Package::namespace(self, db: &dyn Db) -> Namespace [returns(ref)]
+package.rs: fn Package::priority(self, db: &dyn Db) -> Option<Priority> [returns(ref)]
+package.rs: fn Package::version(self, db: &dyn Db) -> Option<String> [returns(ref)]
+package_resolve.rs: fn Package::resolve(self, db: &'db dyn Db, name: Name<'db>, visibility: NamespaceVisibility) -> Vec<Definition<'db>> [returns(clone), cycle_result = resolve_cycle_result]
+workspace.rs: fn all_package_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
+workspace.rs: fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
+workspace.rs: fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
+workspace.rs: fn all_workspace_package_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
+workspace.rs: fn default_search_path_packages(db: &dyn Db) -> Vec<Package> [returns(ref)]
+
+== cycle recovery ==
+file.rs: File::attached_packages -> attached_packages_cycle_result
+file.rs: File::attached_packages_anywhere -> attached_packages_cycle_result
+file.rs: File::semantic_index -> semantic_index_cycle_result
+file_exports.rs: File::exports -> exports_cycle_result
+file_imports.rs: File::inherited_layers -> inherited_layers_cycle_result
+package_resolve.rs: Package::resolve -> resolve_cycle_result

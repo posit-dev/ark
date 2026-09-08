@@ -31,4 +31,6 @@ url.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
+oak_tidy.workspace = true
 tempfile.workspace = true

@@ -181,6 +181,51 @@ Some of the files below `crates/amalthea/src/comm/` are automatically generated 
 Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
 If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
 
+## Salsa queries
+
+`oak_db` and `oak_scan` each run the `salsa_inventory` snapshot test
+from `oak_tidy`. It inventories the crate's `#[salsa::tracked]` functions,
+`#[salsa::input]`, `#[salsa::interned]`, and tracked structs, including their
+keys, options, and `cycle_result` handlers. Changes to that surface fail the
+test. This is a review backstop for additions, signature changes, options, and
+recovery handlers. It does not detect dependency-edge changes.
+
+Treat a snapshot failure as a review prompt. Before accepting a new snapshot:
+
+- Determine whether the new or changed query can become Salsa's repeated key,
+  not merely participate in a cycle. `semantic_index()`, `exports()`,
+  `attached_packages()`, and `cross_file_layers()` re-enter each other while
+  resolving `source()` and attach effects. `Package::resolve()` can recurse
+  through NAMESPACE re-exports. `cross_file_layers()` re-enters at
+  `attached_packages()`, so it has no handler of its own. Choose a fallback
+  that is correct for the repeated query, which is often an empty value.
+- These are known cycles, not an exhaustive list. Analyze any recursion the
+  query introduces.
+- State in the PR whether the query can participate in a cycle and why.
+
+### Determining whether a query can be a cycle key
+
+Do not infer the query graph from a query body. `File::semantic_index()`
+delegates to `build_semantic_index()`, which reaches `exports()` through
+`SalsaImportsResolver` and `oak_semantic`, while `File::exports()` directly
+calls `semantic_index()`.
+
+1. Trace callees through non-tracked helpers such as `build_semantic_index()`
+   and the collation helpers in `file_imports.rs`, `SalsaImportsResolver`
+   methods in `imports.rs`, and `Db` / `DbInputs` trait methods in `storage.rs`.
+2. List every production root that reaches the query. Check diagnostics, file
+   resolution, `resolve_at()`, `imports_at()`, package resolution, and workspace
+   aggregates.
+3. For each root, determine whether its path can return to the query.
+   `source()` site resolution and attach-effect resolution can re-enter
+   `semantic_index()`, `exports()`, `attached_packages()`, and
+   `cross_file_layers()`. Reaching one of those queries below the query under
+   review can make it the repeated key.
+4. One reachable entry order requires a handler because Salsa's repeated key
+   depends on entry order.
+5. Record the roots examined, including any path you could not trace to the
+   end. An incomplete path is a gap in the analysis, not evidence of no cycle.
+
 ## Coding Style
 
 - Do not use `bail!`. Instead use an explicit `return Err(anyhow!(...))`.

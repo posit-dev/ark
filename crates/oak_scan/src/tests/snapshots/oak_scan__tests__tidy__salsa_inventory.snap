@@ -1,0 +1,17 @@
+---
+source: crates/oak_scan/src/tests/tidy.rs
+description: "Updating this snapshot means the Salsa query surface changed. This is a review backstop for additions, signature changes, options, and recovery handlers. It does not detect dependency-edge changes. Before accepting:\n- Determine whether the new or changed query can become Salsa's repeated key, not merely participate in a cycle. `semantic_index()`, `exports()`, `attached_packages()`, and `cross_file_layers()` re-enter each other while resolving `source()` and attach effects. `Package::resolve()` can recurse through NAMESPACE re-exports. `cross_file_layers()` re-enters at `attached_packages()`, so it has no handler of its own. Choose a fallback that is correct for the repeated query, which is often an empty value.\n- Trace every production root through non-tracked helpers, `SalsaImportsResolver`, and `Db` / `DbInputs`. A query body alone misses recursive paths.\n- These are known cycles, not an exhaustive list. Analyze any recursion the query introduces.\n- State in the PR whether the query can participate in a cycle, why, and which production roots were examined."
+expression: "oak_tidy::salsa_inventory(&source_dir)"
+---
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+
+== tracked queries ==
+lookup.rs: fn root_package_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, Package> [returns(ref)]
+stale.rs: fn stale_package_path_index(db: &dyn Db) -> FxHashMap<FilePath, Package> [returns(ref)]
+stale.rs: fn stale_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> [returns(ref)]
+
+== cycle recovery ==
