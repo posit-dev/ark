@@ -39,6 +39,5 @@ impl Console {
         let dc = Rc::clone(self.device_context());
         dc.process_changes(self);
         dc.clear_execution_context();
-        dc.clear_pending_origin();
     }
 }

@@ -586,6 +586,89 @@ fn test_plot_source_context_stacking() {
     assert!(result_a.contains(&format!("$origin_uri\n[1] \"{}\"", file_a.uri_id)));
 }
 
+/// Plots created by `source()` retain the file origin while `dev.hold()`
+/// defers processing until after `source()` returns.
+///
+/// `has_changes` remains true while the hold is active, so each new page must
+/// capture its origin without relying on a false-to-true transition.
+#[test]
+fn test_plot_origin_survives_hold_across_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Deferring the notification until after `source()` returns removes the
+    // source context that fallback capture would otherwise use.
+    let file = SourceFile::new("invisible(dev.hold())\nplot(1:5)\nplot(1:3)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Release the hold after `source()` has returned.
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let display_id = frontend.recv_iopub_display_data_id();
+    assert!(!display_id.is_empty());
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let query = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    assert!(result.contains(&format!("$origin_uri\n[1] \"{}\"", file.uri_id)));
+}
+
+/// Origins are page-scoped, so an unconsumed `source()` origin from an update
+/// cannot be attributed to a later page.
+#[test]
+fn test_plot_origin_is_not_reused_across_pages() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Updates do not store metadata, leaving this page's source origin unconsumed.
+    let file = SourceFile::new("points(2, 2)\n");
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_update_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let code = "plot(1:5)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let display_id = frontend.recv_iopub_display_data_id();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let query = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    assert!(result.contains(&format!("$code\n[1] \"{code}\"")));
+    assert!(!result.contains(&file.uri_id));
+}
+
 /// Test that plots rendered with fig-width/fig-height metadata produce
 /// a PNG at the expected pixel dimensions (inches * 96 DPI).
 #[test]
