@@ -1,0 +1,20 @@
+[package]
+name = "oak_tidy"
+version = "0.1.0"
+description = """
+Source-level tidy checks. Test-support only: walks crate sources with `syn`
+and renders the salsa query surface for snapshot tests.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quote.workspace = true
+syn.workspace = true
+walkdir.workspace = true
