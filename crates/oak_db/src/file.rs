@@ -275,7 +275,7 @@ impl File {
             .semantic_index(db)
             .diagnostics()
             .iter()
-            .map(lower_semantic_diagnostic)
+            .map(|diagnostic| lower_semantic_diagnostic(db, self, diagnostic))
             .collect();
 
         diagnostics.extend(inherited_shadow_diagnostics(db, self));

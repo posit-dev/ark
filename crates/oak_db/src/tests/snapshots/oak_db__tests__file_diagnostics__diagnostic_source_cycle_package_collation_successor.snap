@@ -1,11 +1,11 @@
 ---
 source: crates/oak_db/src/tests/file_diagnostics.rs
-expression: "render(\"w/b.R\", b_source, b.diagnostics(&db))"
+expression: "render(\"w/pkg/R/b.R\", BACK_EDGE_SUCCESSOR, b.diagnostics(&db))"
 ---
 warning[source-cycle]: This file is part of a cycle in how the project's files load each other.
-                       These files may `source()` each other, or `source()` a file that a loader such as a Shiny app or testthat suite already loads for them.
+                       The package already loads its `R/` files in collation order, so a `source()` call between them is redundant.
                        Language analysis will be incomplete until the cycle is resolved.
- --> w/b.R:1:1
+ --> w/pkg/R/b.R:1:1
   |
-1 | source("a.R")
+1 | library(pkgb)
   | ^
