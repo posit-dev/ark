@@ -102,12 +102,12 @@ fn test_shiny_disable_autoload_drops_the_directory_but_keeps_global() {
         "Package(base)".to_string(),
     ]);
 
-    // Disabled autoload leaves `a.R` on plain `R/` collation, so it inherits
-    // neither `global.R` nor `shiny`.
-    assert_eq!(shape(&db, a.imports(&db)), vec![
-        "File(_disable_autoload.R)".to_string(),
-        "Package(base)".to_string(),
-    ]);
+    // Disabled autoload drops `a.R` from Shiny's loader, so it becomes a
+    // standalone script that inherits neither `global.R` nor `shiny`.
+    assert_eq!(
+        shape(&db, a.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
 }
 
 #[test]
@@ -155,22 +155,6 @@ fn test_autoloaded_file_sees_global_and_the_implicit_shiny_attach() {
         "File(global.R)".to_string(),
         "Package(dplyr)".to_string(),
         "Package(shiny)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_r_directory_without_an_entry_point_ignores_global() {
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["base", "shiny"]);
-    let (_, files) = script_workspace(&mut db, &[
-        ("ws/global.R", "cfg <- 1\n"),
-        ("ws/R/a.R", "a_val <- 1\n"),
-        ("ws/R/b.R", "b_val <- 2\n"),
-    ]);
-
-    assert_eq!(shape(&db, files[1].imports(&db)), vec![
-        "File(b.R)".to_string(),
         "Package(base)".to_string(),
     ]);
 }

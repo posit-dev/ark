@@ -838,13 +838,16 @@ fn test_attach_in_a_function_body_is_visible_later_in_that_body() {
 }
 
 #[test]
-fn test_script_r_directory_top_level_sees_only_alphabetic_predecessor() {
+fn test_autoloaded_r_directory_top_level_sees_only_alphabetic_predecessor() {
+    // `app.R` turns `ws/R/` into a Shiny autoload directory, which is what
+    // collates these files.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
+    let app = make_file(&mut db, "ws/app.R", "shinyApp(ui, server)\n");
     let a = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
     let b_source = "x <- 1\n";
     let b = make_file(&mut db, "ws/R/b.R", b_source);
-    root.set_scripts(&mut db).to(vec![a, b]);
+    root.set_scripts(&mut db).to(vec![app, a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     // `b.R` is alphabetically after `a.R`, so `a.R` is its collation
@@ -861,16 +864,20 @@ fn test_script_r_directory_top_level_sees_only_alphabetic_predecessor() {
 }
 
 #[test]
-fn test_script_r_directory_collation_is_case_insensitive() {
+fn test_autoloaded_r_directory_collation_is_case_insensitive() {
     // Non-package `R/` files use `list.files()` collation, so `a.R` precedes
     // `Z.R` in a UTF-8 session locale. Package installation's `LC_COLLATE=C`
     // reverses them.
+    //
+    // `app.R` turns `ws/R/` into a Shiny autoload directory, which is what
+    // collates these files.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
+    let app = make_file(&mut db, "ws/app.R", "shinyApp(ui, server)\n");
     let z_source = "z_val <- 1\n";
     let z_file = make_file(&mut db, "ws/R/Z.R", z_source);
     let a_file = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
-    root.set_scripts(&mut db).to(vec![z_file, a_file]);
+    root.set_scripts(&mut db).to(vec![app, z_file, a_file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let offset = TextSize::from(z_source.len() as u32);
@@ -878,20 +885,24 @@ fn test_script_r_directory_collation_is_case_insensitive() {
 }
 
 #[test]
-fn test_script_r_directory_unplaced_file_still_sees_only_predecessors() {
+fn test_autoloaded_r_directory_unplaced_file_still_sees_only_predecessors() {
     // A file the editor opened before the scanner placed it sits in
     // `OrphanRoot`, so it's missing from its own `collation_siblings`. Its
     // collation position comes from its basename anyway, so the top-level view
     // stays the strict predecessor prefix instead of widening to every sibling.
+    //
+    // `app.R` turns `ws/R/` into a Shiny autoload directory, which is what
+    // collates these files.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
+    let app = make_file(&mut db, "ws/app.R", "shinyApp(ui, server)\n");
     let a = make_file(&mut db, "ws/R/a.R", "a_val <- 1\n");
     let b_source = "x <- 1\n";
     let b = make_file(&mut db, "ws/R/b.R", b_source);
     let c = make_file(&mut db, "ws/R/c.R", "c_val <- 3\n");
 
     // `b.R` is left out: unscanned, so it isn't a collation sibling of anyone.
-    root.set_scripts(&mut db).to(vec![a, c]);
+    root.set_scripts(&mut db).to(vec![app, a, c]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let offset = TextSize::from(b_source.find('x').unwrap() as u32);

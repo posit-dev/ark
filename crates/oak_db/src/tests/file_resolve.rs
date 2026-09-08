@@ -979,24 +979,6 @@ fn test_resolve_namespace_import_beats_attached_package() {
 }
 
 #[test]
-fn test_sourcing_a_script_replaces_fallback_collation_siblings() {
-    // `main.R` explicitly loads `R/a.R` but not `b.R`, replacing the inferred
-    // `R/`-directory collation context. `helper()` has no definition to resolve.
-    let mut db = TestDb::new();
-    let files = setup_workspace(&mut db, &[
-        ("w/main.R", "source(\"R/a.R\")\n"),
-        ("w/R/a.R", "f <- function() helper()\n"),
-        ("w/R/b.R", "helper <- function() 1\n"),
-    ]);
-
-    assert!(files[1].resolve(&db, name(&db, "helper")).is_empty());
-
-    // Nothing sources `b.R`, so it retains the inferred collation context.
-    let def = resolve_one(&db, files[2], "f");
-    assert_eq!(def.file(&db), files[1]);
-}
-
-#[test]
 fn test_shiny_global_resolves_reactive_but_not_r_directory_definitions() {
     // `loadSupport()` calls `require(shiny)` before sourcing anything, so an
     // unqualified `reactive()` in `global.R` resolves to shiny's own binding.

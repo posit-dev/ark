@@ -327,9 +327,10 @@ fn test_testthat_file_depends_on_testthat() {
 }
 
 #[test]
-fn test_r_directory_collation_with_a_source_call_does_not_panic() {
-    // Query `c.R` first to re-enter `attached_packages()` through `R/` collation
-    // when `a.R` sources `b.R`.
+fn test_source_call_between_loose_r_scripts_collects_every_attach() {
+    // Layout from https://github.com/posit-dev/positron/issues/15631. A loose
+    // `R/` script is standalone, so building `c.R`'s index never reaches `a.R`
+    // or `b.R` and no attach is lost to cycle recovery.
     let mut db = TestDb::new();
     register_library(&mut db, &["pkga", "pkgb", "pkgc"]);
     let files = workspace_with_scripts(&mut db, &[
@@ -340,26 +341,9 @@ fn test_r_directory_collation_with_a_source_call_does_not_panic() {
 
     let _ = files[2].used_packages(&db);
 
-    // The cycle rebuilds `a.R` and `b.R` with `NoopImportsResolver`, omitting
-    // their `library()` attachments. Only `c.R` remains a dependency.
-    assert_eq!(all_package_dependencies_names(&db), vec!["pkgc"]);
-}
-
-#[test]
-fn test_r_directory_collation_cycle_without_attaches_does_not_panic() {
-    // No `library()` call and no installed package anywhere: the cycle only
-    // needs an NSE-annotated call (`local()`) in the sourced predecessor to
-    // reach `cross_file_layers()` and re-enter `attached_packages()`.
-    let mut db = TestDb::new();
-    let files = workspace_with_scripts(&mut db, &[
-        ("R/a.R", "source(\"R/b.R\")\n"),
-        ("R/b.R", "local({ 1 })\n"),
-        ("R/c.R", "local({ 2 })\n"),
+    assert_eq!(all_package_dependencies_names(&db), vec![
+        "pkga", "pkgb", "pkgc"
     ]);
-
-    let _ = files[2].used_packages(&db);
-
-    assert_eq!(all_package_dependencies_names(&db), Vec::<String>::new());
 }
 
 #[test]
