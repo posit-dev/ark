@@ -36,6 +36,8 @@ pub struct LspClient {
     server_capabilities: Option<lsp_types::ServerCapabilities>,
     /// Buffered diagnostics notifications, keyed by document URI
     diagnostics: std::collections::HashMap<lsp_types::Uri, Vec<lsp_types::Diagnostic>>,
+    /// Expected error and warning log message substrings.
+    allowed_log_messages: Vec<String>,
     /// Set by `disconnect_abruptly()` so `Drop` skips the graceful `shutdown`/`exit` sequence
     killed: bool,
 }
@@ -58,8 +60,15 @@ impl LspClient {
             open_documents: Vec::new(),
             server_capabilities: None,
             diagnostics: std::collections::HashMap::new(),
+            allowed_log_messages: Vec::new(),
             killed: false,
         })
+    }
+
+    /// Allow an expected server error or warning without hiding unexpected logs.
+    /// Only messages containing `substring` are ignored.
+    pub fn allow_log_message(&mut self, substring: &str) {
+        self.allowed_log_messages.push(substring.to_string());
     }
 
     /// Sever the connection with a TCP reset instead of a graceful close.
@@ -481,7 +490,7 @@ impl LspClient {
             },
 
             (false, true, false) => {
-                let diagnostics = Self::check_server_notification(&message);
+                let diagnostics = self.check_server_notification(&message);
                 LspMessage::Notification { diagnostics }
             },
 
@@ -491,6 +500,7 @@ impl LspClient {
 
     /// Check a server notification, returning parsed diagnostics if applicable.
     fn check_server_notification(
+        &self,
         message: &serde_json::Map<String, Value>,
     ) -> Option<lsp_types::PublishDiagnosticsParams> {
         let method = message["method"].as_str().unwrap_or("unknown");
@@ -505,7 +515,13 @@ impl LspClient {
                     let text = message["params"]["message"]
                         .as_str()
                         .unwrap_or("(no message)");
-                    panic!("LSP server {level}: {text}");
+                    if !self
+                        .allowed_log_messages
+                        .iter()
+                        .any(|allowed| text.contains(allowed))
+                    {
+                        panic!("LSP server {level}: {text}");
+                    }
                 }
                 None
             },

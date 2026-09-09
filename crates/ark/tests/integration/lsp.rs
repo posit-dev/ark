@@ -86,6 +86,10 @@ fn test_lsp_panicking_notification_ends_session() {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
+    // Allow the expected panic log because its auxiliary loop can deliver it
+    // before or after the crash dialog.
+    lsp.allow_log_message("Panic while handling event");
+
     lsp.send_notification("ark/testPanicNotification", json!({}));
 
     // Read `window/showMessageRequest` first because shutdown races it.
