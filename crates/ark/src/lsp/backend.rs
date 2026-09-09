@@ -106,6 +106,8 @@ pub(crate) enum LspNotification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
+    #[cfg(feature = "testing")]
+    TestPanic,
 }
 
 #[derive(Debug)]
@@ -132,6 +134,8 @@ pub(crate) enum LspRequest {
     CodeAction(CodeActionParams),
     VirtualDocument(VirtualDocumentParams),
     InputBoundaries(InputBoundariesParams),
+    #[cfg(feature = "testing")]
+    TestPanic,
 }
 
 #[derive(Debug)]
@@ -158,6 +162,8 @@ pub(crate) enum LspResponse {
     CodeAction(Option<CodeActionResponse>),
     VirtualDocument(VirtualDocumentResponse),
     InputBoundaries(InputBoundariesResponse),
+    #[cfg(feature = "testing")]
+    TestPanic(()),
 }
 
 pub(crate) type LspResult<T> = std::result::Result<T, LspError>;
@@ -482,7 +488,25 @@ impl Backend {
     async fn notification(&self, params: Option<Value>) {
         log::info!("Received Positron notification: {:?}", params);
     }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic(&self, _params: Option<Value>) -> jsonrpc::Result<()> {
+        cast_response!(
+            self.request(LspRequest::TestPanic).await,
+            LspResponse::TestPanic
+        )
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_notification(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestPanic);
+    }
 }
+
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_REQUEST: &str = "ark/testPanic";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_NOTIFICATION: &str = "ark/testPanicNotification";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -549,7 +573,7 @@ pub(crate) fn start_lsp(
             }
         };
 
-        let (service, socket) = LspService::build(init)
+        let builder = LspService::build(init)
             .custom_method(
                 statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
                 Backend::statement_range,
@@ -561,8 +585,17 @@ pub(crate) fn start_lsp(
                 input_boundaries::POSITRON_INPUT_BOUNDARIES_REQUEST,
                 Backend::input_boundaries,
             )
-            .custom_method("positron/notification", Backend::notification)
-            .finish();
+            .custom_method("positron/notification", Backend::notification);
+
+        #[cfg(feature = "testing")]
+        let builder = builder
+            .custom_method(ARK_TEST_PANIC_REQUEST, Backend::test_panic)
+            .custom_method(
+                ARK_TEST_PANIC_NOTIFICATION,
+                Backend::test_panic_notification,
+            );
+
+        let (service, socket) = builder.finish();
 
         let server = Server::new(read, write, socket);
 

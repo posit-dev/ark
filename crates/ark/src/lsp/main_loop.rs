@@ -486,6 +486,11 @@ impl GlobalState {
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.world)?;
                         },
+
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestPanic => {
+                            panic!("Test panic in a notification handler");
+                        },
                     }
                 },
 
@@ -560,6 +565,11 @@ impl GlobalState {
                         },
                         LspRequest::InputBoundaries(params) => {
                             respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
+                        },
+
+                        #[cfg(feature = "testing")]
+                        LspRequest::TestPanic => {
+                            respond(tx, || -> LspResult<()> { panic!("Test panic in a request handler") }, LspResponse::TestPanic)?;
                         },
                     };
                 },

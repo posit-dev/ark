@@ -57,3 +57,23 @@ fn run_job(job: Job) {
         lsp::log_error!("An I/O job panicked: {msg}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Install the production hook so a missing `catch_unwind()` aborts the
+    /// process instead of silently losing the worker panic.
+    #[test]
+    fn test_pool_survives_panicking_job() {
+        crate::panic::install();
+
+        let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE);
+        pool.submit(|| panic!("Test panic in an I/O job"));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        pool.submit(move || tx.send(()).unwrap());
+
+        rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    }
+}

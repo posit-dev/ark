@@ -247,4 +247,27 @@ mod tests {
             .unwrap();
         assert!(!ran.load(Ordering::Acquire));
     }
+
+    /// Install the production hook so a missing `catch_unwind()` aborts the
+    /// process instead of silently losing the worker panic.
+    #[test]
+    fn test_pool_survives_panicking_task() {
+        crate::panic::install();
+
+        let state = WorldState::default();
+        let pool = AnalysisPool::with_threads(1);
+
+        pool.spawn(state.snapshot(), |_snapshot| {
+            panic!("Test panic in an analysis task")
+        });
+
+        let (barrier_tx, barrier_rx) = std::sync::mpsc::channel();
+        pool.spawn(state.snapshot(), move |_snapshot| {
+            barrier_tx.send(()).unwrap()
+        });
+
+        barrier_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+    }
 }

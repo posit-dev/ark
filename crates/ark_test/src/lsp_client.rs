@@ -399,7 +399,7 @@ impl LspClient {
     ///
     /// Skips benign server notifications. Panics on unexpected messages.
     #[track_caller]
-    fn recv_server_request(&mut self, expected_method: &str) {
+    pub fn recv_server_request(&mut self, expected_method: &str) {
         loop {
             match self.recv_any() {
                 LspMessage::ServerRequest { id, method, params } => {
