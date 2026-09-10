@@ -65,7 +65,7 @@ pub(crate) fn symbols(
     state: &WorldState,
 ) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
@@ -166,7 +166,7 @@ pub(crate) fn document_symbols(
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let ast = file.tree_sitter(db);
 
     // Start walking from the root node
@@ -1201,13 +1201,11 @@ outer <- 4
                 },
                 ..Default::default()
             };
-            let mut state = WorldState {
-                config,
-                ..Default::default()
-            };
+            let mut state = WorldState::default();
+            state.config = config;
             let uri = test_path("test.R");
             state
-                .db
+                .db_mut()
                 .upsert_editor(aether_path::FilePath::from_url(&uri), code.to_string());
 
             let params = WorkspaceSymbolParams {

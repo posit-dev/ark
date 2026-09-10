@@ -38,7 +38,7 @@ impl WorldState {
     /// handle can't outlive the tick that made it.
     pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
         WorldStateSnapshot {
-            db: self.db.snapshot(),
+            db: self.db().snapshot(),
             console_scopes: self.console_scopes.clone(),
             installed_packages: self.installed_packages.clone(),
             config: self.config.clone(),

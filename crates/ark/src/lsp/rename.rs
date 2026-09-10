@@ -21,7 +21,7 @@ pub(crate) fn prepare_rename(
     let path = params.text_document.uri.to_document_path()?;
     let position = params.position;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {
@@ -53,7 +53,7 @@ pub(crate) fn rename(
     let position = params.text_document_position.position;
     let new_name = params.new_name;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {

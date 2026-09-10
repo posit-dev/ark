@@ -185,7 +185,7 @@ mod tests {
         let uri = Url::parse("file:///test.R").unwrap();
         let path = FilePath::from_url(&uri);
         let code = "foo";
-        let file = state.db.upsert_editor(path.clone(), code.to_string());
+        let file = state.db_mut().upsert_editor(path.clone(), code.to_string());
         state.insert_open_file(uri.to_uri().unwrap(), path.clone(), file, None);
 
         let file = state.open_file(&path).unwrap().clone();
