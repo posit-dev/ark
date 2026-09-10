@@ -46,7 +46,6 @@ mod packages_pane;
 mod plots;
 mod repos_auto;
 mod repos_conf_file;
-mod reticulate;
 mod rstudioapi;
 mod stack;
 mod stream_filter;
