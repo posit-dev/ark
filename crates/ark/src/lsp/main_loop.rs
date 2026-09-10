@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem::discriminant;
 use std::mem::Discriminant;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -1136,15 +1137,27 @@ impl AuxiliaryState {
     /// loop.
     async fn start(mut self) {
         loop {
-            match self.next_event().await {
-                AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
-                AuxiliaryEvent::PublishDiagnostics(publication) => {
-                    self.publish_diagnostics(publication).await
-                },
-                AuxiliaryEvent::ReportBackgroundPanic => self.report_background_panic().await,
-                AuxiliaryEvent::Shutdown => break,
+            match panic::catch_unwind_async(Recovery::Always, self.handle_next_event()).await {
+                Ok(ControlFlow::Continue(())) => {},
+                Ok(ControlFlow::Break(())) => break,
+                // Use `log::error!()` instead of `lsp::log_error!()`, which queues another event
+                // on this loop. A panic in `log()` would otherwise recurse indefinitely.
+                Err(msg) => log::error!("Panic in the auxiliary loop: {msg}"),
             }
         }
+    }
+
+    async fn handle_next_event(&mut self) -> ControlFlow<()> {
+        match self.next_event().await {
+            AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
+            AuxiliaryEvent::PublishDiagnostics(publication) => {
+                self.publish_diagnostics(publication).await
+            },
+            AuxiliaryEvent::ReportBackgroundPanic => self.report_background_panic().await,
+            AuxiliaryEvent::Shutdown => return ControlFlow::Break(()),
+        }
+
+        ControlFlow::Continue(())
     }
 
     async fn next_event(&mut self) -> AuxiliaryEvent {
