@@ -134,6 +134,7 @@ pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Resu
 /// [`catch_unwind()`] for a caller that hands the panic on to `resume_unwind()`
 /// elsewhere, or that must classify the payload (e.g. distinguish `salsa::Cancelled`
 /// from a genuine panic), and so needs the payload rather than a message.
+#[expect(clippy::disallowed_methods)]
 pub(crate) fn catch_unwind_payload<T>(
     recovery: Recovery,
     f: impl FnOnce() -> T,
@@ -155,6 +156,7 @@ pub(crate) async fn catch_unwind_async<T>(
 
 /// [`catch_unwind_async()`] for a caller that must classify the payload, such as the
 /// LSP event loop distinguishing `salsa::Cancelled` from a genuine panic.
+#[expect(clippy::disallowed_methods)]
 pub(crate) async fn catch_unwind_async_payload<T>(
     recovery: Recovery,
     future: impl Future<Output = T>,

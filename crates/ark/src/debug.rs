@@ -164,6 +164,7 @@ pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
 
     // We protect from panics to correctly restore `captured_output`'s state.
     // The panic is resumed right after.
+    #[expect(clippy::disallowed_methods)]
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
 
     let mut out = capture.take();
