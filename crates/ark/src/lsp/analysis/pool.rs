@@ -204,10 +204,9 @@ fn run_entry(entry: Entry, service_context: &LspServiceContext) {
         return;
     }
 
-    if let Err(payload) =
+    if let Err(message) =
         panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
     {
-        let message = panic::message(&payload);
         lsp::log_error!("An analysis task panicked: {message}");
         service_context.report_background_panic();
     }

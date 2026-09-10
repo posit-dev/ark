@@ -426,16 +426,14 @@ impl GlobalState {
             });
 
             // Handle panics that bypass `handle_event()`'s recovery boundary.
-            if let Err(payload) = outcome {
-                let message = panic::message(&payload);
+            if let Err(message) = outcome {
                 lsp::log_error!("Panic in the main loop: {message}");
                 service_context.set_crashed();
 
                 let report = panic::catch_unwind(Recovery::Always, || {
                     handle.block_on(report_crash(&client))
                 });
-                if let Err(payload) = report {
-                    let message = panic::message(&payload);
+                if let Err(message) = report {
                     log::error!("Panic while reporting an LSP crash: {message}");
                 }
 
@@ -479,7 +477,8 @@ impl GlobalState {
                     }
 
                     let outcome =
-                        panic::catch_unwind_async(Recovery::Always, self.handle_event(event)).await;
+                        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event))
+                            .await;
 
                     match outcome {
                         Ok(Ok(())) => {},
@@ -1043,10 +1042,9 @@ fn respond<T>(
                 RequestOutcome::Handled,
             )
         },
-        Err(payload) => {
+        Err(message) => {
             // The panic hook emits the backtrace to the kernel logs. Mention
             // the panic in the LSP log too for cross-reference.
-            let message = panic::message(&payload);
             lsp::log_error!(
                 "Panic while handling request: {message}. \
                  See the R kernel log for the full panic backtrace."
