@@ -12,7 +12,7 @@
     # This should return a list with the following fields:
     # python: NULL or string
     # venv: NULL or string
-    # ipykernel: NULL or string
+    # embeddedInterpreter: interpreter version, implementation, and architecture
     # error: NULL or string
 
     config <- tryCatch(
@@ -66,28 +66,35 @@
         ))
     }
 
-    # Now check ipykernel
-    ipykernel <- tryCatch(
-        {
-            reticulate::py_module_available("ipykernel")
-        },
-        error = function(err) {
-            err
-        }
-    )
+    # py_config() above has initialized Python successfully.
+    # Do not import ipykernel here: it would cache the project's copy before the
+    # bundle is added to sys.path.
+    embeddedInterpreter <- reticulate::py_run_string(
+        "
+import platform
+import sys
+import sysconfig
 
-    if (inherits(ipykernel, "error")) {
-        return(list(
-            python = python,
-            venv = venv,
-            error = conditionMessage(ipykernel)
-        ))
-    }
+info = {
+    'version': {
+      'major': sys.version_info.major,
+      'minor': sys.version_info.minor,
+    },
+    'implementation': sys.implementation.name,
+    # On Windows, machine() describes the host, which may be running x64 Python under emulation.
+    'architecture': (
+        sysconfig.get_platform().replace('win-', '')
+        if sys.platform == 'win32' else platform.machine().lower()
+    ),
+}
+",
+        local = TRUE
+    )$info
 
     list(
         python = config$python,
         venv = venv,
-        ipykernel = ipykernel,
+        embeddedInterpreter = embeddedInterpreter,
         error = NULL
     )
 }
@@ -97,7 +104,8 @@
     kernelPath,
     connectionFile,
     logFile,
-    logLevel
+    logLevel,
+    pythonPath = character()
 ) {
     # Starts an IPykernel in a separate thread with information provided by
     # the caller.
@@ -106,6 +114,12 @@
     # and passing the communication files that Positron Jupyter's Adapter sets up.
     tryCatch(
         {
+            # PYTHONPATH cannot change an already initialized interpreter. Apply
+            # the launcher's paths directly, preserving their precedence.
+            sys <- reticulate::import("sys", convert = FALSE)
+            for (path in rev(pythonPath)) {
+                sys$path$insert(0L, path)
+            }
             reticulate:::py_run_file_on_thread(
                 file = kernelPath,
                 args = c(
