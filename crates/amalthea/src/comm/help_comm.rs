@@ -11,6 +11,19 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// A help topic offered as an autocomplete suggestion.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HelpTopicSuggestion {
+	/// The topic label shown to the user.
+	pub label: String,
+
+	/// The exact topic value used to open help.
+	pub topic: String,
+
+	/// Optional context such as the package containing the topic.
+	pub detail: Option<String>
+}
+
 /// Possible values for Kind in ShowHelp
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ShowHelpKind {
@@ -32,6 +45,13 @@ pub enum ShowHelpKind {
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
+}
+
+/// Parameters for the SearchHelp method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchHelpParams {
+	/// The help query to search for
+	pub query: String,
 }
 
 /// Parameters for the ShowHelp method.
@@ -62,6 +82,20 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
 
+	/// Search the active interpreter's help system.
+	///
+	/// Searches interpreter-wide help and displays the resulting page via a
+	/// Show Help notification.
+	#[serde(rename = "search_help")]
+	SearchHelp(SearchHelpParams),
+
+	/// List help topics for autocomplete.
+	///
+	/// Returns interpreter-wide help topics that can be offered as search
+	/// suggestions.
+	#[serde(rename = "get_help_topics")]
+	GetHelpTopics,
+
 }
 
 /**
@@ -73,6 +107,12 @@ pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
+
+	/// Whether the search results page was shown.
+	SearchHelpReply(bool),
+
+	/// Help topic suggestions.
+	GetHelpTopicsReply(Vec<HelpTopicSuggestion>),
 
 }
 

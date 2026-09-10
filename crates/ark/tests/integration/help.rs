@@ -13,6 +13,8 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
+use amalthea::comm::help_comm::HelpTopicSuggestion;
+use amalthea::comm::help_comm::SearchHelpParams;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::socket::comm::CommOutgoingTx;
@@ -50,10 +52,7 @@ impl TestRHelp {
         Self { iopub_tx, iopub_rx }
     }
 
-    fn test_topic(&self, topic: &str, id: &str) {
-        let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
-            topic: String::from(topic),
-        });
+    fn request(&self, request: HelpBackendRequest, id: &str) -> HelpBackendReply {
         let data = serde_json::to_value(request).unwrap();
         let request_id = String::from(id);
         let msg = CommMsg::Rpc {
@@ -75,19 +74,37 @@ impl TestRHelp {
         });
 
         let response = self.iopub_rx.recv_comm_msg();
-        match response {
-            CommMsg::Rpc { id, data: val, .. } => {
-                let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
-                match response {
-                    HelpBackendReply::ShowHelpTopicReply(found) => {
-                        assert!(found);
-                        assert_eq!(id, request_id);
-                    },
-                }
-            },
-            _ => {
-                panic!("Unexpected response from help comm: {:?}", response);
-            },
+        let CommMsg::Rpc { id, data, .. } = response else {
+            panic!("Unexpected response from help comm: {response:?}");
+        };
+        assert_eq!(id, request_id);
+        serde_json::from_value(data).unwrap()
+    }
+
+    fn test_topic(&self, topic: &str, id: &str) {
+        let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
+            topic: String::from(topic),
+        });
+        assert_eq!(
+            self.request(request, id),
+            HelpBackendReply::ShowHelpTopicReply(true)
+        );
+    }
+
+    fn test_search(&self, query: &str, id: &str) {
+        let request = HelpBackendRequest::SearchHelp(SearchHelpParams {
+            query: String::from(query),
+        });
+        assert_eq!(
+            self.request(request, id),
+            HelpBackendReply::SearchHelpReply(true)
+        );
+    }
+
+    fn get_topics(&self, id: &str) -> Vec<HelpTopicSuggestion> {
+        match self.request(HelpBackendRequest::GetHelpTopics, id) {
+            HelpBackendReply::GetHelpTopicsReply(topics) => topics,
+            reply => panic!("Unexpected help reply: {reply:?}"),
         }
     }
 }
@@ -124,6 +141,17 @@ fn test_help_comm() {
         r_help_port
     );
     assert!(RHelp::is_help_url(url.as_str(), r_help_port));
+}
+
+#[test]
+fn test_help_search_comm() {
+    let r_help = TestRHelp::new();
+
+    r_help.test_search("linear model", "help-search-test-id");
+    let topics = r_help.get_topics("help-topics-test-id");
+    assert!(topics
+        .iter()
+        .any(|topic| { topic.label == "plot" && topic.topic == "graphics::plot" }));
 }
 
 #[test]
