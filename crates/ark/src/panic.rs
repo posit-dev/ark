@@ -57,12 +57,6 @@ pub fn install() {
             return;
         }
 
-        // A current Tokio handle may be unrelated to the LSP, but Tokio captures task
-        // panics for its caller to handle.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return;
-        }
-
         // Leave time for the log sink to write the flushed panic before aborting.
         log::logger().flush();
         std::thread::sleep(std::time::Duration::from_millis(250));

@@ -52,6 +52,8 @@ use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task;
 
 // Once the LSP has crashed all requests respond with an error. This prevents
@@ -627,19 +629,27 @@ pub(crate) fn start_lsp(
 
         let server = Server::new(read, write, socket);
 
-        tokio::select! {
-            _ = server.serve(service) => {
-                log::trace!(
-                    "LSP: Thread exiting gracefully after connection closed ({:?}).",
-                    address
-                );
-            },
-            _ = shutdown_rx.recv() => {
-                log::trace!(
-                    "LSP: Thread exiting after receiving a shutdown request ({:?}).",
-                    address
-                );
+        let serving = async {
+            tokio::select! {
+                _ = server.serve(service) => {
+                    log::trace!(
+                        "LSP: Thread exiting gracefully after connection closed ({:?}).",
+                        address
+                    );
+                },
+                _ = shutdown_rx.recv() => {
+                    log::trace!(
+                        "LSP: Thread exiting after receiving a shutdown request ({:?}).",
+                        address
+                    );
+                }
             }
+        };
+
+        // Catch handler panics around `server.serve()`, which polls every `tower-lsp`
+        // handler. Cleanup still removes the LSP channel so the client can reconnect.
+        if let Err(msg) = panic::catch_unwind_async(Recovery::Always, serving).await {
+            log::error!("LSP: Panic in the service: {msg}");
         }
 
         // Remove the LSP channel on the way out, we can no longer handle any LSP updates
