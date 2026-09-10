@@ -13,6 +13,7 @@ use crate::lsp::config::LspConfig;
 use crate::lsp::config::LspSettings;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::url::UrlExt;
+use crate::panic;
 
 #[derive(Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -102,10 +103,12 @@ impl WorldState {
     }
 
     pub(crate) fn db(&self) -> &OakDatabase {
+        panic::assert_in_catch_boundary();
         &self.db
     }
 
     pub(crate) fn db_mut(&mut self) -> &mut OakDatabase {
+        panic::assert_in_catch_boundary();
         &mut self.db
     }
 
