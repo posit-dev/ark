@@ -76,7 +76,7 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
         )))
         .await;
 
-    let db = &state.world().db;
+    let db = state.world().db();
     let roots = db.workspace_roots().roots(db).clone();
     assert_eq!(roots.len(), 1);
     let packages = roots[0].packages(db);

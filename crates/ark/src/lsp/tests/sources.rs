@@ -139,7 +139,7 @@ async fn test_source_pipeline_ingests_package_sources() {
     }
 
     // `donor` now carries the ingested source file, readable from disk.
-    let db = &state.world().db;
+    let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
     let files = donor.files(db).clone();
     assert_eq!(files.len(), 1);
@@ -196,7 +196,7 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     assert!(handler.calls().lock().unwrap().is_empty());
 
     // The dependency is indexed even though its sources were not fetched.
-    let db = &state.world().db;
+    let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
     assert!(donor.files(db).is_empty());
 }
@@ -400,10 +400,8 @@ fn test_pulled_setting_beats_initialization_options() {
 }
 
 fn resolved_source_fetching(options: LspSettings, client_settings: LspSettings) -> bool {
-    let mut state = WorldState {
-        initialization_options: options,
-        ..Default::default()
-    };
+    let mut state = WorldState::default();
+    state.initialization_options = options;
     state.resolve_config(client_settings);
     state.config.oak.source_fetching_enabled
 }
@@ -486,7 +484,7 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     // `donor` was declined while off, so it is still on offer and gets fetched
     // now, sources and all.
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
-    let db = &state.world().db;
+    let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
     let files = donor.files(db).clone();
     assert_eq!(files.len(), 1);
@@ -573,7 +571,7 @@ async fn test_disabling_stops_fetching_new_packages() {
     // `donor2` was discovered by the second scan but never dispatched, and
     // `donor1` keeps the sources it already has.
     assert_eq!(dispatched_names(handler.calls()), vec!["donor1"]);
-    let db = &state.world().db;
+    let db = state.world().db();
     assert!(db.package_by_name("donor2").unwrap().files(db).is_empty());
     assert_eq!(db.package_by_name("donor1").unwrap().files(db).len(), 1);
 }
@@ -804,7 +802,7 @@ async fn check_fetching_waits_for_initialized(
 
     // The initial scan discovered the dependency without fetching its sources.
     assert!(handler.calls().lock().unwrap().is_empty());
-    let db = &state.world().db;
+    let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
     assert!(donor.files(db).is_empty());
 
@@ -991,7 +989,7 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
 
     // {generics} now carries its recovered sources, readable from disk. {generics} is a
     // package of S3 generics, so every recovered file is full of `UseMethod()` calls.
-    let db = &state.world().db;
+    let db = state.world().db();
     let generics = db.package_by_name("generics").unwrap();
     let files = generics.files(db).clone();
     assert!(!files.is_empty());

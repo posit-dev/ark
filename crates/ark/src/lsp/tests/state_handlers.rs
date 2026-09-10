@@ -57,9 +57,9 @@ fn set_workspace_paths(
     let mut lsp_state = test_lsp_state();
     let reqs = lsp_state
         .oak_scheduler
-        .set_workspace_paths(&mut state.db, paths, editor_owned);
+        .set_workspace_paths(state.db_mut(), paths, editor_owned);
     drain(
-        &mut state.db,
+        state.db_mut(),
         &mut lsp_state.oak_scheduler,
         reqs,
         editor_owned,
@@ -122,7 +122,7 @@ where
             let followups =
                 lsp_state
                     .oak_scheduler
-                    .apply_scan_completed(&mut state.db, scan, &editor_owned);
+                    .apply_scan_completed(state.db_mut(), scan, &editor_owned);
             dispatch_scan_requests(&lsp_state.scan_pool, &events_tx, followups);
         }
         Ok(())
@@ -189,8 +189,8 @@ fn test_description_created_triggers_root_rescan() {
     let mut state = workspace_state(tmp.path());
 
     // No DESCRIPTION yet, so `a.R` registers as a workspace script.
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert!(root.packages(&state.db).is_empty());
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert!(root.packages(state.db()).is_empty());
 
     // Now write DESCRIPTION and fire the watcher.
     fs::write(
@@ -206,9 +206,9 @@ fn test_description_created_triggers_root_rescan() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert_eq!(root.packages(&state.db).len(), 1);
-    assert_eq!(root.packages(&state.db)[0].name(&state.db), "pkg");
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert_eq!(root.packages(state.db()).len(), 1);
+    assert_eq!(root.packages(state.db())[0].name(state.db()), "pkg");
 }
 
 #[test]
@@ -235,8 +235,8 @@ fn test_multiple_descriptions_under_same_root_dedup_to_one_rescan() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert_eq!(root.packages(&state.db).len(), 2);
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert_eq!(root.packages(state.db()).len(), 2);
 }
 
 #[test]
@@ -251,11 +251,11 @@ fn test_r_file_created_routes_through_add_file() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert_eq!(root.scripts(&state.db).len(), 1);
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert_eq!(root.scripts(state.db()).len(), 1);
     let file_path = FilePath::from_path_buf(path.clone()).unwrap();
-    let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.source_text(&state.db), "x <- 1\n");
+    let file = state.db().file_by_path(&file_path).unwrap();
+    assert_eq!(file.source_text(state.db()), "x <- 1\n");
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let file_path = FilePath::from_url(&url);
     // Push the editor content into oak then register the buffer, the same as `didOpen`.
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
     state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
@@ -283,8 +283,8 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.source_text(&state.db), "editor_v2\n");
+    let file = state.db().file_by_path(&file_path).unwrap();
+    assert_eq!(file.source_text(state.db()), "editor_v2\n");
 }
 
 #[test]
@@ -301,9 +301,9 @@ fn test_r_file_deleted_routes_through_remove_file() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert_eq!(root.scripts(&state.db).len(), 1);
-    assert!(state.db.file_by_path(&file_path).is_none());
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert_eq!(root.scripts(state.db()).len(), 1);
+    assert!(state.db().file_by_path(&file_path).is_none());
 }
 
 #[test]
@@ -319,10 +319,10 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
     let file_path = FilePath::from_path_buf(path.clone()).unwrap();
     assert_eq!(
         state
-            .db
+            .db()
             .file_by_path(&file_path)
             .unwrap()
-            .source_text(&state.db),
+            .source_text(state.db()),
         "v1\n"
     );
 
@@ -334,10 +334,10 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
 
     assert_eq!(
         state
-            .db
+            .db()
             .file_by_path(&file_path)
             .unwrap()
-            .source_text(&state.db),
+            .source_text(state.db()),
         "v2\n"
     );
 }
@@ -358,7 +358,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let url = Url::from_file_path(&path).unwrap();
     let file_path = FilePath::from_url(&url);
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(file_path.clone(), "editor_v2\n".to_string());
     state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
@@ -368,8 +368,8 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.source_text(&state.db), "editor_v2\n");
+    let file = state.db().file_by_path(&file_path).unwrap();
+    assert_eq!(file.source_text(state.db()), "editor_v2\n");
 }
 
 #[test]
@@ -381,9 +381,9 @@ fn test_description_deleted_demotes_package_to_scripts() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert_eq!(root.packages(&state.db).len(), 1);
-    assert!(root.scripts(&state.db).is_empty());
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert_eq!(root.packages(state.db()).len(), 1);
+    assert!(root.scripts(state.db()).is_empty());
 
     fs::remove_file(tmp.path().join("pkg/DESCRIPTION")).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -394,13 +394,13 @@ fn test_description_deleted_demotes_package_to_scripts() {
     };
     did_change_watched_files(params, &mut state).unwrap();
 
-    let root = state.db.workspace_roots().roots(&state.db)[0];
-    assert!(root.packages(&state.db).is_empty());
-    assert_eq!(root.scripts(&state.db).len(), 1);
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert!(root.packages(state.db()).is_empty());
+    assert_eq!(root.scripts(state.db()).len(), 1);
 
     let file_path = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
-    let file = state.db.file_by_path(&file_path).unwrap();
-    assert_eq!(file.package(&state.db), None);
+    let file = state.db().file_by_path(&file_path).unwrap();
+    assert_eq!(file.package(state.db()), None);
 }
 
 fn folder(uri: &str) -> WorkspaceFolder {
@@ -483,17 +483,17 @@ fn test_did_change_workspace_folders_adds_new_folder() {
 
     let mut state = workspace_state(first.path());
     assert_eq!(state.workspace.folders.len(), 1);
-    assert_eq!(state.db.workspace_roots().roots(&state.db).len(), 1);
+    assert_eq!(state.db().workspace_roots().roots(state.db()).len(), 1);
 
     let params = folders_change(vec![folder_for(second.path())], vec![]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
     assert_eq!(state.workspace.folders.len(), 2);
-    let roots = state.db.workspace_roots().roots(&state.db).clone();
+    let roots = state.db().workspace_roots().roots(state.db()).clone();
     assert_eq!(roots.len(), 2);
     // Existing root stays first, new one appended.
-    assert_eq!(roots[0].packages(&state.db)[0].name(&state.db), "pkg1");
-    assert_eq!(roots[1].packages(&state.db)[0].name(&state.db), "pkg2");
+    assert_eq!(roots[0].packages(state.db())[0].name(state.db()), "pkg1");
+    assert_eq!(roots[1].packages(state.db())[0].name(state.db()), "pkg2");
 }
 
 #[test]
@@ -517,15 +517,15 @@ fn test_did_change_workspace_folders_removes_folder() {
         &[first.path().to_path_buf(), second.path().to_path_buf()],
         &HashSet::new(),
     );
-    assert_eq!(state.db.workspace_roots().roots(&state.db).len(), 2);
+    assert_eq!(state.db().workspace_roots().roots(state.db()).len(), 2);
 
     let params = folders_change(vec![], vec![folder_for(first.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
     assert_eq!(state.workspace.folders.len(), 1);
-    let roots = state.db.workspace_roots().roots(&state.db).clone();
+    let roots = state.db().workspace_roots().roots(state.db()).clone();
     assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0].packages(&state.db)[0].name(&state.db), "pkg2");
+    assert_eq!(roots[0].packages(state.db())[0].name(state.db()), "pkg2");
 }
 
 #[test]
@@ -541,7 +541,7 @@ fn test_did_change_workspace_folders_ignores_duplicate_add() {
     did_change_workspace_folders(params, &mut state).unwrap();
 
     assert_eq!(state.workspace.folders.len(), 1);
-    assert_eq!(state.db.workspace_roots().roots(&state.db).len(), 1);
+    assert_eq!(state.db().workspace_roots().roots(state.db()).len(), 1);
 }
 
 #[test]
@@ -560,9 +560,9 @@ fn test_did_change_workspace_folders_handles_add_and_remove_in_one_event() {
     did_change_workspace_folders(params, &mut state).unwrap();
 
     assert_eq!(state.workspace.folders.len(), 1);
-    let roots = state.db.workspace_roots().roots(&state.db).clone();
+    let roots = state.db().workspace_roots().roots(state.db()).clone();
     assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0].packages(&state.db)[0].name(&state.db), "pkg2");
+    assert_eq!(roots[0].packages(state.db())[0].name(state.db()), "pkg2");
 }
 
 #[test]
@@ -581,11 +581,11 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let url = Url::from_file_path(&r_path).unwrap();
     let file_path = FilePath::from_url(&url);
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(file_path.clone(), "editor <- 2\n".to_string());
     state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
-    let file_before = state.db.file_by_path(&file_path).unwrap();
+    let file_before = state.db().file_by_path(&file_path).unwrap();
 
     // Remove the workspace folder. The handler builds the editor_owned set
     // from state.open_files.keys() and passes it to oak; the buffer's file
@@ -593,15 +593,15 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_remove = state.db.file_by_path(&file_path).unwrap();
+    let after_remove = state.db().file_by_path(&file_path).unwrap();
     assert_eq!(file_before, after_remove);
-    assert_eq!(after_remove.package(&state.db), None);
+    assert_eq!(after_remove.package(state.db()), None);
     assert!(state
-        .db
+        .db()
         .orphan_root()
-        .files(&state.db)
+        .files(state.db())
         .contains(&after_remove));
-    assert_eq!(after_remove.source_text(&state.db), "editor <- 2\n");
+    assert_eq!(after_remove.source_text(state.db()), "editor <- 2\n");
 
     // Re-add the same folder. The file snaps back into pkg.files with
     // the same entity and the editor content carries over (the scan's
@@ -609,15 +609,15 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
     let params = folders_change(vec![folder_for(tmp.path())], vec![]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
-    let after_readd = state.db.file_by_path(&file_path).unwrap();
+    let after_readd = state.db().file_by_path(&file_path).unwrap();
     assert_eq!(file_before, after_readd);
-    assert!(after_readd.package(&state.db).is_some());
-    assert_eq!(after_readd.source_text(&state.db), "editor <- 2\n");
+    assert!(after_readd.package(state.db()).is_some());
+    assert_eq!(after_readd.source_text(state.db()), "editor <- 2\n");
     // `upsert_root_file` cleaned the orphan reference.
     assert!(!state
-        .db
+        .db()
         .orphan_root()
-        .files(&state.db)
+        .files(state.db())
         .contains(&after_readd));
 }
 
@@ -638,7 +638,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // Simulate `didOpen` via state mutation (matches the rest of the file's
     // pattern).
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(file_path.clone(), "edited\n".to_string());
     state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
@@ -648,8 +648,8 @@ fn test_did_close_releases_orphan_file_to_stale() {
         &mut state,
     )
     .unwrap();
-    let file = state.db.file_by_path(&file_path).unwrap();
-    assert!(state.db.orphan_root().files(&state.db).contains(&file));
+    let file = state.db().file_by_path(&file_path).unwrap();
+    assert!(state.db().orphan_root().files(state.db()).contains(&file));
 
     // Init the aux channel here, after the workspace-folders churn: the
     // handler wrapper resets the channel each call (it stands up its own to
@@ -664,8 +664,8 @@ fn test_did_close_releases_orphan_file_to_stale() {
     };
     did_close(params, &mut state).unwrap();
 
-    assert!(!state.db.orphan_root().files(&state.db).contains(&file));
-    assert!(state.db.stale_root().files(&state.db).contains(&file));
+    assert!(!state.db().orphan_root().files(state.db()).contains(&file));
+    assert!(state.db().stale_root().files(state.db()).contains(&file));
 
     // did_close() clears diagnostics for the closed file.
     let event = aux_rx.try_recv().unwrap();
@@ -684,7 +684,7 @@ fn test_did_close_releases_orphan_file_to_stale() {
 #[test]
 fn test_console_inputs_advance_revision() {
     let mut state = WorldState::default();
-    let before = salsa::plumbing::current_revision(&state.db);
+    let before = salsa::plumbing::current_revision(state.db());
 
     did_change_console_inputs(
         ConsoleInputs {
@@ -695,6 +695,6 @@ fn test_console_inputs_advance_revision() {
     )
     .unwrap();
 
-    let after = salsa::plumbing::current_revision(&state.db);
+    let after = salsa::plumbing::current_revision(state.db());
     assert_ne!(before, after);
 }

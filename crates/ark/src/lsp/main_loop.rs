@@ -472,7 +472,7 @@ impl GlobalState {
     ///   state.
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
-        let _tick = self.lsp_state.watchdog.tick(self.world.db.outstanding_holds());
+        let _tick = self.lsp_state.watchdog.tick(self.world.db().outstanding_holds());
 
         // Diagnostics read the oak database (workspace symbols, imports,
         // resolved definitions), so any handler that writes to oak invalidates
@@ -481,7 +481,7 @@ impl GlobalState {
         // refresh centrally. Config and console state live outside oak, so the
         // handlers that mutate those advance the revision synthetically (see
         // `WorldState::bump_revision`) to route through this same path.
-        let old_revision = salsa::plumbing::current_revision(&self.world.db);
+        let old_revision = salsa::plumbing::current_revision(self.world.db());
 
         match event {
             Event::Lsp(msg) => match msg {
@@ -489,7 +489,7 @@ impl GlobalState {
                     lsp::log_info!("{notif:#?}");
                     lsp::log_info!(
                         "Entering notification handler with {n} outstanding Salsa db holds",
-                        n = self.world.db.outstanding_holds()
+                        n = self.world.db().outstanding_holds()
                     );
 
                     match notif {
@@ -666,14 +666,14 @@ impl GlobalState {
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
-                    &mut self.world.db,
+                    self.world.db_mut(),
                     scan,
                     &editor_owned,
                 );
                 lsp::log_info!(
                     "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
                     n = followups.len(),
-                    n_holds = self.world.db.outstanding_holds(),
+                    n_holds = self.world.db().outstanding_holds(),
                 );
 
                 dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
@@ -692,7 +692,7 @@ impl GlobalState {
                 let skipped = matches!(response, SourceResponse::Skipped);
 
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
-                    self.world.db.set_package_sources(package, &directory);
+                    self.world.db_mut().set_package_sources(package, &directory);
                 }
 
                 // Schedule a skipped package immediately. `finish()` removes it
@@ -730,7 +730,7 @@ impl GlobalState {
             lsp::log_info!("Handler took more than 50ms");
         }
 
-        if salsa::plumbing::current_revision(&self.world.db) != old_revision {
+        if salsa::plumbing::current_revision(self.world.db()) != old_revision {
             lsp::log_info!("World state revision advanced");
             self.lsp_state.diagnostics.refresh_all(
                 &self.world,
@@ -745,7 +745,7 @@ impl GlobalState {
 
     fn schedule_sources(&mut self) {
         self.lsp_state.source_scheduler.schedule(
-            &self.world.db,
+            self.world.db(),
             &self.world.config.oak,
             &self.lsp_state.source_pool,
             &self.events_tx,
@@ -753,7 +753,7 @@ impl GlobalState {
     }
 
     fn log_source_completed(&self, package: Package, response: &SourceResponse) {
-        let name = package.name(&self.world.db);
+        let name = package.name(self.world.db());
 
         match response {
             SourceResponse::Success {
@@ -1348,7 +1348,7 @@ mod tests {
         let mut state = WorldState::default();
         let uri = Url::parse("file:///test.R").unwrap();
         let file = state
-            .db
+            .db_mut()
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
         state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
@@ -1381,12 +1381,12 @@ mod tests {
     #[test]
     fn test_oak_write_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(&state.db);
-        state.db.upsert_editor(
+        let before = salsa::plumbing::current_revision(state.db());
+        state.db_mut().upsert_editor(
             FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
             "x <- 1".to_string(),
         );
-        let after = salsa::plumbing::current_revision(&state.db);
+        let after = salsa::plumbing::current_revision(state.db());
         assert_ne!(before, after);
     }
 
@@ -1396,9 +1396,9 @@ mod tests {
     #[test]
     fn test_bump_revision_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(&state.db);
+        let before = salsa::plumbing::current_revision(state.db());
         state.bump_revision();
-        let after = salsa::plumbing::current_revision(&state.db);
+        let after = salsa::plumbing::current_revision(state.db());
         assert_ne!(before, after);
     }
 }

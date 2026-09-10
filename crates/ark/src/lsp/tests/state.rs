@@ -14,7 +14,7 @@ fn open_buffer_from_wire(state: &mut WorldState, wire: &str) -> File {
     let uri: Uri = wire.parse().unwrap();
     let url = uri.to_url().unwrap();
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(FilePath::from_url(&url), "x <- 1\n".to_string());
     state.insert_open_file(uri, FilePath::from_url(&url), file, None);
     file
@@ -25,7 +25,7 @@ fn test_wire_uri_non_open_file_synthesises_uri() {
     let mut state = WorldState::default();
     let url = Url::parse("file:///C:/proj//bar.R").unwrap();
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(FilePath::from_url(&url), "y <- 2\n".to_string());
     // Not inserted into open_files, so wire_uri synthesises from the
     // normalised path (dropping the doubled slash) and encodes the drive
@@ -60,7 +60,7 @@ fn test_wire_uri_non_open_file_encodes_reserved_characters() {
     // has no `Url`-based route we could turn into a `Uri` at all.
     let mut state = WorldState::default();
     let path = FilePath::parse("file:///C:/proj/f%5B1%5D.R").unwrap();
-    let file = state.db.upsert_editor(path, "y <- 2\n".to_string());
+    let file = state.db_mut().upsert_editor(path, "y <- 2\n".to_string());
 
     // Not open, so this takes the `Uri::from_file_path()` fallback.
     let uri = state.wire_uri(file).unwrap();
@@ -68,7 +68,7 @@ fn test_wire_uri_non_open_file_encodes_reserved_characters() {
 
     // Confirm a `Url`-based route really would have failed, so the check
     // above bites.
-    let disk_path = file.path(&state.db).as_path().unwrap();
+    let disk_path = file.path(state.db()).as_path().unwrap();
     assert!(Url::from_file_path(disk_path)
         .unwrap()
         .as_str()

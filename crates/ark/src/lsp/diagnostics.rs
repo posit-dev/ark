@@ -1287,7 +1287,7 @@ mod tests {
         let url = url::Url::parse("file:///test.R").unwrap();
         let uri = url.to_uri().unwrap();
         let file = oak_db::File::new(
-            &state.db,
+            state.db(),
             FilePath::from_url(&url),
             oak_db::FileRevision::zero(),
             Some(code.to_string()),
@@ -1299,11 +1299,10 @@ mod tests {
     fn current_state() -> WorldState {
         let inputs = console_inputs().unwrap();
 
-        WorldState {
-            console_scopes: inputs.console_scopes,
-            installed_packages: inputs.installed_packages,
-            ..Default::default()
-        }
+        let mut state = WorldState::default();
+        state.console_scopes = inputs.console_scopes;
+        state.installed_packages = inputs.installed_packages;
+        state
     }
 
     /// Install a package named `name` exporting `exports` into the library
@@ -1720,11 +1719,8 @@ foo
         // Whereas `current_state()` returns a state with the base package
         // attached, this world state only contains `mockpkg` as an installed
         // package and `library()` on the search path.
-        let state = WorldState {
-            db,
-            console_scopes: vec![vec!["library".to_string()]],
-            ..Default::default()
-        };
+        let mut state = WorldState::with_db(db);
+        state.console_scopes = vec![vec!["library".to_string()]];
 
         // Test that exported symbols are recognized
         let code = "
@@ -1794,11 +1790,8 @@ foo
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);
 
-        let state = WorldState {
-            db,
-            console_scopes: vec![vec!["library".to_string()]],
-            ..Default::default()
-        };
+        let mut state = WorldState::with_db(db);
+        state.console_scopes = vec![vec!["library".to_string()]];
 
         // Code with two library calls at different points
         let code = "
@@ -1835,11 +1828,8 @@ foo
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);
 
-        let state = WorldState {
-            db,
-            console_scopes: vec![vec!["require".to_string()]],
-            ..Default::default()
-        };
+        let mut state = WorldState::with_db(db);
+        state.console_scopes = vec![vec!["require".to_string()]];
 
         let code = "
                     foo()
@@ -1863,11 +1853,8 @@ foo
 
         // Simulate a world state with the penguins package installed and
         // `library()` on the search path
-        let state = WorldState {
-            db,
-            console_scopes: vec![vec!["library".to_string()]],
-            ..Default::default()
-        };
+        let mut state = WorldState::with_db(db);
+        state.console_scopes = vec![vec!["library".to_string()]];
 
         let code = r#"
                 library(penguins)
@@ -1911,10 +1898,7 @@ foo
         db.set_package_sources(package, &pkg_dir.join("R"));
         let file = *package.files(&db).first().unwrap();
 
-        let state = WorldState {
-            db,
-            ..Default::default()
-        };
+        let state = WorldState::with_db(db);
 
         let url = url::Url::parse("file:///a.R").unwrap();
         let uri = url.to_uri().unwrap();

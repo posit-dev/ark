@@ -20,7 +20,7 @@ pub(crate) fn find_references(
     let position = params.text_document_position.position;
     let include_declaration = params.context.include_declaration;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {
