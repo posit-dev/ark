@@ -202,10 +202,9 @@ fn run_entry(entry: Entry) {
         return;
     }
 
-    if let Err(payload) =
+    if let Err(message) =
         panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
     {
-        let message = panic::message(&payload);
         lsp::log_error!("An analysis task panicked: {message}");
         crate::lsp::main_loop::report_background_panic();
     }
