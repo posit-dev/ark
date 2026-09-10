@@ -161,20 +161,20 @@ fn test_rename_cross_file_via_source() {
     // `source("helpers.R")` resolves to `<tmpdir>/helpers.R`.
     let fp1 = FilePath::from_url(&uri1.to_url().unwrap());
     let fp2 = FilePath::from_url(&uri2.to_url().unwrap());
-    let file1 = state.db.file_by_path(&fp1).unwrap();
-    let file2 = state.db.file_by_path(&fp2).unwrap();
+    let file1 = state.db().file_by_path(&fp1).unwrap();
+    let file2 = state.db().file_by_path(&fp2).unwrap();
     let root_path = FilePath::from_path_buf(std::env::temp_dir()).unwrap();
     let root = Root::new(
-        &state.db,
+        state.db(),
         root_path,
         RootKind::Workspace,
         vec![file1, file2],
         vec![],
     );
     state
-        .db
+        .db()
         .workspace_roots()
-        .set_roots(&mut state.db)
+        .set_roots(state.db_mut())
         .to(vec![root]);
 
     // Cursor on `helper` use in script.R (line 1, col 0).
