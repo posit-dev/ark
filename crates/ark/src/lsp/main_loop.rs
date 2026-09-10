@@ -661,8 +661,7 @@ impl GlobalState {
                 origin: SourceOrigin::Cached,
                 ..
             } => {
-                // Cache hits use trace logging because they do not make a network request.
-                tracing::trace!("Sources for package {name} came from the cache")
+                lsp::log_info!("Sources for package {name} came from the cache")
             },
             SourceResponse::Success {
                 origin: SourceOrigin::Fetched,
