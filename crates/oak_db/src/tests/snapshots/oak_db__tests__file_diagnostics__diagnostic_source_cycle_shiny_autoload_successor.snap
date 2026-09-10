@@ -1,0 +1,11 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/R/b.R\", BACK_EDGE_SUCCESSOR, b.diagnostics(&db))"
+---
+warning[source-cycle]: This file is part of a cycle in how the project's files load each other.
+                       This Shiny app already loads its `global.R` and `R/` files through `shiny::loadSupport()`, so a `source()` call between them is redundant.
+                       Language analysis will be incomplete until the cycle is resolved.
+ --> w/R/b.R:1:1
+  |
+1 | library(pkgb)
+  | ^

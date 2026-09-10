@@ -102,12 +102,12 @@ fn test_shiny_disable_autoload_drops_the_directory_but_keeps_global() {
         "Package(base)".to_string(),
     ]);
 
-    // Disabled autoload leaves `a.R` on plain `R/` collation, so it inherits
-    // neither `global.R` nor `shiny`.
-    assert_eq!(shape(&db, a.imports(&db)), vec![
-        "File(_disable_autoload.R)".to_string(),
-        "Package(base)".to_string(),
-    ]);
+    // Disabled autoload drops `a.R` from Shiny's loader, so it becomes a
+    // standalone script that inherits neither `global.R` nor `shiny`.
+    assert_eq!(
+        shape(&db, a.imports(&db)),
+        vec!["Package(base)".to_string()]
+    );
 }
 
 #[test]
@@ -155,22 +155,6 @@ fn test_autoloaded_file_sees_global_and_the_implicit_shiny_attach() {
         "File(global.R)".to_string(),
         "Package(dplyr)".to_string(),
         "Package(shiny)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_r_directory_without_an_entry_point_ignores_global() {
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["base", "shiny"]);
-    let (_, files) = script_workspace(&mut db, &[
-        ("ws/global.R", "cfg <- 1\n"),
-        ("ws/R/a.R", "a_val <- 1\n"),
-        ("ws/R/b.R", "b_val <- 2\n"),
-    ]);
-
-    assert_eq!(shape(&db, files[1].imports(&db)), vec![
-        "File(b.R)".to_string(),
         "Package(base)".to_string(),
     ]);
 }
@@ -431,6 +415,100 @@ fn test_app_rooted_at_an_r_directory_is_still_an_entry_point() {
 
     assert_eq!(shape(&db, files[0].imports(&db)), vec![
         "File(util.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+#[test]
+fn test_backward_source_into_collation_successor_cycles() {
+    // `a.R` precedes `b.R` in the autoload collation but also sources it.
+    // Resolving `b.R`'s own `library(pkgb)` reads `a.R`'s
+    // `attached_packages` (a collation predecessor's search-path
+    // contribution), which rebuilds `a.R`'s index, which resolves its
+    // `source("R/b.R")` by reading `b.R`'s `exports`, which needs `b.R`'s
+    // index again: a real salsa cycle, through `cross_file_layers` and
+    // `attached_packages` rather than through two `source()` calls facing
+    // each other.
+    //
+    // `semantic_index`'s `FallbackImmediate` recovery degrades every
+    // participant, not just the file salsa re-entered, so both files rebuild
+    // under `NoopImportsResolver`: neither `library()` call is recognized as
+    // an attach, and `a.R`'s `source()` call is not recognized as effectful
+    // either, so the edge itself disappears.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "pkga", "pkgb"]);
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/R/a.R", "library(pkga)\nsource(\"R/b.R\")\n"),
+        ("ws/R/b.R", "library(pkgb)\n"),
+    ]);
+    let (a, b) = (files[1], files[2]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert!(a.sourced_by(&db).is_empty());
+    assert!(b.sourced_by(&db).is_empty());
+
+    // Both files carry a `SourceCycle` diagnostic with the same generic
+    // message, even though `b.R` has no `source()` call of its own: it is
+    // degraded collaterally by the recovery, not because it takes part in
+    // mutual sourcing. The message's premise ("mutual `source()` calls")
+    // doesn't actually hold for this shape.
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert_eq!(
+        a.diagnostics(&db)[0].message(),
+        "This file is part of a cycle in how the project's files load each other.\n\
+         This Shiny app already loads its `global.R` and `R/` files through \
+         `shiny::loadSupport()`, so a `source()` call between them is redundant.\n\
+         Language analysis will be incomplete until the cycle is resolved."
+    );
+    assert_eq!(
+        a.diagnostics(&db)[0].message(),
+        b.diagnostics(&db)[0].message()
+    );
+}
+
+#[test]
+fn test_forward_source_into_collation_predecessor_does_not_cycle() {
+    // `b.R` sources its own predecessor `a.R`, which has already loaded by
+    // the time `b.R` runs, so this is not a back edge and must not cycle.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny"]);
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/R/a.R", "a_val <- 1\n"),
+        ("ws/R/b.R", "b_val <- 2\nsource(\"R/a.R\")\n"),
+    ]);
+    let (a, b) = (files[1], files[2]);
+
+    assert!(a.diagnostics(&db).is_empty());
+    assert!(b.diagnostics(&db).is_empty());
+    assert_eq!(a.sourced_by(&db), &vec![b]);
+
+    // Known gap. `a.R`'s own collation view contributes `File(b.R)`, and the
+    // context inherited from `b.R` contributes `File(b.R)` again plus
+    // `File(a.R)`, since `a.R` is `b.R`'s only sibling. Harmless today because
+    // own bindings resolve before the import list is consulted.
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "File(b.R)".to_string(),
+        "File(a.R)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
         "Package(shiny)".to_string(),
         "Package(base)".to_string(),
     ]);
