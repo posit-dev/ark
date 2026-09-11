@@ -92,6 +92,7 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
 pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
+static BACKGROUND_PANIC_REPORTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -133,6 +134,7 @@ pub(crate) struct DidCloseVirtualDocumentParams {
 pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(DiagnosticsPublication),
+    ShowMessage(lsp_types::MessageType, String),
     Shutdown,
 }
 
@@ -1086,6 +1088,9 @@ impl AuxiliaryState {
                 AuxiliaryEvent::PublishDiagnostics(publication) => {
                     self.publish_diagnostics(publication).await
                 },
+                AuxiliaryEvent::ShowMessage(level, message) => {
+                    self.client.show_message(level, message).await
+                },
                 AuxiliaryEvent::Shutdown => break,
             }
         }
@@ -1167,6 +1172,36 @@ fn send_auxiliary(event: AuxiliaryEvent) {
             log::warn!("LSP is shut down, can't send event:\n{err:?}");
         }
     })
+}
+
+pub(crate) fn report_background_panic() {
+    // Only report once to avoid spamming the user
+    if BACKGROUND_PANIC_REPORTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let Ok(auxiliary_event_tx) = AUXILIARY_EVENT_TX.read() else {
+        log::warn!("Can't lock auxiliary event sender to report a background panic");
+        return;
+    };
+    let Some(auxiliary_event_tx) = auxiliary_event_tx.as_ref() else {
+        log::warn!("Can't report a background panic before the LSP is initialized");
+        return;
+    };
+
+    let event = AuxiliaryEvent::ShowMessage(
+        MessageType::ERROR,
+        String::from(
+            "An R language server background task encountered an internal error. \
+             Some smart features may be temporarily unavailable. \
+             See https://positron.posit.co/troubleshooting.html#python-and-r-logs \
+             for full logs and report the problem at \
+             https://github.com/posit-dev/positron/issues.",
+        ),
+    );
+    if let Err(err) = auxiliary_event_tx.send(event) {
+        log::warn!("LSP is shut down, can't report a background panic:\n{err:?}");
+    }
 }
 
 /// Initialise the auxiliary channel for unit tests that exercise LSP
@@ -1256,14 +1291,34 @@ mod tests {
     use url::Url;
 
     use super::classify_event_unwind;
+    use super::init_aux_for_test;
+    use super::report_background_panic;
     use super::respond;
     use super::tokio_unbounded_channel;
+    use super::AuxiliaryEvent;
     use super::EventUnwind;
+    use super::MessageType;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
+
+    #[test]
+    fn test_background_panic_is_reported_once() {
+        let mut events_rx = init_aux_for_test();
+
+        report_background_panic();
+        report_background_panic();
+
+        let event = events_rx.try_recv();
+        let Ok(AuxiliaryEvent::ShowMessage(level, message)) = event else {
+            panic!("Expected a show-message event");
+        };
+        assert_eq!(level, MessageType::ERROR);
+        assert!(message.contains("background task encountered an internal error"));
+        assert!(events_rx.try_recv().is_err());
+    }
 
     #[test]
     fn test_salsa_cancellation_is_not_classified_as_event_panic() {

@@ -207,6 +207,7 @@ fn run_entry(entry: Entry) {
     {
         let message = panic::message(&payload);
         lsp::log_error!("An analysis task panicked: {message}");
+        crate::lsp::main_loop::report_background_panic();
     }
 }
 
