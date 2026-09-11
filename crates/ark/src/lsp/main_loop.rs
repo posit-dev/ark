@@ -789,7 +789,7 @@ impl GlobalState {
 /// already flipped the `LSP_HAS_CRASHED` global flag. We do bound it with a 5
 /// second timeout just in case the user ignores the message entirely, so we can
 /// still shutdown.
-async fn report_crash(client: &Client) {
+pub(crate) async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
         "Smart features such as completions will no longer work in this session. ",

@@ -166,6 +166,22 @@ fn test_lsp_panicking_main_loop_reports_crash() {
     lsp.disconnect_abruptly();
 }
 
+// A panic in a `tower-lsp` service future must show the crash dialog while the
+// transport is still running, then close the connection.
+#[test]
+fn test_lsp_panicking_service_reports_crash() {
+    ark::panic::install();
+
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.send_notification("ark/testPanicService", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+    lsp.disconnect_abruptly();
+}
+
 // The auxiliary loop catches panics without ending the session. A later log confirms
 // that it continues processing events.
 #[test]
