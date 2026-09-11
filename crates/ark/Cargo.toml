@@ -74,6 +74,7 @@ streaming-iterator.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 tokio.workspace = true
+tower.workspace = true
 tower-lsp-server.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
@@ -97,7 +98,6 @@ oak_semantic = { workspace = true, features = ["testing"] }
 oak_package_metadata = { workspace = true, features = ["testing"] }
 stdext = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-tower.workspace = true
 
 [build-dependencies]
 cc.workspace = true
