@@ -2590,6 +2590,7 @@ dependencies = [
  "oak_package_metadata",
  "oak_semantic",
  "oak_tidy",
+ "rand 0.10.2",
  "rustc-hash",
  "salsa",
  "salsa-macros",

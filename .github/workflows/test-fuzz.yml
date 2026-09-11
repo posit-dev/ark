@@ -1,0 +1,32 @@
+name: "Test Oak - Fuzz"
+
+# Vary cold query entry points and edit histories to expose Salsa cycle panics.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    name: "Fuzz: oak_db query cycles"
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report Rust Toolchain
+        run: rustup show
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run Fuzz Suite
+        env:
+          NEXTEST_PROFILE: "ci"
+        run: |
+          cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_seeds_/)'
