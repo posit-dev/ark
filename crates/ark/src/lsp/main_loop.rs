@@ -1147,15 +1147,15 @@ impl AuxiliaryState {
             return;
         }
 
+        self.client
+            .publish_diagnostics(uri, diagnostics.clone(), version)
+            .await;
+
         if diagnostics.is_empty() {
             self.published_diagnostics.remove(&path);
         } else {
-            self.published_diagnostics.insert(path, diagnostics.clone());
+            self.published_diagnostics.insert(path, diagnostics);
         }
-
-        self.client
-            .publish_diagnostics(uri, diagnostics, version)
-            .await
     }
 
     async fn log(&self, level: MessageType, message: String) {
