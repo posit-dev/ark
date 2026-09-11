@@ -16,6 +16,14 @@ test-insta:
 test-insta-diagnostics:
   INSTA_UPDATE=always cargo nextest run -p oak_db test_diagnostic_
 
+# Vary cold query entry points and edit histories to expose Salsa cycle panics
+fuzz:
+  cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_seeds_/)'
+
+# Report each operation eagerly because hangs cannot produce an unwind report
+fuzz-seed SEED:
+  OAK_FUZZ_SEED={{SEED}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_seed)'
+
 # Run clippy
 clippy:
   cargo clippy --workspace --all-targets --all-features -- -D warnings
