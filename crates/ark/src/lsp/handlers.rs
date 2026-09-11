@@ -121,7 +121,7 @@ pub(crate) fn handle_folding_range(
 ) -> LspResult<Option<Vec<FoldingRange>>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     match folding_range(db, file) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
@@ -151,7 +151,7 @@ pub(crate) fn handle_completion(
         .uri
         .to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let position = params.text_document_position.position;
@@ -201,7 +201,7 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
         .uri
         .to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
@@ -248,7 +248,7 @@ pub(crate) fn handle_signature_help(
         .uri
         .to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let position = params.text_document_position_params.position;
@@ -295,7 +295,7 @@ pub(crate) fn handle_selection_range(
 ) -> LspResult<Option<Vec<SelectionRange>>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     // Get tree-sitter points to return selection ranges for
@@ -366,7 +366,7 @@ pub(crate) fn handle_statement_range(
 ) -> LspResult<Option<StatementRangeResponse>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
     let point =
         tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
@@ -380,7 +380,7 @@ pub(crate) fn handle_help_topic(
 ) -> LspResult<Option<HelpTopicResponse>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?.file();
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
     let point =
         tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
@@ -397,7 +397,7 @@ pub(crate) fn handle_indent(
     let open_file = state.open_file(&path)?;
     let encoding = state.config.position_encoding;
 
-    let db = &state.db;
+    let db = state.db();
     let line_index = open_file.line_index(db);
     let point = tree_sitter_point_from_lsp_position(ctxt.position, line_index, encoding)?;
 
@@ -426,7 +426,7 @@ pub(crate) fn handle_code_action(
 ) -> LspResult<Option<CodeActionResponse>> {
     let path = params.text_document.uri.to_document_path()?;
     let file = state.open_file(&path)?;
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 

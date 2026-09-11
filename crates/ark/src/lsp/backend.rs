@@ -7,9 +7,14 @@
 
 #![allow(deprecated)]
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::task::Context as TaskContext;
+use std::task::Poll;
 
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -21,6 +26,7 @@ use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
+use tower::Service;
 use tower_lsp_server::jsonrpc;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::request::GotoImplementationParams;
@@ -45,6 +51,9 @@ use crate::lsp::help_topic::HelpTopicResponse;
 use crate::lsp::input_boundaries;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
+#[cfg(feature = "testing")]
+use crate::lsp::main_loop::panic_auxiliary_loop;
+use crate::lsp::main_loop::report_crash;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LoopHandles;
@@ -52,6 +61,8 @@ use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task;
 
 // Once the LSP has crashed all requests respond with an error. This prevents
@@ -247,6 +258,56 @@ impl Backend {
             log::error!("Can't relay notification, the main loop is gone");
         }
     }
+}
+
+struct CatchServicePanics<S> {
+    inner: S,
+    client: Client,
+}
+
+impl<S> CatchServicePanics<S> {
+    fn new(inner: S, client: Client) -> Self {
+        Self { inner, client }
+    }
+}
+
+impl<S> Service<jsonrpc::Request> for CatchServicePanics<S>
+where
+    S: Service<jsonrpc::Request, Response = Option<jsonrpc::Response>>,
+    S::Future: Send + 'static,
+    S::Error: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future =
+        Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(
+        &mut self,
+        context: &mut TaskContext<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        self.inner.poll_ready(context)
+    }
+
+    fn call(&mut self, request: jsonrpc::Request) -> Self::Future {
+        let future = self.inner.call(request);
+        let client = self.client.clone();
+
+        Box::pin(async move {
+            match panic::catch_unwind_async_payload(Recovery::Always, future).await {
+                Ok(response) => response,
+                Err(payload) => report_and_resume_service_panic(client, payload).await,
+            }
+        })
+    }
+}
+
+async fn report_and_resume_service_panic(client: Client, payload: panic::PanicPayload) -> ! {
+    let message = panic::message(&payload);
+    log::error!("LSP: Panic in the service: {message}");
+    LSP_HAS_CRASHED.store(true, Ordering::Release);
+    report_crash(&client).await;
+    std::panic::resume_unwind(payload);
 }
 
 impl LanguageServer for Backend {
@@ -520,6 +581,18 @@ impl Backend {
     async fn test_panic_main_loop(&self, _params: Option<Value>) {
         let _ = self.events_tx.send(Event::TestPanicMainLoop);
     }
+
+    // Bypass the main loop so the test event panics in the auxiliary loop.
+    #[cfg(feature = "testing")]
+    async fn test_panic_auxiliary(&self, _params: Option<Value>) {
+        panic_auxiliary_loop();
+    }
+
+    // Bypass the main loop and panic directly in a `tower-lsp` service future.
+    #[cfg(feature = "testing")]
+    async fn test_panic_service(&self, _params: Option<Value>) {
+        panic!("Test panic in the LSP service");
+    }
 }
 
 #[cfg(feature = "testing")]
@@ -532,6 +605,10 @@ pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
 pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_AUXILIARY: &str = "ark/testPanicAuxiliary";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_SERVICE: &str = "ark/testPanicService";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -540,16 +617,22 @@ pub(crate) fn start_lsp(
     server_started_tx: Sender<ServerStartedMessage>,
     console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 ) {
-    runtime.block_on(async {
+    let lifecycle = async {
         let ip_address = server_start.ip_address();
 
         // Binding to port `0` to allow the OS to allocate a port for us to bind to
-        let listener = TcpListener::bind(format!("{ip_address}:0")).await.unwrap();
+        let listener = match TcpListener::bind(format!("{ip_address}:0")).await {
+            Ok(listener) => listener,
+            Err(err) => {
+                log::error!("LSP: Failed to bind to {ip_address}:0: {err:?}");
+                return;
+            },
+        };
 
         let address = match listener.local_addr() {
             Ok(address) => address,
             Err(error) => {
-                log::error!("LSP: Failed to bind to {ip_address}:0: {error}");
+                log::error!("LSP: Failed to get local address for {ip_address}:0: {error}");
                 return;
             },
         };
@@ -566,13 +649,21 @@ pub(crate) fn start_lsp(
             .log_err();
 
         log::trace!("LSP: Waiting for client");
-        let (stream, address) = listener.accept().await.unwrap();
+        let (stream, address) = match listener.accept().await {
+            Ok(connection) => connection,
+            Err(err) => {
+                log::error!("LSP: Failed to accept a client connection: {err:?}");
+                return;
+            },
+        };
         log::trace!("LSP: Connected to client: '{address}'");
         let (read, write) = tokio::io::split(stream);
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let crash_client = OnceLock::<Client>::new();
 
         let init = |client: Client| {
+            let _ = crash_client.set(client.clone());
             let state = GlobalState::new(client, r_home, console_notification_tx);
             let events_tx = state.events_tx();
 
@@ -621,25 +712,40 @@ pub(crate) fn start_lsp(
             )
             .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
             .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
-            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task);
+            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task)
+            .custom_method(ARK_TEST_PANIC_AUXILIARY, Backend::test_panic_auxiliary)
+            .custom_method(ARK_TEST_PANIC_SERVICE, Backend::test_panic_service);
 
         let (service, socket) = builder.finish();
+        let Some(client) = crash_client.into_inner() else {
+            log::error!("LSP: Service did not initialize its client");
+            return;
+        };
+        let service = CatchServicePanics::new(service, client.clone());
 
         let server = Server::new(read, write, socket);
 
-        tokio::select! {
-            _ = server.serve(service) => {
-                log::trace!(
-                    "LSP: Thread exiting gracefully after connection closed ({:?}).",
-                    address
-                );
-            },
-            _ = shutdown_rx.recv() => {
-                log::trace!(
-                    "LSP: Thread exiting after receiving a shutdown request ({:?}).",
-                    address
-                );
+        let serving = async {
+            tokio::select! {
+                _ = server.serve(service) => {
+                    log::trace!(
+                        "LSP: Thread exiting gracefully after connection closed ({:?}).",
+                        address
+                    );
+                },
+                _ = shutdown_rx.recv() => {
+                    log::trace!(
+                        "LSP: Thread exiting after receiving a shutdown request ({:?}).",
+                        address
+                    );
+                }
             }
+        };
+
+        // Catch handler panics around `server.serve()`, which polls every `tower-lsp`
+        // handler. Cleanup still removes the LSP channel so the client can reconnect.
+        if let Err(msg) = panic::catch_unwind_async(Recovery::Always, serving).await {
+            log::error!("LSP: Panic in the service: {msg}");
         }
 
         // Remove the LSP channel on the way out, we can no longer handle any LSP updates
@@ -649,7 +755,11 @@ pub(crate) fn start_lsp(
                 Console::get_mut().remove_lsp_channel();
             }
         });
-    })
+    };
+
+    if let Err(err) = runtime.block_on(panic::catch_unwind_async(Recovery::Always, lifecycle)) {
+        log::error!("LSP: Panic in the server lifecycle: {err:?}");
+    }
 }
 
 fn new_jsonrpc_error(message: String) -> jsonrpc::Error {

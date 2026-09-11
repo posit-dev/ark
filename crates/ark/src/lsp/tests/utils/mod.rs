@@ -68,7 +68,7 @@ pub(super) fn insert_file(state: &mut WorldState, wire: &str, contents: &str) ->
     let uri: Uri = wire.parse().unwrap();
     let url = uri.to_url().unwrap();
     let file = state
-        .db
+        .db_mut()
         .upsert_editor(FilePath::from_url(&url), contents.to_string());
     state.insert_open_file(uri.clone(), FilePath::from_url(&url), file, None);
     uri

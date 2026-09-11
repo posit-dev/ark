@@ -302,7 +302,7 @@ pub(crate) async fn handle_initialized(
     }
 
     lsp_state.source_scheduler.schedule(
-        &state.db,
+        state.db(),
         &state.config.oak,
         &lsp_state.source_pool,
         events_tx,
@@ -319,7 +319,7 @@ pub(crate) fn did_open(
     let path = wire_uri.to_document_path()?;
     let version = params.text_document.version;
 
-    let file = state.db.upsert_editor(path.clone(), contents);
+    let file = state.db_mut().upsert_editor(path.clone(), contents);
     state.insert_open_file(wire_uri, path, file, Some(version));
 
     // NOTE: Do we need to call `update_config()` here?
@@ -355,11 +355,11 @@ pub(crate) fn did_change(
 
     // Fold the edits into the new buffer text and push it into `oak`
     let new_contents = apply_content_changes(
-        file.source_text(&state.db).as_str(),
+        file.source_text(state.db()).as_str(),
         &params.content_changes,
         encoding,
     );
-    state.db.upsert_editor(path.clone(), new_contents);
+    state.db_mut().upsert_editor(path.clone(), new_contents);
 
     state.open_file_mut(&path)?.set_version(Some(new_version));
 
@@ -393,7 +393,7 @@ pub(crate) fn did_close(
         wire_uri.as_str()
     ))?;
 
-    state.db.close_editor(&path);
+    state.db_mut().close_editor(&path);
 
     lsp::log_info!(
         "did_close(): closed document with URI: '{}'.",
@@ -428,7 +428,7 @@ pub(crate) fn did_change_watched_files(
     let requests =
         lsp_state
             .oak_scheduler
-            .apply_watcher_events(&mut state.db, events, &editor_owned);
+            .apply_watcher_events(state.db_mut(), events, &editor_owned);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     Ok(())
@@ -490,11 +490,11 @@ fn dispatch_workspace_scan(
     // folder goes away.
     let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
-    let requests = lsp_state.oak_scheduler.set_workspace_paths(
-        &mut state.db,
-        &to_std_paths(&state.workspace.folders),
-        &editor_owned,
-    );
+    let folders = to_std_paths(&state.workspace.folders);
+    let requests =
+        lsp_state
+            .oak_scheduler
+            .set_workspace_paths(state.db_mut(), &folders, &editor_owned);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 }
 

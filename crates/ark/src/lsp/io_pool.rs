@@ -53,8 +53,7 @@ impl IoPool {
 }
 
 fn run_job(job: Job) {
-    if let Err(payload) = panic::catch_unwind(Recovery::Always, job) {
-        let message = panic::message(&payload);
+    if let Err(message) = panic::catch_unwind(Recovery::Always, job) {
         lsp::log_error!("An I/O job panicked: {message}");
         crate::lsp::main_loop::report_background_panic();
     }

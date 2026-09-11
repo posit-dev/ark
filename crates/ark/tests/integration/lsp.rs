@@ -70,6 +70,8 @@ fn test_lsp_exits_promptly_after_exit_without_client_close() {
 // A panicking request handler must return an error without ending the LSP session.
 #[test]
 fn test_lsp_panicking_request_is_task_local() {
+    ark::panic::install();
+
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
@@ -100,6 +102,8 @@ fn test_lsp_panicking_request_is_task_local() {
 // A notification handler panic must show a crash dialog before closing the LSP connection.
 #[test]
 fn test_lsp_panicking_notification_ends_session() {
+    ark::panic::install();
+
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
@@ -149,6 +153,8 @@ fn test_lsp_panic_across_r_task_ends_session() {
 // A panic outside the per-event boundary must still show the crash dialog before shutdown.
 #[test]
 fn test_lsp_panicking_main_loop_reports_crash() {
+    ark::panic::install();
+
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
@@ -158,6 +164,47 @@ fn test_lsp_panicking_main_loop_reports_crash() {
     lsp.recv_server_request("window/showMessageRequest");
     lsp.expect_server_closes_connection(Duration::from_secs(5));
     lsp.disconnect_abruptly();
+}
+
+// A panic in a `tower-lsp` service future must show the crash dialog while the
+// transport is still running, then close the connection.
+#[test]
+fn test_lsp_panicking_service_reports_crash() {
+    ark::panic::install();
+
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.send_notification("ark/testPanicService", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+    lsp.disconnect_abruptly();
+}
+
+// The auxiliary loop catches panics without ending the session. A later log confirms
+// that it continues processing events.
+#[test]
+fn test_lsp_panicking_auxiliary_loop_keeps_running() {
+    ark::panic::install();
+
+    // Capture `log::error!()` because reporting this panic through
+    // `window/logMessage` would recurse into the auxiliary loop.
+    ark_test::install_log_capture();
+
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    // Wait for this event to complete before queueing the panic behind it.
+    lsp.open_document("aux_before.R", "x <- 1\n");
+    lsp.wait_for_log_message("aux_before.R", Duration::from_secs(10));
+
+    lsp.send_notification("ark/testPanicAuxiliary", json!({}));
+
+    ark_test::wait_for_captured_log("Panic in the auxiliary loop", Duration::from_secs(10));
+
+    lsp.open_document("aux_after.R", "y <- 2\n");
+    lsp.wait_for_log_message("aux_after.R", Duration::from_secs(10));
 }
 
 // The two cases below test errors that don't depend on the rename

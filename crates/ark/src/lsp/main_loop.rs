@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem::discriminant;
 use std::mem::Discriminant;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -136,6 +137,8 @@ pub(crate) enum AuxiliaryEvent {
     PublishDiagnostics(DiagnosticsPublication),
     ShowMessage(lsp_types::MessageType, String),
     Shutdown,
+    #[cfg(feature = "testing")]
+    TestPanic,
 }
 
 /// Global state for the main loop
@@ -372,16 +375,14 @@ impl GlobalState {
             });
 
             // Handle panics that bypass `handle_event()`'s recovery boundary.
-            if let Err(payload) = outcome {
-                let message = panic::message(&payload);
+            if let Err(message) = outcome {
                 lsp::log_error!("Panic in the main loop: {message}");
                 LSP_HAS_CRASHED.store(true, Ordering::Release);
 
                 let report = panic::catch_unwind(Recovery::Always, || {
                     handle.block_on(report_crash(&client))
                 });
-                if let Err(payload) = report {
-                    let message = panic::message(&payload);
+                if let Err(message) = report {
                     log::error!("Panic while reporting an LSP crash: {message}");
                 }
 
@@ -424,7 +425,8 @@ impl GlobalState {
                     }
 
                     let outcome =
-                        panic::catch_unwind_async(Recovery::Always, self.handle_event(event)).await;
+                        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event))
+                            .await;
 
                     match outcome {
                         Ok(Ok(())) => {},
@@ -472,7 +474,7 @@ impl GlobalState {
     ///   state.
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
-        let _tick = self.lsp_state.watchdog.tick(self.world.db.outstanding_holds());
+        let _tick = self.lsp_state.watchdog.tick(self.world.db().outstanding_holds());
 
         // Diagnostics read the oak database (workspace symbols, imports,
         // resolved definitions), so any handler that writes to oak invalidates
@@ -481,7 +483,7 @@ impl GlobalState {
         // refresh centrally. Config and console state live outside oak, so the
         // handlers that mutate those advance the revision synthetically (see
         // `WorldState::bump_revision`) to route through this same path.
-        let old_revision = salsa::plumbing::current_revision(&self.world.db);
+        let old_revision = salsa::plumbing::current_revision(self.world.db());
 
         match event {
             Event::Lsp(msg) => match msg {
@@ -489,7 +491,7 @@ impl GlobalState {
                     lsp::log_info!("{notif:#?}");
                     lsp::log_info!(
                         "Entering notification handler with {n} outstanding Salsa db holds",
-                        n = self.world.db.outstanding_holds()
+                        n = self.world.db().outstanding_holds()
                     );
 
                     match notif {
@@ -666,14 +668,14 @@ impl GlobalState {
                 // this set as its watcher-event `skip` argument.
                 let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
                 let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
-                    &mut self.world.db,
+                    self.world.db_mut(),
                     scan,
                     &editor_owned,
                 );
                 lsp::log_info!(
                     "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
                     n = followups.len(),
-                    n_holds = self.world.db.outstanding_holds(),
+                    n_holds = self.world.db().outstanding_holds(),
                 );
 
                 dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
@@ -692,7 +694,7 @@ impl GlobalState {
                 let skipped = matches!(response, SourceResponse::Skipped);
 
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
-                    self.world.db.set_package_sources(package, &directory);
+                    self.world.db_mut().set_package_sources(package, &directory);
                 }
 
                 // Schedule a skipped package immediately. `finish()` removes it
@@ -730,7 +732,7 @@ impl GlobalState {
             lsp::log_info!("Handler took more than 50ms");
         }
 
-        if salsa::plumbing::current_revision(&self.world.db) != old_revision {
+        if salsa::plumbing::current_revision(self.world.db()) != old_revision {
             lsp::log_info!("World state revision advanced");
             self.lsp_state.diagnostics.refresh_all(
                 &self.world,
@@ -745,7 +747,7 @@ impl GlobalState {
 
     fn schedule_sources(&mut self) {
         self.lsp_state.source_scheduler.schedule(
-            &self.world.db,
+            self.world.db(),
             &self.world.config.oak,
             &self.lsp_state.source_pool,
             &self.events_tx,
@@ -753,7 +755,7 @@ impl GlobalState {
     }
 
     fn log_source_completed(&self, package: Package, response: &SourceResponse) {
-        let name = package.name(&self.world.db);
+        let name = package.name(self.world.db());
 
         match response {
             SourceResponse::Success {
@@ -787,7 +789,7 @@ impl GlobalState {
 /// already flipped the `LSP_HAS_CRASHED` global flag. We do bound it with a 5
 /// second timeout just in case the user ignores the message entirely, so we can
 /// still shutdown.
-async fn report_crash(client: &Client) {
+pub(crate) async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
         "Smart features such as completions will no longer work in this session. ",
@@ -988,10 +990,9 @@ fn respond<T>(
                 RequestOutcome::Handled,
             )
         },
-        Err(payload) => {
+        Err(message) => {
             // The panic hook emits the backtrace to the kernel logs. Mention
             // the panic in the LSP log too for cross-reference.
-            let message = panic::message(&payload);
             lsp::log_error!(
                 "Panic while handling request: {message}. \
                  See the R kernel log for the full panic backtrace."
@@ -1083,17 +1084,31 @@ impl AuxiliaryState {
     /// loop.
     async fn start(mut self) {
         loop {
-            match self.next_event().await {
-                AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
-                AuxiliaryEvent::PublishDiagnostics(publication) => {
-                    self.publish_diagnostics(publication).await
-                },
-                AuxiliaryEvent::ShowMessage(level, message) => {
-                    self.client.show_message(level, message).await
-                },
-                AuxiliaryEvent::Shutdown => break,
+            match panic::catch_unwind_async(Recovery::Always, self.handle_next_event()).await {
+                Ok(ControlFlow::Continue(())) => {},
+                Ok(ControlFlow::Break(())) => break,
+                // Use `log::error!()` instead of `lsp::log_error!()`, which queues another event
+                // on this loop. A panic in `log()` would otherwise recurse indefinitely.
+                Err(msg) => log::error!("Panic in the auxiliary loop: {msg}"),
             }
         }
+    }
+
+    async fn handle_next_event(&mut self) -> ControlFlow<()> {
+        match self.next_event().await {
+            AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
+            AuxiliaryEvent::PublishDiagnostics(publication) => {
+                self.publish_diagnostics(publication).await
+            },
+            AuxiliaryEvent::ShowMessage(level, message) => {
+                self.client.show_message(level, message).await
+            },
+            AuxiliaryEvent::Shutdown => return ControlFlow::Break(()),
+            #[cfg(feature = "testing")]
+            AuxiliaryEvent::TestPanic => panic!("Test panic in the auxiliary loop"),
+        }
+
+        ControlFlow::Continue(())
     }
 
     async fn next_event(&mut self) -> AuxiliaryEvent {
@@ -1132,15 +1147,15 @@ impl AuxiliaryState {
             return;
         }
 
+        self.client
+            .publish_diagnostics(uri, diagnostics.clone(), version)
+            .await;
+
         if diagnostics.is_empty() {
             self.published_diagnostics.remove(&path);
         } else {
-            self.published_diagnostics.insert(path, diagnostics.clone());
+            self.published_diagnostics.insert(path, diagnostics);
         }
-
-        self.client
-            .publish_diagnostics(uri, diagnostics, version)
-            .await
     }
 
     async fn log(&self, level: MessageType, message: String) {
@@ -1243,6 +1258,11 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
         MessageType::WARNING => log::warn!("{message}"),
         _ => log::info!("{message}"),
     };
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn panic_auxiliary_loop() {
+    send_auxiliary(AuxiliaryEvent::TestPanic);
 }
 
 pub(crate) fn publish_diagnostics(publication: DiagnosticsPublication) {
@@ -1348,7 +1368,7 @@ mod tests {
         let mut state = WorldState::default();
         let uri = Url::parse("file:///test.R").unwrap();
         let file = state
-            .db
+            .db_mut()
             .upsert_editor(FilePath::from_url(&uri), "foo".to_string());
         state.insert_open_file(uri.to_uri().unwrap(), FilePath::from_url(&uri), file, None);
 
@@ -1381,12 +1401,12 @@ mod tests {
     #[test]
     fn test_oak_write_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(&state.db);
-        state.db.upsert_editor(
+        let before = salsa::plumbing::current_revision(state.db());
+        state.db_mut().upsert_editor(
             FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
             "x <- 1".to_string(),
         );
-        let after = salsa::plumbing::current_revision(&state.db);
+        let after = salsa::plumbing::current_revision(state.db());
         assert_ne!(before, after);
     }
 
@@ -1396,9 +1416,9 @@ mod tests {
     #[test]
     fn test_bump_revision_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(&state.db);
+        let before = salsa::plumbing::current_revision(state.db());
         state.bump_revision();
-        let after = salsa::plumbing::current_revision(&state.db);
+        let after = salsa::plumbing::current_revision(state.db());
         assert_ne!(before, after);
     }
 }
