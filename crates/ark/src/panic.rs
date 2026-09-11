@@ -16,6 +16,8 @@ use std::task::Poll;
 
 use stdext::panic_message;
 
+pub(crate) type PanicPayload = Box<dyn std::any::Any + Send + 'static>;
+
 /// Install the global panic hook.
 ///
 /// This causes panics on background threads to propagate on the main
@@ -99,7 +101,7 @@ thread_local! {
 }
 
 /// Whether a `catch_unwind()` boundary is waiting to recover this panic.
-fn recovers_panic() -> bool {
+pub(crate) fn recovers_panic() -> bool {
     match BOUNDARY.get() {
         None => false,
         Some(Recovery::Always) => true,
@@ -107,20 +109,24 @@ fn recovers_panic() -> bool {
     }
 }
 
-/// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
-/// unwind safety is asserted on the caller's behalf.
-pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Result<T, String> {
+/// Runs `f` inside a `catch_unwind()` boundary. `Err` preserves the panic payload so
+/// callers can distinguish control-flow unwinds such as `salsa::Cancelled` from genuine
+/// panics. Unwind safety is asserted on the caller's behalf.
+pub(crate) fn catch_unwind<T>(
+    recovery: Recovery,
+    f: impl FnOnce() -> T,
+) -> Result<T, PanicPayload> {
     let _boundary = catch_boundary(recovery);
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-        .map_err(|payload| panic_message(payload.as_ref()))
 }
 
 /// Recover panics while polling a future. Enter the recovery boundary for each poll so
-/// unrelated work on the polling thread cannot inherit it.
+/// unrelated work on the polling thread cannot inherit it. Preserve the panic payload so
+/// the caller can distinguish control-flow unwinds from genuine panics.
 pub(crate) async fn catch_unwind_async<T>(
     recovery: Recovery,
     future: impl Future<Output = T>,
-) -> Result<T, String> {
+) -> Result<T, PanicPayload> {
     let mut future = Box::pin(future);
 
     std::future::poll_fn(move |cx| {
@@ -129,10 +135,14 @@ pub(crate) async fn catch_unwind_async<T>(
         match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
             Ok(Poll::Pending) => Poll::Pending,
             Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
-            Err(payload) => Poll::Ready(Err(panic_message(payload.as_ref()))),
+            Err(payload) => Poll::Ready(Err(payload)),
         }
     })
     .await
+}
+
+pub(crate) fn message(payload: &PanicPayload) -> String {
+    panic_message(payload.as_ref())
 }
 
 /// Guard that preserves a `catch_unwind()` recovery boundary for the panic hook.
@@ -193,24 +203,49 @@ mod tests {
     #[test]
     fn test_catch_unwind_passes_through_ok() {
         let result = catch_unwind(Recovery::Always, || 1 + 1);
-        assert_eq!(result, Ok(2));
+        let Ok(value) = result else {
+            panic!("Expected a value");
+        };
+        assert_eq!(value, 2);
     }
 
     #[test]
-    fn test_catch_unwind_converts_panic_to_err() {
+    fn test_catch_unwind_preserves_panic_payload() {
         let result = catch_unwind(Recovery::Always, || panic!("oh no"));
-        assert_eq!(result, Err(String::from("oh no")));
+        let Err(payload) = result else {
+            panic!("Expected a panic payload");
+        };
+        assert_eq!(message(&payload), "oh no");
     }
 
     #[tokio::test]
     async fn test_catch_unwind_async_passes_through_ok() {
         let result = catch_unwind_async(Recovery::Always, async { 1 + 1 }).await;
-        assert_eq!(result, Ok(2));
+        let Ok(value) = result else {
+            panic!("Expected a value");
+        };
+        assert_eq!(value, 2);
     }
 
     #[tokio::test]
-    async fn test_catch_unwind_async_converts_panic_to_err() {
+    async fn test_catch_unwind_async_preserves_panic_payload() {
         let result = catch_unwind_async(Recovery::Always, async { panic!("oh no") }).await;
-        assert_eq!(result, Err(String::from("oh no")));
+        let Err(payload) = result else {
+            panic!("Expected a panic payload");
+        };
+        assert_eq!(message(&payload), "oh no");
+    }
+
+    #[tokio::test]
+    async fn test_catch_unwind_async_preserves_salsa_cancellation() {
+        let result = catch_unwind_async(Recovery::Always, async {
+            std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite))
+        })
+        .await;
+
+        let Err(payload) = result else {
+            panic!("Expected a cancellation payload");
+        };
+        assert!(payload.is::<salsa::Cancelled>());
     }
 }

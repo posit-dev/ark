@@ -731,7 +731,10 @@ impl Console {
     pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
         match panic::catch_unwind(Recovery::ReleaseOnly, || f(Console::get())) {
             Ok(result) => result,
-            Err(msg) => Err(anyhow!("Panic in Console callback: {msg}")),
+            Err(payload) => {
+                let message = panic::message(&payload);
+                Err(anyhow!("Panic in Console callback: {message}"))
+            },
         }
     }
 

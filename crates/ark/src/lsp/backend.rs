@@ -108,6 +108,10 @@ pub(crate) enum LspNotification {
     DidCloseTextDocument(DidCloseTextDocumentParams),
     #[cfg(feature = "testing")]
     TestPanic,
+    #[cfg(feature = "testing")]
+    TestCancelRTask,
+    #[cfg(feature = "testing")]
+    TestPanicRTask,
 }
 
 #[derive(Debug)]
@@ -503,6 +507,16 @@ impl Backend {
     }
 
     #[cfg(feature = "testing")]
+    async fn test_cancel_r_task(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestCancelRTask);
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_r_task(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestPanicRTask);
+    }
+
+    #[cfg(feature = "testing")]
     async fn test_panic_main_loop(&self, _params: Option<Value>) {
         let _ = self.events_tx.send(Event::TestPanicMainLoop);
     }
@@ -514,6 +528,10 @@ pub(crate) static ARK_TEST_PANIC_REQUEST: &str = "ark/testPanic";
 pub(crate) static ARK_TEST_PANIC_NOTIFICATION: &str = "ark/testPanicNotification";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -601,7 +619,9 @@ pub(crate) fn start_lsp(
                 ARK_TEST_PANIC_NOTIFICATION,
                 Backend::test_panic_notification,
             )
-            .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop);
+            .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
+            .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
+            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task);
 
         let (service, socket) = builder.finish();
 

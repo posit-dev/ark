@@ -370,15 +370,17 @@ impl GlobalState {
             });
 
             // Handle panics that bypass `handle_event()`'s recovery boundary.
-            if let Err(msg) = outcome {
-                lsp::log_error!("Panic in the main loop: {msg}");
+            if let Err(payload) = outcome {
+                let message = panic::message(&payload);
+                lsp::log_error!("Panic in the main loop: {message}");
                 LSP_HAS_CRASHED.store(true, Ordering::Release);
 
                 let report = panic::catch_unwind(Recovery::Always, || {
                     handle.block_on(report_crash(&client))
                 });
-                if let Err(msg) = report {
-                    log::error!("Panic while reporting an LSP crash: {msg}");
+                if let Err(payload) = report {
+                    let message = panic::message(&payload);
+                    log::error!("Panic while reporting an LSP crash: {message}");
                 }
 
                 // The runtime may be shutting down, so don't wait for channel capacity.
@@ -425,14 +427,18 @@ impl GlobalState {
                     match outcome {
                         Ok(Ok(())) => {},
                         Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
-                        Err(msg) => {
-                            // `report_crash()` reads only the `Client` handle. Drop `self` after the
-                            // panic because a handler may have partially written its state.
-                            lsp::log_error!("Panic while handling event: {msg}");
-                            LSP_HAS_CRASHED.store(true, Ordering::Release);
-                            report_crash(&self.client).await;
-                            let _ = server_shutdown_tx.send(()).await;
-                            break;
+                        Err(payload) => match classify_event_unwind(payload) {
+                            EventUnwind::Cancelled => {},
+                            EventUnwind::Panicked(payload) => {
+                                // `report_crash()` reads only the `Client` handle. Drop `self` after
+                                // the panic because a handler may have partially written its state.
+                                let message = panic::message(&payload);
+                                lsp::log_error!("Panic while handling event: {message}");
+                                LSP_HAS_CRASHED.store(true, Ordering::Release);
+                                report_crash(&self.client).await;
+                                let _ = server_shutdown_tx.send(()).await;
+                                break;
+                            },
                         },
                     }
                 }
@@ -513,6 +519,18 @@ impl GlobalState {
                         #[cfg(feature = "testing")]
                         LspNotification::TestPanic => {
                             panic!("Test panic in a notification handler");
+                        },
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestCancelRTask => {
+                            crate::r_task(|| {
+                                std::panic::resume_unwind(Box::new(
+                                    salsa::Cancelled::PendingWrite,
+                                ))
+                            });
+                        },
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestPanicRTask => {
+                            crate::r_task(|| panic!("Test panic in an R task"));
                         },
                     }
                 },
@@ -892,6 +910,19 @@ impl GlobalState {
     }
 }
 
+enum EventUnwind {
+    Cancelled,
+    Panicked(panic::PanicPayload),
+}
+
+fn classify_event_unwind(payload: panic::PanicPayload) -> EventUnwind {
+    if payload.is::<salsa::Cancelled>() {
+        EventUnwind::Cancelled
+    } else {
+        EventUnwind::Panicked(payload)
+    }
+}
+
 /// Run each [`ScanRequest`] on `pool`. Each job runs the pure-I/O
 /// [`ScanRequest::run`] and ships the [`ScanCompleted`] back to the main loop as
 /// [`Event::OakScanCompleted`], where the scheduler then applies it.
@@ -955,16 +986,17 @@ fn respond<T>(
                 RequestOutcome::Handled,
             )
         },
-        Err(msg) => {
+        Err(payload) => {
             // The panic hook emits the backtrace to the kernel logs. Mention
             // the panic in the LSP log too for cross-reference.
+            let message = panic::message(&payload);
             lsp::log_error!(
-                "Panic while handling request: {msg}. \
+                "Panic while handling request: {message}. \
                  See the R kernel log for the full panic backtrace."
             );
             (
                 RequestResponse::Result(Err(LspError::Anyhow(anyhow!(
-                    "Panic while handling request: {msg}"
+                    "Panic while handling request: {message}"
                 )))),
                 RequestOutcome::Panicked,
             )
@@ -1223,13 +1255,34 @@ mod tests {
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
+    use super::classify_event_unwind;
     use super::respond;
     use super::tokio_unbounded_channel;
+    use super::EventUnwind;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
+
+    #[test]
+    fn test_salsa_cancellation_is_not_classified_as_event_panic() {
+        let payload = Box::new(salsa::Cancelled::PendingWrite);
+        let outcome = classify_event_unwind(payload);
+
+        assert!(matches!(outcome, EventUnwind::Cancelled));
+    }
+
+    #[test]
+    fn test_genuine_panic_is_classified_as_event_panic() {
+        let payload = Box::new(String::from("oh no"));
+        let outcome = classify_event_unwind(payload);
+
+        let EventUnwind::Panicked(payload) = outcome else {
+            panic!("Expected a panic");
+        };
+        assert_eq!(crate::panic::message(&payload), "oh no");
+    }
 
     /// A `salsa::Cancelled` re-raised out of a request handler (by `r_task`,
     /// after catching it on the R thread) must not crash the LSP. `respond`

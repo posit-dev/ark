@@ -117,6 +117,35 @@ fn test_lsp_panicking_notification_ends_session() {
     lsp.disconnect_abruptly();
 }
 
+// Salsa cancellation is control flow, not a crash. Its typed unwind payload must
+// survive the trip through `r_task()` and the async event boundary.
+#[test]
+fn test_lsp_cancellation_across_r_task_keeps_running() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.send_notification("ark/testCancelRTask", json!({}));
+
+    let uri = lsp.open_document("test_cancel_r_task.R", "x <- 1\n");
+    lsp.completions(&uri, 0, 0);
+    assert!(lsp.show_messages().is_empty());
+}
+
+// A genuine panic raised in `r_task()` must return to the caller's recovery
+// boundary rather than aborting the R process.
+#[test]
+fn test_lsp_panic_across_r_task_ends_session() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Panic while handling event");
+    lsp.send_notification("ark/testPanicRTask", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+    lsp.disconnect_abruptly();
+}
+
 // A panic outside the per-event boundary must still show the crash dialog before shutdown.
 #[test]
 fn test_lsp_panicking_main_loop_reports_crash() {

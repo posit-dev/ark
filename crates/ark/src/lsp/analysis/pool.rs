@@ -202,9 +202,11 @@ fn run_entry(entry: Entry) {
         return;
     }
 
-    if let Err(msg) = panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
+    if let Err(payload) =
+        panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
     {
-        lsp::log_error!("An analysis task panicked: {msg}");
+        let message = panic::message(&payload);
+        lsp::log_error!("An analysis task panicked: {message}");
     }
 }
 
