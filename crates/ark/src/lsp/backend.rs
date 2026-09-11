@@ -45,6 +45,8 @@ use crate::lsp::help_topic::HelpTopicResponse;
 use crate::lsp::input_boundaries;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
+#[cfg(feature = "testing")]
+use crate::lsp::main_loop::panic_auxiliary_loop;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LoopHandles;
@@ -522,6 +524,12 @@ impl Backend {
     async fn test_panic_main_loop(&self, _params: Option<Value>) {
         let _ = self.events_tx.send(Event::TestPanicMainLoop);
     }
+
+    // Bypass the main loop so the test event panics in the auxiliary loop.
+    #[cfg(feature = "testing")]
+    async fn test_panic_auxiliary(&self, _params: Option<Value>) {
+        panic_auxiliary_loop();
+    }
 }
 
 #[cfg(feature = "testing")]
@@ -534,6 +542,8 @@ pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
 pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_AUXILIARY: &str = "ark/testPanicAuxiliary";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -623,7 +633,8 @@ pub(crate) fn start_lsp(
             )
             .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
             .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
-            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task);
+            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task)
+            .custom_method(ARK_TEST_PANIC_AUXILIARY, Backend::test_panic_auxiliary);
 
         let (service, socket) = builder.finish();
 

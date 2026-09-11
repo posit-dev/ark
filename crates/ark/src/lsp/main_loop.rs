@@ -137,6 +137,8 @@ pub(crate) enum AuxiliaryEvent {
     PublishDiagnostics(DiagnosticsPublication),
     ShowMessage(lsp_types::MessageType, String),
     Shutdown,
+    #[cfg(feature = "testing")]
+    TestPanic,
 }
 
 /// Global state for the main loop
@@ -1102,6 +1104,8 @@ impl AuxiliaryState {
                 self.client.show_message(level, message).await
             },
             AuxiliaryEvent::Shutdown => return ControlFlow::Break(()),
+            #[cfg(feature = "testing")]
+            AuxiliaryEvent::TestPanic => panic!("Test panic in the auxiliary loop"),
         }
 
         ControlFlow::Continue(())
@@ -1254,6 +1258,11 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
         MessageType::WARNING => log::warn!("{message}"),
         _ => log::info!("{message}"),
     };
+}
+
+#[cfg(feature = "testing")]
+pub(crate) fn panic_auxiliary_loop() {
+    send_auxiliary(AuxiliaryEvent::TestPanic);
 }
 
 pub(crate) fn publish_diagnostics(publication: DiagnosticsPublication) {
