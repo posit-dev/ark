@@ -841,10 +841,10 @@ impl GlobalState {
 /// notification often won't get sent out before shutdown occurs. The request
 /// returns control to us when the user acknowledges the message. It doesn't
 /// matter if that takes awhile because we shut down right after, and we've
-/// already set the session's `CrashFlag`. We do bound it with a 5 second
-/// timeout just in case the user ignores the message entirely, so we can still
-/// shutdown.
-async fn report_crash(client: &Client) {
+/// already marked the service as crashed in its [`LspServiceContext`]. We do
+/// bound it with a 5 second timeout just in case the user ignores the message
+/// entirely, so we can still shutdown.
+pub(crate) async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
         "Smart features such as completions will no longer work in this session. ",
