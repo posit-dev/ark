@@ -25,6 +25,8 @@ use uuid::Uuid;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
+use crate::panic;
+use crate::panic::Recovery;
 
 /// Task channels for idle-time tasks (top-level only)
 static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
@@ -296,16 +298,24 @@ where
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
 
-    // Stores the outcome of `f`. We catch any unwind on the R thread instead of
-    // letting it escape the closure: the closure runs inside `r_sandbox`'s
-    // `try_catch`, and a Rust unwind crossing those C frames is UB. The payload
-    // is ferried back and re-raised below, on the calling thread.
+    // Stores the outcome of `f`. If the caller can recover panics, catch any unwind
+    // on the R thread instead of letting it escape through `r_sandbox`'s C frames.
+    // The payload is ferried back and re-raised below, on the calling thread.
+    //
+    // Without a recovering caller, don't install a boundary on the R thread. The
+    // production panic hook must abort rather than let the process continue after
+    // losing a thread.
+    let caller_recovers_panic = panic::recovers_panic();
     let result: SharedOption<std::thread::Result<T>> = SharedOption::default();
 
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            let caught = if caller_recovers_panic {
+                panic::catch_unwind(Recovery::Always, f)
+            } else {
+                Ok(f())
+            };
             *result.lock().unwrap() = Some(caught);
         };
 
@@ -364,9 +374,10 @@ where
         }
     }
 
-    // The closure ran to completion: it caught its own unwind, and an R-level
-    // error would have panicked above. Re-raise on this thread any panic the
-    // closure caught on the R thread.
+    // The closure ran to completion, and an R-level error would have panicked above.
+    // If the caller has a recovery boundary, re-raise any Rust panic caught on the
+    // R thread. If there is no recovery boundary, the production panic hook aborts
+    // before reaching here.
     let caught = result.lock().unwrap().take().unwrap();
     match caught {
         Ok(value) => value,

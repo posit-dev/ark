@@ -5,13 +5,12 @@
 //
 //
 
-use std::panic::AssertUnwindSafe;
-
 use crossbeam::channel::Sender;
-use stdext::panic_message;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
+use crate::panic;
+use crate::panic::Recovery;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -54,10 +53,29 @@ impl IoPool {
 }
 
 fn run_job(job: Job) {
-    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(job)) {
-        lsp::log_error!(
-            "An I/O job panicked: {msg}",
-            msg = panic_message(err.as_ref())
-        );
+    if let Err(payload) = panic::catch_unwind(Recovery::Always, job) {
+        let message = panic::message(&payload);
+        lsp::log_error!("An I/O job panicked: {message}");
+        crate::lsp::main_loop::report_background_panic();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Install the production hook so a missing `catch_unwind()` aborts the
+    /// process instead of silently losing the worker panic.
+    #[test]
+    fn test_pool_survives_panicking_job() {
+        crate::panic::install();
+
+        let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE);
+        pool.submit(|| panic!("Test panic in an I/O job"));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        pool.submit(move || tx.send(()).unwrap());
+
+        rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
     }
 }

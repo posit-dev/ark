@@ -13,12 +13,13 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use stdext::panic_message;
 use stdext::DebugRefCell;
 
 use super::*;
 use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
 use crate::r_task::TryIdleTask;
@@ -33,18 +34,6 @@ const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "
 // execution past the current prompt, `Q` exits all nested browsers entirely.
 // These are not transient evals: they represent deliberate debugger navigation.
 const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
-
-thread_local! {
-    /// When `true`, the global panic hook should return early instead of
-    /// aborting, so that `catch_unwind` can catch the panic in `Console::with`.
-    static CATCHING_PANICS: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Returns `true` when we are inside a `Console::with` catch boundary.
-/// Checked by the global panic hook to decide whether to abort.
-pub fn catching_panics() -> bool {
-    CATCHING_PANICS.get()
-}
 
 /// Used to wait for complete R startup in `Console::wait_initialized()` or
 /// check for it in `Console::is_initialized()`.
@@ -740,19 +729,11 @@ impl Console {
     /// caught and converted to `anyhow::Error`, which `harp::register`'s
     /// `r_unwrap()` then surfaces as a clean R error.
     pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
-        if cfg!(debug_assertions) {
-            return f(Console::get());
-        }
-
-        CATCHING_PANICS.set(true);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get())));
-        CATCHING_PANICS.set(false);
-
-        match result {
+        match panic::catch_unwind(Recovery::ReleaseOnly, || f(Console::get())) {
             Ok(result) => result,
-            Err(panic) => {
-                let msg = panic_message(panic.as_ref());
-                Err(anyhow!("Panic in Console callback: {msg}"))
+            Err(payload) => {
+                let message = panic::message(&payload);
+                Err(anyhow!("Panic in Console callback: {message}"))
             },
         }
     }

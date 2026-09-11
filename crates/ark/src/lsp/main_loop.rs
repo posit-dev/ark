@@ -7,12 +7,15 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::mem::discriminant;
+use std::mem::Discriminant;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
@@ -22,16 +25,18 @@ use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
-use stdext::panic_message;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tower_lsp_server::jsonrpc;
 use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::request;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::ls_types::ShowMessageRequestParams;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::Client;
 
@@ -39,6 +44,7 @@ use super::backend::RequestResponse;
 use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
+use crate::lsp::analysis::catch_cancellation;
 use crate::lsp::analysis::AnalysisPool;
 use crate::lsp::analysis::DiagnosticsReady;
 use crate::lsp::analysis::DiagnosticsState;
@@ -64,6 +70,8 @@ use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::watchdog::Watchdog;
+use crate::panic;
+use crate::panic::Recovery;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -84,6 +92,7 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
 pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
+static BACKGROUND_PANIC_REPORTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -93,6 +102,8 @@ pub(crate) enum Event {
     OakScanCompleted(ScanCompleted),
     SourceCompleted(SourceCompleted),
     DiagnosticsReady(DiagnosticsReady),
+    #[cfg(feature = "testing")]
+    TestPanicMainLoop,
 }
 
 #[derive(Debug)]
@@ -123,6 +134,7 @@ pub(crate) struct DidCloseVirtualDocumentParams {
 pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(DiagnosticsPublication),
+    ShowMessage(lsp_types::MessageType, String),
     Shutdown,
 }
 
@@ -145,6 +157,9 @@ pub(crate) struct GlobalState {
 
     /// LSP client shared with tower-lsp and the log loop
     client: Client,
+
+    /// Request handlers whose panic has already been reported to the user.
+    reported_request_panics: HashSet<Discriminant<LspRequest>>,
 
     /// Event channels for the main loop. The tower-lsp methods forward
     /// notifications and requests here via `Event::Lsp`. We also receive
@@ -315,6 +330,7 @@ impl GlobalState {
             world,
             lsp_state,
             client,
+            reported_request_panics: HashSet::new(),
             events_tx,
             events_rx,
         }
@@ -329,7 +345,7 @@ impl GlobalState {
     ///
     /// The returned [`LoopHandles`] owns everything the loops need. Drop it to
     /// shut the loops down and release the owned state.
-    pub(crate) fn start(self) -> LoopHandles {
+    pub(crate) fn start(self, server_shutdown_tx: Sender<()>) -> LoopHandles {
         let mut aux = tokio::task::JoinSet::<()>::new();
 
         // The auxiliary loop is fully async and never blocks. Must be started
@@ -346,8 +362,32 @@ impl GlobalState {
         // thread that we're in control of.
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let handle = Handle::current();
+        let client = self.client.clone();
+
         let main_loop = spawn!("oak-main-loop", move || {
-            handle.block_on(self.main_loop(shutdown_rx));
+            let outcome = panic::catch_unwind(Recovery::Always, {
+                let server_shutdown_tx = server_shutdown_tx.clone();
+                let handle = handle.clone();
+                move || handle.block_on(self.main_loop(shutdown_rx, server_shutdown_tx))
+            });
+
+            // Handle panics that bypass `handle_event()`'s recovery boundary.
+            if let Err(payload) = outcome {
+                let message = panic::message(&payload);
+                lsp::log_error!("Panic in the main loop: {message}");
+                LSP_HAS_CRASHED.store(true, Ordering::Release);
+
+                let report = panic::catch_unwind(Recovery::Always, || {
+                    handle.block_on(report_crash(&client))
+                });
+                if let Err(payload) = report {
+                    let message = panic::message(&payload);
+                    log::error!("Panic while reporting an LSP crash: {message}");
+                }
+
+                // The runtime may be shutting down, so don't wait for channel capacity.
+                server_shutdown_tx.try_send(()).log_err();
+            }
         });
 
         LoopHandles {
@@ -361,7 +401,11 @@ impl GlobalState {
     ///
     /// This takes ownership of all global state and handles one by one LSP
     /// requests, notifications, and other internal events.
-    async fn main_loop(mut self, mut shutdown_rx: oneshot::Receiver<()>) {
+    async fn main_loop(
+        mut self,
+        mut shutdown_rx: oneshot::Receiver<()>,
+        server_shutdown_tx: Sender<()>,
+    ) {
         loop {
             tokio::select! {
                 _ = &mut shutdown_rx => {
@@ -373,8 +417,31 @@ impl GlobalState {
                         lsp::log_info!("Main loop stopping: event channel closed");
                         break;
                     };
-                    if let Err(err) = self.handle_event(event).await {
-                        lsp::log_error!("Failure while handling event:\n{err:?}")
+
+                    #[cfg(feature = "testing")]
+                    if matches!(event, Event::TestPanicMainLoop) {
+                        panic!("Test panic outside the event recovery boundary");
+                    }
+
+                    let outcome =
+                        panic::catch_unwind_async(Recovery::Always, self.handle_event(event)).await;
+
+                    match outcome {
+                        Ok(Ok(())) => {},
+                        Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
+                        Err(payload) => match classify_event_unwind(payload) {
+                            EventUnwind::Cancelled => {},
+                            EventUnwind::Panicked(payload) => {
+                                // `report_crash()` reads only the `Client` handle. Drop `self` after
+                                // the panic because a handler may have partially written its state.
+                                let message = panic::message(&payload);
+                                lsp::log_error!("Panic while handling event: {message}");
+                                LSP_HAS_CRASHED.store(true, Ordering::Release);
+                                report_crash(&self.client).await;
+                                let _ = server_shutdown_tx.send(()).await;
+                                break;
+                            },
+                        },
                     }
                 }
             }
@@ -450,82 +517,111 @@ impl GlobalState {
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.world)?;
                         },
+
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestPanic => {
+                            panic!("Test panic in a notification handler");
+                        },
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestCancelRTask => {
+                            crate::r_task(|| {
+                                std::panic::resume_unwind(Box::new(
+                                    salsa::Cancelled::PendingWrite,
+                                ))
+                            });
+                        },
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestPanicRTask => {
+                            crate::r_task(|| panic!("Test panic in an R task"));
+                        },
                     }
                 },
 
                 LspMessage::Request(request, tx) => {
                     lsp::log_info!("{request:#?}");
 
-                    match request {
+                    let request_kind = discriminant(&request);
+                    let outcome = match request {
                         LspRequest::Initialize(params) => {
-                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?;
+                            respond_exclusive(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?
                         },
                         LspRequest::WorkspaceSymbol(params) => {
-                            respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
+                            respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?
                         },
                         LspRequest::DocumentSymbol(params) => {
-                            respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?;
+                            respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?
                         },
                         LspRequest::FoldingRange(params) => {
-                            respond(tx, || handlers::handle_folding_range(params, &self.world), LspResponse::FoldingRange)?;
+                            respond(tx, || handlers::handle_folding_range(params, &self.world), LspResponse::FoldingRange)?
                         },
                         LspRequest::ExecuteCommand(_params) => {
                             let response = handlers::handle_execute_command(&self.client).await;
-                            respond(tx, || response, LspResponse::ExecuteCommand)?;
+                            respond(tx, || response, LspResponse::ExecuteCommand)?
                         },
                         LspRequest::Completion(params) => {
-                            respond(tx, || handlers::handle_completion(params, &self.world), LspResponse::Completion)?;
+                            respond(tx, || handlers::handle_completion(params, &self.world), LspResponse::Completion)?
                         },
                         LspRequest::CompletionResolve(params) => {
-                            respond(tx, || handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?;
+                            respond(tx, || handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?
                         },
                         LspRequest::Hover(params) => {
-                            respond(tx, || handlers::handle_hover(params, &self.world), LspResponse::Hover)?;
+                            respond(tx, || handlers::handle_hover(params, &self.world), LspResponse::Hover)?
                         },
                         LspRequest::SignatureHelp(params) => {
-                            respond(tx, || handlers::handle_signature_help(params, &self.world), LspResponse::SignatureHelp)?;
+                            respond(tx, || handlers::handle_signature_help(params, &self.world), LspResponse::SignatureHelp)?
                         },
                         LspRequest::GotoDefinition(params) => {
-                            respond(tx, || handlers::handle_goto_definition(params, &self.world), LspResponse::GotoDefinition)?;
+                            respond(tx, || handlers::handle_goto_definition(params, &self.world), LspResponse::GotoDefinition)?
                         },
                         LspRequest::GotoImplementation(_params) => {
                             // TODO
-                            respond(tx, || Ok(None), LspResponse::GotoImplementation)?;
+                            respond(tx, || Ok(None), LspResponse::GotoImplementation)?
                         },
                         LspRequest::SelectionRange(params) => {
-                            respond(tx, || handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?;
+                            respond(tx, || handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?
                         },
                         LspRequest::References(params) => {
-                            respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?;
+                            respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?
                         },
                         LspRequest::PrepareRename(params) => {
-                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?;
+                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?
                         },
                         LspRequest::Rename(params) => {
-                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?;
+                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?
                         },
                         LspRequest::StatementRange(params) => {
-                            respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?;
+                            respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?
                         },
                         LspRequest::HelpTopic(params) => {
-                            respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?;
+                            respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?
                         },
                         LspRequest::OnTypeFormatting(params) => {
                             if let Some(path) = params.text_document_position.text_document.uri.to_document_path().log_err() {
                                 state_handlers::did_change_formatting_options(&path, &params.options, &mut self.world);
                             }
-                            respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
+                            respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?
                         },
                         LspRequest::CodeAction(params) => {
-                            respond(tx, || handlers::handle_code_action(params, &self.lsp_state, &self.world), LspResponse::CodeAction)?;
+                            respond(tx, || handlers::handle_code_action(params, &self.lsp_state, &self.world), LspResponse::CodeAction)?
                         },
                         LspRequest::VirtualDocument(params) => {
-                            respond(tx, || handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?;
+                            respond(tx, || handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?
                         },
                         LspRequest::InputBoundaries(params) => {
-                            respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
+                            respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?
+                        },
+
+                        #[cfg(feature = "testing")]
+                        LspRequest::TestPanic => {
+                            respond(tx, || -> LspResult<()> { panic!("Test panic in a request handler") }, LspResponse::TestPanic)?
                         },
                     };
+
+                    if outcome == RequestOutcome::Panicked &&
+                        self.reported_request_panics.insert(request_kind)
+                    {
+                        report_request_panic(&self.client).await;
+                    }
                 },
             },
 
@@ -623,6 +719,9 @@ impl GlobalState {
                     );
                 }
             },
+
+            #[cfg(feature = "testing")]
+            Event::TestPanicMainLoop => unreachable!(),
         }
         lsp::log_info!("Finished handling event in {}ms", loop_tick.elapsed().as_millis());
 
@@ -677,6 +776,50 @@ impl GlobalState {
             },
         }
     }
+}
+
+/// Send via `request::ShowMessageRequest` not `notification::ShowMessage` so
+/// that we can ensure that the message has been received on the frontend side.
+/// We are about to shut the LSP down, and sending out a fire-and-forget
+/// notification often won't get sent out before shutdown occurs. The request
+/// returns control to us when the user acknowledges the message. It doesn't
+/// matter if that takes awhile because we shut down right after, and we've
+/// already flipped the `LSP_HAS_CRASHED` global flag. We do bound it with a 5
+/// second timeout just in case the user ignores the message entirely, so we can
+/// still shutdown.
+async fn report_crash(client: &Client) {
+    let user_message = concat!(
+        "The R language server has crashed and has been disabled. ",
+        "Smart features such as completions will no longer work in this session. ",
+        "Please report this crash to https://github.com/posit-dev/positron/issues ",
+        "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
+    );
+    let request = client.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
+        typ: MessageType::ERROR,
+        message: String::from(user_message),
+        actions: None,
+    });
+    match tokio::time::timeout(Duration::from_secs(5), request).await {
+        Ok(result) => {
+            result.log_err();
+        },
+        Err(_) => {
+            log::warn!("Timed out waiting for frontend to acknowledge LSP crash notification");
+        },
+    }
+}
+
+async fn report_request_panic(client: &Client) {
+    client
+        .show_message(
+            MessageType::ERROR,
+            concat!(
+                "An R language server feature encountered an internal error. ",
+                "The request failed, but the language server is still running. ",
+                "See the R Kernel and R Language Server logs for the panic and backtrace."
+            ),
+        )
+        .await;
 }
 
 /// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
@@ -769,6 +912,19 @@ impl GlobalState {
     }
 }
 
+enum EventUnwind {
+    Cancelled,
+    Panicked(panic::PanicPayload),
+}
+
+fn classify_event_unwind(payload: panic::PanicPayload) -> EventUnwind {
+    if payload.is::<salsa::Cancelled>() {
+        EventUnwind::Cancelled
+    } else {
+        EventUnwind::Panicked(payload)
+    }
+}
+
 /// Run each [`ScanRequest`] on `pool`. Each job runs the pure-I/O
 /// [`ScanRequest::run`] and ships the [`ScanCompleted`] back to the main loop as
 /// [`Event::OakScanCompleted`], where the scheduler then applies it.
@@ -784,6 +940,12 @@ pub(super) fn dispatch_scan_requests(
             tx.send(Event::OakScanCompleted(scan)).log_err();
         });
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestOutcome {
+    Handled,
+    Panicked,
 }
 
 /// Respond to a request from the LSP
@@ -808,29 +970,69 @@ fn respond<T>(
     response_tx: TokioUnboundedSender<RequestResponse>,
     response: impl FnOnce() -> LspResult<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
-) -> anyhow::Result<()> {
-    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
-        Ok(Ok(t)) => RequestResponse::Result(Ok(into_lsp_response(t))),
-        Ok(Err(e)) => RequestResponse::Result(Err(e)),
-        Err(err) if err.downcast_ref::<salsa::Cancelled>().is_some() => {
+) -> anyhow::Result<RequestOutcome> {
+    let (response, outcome) = match panic::catch_unwind(Recovery::Always, || {
+        catch_cancellation(response)
+    }) {
+        Ok(Some(Ok(value))) => (
+            RequestResponse::Result(Ok(into_lsp_response(value))),
+            RequestOutcome::Handled,
+        ),
+        Ok(Some(Err(err))) => (RequestResponse::Result(Err(err)), RequestOutcome::Handled),
+        Ok(None) => {
             // A salsa write cancelled an oak query while the handler ran.
             // Report `ContentModified` so the client knows the content moved
             // under us and re-requests.
-            RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified())))
+            (
+                RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified()))),
+                RequestOutcome::Handled,
+            )
         },
-        Err(err) => {
-            // Set global crash flag to disable the LSP
-            LSP_HAS_CRASHED.store(true, Ordering::Release);
-
-            let msg = panic_message(err.as_ref());
-
-            // This creates an uninformative backtrace that is reported in the
-            // LSP logs. Note that the relevant backtrace is the one created by
-            // our panic hook and reported via the _kernel_ logs.
-            RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}"))
+        Err(payload) => {
+            // The panic hook emits the backtrace to the kernel logs. Mention
+            // the panic in the LSP log too for cross-reference.
+            let message = panic::message(&payload);
+            lsp::log_error!(
+                "Panic while handling request: {message}. \
+                 See the R kernel log for the full panic backtrace."
+            );
+            (
+                RequestResponse::Result(Err(LspError::Anyhow(anyhow!(
+                    "Panic while handling request: {message}"
+                )))),
+                RequestOutcome::Panicked,
+            )
         },
     };
 
+    send_response(response_tx, response)?;
+    Ok(outcome)
+}
+
+/// Run a handler that holds an exclusive world-state borrow.
+///
+/// We don't recover from panics in these handlers because they could leave
+/// leave the world state half-built. Let them reach `main_loop()`'s recovery
+/// boundary, which terminates the session.
+fn respond_exclusive<T>(
+    response_tx: TokioUnboundedSender<RequestResponse>,
+    response: impl FnOnce() -> LspResult<T>,
+    into_lsp_response: impl FnOnce(T) -> LspResponse,
+) -> anyhow::Result<RequestOutcome> {
+    let response = match catch_cancellation(response) {
+        Some(Ok(value)) => RequestResponse::Result(Ok(into_lsp_response(value))),
+        Some(Err(err)) => RequestResponse::Result(Err(err)),
+        None => RequestResponse::Result(Err(LspError::JsonRpc(jsonrpc::Error::content_modified()))),
+    };
+
+    send_response(response_tx, response)?;
+    Ok(RequestOutcome::Handled)
+}
+
+fn send_response(
+    response_tx: TokioUnboundedSender<RequestResponse>,
+    response: RequestResponse,
+) -> anyhow::Result<()> {
     let out = match response {
         RequestResponse::Result(Ok(_)) => Ok(()),
         RequestResponse::Result(Err(ref error)) => {
@@ -840,9 +1042,6 @@ fn respond<T>(
             // backtrace) so server logs keep diagnostic context.
             lsp::log_info!("Error while handling request:\n{error:?}");
             Ok(())
-        },
-        RequestResponse::Crashed(ref error) => {
-            Err(anyhow!("Crashed while handling request:\n{error:?}"))
         },
         RequestResponse::Disabled => Err(anyhow!("Received impossible `Disabled` response state")),
     };
@@ -888,6 +1087,9 @@ impl AuxiliaryState {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
                 AuxiliaryEvent::PublishDiagnostics(publication) => {
                     self.publish_diagnostics(publication).await
+                },
+                AuxiliaryEvent::ShowMessage(level, message) => {
+                    self.client.show_message(level, message).await
                 },
                 AuxiliaryEvent::Shutdown => break,
             }
@@ -970,6 +1172,36 @@ fn send_auxiliary(event: AuxiliaryEvent) {
             log::warn!("LSP is shut down, can't send event:\n{err:?}");
         }
     })
+}
+
+pub(crate) fn report_background_panic() {
+    // Only report once to avoid spamming the user
+    if BACKGROUND_PANIC_REPORTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let Ok(auxiliary_event_tx) = AUXILIARY_EVENT_TX.read() else {
+        log::warn!("Can't lock auxiliary event sender to report a background panic");
+        return;
+    };
+    let Some(auxiliary_event_tx) = auxiliary_event_tx.as_ref() else {
+        log::warn!("Can't report a background panic before the LSP is initialized");
+        return;
+    };
+
+    let event = AuxiliaryEvent::ShowMessage(
+        MessageType::ERROR,
+        String::from(
+            "An R language server background task encountered an internal error. \
+             Some smart features may be temporarily unavailable. \
+             See https://positron.posit.co/troubleshooting.html#python-and-r-logs \
+             for full logs and report the problem at \
+             https://github.com/posit-dev/positron/issues.",
+        ),
+    );
+    if let Err(err) = auxiliary_event_tx.send(event) {
+        log::warn!("LSP is shut down, can't report a background panic:\n{err:?}");
+    }
 }
 
 /// Initialise the auxiliary channel for unit tests that exercise LSP
@@ -1058,13 +1290,54 @@ mod tests {
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
+    use super::classify_event_unwind;
+    use super::init_aux_for_test;
+    use super::report_background_panic;
     use super::respond;
     use super::tokio_unbounded_channel;
+    use super::AuxiliaryEvent;
+    use super::EventUnwind;
+    use super::MessageType;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
+
+    #[test]
+    fn test_background_panic_is_reported_once() {
+        let mut events_rx = init_aux_for_test();
+
+        report_background_panic();
+        report_background_panic();
+
+        let event = events_rx.try_recv();
+        let Ok(AuxiliaryEvent::ShowMessage(level, message)) = event else {
+            panic!("Expected a show-message event");
+        };
+        assert_eq!(level, MessageType::ERROR);
+        assert!(message.contains("background task encountered an internal error"));
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_salsa_cancellation_is_not_classified_as_event_panic() {
+        let payload = Box::new(salsa::Cancelled::PendingWrite);
+        let outcome = classify_event_unwind(payload);
+
+        assert!(matches!(outcome, EventUnwind::Cancelled));
+    }
+
+    #[test]
+    fn test_genuine_panic_is_classified_as_event_panic() {
+        let payload = Box::new(String::from("oh no"));
+        let outcome = classify_event_unwind(payload);
+
+        let EventUnwind::Panicked(payload) = outcome else {
+            panic!("Expected a panic");
+        };
+        assert_eq!(crate::panic::message(&payload), "oh no");
+    }
 
     /// A `salsa::Cancelled` re-raised out of a request handler (by `r_task`,
     /// after catching it on the R thread) must not crash the LSP. `respond`

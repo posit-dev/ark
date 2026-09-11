@@ -10,7 +10,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -55,10 +54,6 @@ use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
 use crate::r_task;
 
-// This enum is useful for two things. First it allows us to distinguish a
-// normal request failure from a crash. In the latter case we send a
-// notification to the client so the user knows the LSP has crashed.
-//
 // Once the LSP has crashed all requests respond with an error. This prevents
 // any handler from running while we process the message to shut down the
 // server. The `Disabled` enum variant is an indicator of this state. We could
@@ -67,13 +62,12 @@ use crate::r_task;
 #[expect(clippy::large_enum_variant)]
 pub(crate) enum RequestResponse {
     Disabled,
-    Crashed(anyhow::Error),
     Result(LspResult<LspResponse>),
 }
 
 // Based on https://stackoverflow.com/a/69324393/1725177
 macro_rules! cast_response {
-    ($self:expr, $target:expr, $pat:path) => {{
+    ($target:expr, $pat:path) => {{
         match $target {
             RequestResponse::Result(Ok($pat(resp))) => Ok(resp),
             RequestResponse::Result(Ok(_)) => {
@@ -88,50 +82,11 @@ macro_rules! cast_response {
                 // is set, which then surfaces in the client's error popup.
                 LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err}"))),
             },
-            RequestResponse::Crashed(err) => {
-                // Notify user that the LSP has crashed and is no longer active
-                report_crash($self.client()).await;
-
-                // The backtrace is reported via `err` and eventually shows up
-                // in the LSP logs on the client side
-                let _ = $self.shutdown_tx.send(()).await;
-                Err(new_jsonrpc_error(format!("{err:?}")))
-            },
             RequestResponse::Disabled => Err(new_jsonrpc_error(String::from(
                 "The LSP server has crashed and is now shut down!",
             ))),
         }
     }};
-}
-
-/// Send via `request::ShowMessageRequest` not `notification::ShowMessage` so that we can
-/// ensure that the message has been received on the frontend side. We are about to shut
-/// the LSP down, and sending out a fire-and-forget notification often won't get sent out
-/// before shutdown occurs. The request returns control to us when the user acknowledges
-/// the message. It doesn't matter if that takes awhile because we shut down right after,
-/// and we've already flipped the `LSP_HAS_CRASHED` global flag, but we do bound it with
-/// a 5 second timeout just in case the user ignores the message entirely, so we can still
-/// shutdown.
-async fn report_crash(client: &Client) {
-    let user_message = concat!(
-        "The R language server has crashed and has been disabled. ",
-        "Smart features such as completions will no longer work in this session. ",
-        "Please report this crash to https://github.com/posit-dev/positron/issues ",
-        "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
-    );
-    let request = client.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
-        typ: MessageType::ERROR,
-        message: String::from(user_message),
-        actions: None,
-    });
-    match tokio::time::timeout(Duration::from_secs(5), request).await {
-        Ok(result) => {
-            result.log_err();
-        },
-        Err(_) => {
-            log::warn!("Timed out waiting for frontend to acknowledge LSP crash notification");
-        },
-    }
 }
 
 #[derive(Debug)]
@@ -151,6 +106,12 @@ pub(crate) enum LspNotification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
+    #[cfg(feature = "testing")]
+    TestPanic,
+    #[cfg(feature = "testing")]
+    TestCancelRTask,
+    #[cfg(feature = "testing")]
+    TestPanicRTask,
 }
 
 #[derive(Debug)]
@@ -177,6 +138,8 @@ pub(crate) enum LspRequest {
     CodeAction(CodeActionParams),
     VirtualDocument(VirtualDocumentParams),
     InputBoundaries(InputBoundariesParams),
+    #[cfg(feature = "testing")]
+    TestPanic,
 }
 
 #[derive(Debug)]
@@ -203,6 +166,8 @@ pub(crate) enum LspResponse {
     CodeAction(Option<CodeActionResponse>),
     VirtualDocument(VirtualDocumentResponse),
     InputBoundaries(InputBoundariesResponse),
+    #[cfg(feature = "testing")]
+    TestPanic(()),
 }
 
 pub(crate) type LspResult<T> = std::result::Result<T, LspError>;
@@ -240,15 +205,8 @@ impl From<anyhow::Error> for LspError {
 
 #[derive(Debug)]
 struct Backend {
-    /// Shutdown notifier used to unwind tower-lsp and disconnect from the
-    /// client when an LSP handler panics.
-    shutdown_tx: tokio::sync::mpsc::Sender<()>,
-
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
-
-    /// Copy of the Client, for reporting crash messages.
-    client: Client,
 
     /// Handle to the LSP loops. Drop it to shut the loops down and drop all
     /// owned state.
@@ -264,30 +222,36 @@ impl Backend {
         let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
 
         // Relay request to main loop
-        self.events_tx
+        if self
+            .events_tx
             .send(Event::Lsp(LspMessage::Request(request, response_tx)))
-            .unwrap();
+            .is_err()
+        {
+            return RequestResponse::Disabled;
+        }
 
         // Wait for response from main loop
-        response_rx.recv().await.unwrap()
+        match response_rx.recv().await {
+            Some(response) => response,
+            None => RequestResponse::Disabled,
+        }
     }
 
     fn notify(&self, notif: LspNotification) {
         // Relay notification to main loop
-        self.events_tx
+        if self
+            .events_tx
             .send(Event::Lsp(LspMessage::Notification(notif)))
-            .unwrap();
-    }
-
-    fn client(&self) -> &Client {
-        &self.client
+            .is_err()
+        {
+            log::error!("Can't relay notification, the main loop is gone");
+        }
     }
 }
 
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         cast_response!(
-            self,
             self.request(LspRequest::Initialize(params)).await,
             LspResponse::Initialize
         )
@@ -320,7 +284,6 @@ impl LanguageServer for Backend {
         params: WorkspaceSymbolParams,
     ) -> Result<Option<WorkspaceSymbolResponse>> {
         let info: Option<Vec<SymbolInformation>> = cast_response!(
-            self,
             self.request(LspRequest::WorkspaceSymbol(params)).await,
             LspResponse::WorkspaceSymbol
         )?;
@@ -332,7 +295,6 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::DocumentSymbol(params)).await,
             LspResponse::DocumentSymbol
         )
@@ -340,7 +302,6 @@ impl LanguageServer for Backend {
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         cast_response!(
-            self,
             self.request(LspRequest::FoldingRange(params)).await,
             LspResponse::FoldingRange
         )
@@ -351,7 +312,6 @@ impl LanguageServer for Backend {
         params: ExecuteCommandParams,
     ) -> jsonrpc::Result<Option<Value>> {
         cast_response!(
-            self,
             self.request(LspRequest::ExecuteCommand(params)).await,
             LspResponse::ExecuteCommand
         )
@@ -375,7 +335,6 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::Completion(params)).await,
             LspResponse::Completion
         )
@@ -383,7 +342,6 @@ impl LanguageServer for Backend {
 
     async fn completion_resolve(&self, item: CompletionItem) -> Result<CompletionItem> {
         cast_response!(
-            self,
             self.request(LspRequest::CompletionResolve(item)).await,
             LspResponse::CompletionResolve
         )
@@ -391,7 +349,6 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         cast_response!(
-            self,
             self.request(LspRequest::Hover(params)).await,
             LspResponse::Hover
         )
@@ -399,7 +356,6 @@ impl LanguageServer for Backend {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         cast_response!(
-            self,
             self.request(LspRequest::SignatureHelp(params)).await,
             LspResponse::SignatureHelp
         )
@@ -410,7 +366,6 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::GotoDefinition(params)).await,
             LspResponse::GotoDefinition
         )
@@ -421,7 +376,6 @@ impl LanguageServer for Backend {
         params: GotoImplementationParams,
     ) -> Result<Option<GotoImplementationResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::GotoImplementation(params)).await,
             LspResponse::GotoImplementation
         )
@@ -432,7 +386,6 @@ impl LanguageServer for Backend {
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
         cast_response!(
-            self,
             self.request(LspRequest::SelectionRange(params)).await,
             LspResponse::SelectionRange
         )
@@ -440,7 +393,6 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         cast_response!(
-            self,
             self.request(LspRequest::References(params)).await,
             LspResponse::References
         )
@@ -451,7 +403,6 @@ impl LanguageServer for Backend {
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::PrepareRename(params)).await,
             LspResponse::PrepareRename
         )
@@ -459,7 +410,6 @@ impl LanguageServer for Backend {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         cast_response!(
-            self,
             self.request(LspRequest::Rename(params)).await,
             LspResponse::Rename
         )
@@ -470,7 +420,6 @@ impl LanguageServer for Backend {
         params: DocumentOnTypeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         cast_response!(
-            self,
             self.request(LspRequest::OnTypeFormatting(params)).await,
             LspResponse::OnTypeFormatting
         )
@@ -478,7 +427,6 @@ impl LanguageServer for Backend {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::CodeAction(params)).await,
             LspResponse::CodeAction
         )
@@ -506,7 +454,6 @@ impl Backend {
         params: StatementRangeParams,
     ) -> jsonrpc::Result<Option<StatementRangeResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::StatementRange(params)).await,
             LspResponse::StatementRange
         )
@@ -517,7 +464,6 @@ impl Backend {
         params: HelpTopicParams,
     ) -> jsonrpc::Result<Option<HelpTopicResponse>> {
         cast_response!(
-            self,
             self.request(LspRequest::HelpTopic(params)).await,
             LspResponse::HelpTopic
         )
@@ -528,7 +474,6 @@ impl Backend {
         params: VirtualDocumentParams,
     ) -> tower_lsp_server::jsonrpc::Result<VirtualDocumentResponse> {
         cast_response!(
-            self,
             self.request(LspRequest::VirtualDocument(params)).await,
             LspResponse::VirtualDocument
         )
@@ -539,7 +484,6 @@ impl Backend {
         params: InputBoundariesParams,
     ) -> tower_lsp_server::jsonrpc::Result<InputBoundariesResponse> {
         cast_response!(
-            self,
             self.request(LspRequest::InputBoundaries(params)).await,
             LspResponse::InputBoundaries
         )
@@ -548,7 +492,46 @@ impl Backend {
     async fn notification(&self, params: Option<Value>) {
         log::info!("Received Positron notification: {:?}", params);
     }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic(&self, _params: Option<Value>) -> jsonrpc::Result<()> {
+        cast_response!(
+            self.request(LspRequest::TestPanic).await,
+            LspResponse::TestPanic
+        )
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_notification(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestPanic);
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_cancel_r_task(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestCancelRTask);
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_r_task(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestPanicRTask);
+    }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_main_loop(&self, _params: Option<Value>) {
+        let _ = self.events_tx.send(Event::TestPanicMainLoop);
+    }
 }
+
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_REQUEST: &str = "ark/testPanic";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_NOTIFICATION: &str = "ark/testPanicNotification";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -590,11 +573,11 @@ pub(crate) fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client.clone(), r_home, console_notification_tx);
+            let state = GlobalState::new(client, r_home, console_notification_tx);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start();
+            let main_loop = state.start(shutdown_tx);
 
             // Forward event channel along to `Console`.
             // This also updates an outdated channel after a reconnect.
@@ -610,14 +593,12 @@ pub(crate) fn start_lsp(
             });
 
             Backend {
-                shutdown_tx,
                 events_tx,
-                client,
                 _main_loop: main_loop,
             }
         };
 
-        let (service, socket) = LspService::build(init)
+        let builder = LspService::build(init)
             .custom_method(
                 statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
                 Backend::statement_range,
@@ -629,8 +610,20 @@ pub(crate) fn start_lsp(
                 input_boundaries::POSITRON_INPUT_BOUNDARIES_REQUEST,
                 Backend::input_boundaries,
             )
-            .custom_method("positron/notification", Backend::notification)
-            .finish();
+            .custom_method("positron/notification", Backend::notification);
+
+        #[cfg(feature = "testing")]
+        let builder = builder
+            .custom_method(ARK_TEST_PANIC_REQUEST, Backend::test_panic)
+            .custom_method(
+                ARK_TEST_PANIC_NOTIFICATION,
+                Backend::test_panic_notification,
+            )
+            .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
+            .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
+            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task);
+
+        let (service, socket) = builder.finish();
 
         let server = Server::new(read, write, socket);
 
