@@ -12,6 +12,8 @@ A cycle occurs when evaluation reaches a query with the same key while that quer
 
 Whether a query is repeated depends on where evaluation starts. Check every production operation that can reach the query, even after finding a cycle that repeats another query.
 
+Every `oak_db` cycle handler must call `recovery::record()` with the query key before producing its fallback. Recovery often returns an ordinary empty value that is indistinguishable from successful evaluation, so this hook is how tests and the fuzz harness observe which handler fired. When adding or changing a handler, update `Recovery` and its rendering alongside the handler signature.
+
 ## Reviewing a query or dependency change
 
 A query's body does not show every query it can reach. For example, `File::semantic_index()` calls `build_semantic_index()`, which eventually reaches `exports()` through `SalsaImportsResolver` and `oak_semantic`. `File::exports()` calls `semantic_index()` directly.
