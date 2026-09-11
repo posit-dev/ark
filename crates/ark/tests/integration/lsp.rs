@@ -73,11 +73,28 @@ fn test_lsp_panicking_request_is_task_local() {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
+    lsp.allow_log_message("Panic while handling request");
+
+    let message = lsp.send_request_expect_error("ark/testPanic", json!({}));
+    assert!(message.contains("Panic while handling request"));
+
+    let toast = lsp.recv_show_message();
+    assert_eq!(
+        toast,
+        concat!(
+            "An R language server feature encountered an internal error. ",
+            "The request failed, but the language server is still running. ",
+            "See the R Kernel and R Language Server logs for the panic and backtrace."
+        )
+    );
+
+    // The same handler still logs and returns an error, but doesn't repeat its toast.
     let message = lsp.send_request_expect_error("ark/testPanic", json!({}));
     assert!(message.contains("Panic while handling request"));
 
     let uri = lsp.open_document("test_panic_request.R", "x <- 1\n");
     lsp.completions(&uri, 0, 0);
+    assert!(lsp.show_messages().is_empty());
 }
 
 // A notification handler panic must show a crash dialog before closing the LSP connection.
@@ -97,6 +114,20 @@ fn test_lsp_panicking_notification_ends_session() {
     lsp.expect_server_closes_connection(Duration::from_secs(5));
 
     // Skip `shutdown()` because the server has already closed the connection.
+    lsp.disconnect_abruptly();
+}
+
+// A panic outside the per-event boundary must still show the crash dialog before shutdown.
+#[test]
+fn test_lsp_panicking_main_loop_reports_crash() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Panic in the main loop");
+    lsp.send_notification("ark/testPanicMainLoop", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
     lsp.disconnect_abruptly();
 }
 

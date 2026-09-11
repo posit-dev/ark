@@ -36,6 +36,8 @@ pub struct LspClient {
     server_capabilities: Option<lsp_types::ServerCapabilities>,
     /// Buffered diagnostics notifications, keyed by document URI
     diagnostics: std::collections::HashMap<lsp_types::Uri, Vec<lsp_types::Diagnostic>>,
+    /// Buffered `window/showMessage` notifications.
+    show_messages: Vec<String>,
     /// Expected error and warning log message substrings.
     allowed_log_messages: Vec<String>,
     /// Set by `disconnect_abruptly()` so `Drop` skips the graceful `shutdown`/`exit` sequence
@@ -60,6 +62,7 @@ impl LspClient {
             open_documents: Vec::new(),
             server_capabilities: None,
             diagnostics: std::collections::HashMap::new(),
+            show_messages: Vec::new(),
             allowed_log_messages: Vec::new(),
             killed: false,
         })
@@ -69,6 +72,30 @@ impl LspClient {
     /// Only messages containing `substring` are ignored.
     pub fn allow_log_message(&mut self, substring: &str) {
         self.allowed_log_messages.push(substring.to_string());
+    }
+
+    /// Receive the next `window/showMessage` notification. Buffers diagnostics.
+    #[track_caller]
+    pub fn recv_show_message(&mut self) -> String {
+        loop {
+            if !self.show_messages.is_empty() {
+                return self.show_messages.remove(0);
+            }
+
+            match self.recv_any() {
+                LspMessage::Notification { diagnostics } => {
+                    if let Some(params) = diagnostics {
+                        self.diagnostics.insert(params.uri, params.diagnostics);
+                    }
+                },
+                other => panic!("Expected `window/showMessage`, got: {other:?}"),
+            }
+        }
+    }
+
+    /// Buffered `window/showMessage` notifications consumed while awaiting other messages.
+    pub fn show_messages(&self) -> &[String] {
+        &self.show_messages
     }
 
     /// Sever the connection with a TCP reset instead of a graceful close.
@@ -500,7 +527,7 @@ impl LspClient {
 
     /// Check a server notification, returning parsed diagnostics if applicable.
     fn check_server_notification(
-        &self,
+        &mut self,
         message: &serde_json::Map<String, Value>,
     ) -> Option<lsp_types::PublishDiagnosticsParams> {
         let method = message["method"].as_str().unwrap_or("unknown");
@@ -523,6 +550,13 @@ impl LspClient {
                         panic!("LSP server {level}: {text}");
                     }
                 }
+                None
+            },
+            "window/showMessage" => {
+                let text = message["params"]["message"]
+                    .as_str()
+                    .unwrap_or("(no message)");
+                self.show_messages.push(text.to_string());
                 None
             },
             "textDocument/publishDiagnostics" => {

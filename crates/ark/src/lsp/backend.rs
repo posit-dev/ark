@@ -501,12 +501,19 @@ impl Backend {
     async fn test_panic_notification(&self, _params: Option<Value>) {
         self.notify(LspNotification::TestPanic);
     }
+
+    #[cfg(feature = "testing")]
+    async fn test_panic_main_loop(&self, _params: Option<Value>) {
+        let _ = self.events_tx.send(Event::TestPanicMainLoop);
+    }
 }
 
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_REQUEST: &str = "ark/testPanic";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_NOTIFICATION: &str = "ark/testPanicNotification";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
 
 pub(crate) fn start_lsp(
     r_home: PathBuf,
@@ -593,7 +600,8 @@ pub(crate) fn start_lsp(
             .custom_method(
                 ARK_TEST_PANIC_NOTIFICATION,
                 Backend::test_panic_notification,
-            );
+            )
+            .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop);
 
         let (service, socket) = builder.finish();
 
