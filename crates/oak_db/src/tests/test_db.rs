@@ -133,6 +133,15 @@ pub(super) fn file_path(name: &str) -> FilePath {
     FilePath::from_url(&url)
 }
 
+/// Return a platform-independent path for assertions. `FilePath`'s `Display`
+/// includes a platform-specific `file:` URL prefix.
+pub(crate) fn path_name(path: &FilePath) -> String {
+    let url = path.to_url();
+    let path = url.path();
+    let prefix = if cfg!(windows) { "/C:/" } else { "/" };
+    path.strip_prefix(prefix).unwrap_or(path).to_string()
+}
+
 /// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each
 /// call allocates a new salsa entity; tests that need to assert on
 /// root identity should retain the returned value.

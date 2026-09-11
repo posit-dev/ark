@@ -1,3 +1,5 @@
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::Db;
 use crate::Definition;
 use crate::Name;
@@ -86,8 +88,9 @@ fn resolve_cycle_result<'db>(
     _id: salsa::Id,
     package: Package,
     name: Name<'db>,
-    _visibility: NamespaceVisibility,
+    visibility: NamespaceVisibility,
 ) -> Vec<Definition<'db>> {
+    record(db, Recovery::PackageResolve(package, name, visibility));
     log::warn!(
         "Cyclic NAMESPACE re-export of `{}` detected at `{}`. Resolving to no candidates.",
         name.text(db).as_str(),
