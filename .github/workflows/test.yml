@@ -21,3 +21,8 @@ jobs:
     name: Test Linux
     uses: ./.github/workflows/test-linux.yml
     secrets: inherit
+
+  test_fuzz:
+    name: Test Fuzz
+    uses: ./.github/workflows/test-fuzz.yml
+    secrets: inherit
