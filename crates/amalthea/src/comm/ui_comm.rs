@@ -435,6 +435,7 @@ pub enum UiBackendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum UiBackendReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
@@ -533,6 +534,7 @@ pub enum UiFrontendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum UiFrontendReply {
 	/// Reply for the new_document method (no result)
 	NewDocumentReply(),
