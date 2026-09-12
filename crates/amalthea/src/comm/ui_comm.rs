@@ -41,7 +41,10 @@ pub struct EditorContext {
 	pub selection: Selection,
 
 	/// The selections in this text editor.
-	pub selections: Vec<Selection>
+	pub selections: Vec<Selection>,
+
+	/// A stable identifier for the document, e.g. '#console' for the console
+	pub id: Option<String>
 }
 
 /// Document metadata
