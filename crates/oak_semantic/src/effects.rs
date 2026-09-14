@@ -22,6 +22,9 @@ use crate::semantic_index::EvalTiming;
 /// `lookup`/`annotates` query API below.
 mod contrib;
 
+#[cfg(feature = "testing")]
+pub mod fuzz;
+
 /// Registry entries keyed by function name so they can be queried by `lookup()`
 /// (package plus function) and `annotates()` (function only) probe on. Entries
 /// for a name carried by several packages (e.g. `defer()` in both withr and
