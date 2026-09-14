@@ -13,6 +13,7 @@ use crate::semantic_index::EvalTiming;
 
 /// A code source recipe for an [`effect`](crate::effects::Effects).
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EffectRecipe {
     Source {
         path: String,
@@ -53,6 +54,7 @@ pub enum EffectRecipe {
 ///
 /// [`SourceTarget`]: crate::effects::SourceTarget
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SourceProvider {
     /// `source()`, taking a file.
     File,

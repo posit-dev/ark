@@ -10,11 +10,11 @@ pub(super) const LIBRARY_ROOT: &str = "libs";
 
 /// Index into [`WorkspaceSpec::files`]. Stable across edits so operations keep
 /// naming the same file.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FileId(pub usize);
 
 /// Determines the root against which relative `source()` paths resolve.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Owner {
     /// A loose script under the scripts workspace root.
     Script,
@@ -22,7 +22,7 @@ pub enum Owner {
     Package,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FileSpec {
     pub owner: Owner,
     /// Relative to the owning root because `source()` resolves from `anchor_dir()`.
@@ -30,7 +30,7 @@ pub struct FileSpec {
     pub program: Program,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceSpec {
     /// Includes `base` when `source()` or `library()` needs it to resolve.
     pub installed: Vec<String>,
