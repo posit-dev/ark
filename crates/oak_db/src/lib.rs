@@ -10,6 +10,8 @@ mod file_reader;
 mod file_resolve;
 mod file_revision;
 mod file_source_site;
+#[cfg(feature = "fuzz")]
+pub mod fuzz;
 mod identifier;
 mod imports;
 mod inputs;
@@ -22,6 +24,8 @@ mod recovery;
 mod resolver_db;
 mod search;
 mod storage;
+#[cfg(any(test, feature = "fuzz"))]
+mod test_path;
 mod workspace;
 
 #[cfg(test)]
