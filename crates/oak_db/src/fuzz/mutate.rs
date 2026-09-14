@@ -24,21 +24,21 @@ use oak_semantic::fuzz::Stmt;
 use oak_semantic::semantic_index::EvalEnv;
 use oak_semantic::semantic_index::EvalTiming;
 
-use crate::tests::fuzz::build::binding;
-use crate::tests::fuzz::build::function_def;
-use crate::tests::fuzz::build::library;
-use crate::tests::fuzz::build::shadow;
-use crate::tests::fuzz::build::source_with;
-use crate::tests::fuzz::choose::binding_name;
-use crate::tests::fuzz::choose::random_query;
-use crate::tests::fuzz::choose::Choose;
-use crate::tests::fuzz::generate::file_path;
-use crate::tests::fuzz::generate::UNINSTALLED;
-use crate::tests::fuzz::scenario::Edit;
-use crate::tests::fuzz::scenario::Op;
-use crate::tests::fuzz::scenario::Scenario;
-use crate::tests::fuzz::spec::FileId;
-use crate::tests::fuzz::spec::FileSpec;
+use crate::fuzz::build::binding;
+use crate::fuzz::build::function_def;
+use crate::fuzz::build::library;
+use crate::fuzz::build::shadow;
+use crate::fuzz::build::source_with;
+use crate::fuzz::choose::binding_name;
+use crate::fuzz::choose::random_query;
+use crate::fuzz::choose::Choose;
+use crate::fuzz::generate::file_path;
+use crate::fuzz::generate::UNINSTALLED;
+use crate::fuzz::scenario::Edit;
+use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Scenario;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::FileSpec;
 
 pub(super) const MAX_FILES: usize = 5;
 
@@ -51,14 +51,14 @@ const MAX_DEPTH: usize = 3;
 
 /// Fit the longest [`seed_corpus()`] history, three rounds of five operations.
 ///
-/// [`seed_corpus()`]: crate::tests::fuzz::generate::seed_corpus
+/// [`seed_corpus()`]: crate::fuzz::generate::seed_corpus
 const MAX_OPS: usize = 16;
 
 /// Stop growing a program past this rendered width, which the statement count
 /// cannot detect. The statement that crosses the line still lands.
 const MAX_TEXT: usize = 2_000;
 
-pub(super) struct ScenarioMutator;
+pub struct ScenarioMutator;
 
 impl Mutate<Scenario> for ScenarioMutator {
     fn mutate(&mut self, mutations: &mut Candidates<'_>, scenario: &mut Scenario) -> Result<()> {
@@ -960,7 +960,7 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::tests::fuzz::corpus;
+    use crate::fuzz::corpus;
 
     /// Test source-edge steps directly because `InsertStatement` can also add
     /// `source()` calls.

@@ -5,24 +5,24 @@ use std::fmt::Write;
 use oak_semantic::fuzz::Program;
 
 use crate::file_imports::CollationView;
-use crate::tests::fuzz::spec::FileId;
-use crate::tests::fuzz::spec::WorkspaceSpec;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::WorkspaceSpec;
 
 #[derive(Clone, Debug)]
-pub(super) struct Scenario {
+pub struct Scenario {
     /// Identifies the originating corpus, not the mutated scenario.
-    pub(super) seed: u64,
+    pub seed: u64,
     /// Position in the seed corpus.
-    pub(super) variant: usize,
-    pub(super) initial: WorkspaceSpec,
+    pub variant: usize,
+    pub initial: WorkspaceSpec,
     /// Run first on a fresh database because Salsa's repeated key depends on
     /// entry order.
-    pub(super) cold_entry: Query,
-    pub(super) ops: Vec<Op>,
+    pub cold_entry: Query,
+    pub ops: Vec<Op>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum Op {
+pub enum Op {
     Query(Query),
     Edit(Edit),
 }
@@ -30,14 +30,14 @@ pub(super) enum Op {
 /// Use the same source override as `upsert_editor()` so edits do not bump the
 /// file revision.
 #[derive(Clone, Debug)]
-pub(super) struct Edit {
-    pub(super) file: FileId,
-    pub(super) program: Program,
+pub struct Edit {
+    pub file: FileId,
+    pub program: Program,
 }
 
 /// Production roots and direct entries to cycle-sensitive queries.
 #[derive(Clone, Debug)]
-pub(super) enum Query {
+pub enum Query {
     Diagnostics(FileId),
     Imports(FileId),
     ImportsAt(FileId, Site),
@@ -61,7 +61,7 @@ pub(super) enum Query {
 /// A semantic location for an offset-keyed query, resolved after each edit.
 /// Stored byte offsets could point into unrelated replacement text.
 #[derive(Clone, Copy, Debug)]
-pub(super) enum Site {
+pub enum Site {
     /// Start of the first `source()` or `library()` callee, including nested calls.
     FirstCall,
     /// Start of the last identifier, which can be in deferred collation.

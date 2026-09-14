@@ -2,7 +2,7 @@ use biome_rowan::TextSize;
 use salsa::Setter;
 
 use crate::search::DEFAULT_SEARCH_PATH_PACKAGES;
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;

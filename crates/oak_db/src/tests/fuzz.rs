@@ -1,12 +1,4 @@
-//! Exercises Salsa queries across mutated workspaces and edit histories.
-//!
-//! Each selected query must complete without panicking or hanging. Recovery
-//! firings provide context but do not identify Salsa's repeated key.
-//!
-//! [`generate::seed_corpus()`] supplies fixed starting scenarios, and
-//! [`mutate::ScenarioMutator`] derives the rest. Failures replay the shrunken
-//! scenario so its trace, panic location, and artifact agree. Save the printed
-//! scenario as an explicit [`Scenario`] test.
+//! Fuzz suite entry points. See [`crate::fuzz`] for the model and coverage.
 //!
 //! ```text
 //! just fuzz
@@ -19,50 +11,21 @@
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
 //! `just fuzz-seed` also traces every operation, which changes timing.
-//!
-//! # Coverage
-//!
-//! [`Query`] covers 18 of the 50 tracked queries in the Salsa inventory. It
-//! includes the production roots `diagnostics()`, `imports()`, `imports_at()`,
-//! `resolve_at()`, `resolve()`, `used_packages()`, and `sourced_by()`, all five
-//! workspace aggregates, and cold entry into the six file-keyed queries with
-//! `cycle_result` handlers.
-//!
-//! Mutation reaches every `EffectRecipe` variant, both invocation forms, and
-//! all three `SourceProvider` walks, including an effect escaped through a
-//! `bquote()` hole.
-//!
-//! `Package::resolve()` is excluded because these workspaces have no NAMESPACE
-//! re-exports. Testthat and shiny layouts, file renaming, and metadata or
-//! revision edits stay out of reach. Queries outside [`Query`] are covered only
-//! as dependencies, not as entry points.
-
-mod artifact;
-mod build;
-mod choose;
-mod corpus;
-mod generate;
-mod mutate;
-mod panics;
-mod run;
-mod scenario;
-mod spec;
 
 use mutatis::check::Check;
 use mutatis::check::CheckError;
 use mutatis::check::CheckResult;
 use mutatis::Session;
 
+use crate::fuzz::corpus;
+use crate::fuzz::seed_corpus;
+use crate::fuzz::start;
+use crate::fuzz::FileId;
+use crate::fuzz::Runner;
+use crate::fuzz::Scenario;
+use crate::fuzz::ScenarioMutator;
+use crate::fuzz::World;
 use crate::recovery;
-use crate::tests::fuzz::artifact::Artifact;
-use crate::tests::fuzz::generate::seed_corpus;
-use crate::tests::fuzz::mutate::ScenarioMutator;
-use crate::tests::fuzz::run::run;
-use crate::tests::fuzz::run::run_scenario;
-use crate::tests::fuzz::run::start;
-use crate::tests::fuzz::run::World;
-use crate::tests::fuzz::scenario::Scenario;
-use crate::tests::fuzz::spec::FileId;
 
 /// Limit the default suite to a quick regression check.
 const SMOKE_ITERS: usize = 50;
@@ -74,23 +37,22 @@ const BLOCK_ITERS: usize = 3000;
 const SHRINK_ITERS: usize = 150;
 
 fn check_block(block: u64, iters: usize) {
-    let artifact = Artifact::open();
-    let _hook = panics::install();
+    let runner = Runner::open();
     let result = Check::new()
         .iters(iters)
         .shrink_iters(SHRINK_ITERS)
         .seed(block)
         .run_with(ScenarioMutator, seed_corpus(block), |scenario| {
-            run_scenario(scenario, &artifact)
+            runner.check(scenario)
         });
-    report(result, &artifact);
+    report(result, &runner);
 }
 
 /// Replay the shrunken failure because the last candidate evaluated during
 /// shrinking may have passed and overwritten the artifact.
-fn report(result: CheckResult<Scenario>, artifact: &Artifact) {
+fn report(result: CheckResult<Scenario>, runner: &Runner) {
     let Err(error) = result else {
-        artifact.clear();
+        runner.clear();
         return;
     };
     let failure = match error {
@@ -99,8 +61,8 @@ fn report(result: CheckResult<Scenario>, artifact: &Artifact) {
     };
 
     eprintln!("{}", failure.message);
-    eprintln!("artifact: {}", artifact.path().display());
-    run(&failure.value, artifact, true);
+    eprintln!("artifact: {}", runner.artifact_path().display());
+    runner.replay(&failure.value);
 
     // A concrete `Scenario` makes `run()` deterministic, so returning means
     // the failure did not reproduce.
