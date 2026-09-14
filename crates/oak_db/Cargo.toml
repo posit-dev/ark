@@ -10,6 +10,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+fuzz = ["dep:mutatis", "dep:rand", "oak_semantic/testing"]
+
 [lints]
 workspace = true
 
@@ -23,9 +26,11 @@ camino.workspace = true
 compact_str.workspace = true
 filetime.workspace = true
 log.workspace = true
+mutatis = { workspace = true, optional = true }
 oak_core.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
+rand = { workspace = true, optional = true }
 rustc-hash.workspace = true
 salsa.workspace = true
 salsa-macros.workspace = true
@@ -37,8 +42,6 @@ url.workspace = true
 annotate-snippets.workspace = true
 anyhow.workspace = true
 insta.workspace = true
-mutatis.workspace = true
-oak_semantic = { workspace = true, features = ["salsa", "testing"] }
+oak_db = { workspace = true, features = ["fuzz"] }
 oak_tidy.workspace = true
-rand.workspace = true
 tempfile.workspace = true
