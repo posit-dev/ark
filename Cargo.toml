@@ -76,6 +76,7 @@ libr = { path = "crates/libr" }
 log = "0.4.29"
 memchr = "2.7.4"
 mime_guess = "2.0.5"
+mutatis = { version = "0.5.3", features = ["check"] }
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal"] }
 notify = "8.2.0"
 oak_cache = { path = "crates/oak_cache" }
