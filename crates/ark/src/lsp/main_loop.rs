@@ -46,7 +46,9 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
 use crate::lsp::analysis::catch_cancellation;
+use crate::lsp::analysis::log_settled;
 use crate::lsp::analysis::AnalysisPool;
+use crate::lsp::analysis::DiagnosticsMetrics;
 use crate::lsp::analysis::DiagnosticsReady;
 use crate::lsp::analysis::DiagnosticsState;
 use crate::lsp::backend::LspError;
@@ -248,6 +250,10 @@ pub(crate) struct LspState {
     /// [`crate::lsp::analysis::DiagnosticsState`].
     pub(crate) diagnostics: DiagnosticsState,
 
+    /// Session counters for diagnostics scheduling, separate so observability
+    /// cannot affect the main loop's idle check.
+    pub(crate) diagnostics_metrics: DiagnosticsMetrics,
+
     /// Threads running workspace scans.
     pub(crate) scan_pool: IoPool,
 
@@ -278,6 +284,7 @@ impl LspState {
             source_scheduler,
             analysis_pool: AnalysisPool::new(Arc::clone(&service_context)),
             diagnostics: DiagnosticsState::default(),
+            diagnostics_metrics: DiagnosticsMetrics::default(),
             // Stack size: `ScanRequest::run()` walks the filesystem with
             // `ignore::Walk` and `WalkDir`, both iterative, and parses
             // DESCRIPTION line by line.
@@ -767,14 +774,22 @@ impl GlobalState {
                 );
 
                 if self.lsp_state.diagnostics.accept(&publication.path, generation) {
+                    self.lsp_state.diagnostics_metrics.record_published();
                     lsp::publish_diagnostics(publication);
                 } else {
+                    self.lsp_state.diagnostics_metrics.record_stale();
                     let path = &publication.path;
                     let published = self.lsp_state.diagnostics.published_generation(path);
                     tracing::trace!(
                         "Dropping stale diagnostics for {path}: generation {generation} is older than published generation {published:?}"
                     );
                 }
+
+                log_settled(
+                    &mut self.lsp_state.diagnostics_metrics,
+                    &self.lsp_state.diagnostics,
+                    &self.lsp_state.analysis_pool,
+                );
             },
 
             #[cfg(feature = "testing")]
@@ -789,11 +804,22 @@ impl GlobalState {
 
         if salsa::plumbing::current_revision(self.world.db()) != old_revision {
             lsp::log_info!("World state revision advanced");
-            self.lsp_state.diagnostics.refresh_all(
+
+            let tasks = self.lsp_state.diagnostics.refresh_all(
                 &self.world,
                 &self.lsp_state.analysis_pool,
                 &self.events_tx,
             );
+            self.lsp_state.diagnostics_metrics.record_batch(tasks);
+
+            // Empty batches don't emit any `DiagnosticsReady` event, so sample
+            // them here. Nonempty batches are sampled when their final result arrives.
+            log_settled(
+                &mut self.lsp_state.diagnostics_metrics,
+                &self.lsp_state.diagnostics,
+                &self.lsp_state.analysis_pool,
+            );
+
             self.schedule_sources();
         }
 

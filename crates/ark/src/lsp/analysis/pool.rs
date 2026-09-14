@@ -51,6 +51,7 @@ impl AnalysisPool {
             queue: Mutex::new(Queue {
                 entries: VecDeque::new(),
                 closed: false,
+                metrics: PoolMetrics::default(),
             }),
             ready: Condvar::new(),
         });
@@ -106,6 +107,7 @@ impl AnalysisPool {
 
     fn push(&self, entry: Entry) {
         let mut queue = self.shared.lock();
+        queue.metrics.queued += 1;
 
         if entry.key.is_some() {
             let queued = queue
@@ -117,13 +119,23 @@ impl AnalysisPool {
             // the other files behind it.
             if let Some(queued) = queued {
                 *queued = entry;
+                queue.metrics.replaced += 1;
                 return;
             }
         }
 
         queue.entries.push_back(entry);
+
+        let len = queue.entries.len();
+        let metrics = &mut queue.metrics;
+        metrics.peak_queue_len = metrics.peak_queue_len.max(len);
+
         drop(queue);
         self.shared.ready.notify_one();
+    }
+
+    pub(crate) fn metrics(&self) -> PoolMetrics {
+        self.shared.lock().metrics
     }
 }
 
@@ -157,9 +169,48 @@ struct Shared {
     ready: Condvar,
 }
 
+/// Counters describing how the analysis queue processes tasks.
+#[derive(Default, Debug, Clone, Copy)]
+pub(crate) struct PoolMetrics {
+    /// Submitted tasks, including replacements.
+    pub(crate) queued: u64,
+    /// Queued entries replaced by a newer task with the same key.
+    pub(crate) replaced: u64,
+    pub(crate) started: u64,
+    pub(crate) completed: u64,
+    /// Tasks cancelled before a worker started them.
+    pub(crate) cancelled_queued: u64,
+    /// Tasks cancelled after a worker started them.
+    pub(crate) cancelled_running: u64,
+    /// Tasks whose panic a worker caught.
+    pub(crate) panicked: u64,
+    pub(crate) peak_queue_len: usize,
+}
+
+impl PoolMetrics {
+    /// Entries still queued. Derived by subtracting every outcome that removes
+    /// an entry. A negative value signals unbalanced counters.
+    pub(crate) fn waiting(&self) -> i64 {
+        self.queued as i64 -
+            self.replaced as i64 -
+            self.cancelled_queued as i64 -
+            self.started as i64
+    }
+
+    /// Tasks still running in workers. Derived by subtracting every terminal
+    /// outcome after a task starts. A negative value signals unbalanced counters.
+    pub(crate) fn running(&self) -> i64 {
+        self.started as i64 -
+            self.completed as i64 -
+            self.cancelled_running as i64 -
+            self.panicked as i64
+    }
+}
+
 struct Queue {
     entries: VecDeque<Entry>,
     closed: bool,
+    metrics: PoolMetrics,
 }
 
 struct Entry {
@@ -174,7 +225,7 @@ fn work(shared: &Shared, service_context: &LspServiceContext) {
     // time we ask for the next one. A worker parked on `next_entry` doesn't
     // hold a db handle and can't block a writer.
     while let Some(entry) = shared.next_entry() {
-        run_entry(entry, service_context);
+        run_entry(entry, shared, service_context);
     }
 }
 
@@ -205,21 +256,31 @@ impl Shared {
     }
 }
 
-fn run_entry(entry: Entry, service_context: &LspServiceContext) {
+fn run_entry(entry: Entry, shared: &Shared, service_context: &LspServiceContext) {
     let Entry { snapshot, run, .. } = entry;
 
     // A writer parked on this handle would only cancel the task at its first
     // query, so go straight to dropping the snapshot. This is what lets a
     // backlog drain in one pass while a writer waits.
     if snapshot.is_cancelled() {
+        shared.lock().metrics.cancelled_queued += 1;
         return;
     }
 
-    if let Err(message) =
-        panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
-    {
-        lsp::log_error!("An analysis task panicked: {message}");
-        service_context.report_background_panic();
+    shared.lock().metrics.started += 1;
+
+    match panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot))) {
+        Ok(Some(())) => {
+            shared.lock().metrics.completed += 1;
+        },
+        Ok(None) => {
+            shared.lock().metrics.cancelled_running += 1;
+        },
+        Err(message) => {
+            shared.lock().metrics.panicked += 1;
+            lsp::log_error!("An analysis task panicked: {message}");
+            service_context.report_background_panic();
+        },
     }
 }
 
@@ -263,6 +324,11 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap();
         assert!(!ran.load(Ordering::Acquire));
+
+        let counts = pool.metrics();
+        assert_eq!(counts.queued, 2);
+        assert_eq!(counts.cancelled_queued, 1);
+        assert_eq!(counts.started, 1);
     }
 
     /// Install the production hook so a missing `catch_unwind()` aborts the

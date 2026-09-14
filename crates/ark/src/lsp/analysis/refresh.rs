@@ -41,17 +41,17 @@ pub(crate) struct DiagnosticsState {
     generation: u64,
     /// Generation of the newest result published per file.
     published: HashMap<FilePath, u64>,
+    pending_in_batch: u64,
 }
 
 impl DiagnosticsState {
-    /// Queue a diagnostics pass for every open file we diagnose, all tagged
-    /// with a new generation.
+    /// Queues diagnostics for every open file and tags them with a new generation.
     pub(crate) fn refresh_all(
         &mut self,
         state: &WorldState,
         pool: &AnalysisPool,
         events_tx: &TokioUnboundedSender<Event>,
-    ) {
+    ) -> u64 {
         self.generation += 1;
         let generation = self.generation;
 
@@ -63,6 +63,9 @@ impl DiagnosticsState {
 
         tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());
         lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
+
+        let tasks = files.len() as u64;
+        self.pending_in_batch = tasks;
 
         for (path, open_file) in files {
             let path = path.clone();
@@ -78,6 +81,8 @@ impl DiagnosticsState {
                 events_tx.send(Event::DiagnosticsReady(ready)).log_err();
             });
         }
+
+        tasks
     }
 
     /// Whether a diagnostics result for `path` computed at `generation`
@@ -87,6 +92,10 @@ impl DiagnosticsState {
     /// we spawn one task per file per batch, and keyed replacement on the
     /// pool keeps at most one queued entry per file.
     pub(crate) fn accept(&mut self, path: &FilePath, generation: u64) -> bool {
+        if generation == self.generation {
+            self.pending_in_batch = self.pending_in_batch.saturating_sub(1);
+        }
+
         if let Some(published) = self.published.get(path) {
             if *published > generation {
                 return false;
@@ -101,6 +110,17 @@ impl DiagnosticsState {
     /// main loop to log alongside a dropped stale result.
     pub(crate) fn published_generation(&self, path: &FilePath) -> Option<u64> {
         self.published.get(path).copied()
+    }
+
+    /// Returns the newest refresh generation so instrumentation logs once per batch.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns outstanding tasks from the newest refresh batch. Zero means all
+    /// tasks from the latest refresh have reported.
+    pub(crate) fn pending_in_batch(&self) -> u64 {
+        self.pending_in_batch
     }
 }
 
@@ -152,14 +172,6 @@ mod tests {
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
-    /// `accept` is the staleness gate a refresh batch relies on: a result only
-    /// publishes if no newer generation for that file already went out. Pins
-    /// the three cases that can arrive at the main loop: a file seen for the
-    /// first time, a fresh batch superseding the last one, and a straggler
-    /// from an old batch arriving after a newer one already landed. Also pins
-    /// the deliberate choice to accept a repeat of the last generation (see
-    /// `accept`'s doc comment for why that can't happen in practice but is
-    /// still safe).
     #[test]
     fn test_accept_tracks_staleness_per_file() {
         let mut diagnostics = DiagnosticsState::default();
@@ -171,14 +183,6 @@ mod tests {
         assert!(diagnostics.accept(&path, 2));
     }
 
-    /// A salsa cancellation during the pass is swallowed into `None` by
-    /// `catch_cancellation`, the wrapper the pool applies to every task, rather
-    /// than unwinding and killing the worker thread.
-    ///
-    /// `cancellation_token().cancel()` arms local cancellation on the snapshot's
-    /// oak, so the first salsa query in `generate_diagnostics` (the `tree_sitter`
-    /// fetch) unwinds with `salsa::Cancelled`, the same payload a concurrent
-    /// `set_*` produces. The unwind fires before any R, so no `r_task` here.
     #[test]
     fn test_cancelled_diagnostics_pass_is_caught() {
         let mut state = WorldState::default();

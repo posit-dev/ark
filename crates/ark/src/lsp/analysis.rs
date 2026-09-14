@@ -13,11 +13,14 @@
 
 use std::panic::AssertUnwindSafe;
 
+mod metrics;
 mod pool;
 mod refresh;
 mod snapshot;
 mod warmup;
 
+pub(crate) use metrics::log_settled;
+pub(crate) use metrics::DiagnosticsMetrics;
 pub(crate) use pool::AnalysisPool;
 pub(crate) use refresh::DiagnosticsReady;
 pub(crate) use refresh::DiagnosticsState;
