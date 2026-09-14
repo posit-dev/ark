@@ -1,19 +1,19 @@
-//! Keeps failure reports independent of Salsa identities so a workspace can
-//! be reconstructed from the reported data.
+//! Keeps failure reports independent of Salsa identities.
 
 use std::fmt::Write;
+
+use oak_semantic::fuzz::Program;
 
 pub(super) const SCRIPT_ROOT: &str = "w";
 
 pub(super) const LIBRARY_ROOT: &str = "libs";
 
-/// Index into [`WorkspaceSpec::files`]. Stable across edits, so an operation
-/// recorded before execution keeps naming the same file.
+/// Index into [`WorkspaceSpec::files`]. Stable across edits so operations keep
+/// naming the same file.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct FileId(pub(super) usize);
 
-/// Which root a file belongs to, and therefore which relative paths a
-/// `source()` call in it can name.
+/// Determines the root against which relative `source()` paths resolve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Owner {
     /// A loose script under the scripts workspace root.
@@ -25,19 +25,17 @@ pub(super) enum Owner {
 #[derive(Clone, Debug)]
 pub(super) struct FileSpec {
     pub(super) owner: Owner,
-    /// Store paths relative to the owning root because `source()` resolves relative
-    /// arguments from that root through `anchor_dir()`.
+    /// Relative to the owning root because `source()` resolves from `anchor_dir()`.
     pub(super) path: String,
-    pub(super) contents: String,
+    pub(super) program: Program,
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct WorkspaceSpec {
-    /// Include `base` so `source()` and `library()` can form the intended edges.
+    /// Includes `base` when `source()` or `library()` needs it to resolve.
     pub(super) installed: Vec<String>,
     pub(super) package: Option<String>,
-    /// Indexed by [`FileId`]. Order within an owner is the root's script order
-    /// and the package's collation order.
+    /// Indexed by [`FileId`]. Order is script order or package collation order.
     pub(super) files: Vec<FileSpec>,
 }
 
@@ -73,8 +71,7 @@ impl WorkspaceSpec {
         format!("{}/{}", self.root_path(file.owner), file.path)
     }
 
-    /// Indent file bodies so generated R code remains distinct from report
-    /// metadata.
+    /// Indents file bodies to distinguish R code from report metadata.
     pub(super) fn render(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(out, "  installed: {}", self.installed.join(", "));
@@ -83,7 +80,7 @@ impl WorkspaceSpec {
         }
         for id in self.ids() {
             let _ = writeln!(out, "  [{}] {}", id.0, self.absolute_path(id));
-            for line in self.file(id).contents.lines() {
+            for line in self.file(id).program.render().text.lines() {
                 let _ = writeln!(out, "      | {line}");
             }
         }
