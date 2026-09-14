@@ -1,8 +1,6 @@
-//! Executes each scenario on one database so edits exercise incremental
-//! evaluation rather than repeated cold evaluation.
+//! Executes each scenario on one database so edits exercise incremental evaluation.
 //!
-//! Panics propagate because Salsa marks the database as poisoned after an
-//! unwind.
+//! Panics propagate because Salsa poisons the database after an unwind.
 
 use std::cell::Cell;
 
@@ -48,8 +46,7 @@ pub(super) fn run(scenario: &Scenario) {
     }
 }
 
-/// Report eagerly so explicit scenarios retain context if an operation hangs
-/// or aborts before unwinding.
+/// Print the scenario before execution because hangs and aborts do not unwind.
 pub(super) fn start(scenario: &Scenario) -> World {
     recovery::reset();
     eprintln!("{}", scenario.header());
@@ -59,25 +56,22 @@ pub(super) fn start(scenario: &Scenario) -> World {
     world
 }
 
-/// Prints the concrete workspace and history while unwinding from a panic.
+/// Prints the workspace and history while unwinding from a panic.
 ///
-/// Eager reporting is restricted to `OAK_FUZZ_TRACE=1` to avoid retaining
-/// large captured output. Use it for hangs and aborts, which do not reach
-/// `Drop::drop()`.
+/// `OAK_FUZZ_TRACE=1` also prints each operation before it runs, which captures
+/// hangs and aborts that never reach [`Drop::drop()`].
 struct Report<'scenario> {
     scenario: &'scenario Scenario,
     trace: bool,
-    /// Operation in flight, named in the dump so the report says which
-    /// operation failed rather than only which scenario.
+    /// Printed on panic to identify the failed operation.
     current: Cell<Option<String>>,
-    /// Recovery firings already printed under `trace`.
+    /// Recovery firings already printed while tracing.
     printed_firings: Cell<usize>,
 }
 
 impl Report<'_> {
     fn new(scenario: &Scenario) -> Report<'_> {
-        // Print the replay key first because hangs and aborts do not reach
-        // `Drop::drop()`.
+        // Print the replay key before execution because hangs and aborts do not unwind.
         eprintln!("{}", scenario.header());
         let trace = std::env::var_os("OAK_FUZZ_TRACE").is_some();
         if trace {
@@ -127,16 +121,14 @@ impl Drop for Report<'_> {
 
 pub(super) struct World {
     db: OakDatabase,
-    /// Kept in step with the database so offset-keyed queries compute their
-    /// positions from post-edit text.
+    /// Matches the database source text so offsets use post-edit text.
     spec: WorkspaceSpec,
-    /// Indexed by [`FileId`], matching `spec.files`.
+    /// Indexed by [`FileId`] to match [`WorkspaceSpec::files`].
     files: Vec<File>,
 }
 
 impl World {
-    /// Avoid semantic queries here so `cold_entry` remains the first query Salsa
-    /// enters.
+    /// Do not evaluate semantic queries here. `cold_entry` must be Salsa's first query.
     pub(super) fn materialize(spec: &WorkspaceSpec) -> Self {
         let mut db = OakDatabase::new();
 
@@ -166,9 +158,8 @@ impl World {
         );
         db.library_roots().set_roots(&mut db).to(vec![library]);
 
-        // Use an empty namespace because `Package::namespace()` would otherwise read
-        // a `NAMESPACE` beside a URL-only `DESCRIPTION` path. `workspace::as_packages()`
-        // classifies the package from its root kind.
+        // Avoid reading a `NAMESPACE` beside the URL-only `DESCRIPTION` path.
+        // `workspace::as_packages()` classifies this package from its root kind.
         let package = match (&spec.package, spec.package_root()) {
             (Some(name), Some(root)) => Some(Package::new(
                 &db,
@@ -195,7 +186,7 @@ impl World {
                     &db,
                     file_path(&spec.absolute_path(id)),
                     FileRevision::zero(),
-                    Some(spec.file(id).contents.clone()),
+                    Some(spec.file(id).program.render().text),
                     owner,
                 )
             })
@@ -242,13 +233,13 @@ impl World {
         match op {
             Op::Query(query) => self.query(query),
             Op::Edit(edit) => {
-                self.spec.file_mut(edit.file).contents = edit.contents.clone();
-                // Same input the editor path touches on a `didChange`
-                // (`oak_scan::inputs::upsert_editor()`), which leaves the file
-                // revision alone.
+                self.spec.file_mut(edit.file).program = edit.program.clone();
+                let text = edit.program.render().text;
+                // Match `oak_scan::inputs::upsert_editor()` so a `didChange` leaves the
+                // file revision unchanged.
                 self.files[edit.file.0]
                     .set_source_text_override(&mut self.db)
-                    .to(Some(edit.contents.clone()));
+                    .to(Some(text));
             },
         }
     }
@@ -318,23 +309,37 @@ impl World {
     }
 
     fn offset(&self, id: FileId, site: Site) -> TextSize {
-        let text = &self.spec.file(id).contents;
+        let rendered = self.spec.file(id).program.render();
         let position = match site {
-            Site::FirstCall => first_call(text),
-            Site::LastIdentifier => last_identifier(text),
-            Site::Eof => text.len(),
+            Site::FirstCall => rendered.first_call.unwrap_or(0),
+            Site::LastIdentifier => rendered.last_identifier.unwrap_or(0),
+            Site::Eof => rendered.text.len(),
         };
         TextSize::from(position as u32)
     }
 
-    /// Root-relative paths the file's `source()` calls resolved to. Empty
-    /// means no edge was recognized, which an assertion about a cycle has to
-    /// rule out.
+    /// Root-relative `source()` targets. An empty result means no edge was recognized.
     pub(super) fn source_targets(&self, id: FileId) -> Vec<String> {
         self.file(id)
             .source_targets(&self.db)
             .iter()
             .map(|target| path_name(target.path(&self.db)))
+            .collect()
+    }
+
+    pub(super) fn attached_packages(&self, id: FileId) -> Vec<String> {
+        self.file(id)
+            .attached_packages(&self.db)
+            .iter()
+            .map(|name| name.text(&self.db).to_string())
+            .collect()
+    }
+
+    pub(super) fn attached_packages_anywhere(&self, id: FileId) -> Vec<String> {
+        self.file(id)
+            .attached_packages_anywhere(&self.db)
+            .iter()
+            .map(|name| name.text(&self.db).to_string())
             .collect()
     }
 
@@ -348,54 +353,4 @@ impl World {
             .iter()
             .any(|diagnostic| diagnostic.kind() == DiagnosticKind::SourceCycle)
     }
-}
-
-/// Start of the first `source` or `library` callee, an eager call site.
-/// Generated text is ASCII, so byte offsets are char boundaries.
-fn first_call(text: &str) -> usize {
-    ["source(", "library("]
-        .iter()
-        .filter_map(|needle| text.find(needle))
-        .min()
-        .unwrap_or(0)
-}
-
-fn last_identifier(text: &str) -> usize {
-    let bytes = text.as_bytes();
-    let is_identifier_continue =
-        |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.';
-    let mut cursor = bytes.len();
-
-    while let Some(end) = bytes[..cursor]
-        .iter()
-        .rposition(|&byte| is_identifier_continue(byte))
-    {
-        let mut start = end;
-        while start > 0 && is_identifier_continue(bytes[start - 1]) {
-            start -= 1;
-        }
-
-        let starts_with_dot = bytes[start] == b'.';
-        let dot_followed_by_digit =
-            starts_with_dot && bytes.get(start + 1).is_some_and(u8::is_ascii_digit);
-        if bytes[start].is_ascii_alphabetic() || starts_with_dot && !dot_followed_by_digit {
-            return start;
-        }
-
-        cursor = start;
-    }
-
-    0
-}
-
-#[test]
-fn test_last_identifier_skips_trailing_number() {
-    let text = "1\nval_0 <- 2";
-    assert_eq!(last_identifier(text), 2);
-}
-
-#[test]
-fn test_last_identifier_finds_deferred_use() {
-    let text = "val_0 <- 1\nread <- function() val_0\n";
-    assert_eq!(last_identifier(text), 30);
 }
