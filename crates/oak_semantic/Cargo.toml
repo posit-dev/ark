@@ -13,6 +13,7 @@ rust-version.workspace = true
 
 [features]
 salsa = ["dep:salsa"]
+serde = ["dep:serde"]
 testing = ["dep:tempfile"]
 
 [lints]
@@ -35,6 +36,10 @@ stdext.workspace = true
 url.workspace = true
 
 [dependencies.salsa]
+workspace = true
+optional = true
+
+[dependencies.serde]
 workspace = true
 optional = true
 
