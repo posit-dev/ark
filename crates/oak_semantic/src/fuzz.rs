@@ -12,6 +12,7 @@ use crate::effects::fuzz::Callee;
 use crate::effects::fuzz::EffectRecipe;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Program {
     pub statements: Vec<Stmt>,
 }
@@ -19,6 +20,7 @@ pub struct Program {
 pub type Block = Vec<Stmt>;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Stmt {
     /// Binding a callee name shadows that callee for later bare calls.
     Bind {
@@ -50,6 +52,7 @@ impl Stmt {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Expr {
     Num(i32),
     Null,
@@ -75,6 +78,7 @@ impl Expr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Invocation {
     Bare,
     Qualified,

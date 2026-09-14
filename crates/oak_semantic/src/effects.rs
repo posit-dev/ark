@@ -185,6 +185,7 @@ pub trait ScopeContext {
 
 /// Whether an assign effect reads its target before writing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TargetAccess {
     /// Writes the target without reading it, as in `x <- value`.
     Write,
