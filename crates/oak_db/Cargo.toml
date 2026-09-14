@@ -11,7 +11,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-fuzz = ["dep:mutatis", "dep:rand", "oak_semantic/testing"]
+fuzz = ["dep:anyhow", "dep:mutatis", "dep:rand", "dep:serde", "dep:serde_json", "oak_semantic/serde", "oak_semantic/testing"]
 
 [lints]
 workspace = true
@@ -20,6 +20,7 @@ workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_path.workspace = true
+anyhow = { workspace = true, optional = true }
 biome_line_index.workspace = true
 biome_rowan.workspace = true
 camino.workspace = true
@@ -34,6 +35,8 @@ rand = { workspace = true, optional = true }
 rustc-hash.workspace = true
 salsa.workspace = true
 salsa-macros.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 stacker.workspace = true
 stdext.workspace = true
 url.workspace = true
