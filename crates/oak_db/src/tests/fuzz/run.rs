@@ -1,6 +1,8 @@
-//! Executes each scenario on one database so edits exercise incremental evaluation.
+//! Executes each scenario on one database so edits exercise incremental
+//! evaluation.
 //!
-//! Panics propagate because Salsa poisons the database after an unwind.
+//! [`run_scenario()`] catches property panics so the check can shrink failures.
+//! [`run()`]'s database is dropped during unwinding before the panic is caught.
 
 use std::cell::Cell;
 
@@ -9,6 +11,8 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::recovery;
+use crate::tests::fuzz::artifact::Artifact;
+use crate::tests::fuzz::panics::catch_quietly;
 use crate::tests::fuzz::scenario::Op;
 use crate::tests::fuzz::scenario::Query;
 use crate::tests::fuzz::scenario::Scenario;
@@ -30,9 +34,19 @@ use crate::Package;
 use crate::Root;
 use crate::RootKind;
 
-pub(super) fn run(scenario: &Scenario) {
+/// Preserve the original panic details in case the shrunken failure does not
+/// reproduce.
+pub(super) fn run_scenario(
+    scenario: &Scenario,
+    artifact: &Artifact,
+) -> std::result::Result<(), String> {
+    catch_quietly(|| run(scenario, artifact, traced()))
+        .map_err(|panic| format!("{}\n{panic}", scenario.header()))
+}
+
+pub(super) fn run(scenario: &Scenario, artifact: &Artifact, trace: bool) {
     recovery::reset();
-    let report = Report::new(scenario);
+    let report = Report::new(scenario, artifact, trace);
 
     let mut world = World::materialize(&scenario.initial);
     report.entering("cold entry", &scenario.cold_entry.render());
@@ -46,6 +60,10 @@ pub(super) fn run(scenario: &Scenario) {
     }
 }
 
+fn traced() -> bool {
+    std::env::var_os("OAK_FUZZ_TRACE").is_some()
+}
+
 /// Print the scenario before execution because hangs and aborts do not unwind.
 pub(super) fn start(scenario: &Scenario) -> World {
     recovery::reset();
@@ -56,40 +74,39 @@ pub(super) fn start(scenario: &Scenario) -> World {
     world
 }
 
-/// Prints the workspace and history while unwinding from a panic.
-///
-/// `OAK_FUZZ_TRACE=1` also prints each operation before it runs, which captures
-/// hangs and aborts that never reach [`Drop::drop()`].
+/// Record each operation before it runs so hangs and aborts leave an artifact.
+/// Tracing also prints this context during replay and `OAK_FUZZ_TRACE=1` runs.
 struct Report<'scenario> {
-    scenario: &'scenario Scenario,
     trace: bool,
-    /// Printed on panic to identify the failed operation.
-    current: Cell<Option<String>>,
     /// Recovery firings already printed while tracing.
     printed_firings: Cell<usize>,
+    artifact: &'scenario Artifact,
 }
 
 impl Report<'_> {
-    fn new(scenario: &Scenario) -> Report<'_> {
-        // Print the replay key before execution because hangs and aborts do not unwind.
-        eprintln!("{}", scenario.header());
-        let trace = std::env::var_os("OAK_FUZZ_TRACE").is_some();
+    fn new<'scenario>(
+        scenario: &'scenario Scenario,
+        artifact: &'scenario Artifact,
+        trace: bool,
+    ) -> Report<'scenario> {
         if trace {
+            eprintln!("{}", scenario.header());
             eprint!("{}", scenario.render());
         }
+        artifact.reset(format!("{}\n{}", scenario.header(), scenario.render()));
         Report {
-            scenario,
             trace,
-            current: Cell::new(None),
             printed_firings: Cell::new(0),
+            artifact,
         }
     }
 
     fn entering(&self, position: &str, operation: &str) {
+        let current = format!("{position}: {operation}");
         if self.trace {
-            eprintln!("  {position}: {operation}");
+            eprintln!("  {current}");
         }
-        self.current.set(Some(format!("{position}: {operation}")));
+        self.artifact.entering(&current);
     }
 
     fn firings(&self) {
@@ -101,21 +118,6 @@ impl Report<'_> {
             eprintln!("      recovered: {entry}");
         }
         self.printed_firings.set(fired.len());
-    }
-}
-
-impl Drop for Report<'_> {
-    fn drop(&mut self) {
-        if !std::thread::panicking() || self.trace {
-            return;
-        }
-        eprint!("{}", self.scenario.render());
-        if let Some(current) = self.current.take() {
-            eprintln!("  failed at {current}");
-        }
-        for entry in recovery::fired() {
-            eprintln!("      recovered: {entry}");
-        }
     }
 }
 
@@ -352,5 +354,36 @@ impl World {
             .diagnostics(&self.db)
             .iter()
             .any(|diagnostic| diagnostic.kind() == DiagnosticKind::SourceCycle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::*;
+    use crate::tests::fuzz::corpus;
+
+    /// The artifact must identify the active operation even without unwinding.
+    #[test]
+    fn test_artifact_records_scenario_and_failing_operation() {
+        let scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let artifact = Artifact::open();
+        let operation = scenario.ops[0].render();
+
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let report = Report::new(&scenario, &artifact, false);
+            report.entering("op 0", &operation);
+            panic!("simulated hang point");
+        }));
+        assert!(outcome.is_err());
+
+        let content = std::fs::read_to_string(artifact.path()).unwrap();
+        let expected = format!(
+            "{}\n{}  current: op 0: {operation}\n",
+            scenario.header(),
+            scenario.render()
+        );
+        assert_eq!(content, expected);
     }
 }

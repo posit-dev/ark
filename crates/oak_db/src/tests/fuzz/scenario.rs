@@ -10,8 +10,9 @@ use crate::tests::fuzz::spec::WorkspaceSpec;
 
 #[derive(Clone, Debug)]
 pub(super) struct Scenario {
+    /// Identifies the originating corpus, not the mutated scenario.
     pub(super) seed: u64,
-    /// Distinguishes cold entries sharing one workspace and history.
+    /// Position in the seed corpus.
     pub(super) variant: usize,
     pub(super) initial: WorkspaceSpec,
     /// Run first on a fresh database because Salsa's repeated key depends on
@@ -70,8 +71,6 @@ pub(super) enum Site {
 }
 
 impl Scenario {
-    /// Identify the scenario before execution because hangs and aborts do not
-    /// reach the unwind report.
     pub(super) fn header(&self) -> String {
         format!("seed {} variant {}", self.seed, self.variant)
     }
@@ -88,6 +87,14 @@ impl Scenario {
 }
 
 impl Op {
+    /// Expose an operation's file so removal mutations can retarget it.
+    pub(super) fn file_mut(&mut self) -> Option<&mut FileId> {
+        match self {
+            Op::Query(query) => query.file_mut(),
+            Op::Edit(edit) => Some(&mut edit.file),
+        }
+    }
+
     pub(super) fn render(&self) -> String {
         match self {
             Op::Query(query) => query.render(),
@@ -97,6 +104,29 @@ impl Op {
 }
 
 impl Query {
+    pub(super) fn file_mut(&mut self) -> Option<&mut FileId> {
+        match self {
+            Query::Diagnostics(file) |
+            Query::Imports(file) |
+            Query::ImportsAt(file, _) |
+            Query::ResolveAt(file, _) |
+            Query::Resolve(file, _) |
+            Query::UsedPackages(file) |
+            Query::SourcedBy(file) |
+            Query::SemanticIndex(file) |
+            Query::Exports(file) |
+            Query::AttachedPackages(file) |
+            Query::AttachedPackagesAnywhere(file) |
+            Query::InheritedLayers(file, _) |
+            Query::CrossFileLayers(file, _) => Some(file),
+            Query::AllPackageDependencies |
+            Query::AllWorkspaceFileDependencies |
+            Query::AllWorkspaceLoaderDependencies |
+            Query::AllWorkspacePackageDependencies |
+            Query::DefaultSearchPathPackages => None,
+        }
+    }
+
     pub(super) fn render(&self) -> String {
         match self {
             Query::Diagnostics(file) => format!("diagnostics[{}]", file.0),

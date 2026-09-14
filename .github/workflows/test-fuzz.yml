@@ -29,4 +29,4 @@ jobs:
         env:
           NEXTEST_PROFILE: "ci"
         run: |
-          cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_seeds_/)'
+          cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_block_/)'
