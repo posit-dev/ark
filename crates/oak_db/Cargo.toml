@@ -37,6 +37,7 @@ url.workspace = true
 annotate-snippets.workspace = true
 anyhow.workspace = true
 insta.workspace = true
+mutatis.workspace = true
 oak_semantic = { workspace = true, features = ["salsa", "testing"] }
 oak_tidy.workspace = true
 rand.workspace = true
