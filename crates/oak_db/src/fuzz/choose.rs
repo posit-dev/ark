@@ -4,9 +4,9 @@ use rand::rngs::StdRng;
 use rand::RngExt;
 
 use crate::file_imports::CollationView;
-use crate::tests::fuzz::scenario::Query;
-use crate::tests::fuzz::scenario::Site;
-use crate::tests::fuzz::spec::FileId;
+use crate::fuzz::scenario::Query;
+use crate::fuzz::scenario::Site;
+use crate::fuzz::spec::FileId;
 
 /// Unifies [`StdRng`] and [`mutatis::Rng`] for shared query generation.
 pub(super) trait Choose {

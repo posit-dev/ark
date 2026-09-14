@@ -1,30 +1,36 @@
 //! Executes each scenario on one database so edits exercise incremental
 //! evaluation.
 //!
-//! [`run_scenario()`] catches property panics so the check can shrink failures.
-//! [`run()`]'s database is dropped during unwinding before the panic is caught.
+//! [`Runner::check()`] catches property panics so the check can shrink
+//! failures. The database is dropped during unwinding before the panic is
+//! caught.
 
 use std::cell::Cell;
+use std::path::Path;
 
 use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::fuzz::artifact::Artifact;
+use crate::fuzz::panics::catch_quietly;
+use crate::fuzz::panics::install;
+use crate::fuzz::panics::Guard;
+use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Query;
+use crate::fuzz::scenario::Scenario;
+use crate::fuzz::scenario::Site;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::WorkspaceSpec;
+use crate::fuzz::spec::LIBRARY_ROOT;
+use crate::fuzz::spec::SCRIPT_ROOT;
 use crate::recovery;
-use crate::tests::fuzz::artifact::Artifact;
-use crate::tests::fuzz::panics::catch_quietly;
-use crate::tests::fuzz::scenario::Op;
-use crate::tests::fuzz::scenario::Query;
-use crate::tests::fuzz::scenario::Scenario;
-use crate::tests::fuzz::scenario::Site;
-use crate::tests::fuzz::spec::FileId;
-use crate::tests::fuzz::spec::Owner;
-use crate::tests::fuzz::spec::WorkspaceSpec;
-use crate::tests::fuzz::spec::LIBRARY_ROOT;
-use crate::tests::fuzz::spec::SCRIPT_ROOT;
-use crate::tests::test_db::file_path;
-use crate::tests::test_db::path_name;
+use crate::test_path::file_path;
+#[cfg(test)]
+use crate::test_path::path_name;
 use crate::DbInputs;
+#[cfg(test)]
 use crate::DiagnosticKind;
 use crate::File;
 use crate::FileRevision;
@@ -34,17 +40,51 @@ use crate::Package;
 use crate::Root;
 use crate::RootKind;
 
+/// Owns the failure artifact and the panic hook, so no caller can run a
+/// scenario without the context a failure needs.
+pub struct Runner {
+    artifact: Artifact,
+    /// `check()` can only recover a panic's message and location while this guard is alive.
+    _hook: Guard,
+}
+
+impl Runner {
+    pub fn open() -> Runner {
+        Runner {
+            artifact: Artifact::open(),
+            _hook: install(),
+        }
+    }
+
+    /// Runs `scenario`, returning a panic's message and location on failure.
+    pub fn check(&self, scenario: &Scenario) -> std::result::Result<(), String> {
+        run_scenario(scenario, &self.artifact)
+    }
+
+    /// Re-runs `scenario` with operation tracing, letting a panic propagate.
+    pub fn replay(&self, scenario: &Scenario) {
+        run(scenario, &self.artifact, true)
+    }
+
+    /// Path of the artifact naming the scenario and operation in flight.
+    pub fn artifact_path(&self) -> &Path {
+        self.artifact.path()
+    }
+
+    /// Truncates the artifact after a clean run.
+    pub fn clear(&self) {
+        self.artifact.clear()
+    }
+}
+
 /// Preserve the original panic details in case the shrunken failure does not
 /// reproduce.
-pub(super) fn run_scenario(
-    scenario: &Scenario,
-    artifact: &Artifact,
-) -> std::result::Result<(), String> {
+fn run_scenario(scenario: &Scenario, artifact: &Artifact) -> std::result::Result<(), String> {
     catch_quietly(|| run(scenario, artifact, traced()))
         .map_err(|panic| format!("{}\n{panic}", scenario.header()))
 }
 
-pub(super) fn run(scenario: &Scenario, artifact: &Artifact, trace: bool) {
+fn run(scenario: &Scenario, artifact: &Artifact, trace: bool) {
     recovery::reset();
     let report = Report::new(scenario, artifact, trace);
 
@@ -65,7 +105,8 @@ fn traced() -> bool {
 }
 
 /// Print the scenario before execution because hangs and aborts do not unwind.
-pub(super) fn start(scenario: &Scenario) -> World {
+#[cfg(test)]
+pub(crate) fn start(scenario: &Scenario) -> World {
     recovery::reset();
     eprintln!("{}", scenario.header());
     eprint!("{}", scenario.render());
@@ -121,7 +162,7 @@ impl Report<'_> {
     }
 }
 
-pub(super) struct World {
+pub(crate) struct World {
     db: OakDatabase,
     /// Matches the database source text so offsets use post-edit text.
     spec: WorkspaceSpec,
@@ -131,7 +172,7 @@ pub(super) struct World {
 
 impl World {
     /// Do not evaluate semantic queries here. `cold_entry` must be Salsa's first query.
-    pub(super) fn materialize(spec: &WorkspaceSpec) -> Self {
+    pub(crate) fn materialize(spec: &WorkspaceSpec) -> Self {
         let mut db = OakDatabase::new();
 
         let installed: Vec<Package> = spec
@@ -231,7 +272,7 @@ impl World {
         }
     }
 
-    pub(super) fn apply(&mut self, op: &Op) {
+    pub(crate) fn apply(&mut self, op: &Op) {
         match op {
             Op::Query(query) => self.query(query),
             Op::Edit(edit) => {
@@ -321,7 +362,8 @@ impl World {
     }
 
     /// Root-relative `source()` targets. An empty result means no edge was recognized.
-    pub(super) fn source_targets(&self, id: FileId) -> Vec<String> {
+    #[cfg(test)]
+    pub(crate) fn source_targets(&self, id: FileId) -> Vec<String> {
         self.file(id)
             .source_targets(&self.db)
             .iter()
@@ -329,7 +371,8 @@ impl World {
             .collect()
     }
 
-    pub(super) fn attached_packages(&self, id: FileId) -> Vec<String> {
+    #[cfg(test)]
+    pub(crate) fn attached_packages(&self, id: FileId) -> Vec<String> {
         self.file(id)
             .attached_packages(&self.db)
             .iter()
@@ -337,7 +380,8 @@ impl World {
             .collect()
     }
 
-    pub(super) fn attached_packages_anywhere(&self, id: FileId) -> Vec<String> {
+    #[cfg(test)]
+    pub(crate) fn attached_packages_anywhere(&self, id: FileId) -> Vec<String> {
         self.file(id)
             .attached_packages_anywhere(&self.db)
             .iter()
@@ -345,11 +389,13 @@ impl World {
             .collect()
     }
 
-    pub(super) fn any_source_cycle(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn any_source_cycle(&self) -> bool {
         self.spec.ids().any(|id| self.source_cycle_reported(id))
     }
 
-    pub(super) fn source_cycle_reported(&self, id: FileId) -> bool {
+    #[cfg(test)]
+    pub(crate) fn source_cycle_reported(&self, id: FileId) -> bool {
         self.file(id)
             .diagnostics(&self.db)
             .iter()
@@ -362,7 +408,7 @@ mod tests {
     use std::panic::AssertUnwindSafe;
 
     use super::*;
-    use crate::tests::fuzz::corpus;
+    use crate::fuzz::corpus;
 
     /// The artifact must identify the active operation even without unwinding.
     #[test]
@@ -385,5 +431,21 @@ mod tests {
             scenario.render()
         );
         assert_eq!(content, expected);
+    }
+
+    /// `Runner::open()` installs the panic hook itself, so `check()` must recover
+    /// the real panic message without a separately installed hook.
+    #[test]
+    fn test_check_recovers_panic_without_separately_installed_hook() {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        scenario.cold_entry = Query::Diagnostics(FileId(9));
+
+        let runner = Runner::open();
+        let outcome = runner.check(&scenario);
+
+        assert!(outcome.is_err());
+        let message = outcome.unwrap_err();
+        assert!(message.contains("index out of bounds"));
+        assert!(!message.contains("panicked without reaching the panic hook"));
     }
 }

@@ -16,11 +16,14 @@ thread_local! {
 
 type Hook = dyn for<'info> Fn(&PanicHookInfo<'info>) + Send + Sync + 'static;
 
-pub(super) struct Guard {
+pub(crate) struct Guard {
     previous: Option<Arc<Hook>>,
 }
 
-pub(super) fn install() -> Guard {
+/// Keep the returned [`Guard`] alive while running scenarios to capture panic
+/// messages and locations. The hook records panics inside `catch_quietly()` on
+/// the calling thread and delegates all others to the previous hook.
+pub(crate) fn install() -> Guard {
     let previous: Arc<Hook> = Arc::from(std::panic::take_hook());
     let delegate = Arc::clone(&previous);
     std::panic::set_hook(Box::new(move |info| {

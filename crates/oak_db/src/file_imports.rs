@@ -215,7 +215,7 @@ pub(crate) struct InheritedLayers {
 
 /// The point in a package's load at which a file views its collation siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CollationView {
+pub enum CollationView {
     /// In load order (a top-level statement): only siblings sourced before this
     /// point have loaded, so a name defined later in the collation isn't visible.
     Eager,

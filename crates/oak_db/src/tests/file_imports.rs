@@ -4,7 +4,7 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::file_imports::CollationView;
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;

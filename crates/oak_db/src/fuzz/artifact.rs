@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub(super) struct Artifact {
+pub(crate) struct Artifact {
     path: PathBuf,
     file: RefCell<File>,
     /// Cached scenario text avoids rendering it for every operation.
@@ -21,7 +21,7 @@ pub(super) struct Artifact {
 
 impl Artifact {
     /// Print the artifact path immediately so CI timeout logs can identify it.
-    pub(super) fn open() -> Artifact {
+    pub(crate) fn open() -> Artifact {
         let path = artifact_path();
         if let Some(parent) = path.parent() {
             if let Err(err) = std::fs::create_dir_all(parent) {
@@ -45,21 +45,21 @@ impl Artifact {
         }
     }
 
-    pub(super) fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(super) fn reset(&self, header: String) {
+    pub(crate) fn reset(&self, header: String) {
         self.write(&header);
         *self.header.borrow_mut() = header;
     }
 
-    pub(super) fn entering(&self, operation: &str) {
+    pub(crate) fn entering(&self, operation: &str) {
         let header = self.header.borrow();
         self.write(&format!("{header}  current: {operation}\n"));
     }
 
-    pub(super) fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.write("");
         self.header.borrow_mut().clear();
     }
@@ -81,12 +81,26 @@ fn write_in_place(file: &mut File, content: &str) -> std::io::Result<()> {
     file.set_len(content.len() as u64)
 }
 
-/// Use the test's fully qualified thread name for a stable, readable path.
+/// An external driver's worker threads are typically all named `main`, so the
+/// process id keeps their artifact paths from colliding.
 fn artifact_path() -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/oak_fuzz");
-    let name = std::thread::current()
-        .name()
-        .map(|name| name.replace("::", "_"))
-        .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+    let pid = std::process::id();
+    let name = match std::thread::current().name() {
+        Some(name) => format!("{}-{pid}", name.replace("::", "_")),
+        None => format!("pid-{pid}"),
+    };
     dir.join(format!("{name}.artifact"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_artifact_path_includes_process_id() {
+        let path = artifact_path();
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        assert!(file_name.contains(&std::process::id().to_string()));
+    }
 }

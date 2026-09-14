@@ -11,11 +11,11 @@ pub(super) const LIBRARY_ROOT: &str = "libs";
 /// Index into [`WorkspaceSpec::files`]. Stable across edits so operations keep
 /// naming the same file.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct FileId(pub(super) usize);
+pub struct FileId(pub usize);
 
 /// Determines the root against which relative `source()` paths resolve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Owner {
+pub enum Owner {
     /// A loose script under the scripts workspace root.
     Script,
     /// An `R/` file of the workspace package, under its own root.
@@ -23,20 +23,20 @@ pub(super) enum Owner {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct FileSpec {
-    pub(super) owner: Owner,
+pub struct FileSpec {
+    pub owner: Owner,
     /// Relative to the owning root because `source()` resolves from `anchor_dir()`.
-    pub(super) path: String,
-    pub(super) program: Program,
+    pub path: String,
+    pub program: Program,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct WorkspaceSpec {
+pub struct WorkspaceSpec {
     /// Includes `base` when `source()` or `library()` needs it to resolve.
-    pub(super) installed: Vec<String>,
-    pub(super) package: Option<String>,
+    pub installed: Vec<String>,
+    pub package: Option<String>,
     /// Indexed by [`FileId`]. Order is script order or package collation order.
-    pub(super) files: Vec<FileSpec>,
+    pub files: Vec<FileSpec>,
 }
 
 impl WorkspaceSpec {

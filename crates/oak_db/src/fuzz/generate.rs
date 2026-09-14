@@ -11,23 +11,23 @@ use rand::rngs::StdRng;
 use rand::RngExt;
 use rand::SeedableRng;
 
-use crate::tests::fuzz::build::binding;
-use crate::tests::fuzz::build::function_def;
-use crate::tests::fuzz::build::library;
-use crate::tests::fuzz::build::qualified_source;
-use crate::tests::fuzz::build::shadow;
-use crate::tests::fuzz::build::source;
-use crate::tests::fuzz::choose::binding_name;
-use crate::tests::fuzz::choose::cold_entries;
-use crate::tests::fuzz::choose::random_query;
-use crate::tests::fuzz::mutate::MAX_FILES;
-use crate::tests::fuzz::scenario::Edit;
-use crate::tests::fuzz::scenario::Op;
-use crate::tests::fuzz::scenario::Scenario;
-use crate::tests::fuzz::spec::FileId;
-use crate::tests::fuzz::spec::FileSpec;
-use crate::tests::fuzz::spec::Owner;
-use crate::tests::fuzz::spec::WorkspaceSpec;
+use crate::fuzz::build::binding;
+use crate::fuzz::build::function_def;
+use crate::fuzz::build::library;
+use crate::fuzz::build::qualified_source;
+use crate::fuzz::build::shadow;
+use crate::fuzz::build::source;
+use crate::fuzz::choose::binding_name;
+use crate::fuzz::choose::cold_entries;
+use crate::fuzz::choose::random_query;
+use crate::fuzz::mutate::MAX_FILES;
+use crate::fuzz::scenario::Edit;
+use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Scenario;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::FileSpec;
+use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::WorkspaceSpec;
 
 const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
 
@@ -37,7 +37,7 @@ pub(super) const EFFECT_PACKAGES: [&str; 4] = ["S7", "magrittr", "shiny", "targe
 
 pub(super) const UNINSTALLED: &str = "pkgz";
 
-pub(super) fn seed_corpus(seed: u64) -> Vec<Scenario> {
+pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut scenarios = Vec::new();
 

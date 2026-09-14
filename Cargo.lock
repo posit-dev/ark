@@ -2598,6 +2598,7 @@ dependencies = [
  "log",
  "mutatis",
  "oak_core",
+ "oak_db",
  "oak_package_metadata",
  "oak_semantic",
  "oak_tidy",

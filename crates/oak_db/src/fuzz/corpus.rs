@@ -6,27 +6,27 @@ use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 
 use crate::file_imports::CollationView;
-use crate::tests::fuzz::build::binding;
-use crate::tests::fuzz::build::function_def;
-use crate::tests::fuzz::build::library;
-use crate::tests::fuzz::build::shadow;
-use crate::tests::fuzz::build::source;
-use crate::tests::fuzz::build::source_with;
-use crate::tests::fuzz::scenario::Edit;
-use crate::tests::fuzz::scenario::Op;
-use crate::tests::fuzz::scenario::Query;
-use crate::tests::fuzz::scenario::Scenario;
-use crate::tests::fuzz::spec::FileId;
-use crate::tests::fuzz::spec::FileSpec;
-use crate::tests::fuzz::spec::Owner;
-use crate::tests::fuzz::spec::WorkspaceSpec;
+use crate::fuzz::build::binding;
+use crate::fuzz::build::function_def;
+use crate::fuzz::build::library;
+use crate::fuzz::build::shadow;
+use crate::fuzz::build::source;
+use crate::fuzz::build::source_with;
+use crate::fuzz::scenario::Edit;
+use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Query;
+use crate::fuzz::scenario::Scenario;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::FileSpec;
+use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::WorkspaceSpec;
 
-pub(super) struct Case {
-    pub(super) name: &'static str,
-    pub(super) scenario: Scenario,
+pub struct Case {
+    pub name: &'static str,
+    pub scenario: Scenario,
 }
 
-pub(super) fn corpus() -> Vec<Case> {
+pub fn corpus() -> Vec<Case> {
     vec![
         Case {
             name: "acyclic_pair_closes_then_reopens",
@@ -71,7 +71,7 @@ pub(super) fn corpus() -> Vec<Case> {
     ]
 }
 
-pub(super) fn case(name: &str) -> Scenario {
+pub fn case(name: &str) -> Scenario {
     match corpus().into_iter().find(|case| case.name == name) {
         Some(case) => case.scenario,
         None => panic!("no corpus case named {name:?}"),
