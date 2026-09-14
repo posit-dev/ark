@@ -1,19 +1,24 @@
-//! Exercises Salsa queries across generated workspaces and edit histories.
+//! Exercises Salsa queries across mutated workspaces and edit histories.
 //!
 //! Each selected query must complete without panicking or hanging. Recovery
-//! firings add failure context but cannot identify Salsa's repeated key.
+//! firings provide context but do not identify Salsa's repeated key.
 //!
-//! A seed reproduces a scenario only for an unchanged generator and RNG. Save
-//! failures as explicit [`Scenario`] tests.
+//! [`generate::seed_corpus()`] supplies fixed starting scenarios, and
+//! [`mutate::ScenarioMutator`] derives the rest. Failures replay the shrunken
+//! scenario so its trace, panic location, and artifact agree. Save the printed
+//! scenario as an explicit [`Scenario`] test.
 //!
 //! ```text
 //! just fuzz
 //! just fuzz-seed 1234
 //! ```
 //!
-//! `just fuzz-seed` reports each operation eagerly because hangs and aborts do
-//! not reach the unwind report. Set `OAK_FUZZ_TRACE=1` on other runs when
-//! investigating those failures.
+//! `SEED` controls both the starting corpus and the mutation session. Rerun
+//! `just fuzz-seed SEED` to reproduce a block.
+//!
+//! Before each operation, the harness writes the scenario to a per-process
+//! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
+//! `just fuzz-seed` also traces every operation, which changes timing.
 //!
 //! # Coverage
 //!
@@ -23,99 +28,131 @@
 //! workspace aggregates, and cold entry into the six file-keyed queries with
 //! `cycle_result` handlers.
 //!
-//! `Package::resolve()` is excluded because the generated workspaces have no
-//! NAMESPACE re-exports. Directory sourcing is covered only by explicit corpus
-//! scenarios. The generator also excludes testthat and shiny layouts, file
-//! creation, removal, renaming, and metadata or revision edits. Queries outside
-//! [`Query`] are covered only as dependencies, not as entry points.
+//! Mutation reaches every `EffectRecipe` variant, both invocation forms, and
+//! all three `SourceProvider` walks, including an effect escaped through a
+//! `bquote()` hole.
+//!
+//! `Package::resolve()` is excluded because these workspaces have no NAMESPACE
+//! re-exports. Testthat and shiny layouts, file renaming, and metadata or
+//! revision edits stay out of reach. Queries outside [`Query`] are covered only
+//! as dependencies, not as entry points.
 
+mod artifact;
 mod build;
+mod choose;
 mod corpus;
 mod generate;
+mod mutate;
+mod panics;
 mod run;
 mod scenario;
 mod spec;
 
-use std::ops::Range;
+use mutatis::check::Check;
+use mutatis::check::CheckError;
+use mutatis::check::CheckResult;
+use mutatis::Session;
 
 use crate::recovery;
-use crate::tests::fuzz::generate::generate;
+use crate::tests::fuzz::artifact::Artifact;
+use crate::tests::fuzz::generate::seed_corpus;
+use crate::tests::fuzz::mutate::ScenarioMutator;
 use crate::tests::fuzz::run::run;
+use crate::tests::fuzz::run::run_scenario;
 use crate::tests::fuzz::run::start;
 use crate::tests::fuzz::run::World;
+use crate::tests::fuzz::scenario::Scenario;
 use crate::tests::fuzz::spec::FileId;
 
-/// Keep the default suite small enough to catch basic regressions without
-/// materially increasing test time.
-const SMOKE: Range<u64> = 0..8;
+/// Limit the default suite to a quick regression check.
+const SMOKE_ITERS: usize = 50;
 
-/// Keep each block below the CI profile's 60-second termination threshold.
-/// Separate tests let nextest run the blocks in parallel.
-const SEEDS_PER_TEST: u64 = 600;
+/// Keep each parallel block below CI's 60-second timeout.
+const BLOCK_ITERS: usize = 3000;
 
-fn run_seeds(seeds: Range<u64>) {
-    for seed in seeds {
-        run_seed(seed);
-    }
+/// Cap shrinking because every attempt reruns the full scenario.
+const SHRINK_ITERS: usize = 150;
+
+fn check_block(block: u64, iters: usize) {
+    let artifact = Artifact::open();
+    let _hook = panics::install();
+    let result = Check::new()
+        .iters(iters)
+        .shrink_iters(SHRINK_ITERS)
+        .seed(block)
+        .run_with(ScenarioMutator, seed_corpus(block), |scenario| {
+            run_scenario(scenario, &artifact)
+        });
+    report(result, &artifact);
 }
 
-fn run_seed(seed: u64) {
-    for scenario in generate(seed) {
-        run(&scenario);
-    }
-}
+/// Replay the shrunken failure because the last candidate evaluated during
+/// shrinking may have passed and overwritten the artifact.
+fn report(result: CheckResult<Scenario>, artifact: &Artifact) {
+    let Err(error) = result else {
+        artifact.clear();
+        return;
+    };
+    let failure = match error {
+        CheckError::Failed(failure) => failure,
+        other => panic!("fuzz check did not run: {other}"),
+    };
 
-fn seed_block(block: u64) -> Range<u64> {
-    let start = block * SEEDS_PER_TEST;
-    start..start + SEEDS_PER_TEST
+    eprintln!("{}", failure.message);
+    eprintln!("artifact: {}", artifact.path().display());
+    run(&failure.value, artifact, true);
+
+    // A concrete `Scenario` makes `run()` deterministic, so returning means
+    // the failure did not reproduce.
+    panic!("fuzz failure did not reproduce on replay");
 }
 
 #[test]
 fn test_fuzz_smoke() {
-    run_seeds(SMOKE);
+    check_block(0, SMOKE_ITERS);
 }
 
 // == Opt-in suite ==
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_0() {
-    run_seeds(seed_block(0));
+fn test_block_0() {
+    check_block(0, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_1() {
-    run_seeds(seed_block(1));
+fn test_block_1() {
+    check_block(1, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_2() {
-    run_seeds(seed_block(2));
+fn test_block_2() {
+    check_block(2, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_3() {
-    run_seeds(seed_block(3));
+fn test_block_3() {
+    check_block(3, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_4() {
-    run_seeds(seed_block(4));
+fn test_block_4() {
+    check_block(4, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz"]
-fn test_seeds_5() {
-    run_seeds(seed_block(5));
+fn test_block_5() {
+    check_block(5, BLOCK_ITERS);
 }
 
 #[test]
 #[ignore = "opt-in: just fuzz-seed <seed>"]
-fn test_replay_seed() {
+fn test_replay_block() {
     let seed = match std::env::var("OAK_FUZZ_SEED") {
         Ok(seed) => match seed.parse::<u64>() {
             Ok(seed) => seed,
@@ -123,36 +160,65 @@ fn test_replay_seed() {
         },
         Err(_) => panic!("set OAK_FUZZ_SEED, or run `just fuzz-seed <seed>`"),
     };
-    run_seed(seed);
+    check_block(seed, BLOCK_ITERS);
 }
 
-// == Generator coverage ==
+// == Mutation coverage ==
 
-/// Generated edits must create and remove recognized cycles.
-///
-/// Use a separate database so diagnostics do not change the no-panic runs'
-/// cold-entry order.
+/// Credit only increases over the seed baseline, which already contains cycle
+/// transitions. Each measurement uses a separate database so diagnostics do not
+/// change the no-panic runs' cold-entry order.
 #[test]
-fn test_generated_histories_close_and_reopen_recognized_cycles() {
-    let mut closed = 0;
-    let mut reopened = 0;
+fn test_mutated_histories_close_and_reopen_recognized_cycles() {
+    const MUTATIONS: usize = 400;
 
-    for seed in SMOKE {
-        for scenario in generate(seed) {
-            let mut world = World::materialize(&scenario.initial);
-            let mut cyclic = world.any_source_cycle();
-            for op in &scenario.ops {
-                world.apply(op);
-                let now = world.any_source_cycle();
-                closed += usize::from(now && !cyclic);
-                reopened += usize::from(cyclic && !now);
-                cyclic = now;
-            }
+    let mut session = Session::new().seed(0);
+    let mut corpus = seed_corpus(0);
+    let baseline: Vec<Transitions> = corpus.iter().map(cycle_transitions).collect();
+
+    let mut closed = false;
+    let mut reopened = false;
+
+    for round in 0..MUTATIONS {
+        let entry = round % corpus.len();
+        if session
+            .mutate_with(&mut ScenarioMutator, &mut corpus[entry])
+            .is_err()
+        {
+            continue;
         }
+
+        let after = cycle_transitions(&corpus[entry]);
+        closed |= after.closed > baseline[entry].closed;
+        reopened |= after.reopened > baseline[entry].reopened;
     }
 
-    assert!(closed > 0);
-    assert!(reopened > 0);
+    assert!(closed);
+    assert!(reopened);
+}
+
+struct Transitions {
+    closed: usize,
+    reopened: usize,
+}
+
+fn cycle_transitions(scenario: &Scenario) -> Transitions {
+    let mut transitions = Transitions {
+        closed: 0,
+        reopened: 0,
+    };
+    let mut world = World::materialize(&scenario.initial);
+    let mut cyclic = world.any_source_cycle();
+
+    for op in &scenario.ops {
+        world.apply(op);
+        let now = world.any_source_cycle();
+        transitions.closed += usize::from(now && !cyclic);
+        transitions.reopened += usize::from(cyclic && !now);
+        cyclic = now;
+    }
+
+    transitions
 }
 
 // == Scenario invariants ==
