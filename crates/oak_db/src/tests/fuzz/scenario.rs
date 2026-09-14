@@ -1,7 +1,8 @@
-//! Stores scenarios without Salsa identities or deferred randomness so
-//! execution and failure reporting can reproduce the concrete inputs.
+//! Stores concrete scenarios without Salsa identities or deferred randomness.
 
 use std::fmt::Write;
+
+use oak_semantic::fuzz::Program;
 
 use crate::file_imports::CollationView;
 use crate::tests::fuzz::spec::FileId;
@@ -10,7 +11,7 @@ use crate::tests::fuzz::spec::WorkspaceSpec;
 #[derive(Clone, Debug)]
 pub(super) struct Scenario {
     pub(super) seed: u64,
-    /// Distinguishes cold entry points that share the same workspace and history.
+    /// Distinguishes cold entries sharing one workspace and history.
     pub(super) variant: usize,
     pub(super) initial: WorkspaceSpec,
     /// Run first on a fresh database because Salsa's repeated key depends on
@@ -30,10 +31,10 @@ pub(super) enum Op {
 #[derive(Clone, Debug)]
 pub(super) struct Edit {
     pub(super) file: FileId,
-    pub(super) contents: String,
+    pub(super) program: Program,
 }
 
-/// Production roots and direct entries into cycle-sensitive queries.
+/// Production roots and direct entries to cycle-sensitive queries.
 #[derive(Clone, Debug)]
 pub(super) enum Query {
     Diagnostics(FileId),
@@ -56,15 +57,13 @@ pub(super) enum Query {
     CrossFileLayers(FileId, CollationView),
 }
 
-/// Where an offset-keyed query points, resolved against the file's text at
-/// execution time. Recording a byte offset instead would let an edit carry a
-/// pre-edit position into unrelated replacement text.
+/// A semantic location for an offset-keyed query, resolved after each edit.
+/// Stored byte offsets could point into unrelated replacement text.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Site {
-    /// Start of the first `source` or `library` callee, an eager call site.
+    /// Start of the first `source()` or `library()` callee, including nested calls.
     FirstCall,
-    /// Start of the last identifier, which for a generated file with a
-    /// trailing function definition is a deferred use.
+    /// Start of the last identifier, which can be in deferred collation.
     LastIdentifier,
     /// One past the last byte, where the whole collation has loaded.
     Eof,
@@ -92,7 +91,7 @@ impl Op {
     pub(super) fn render(&self) -> String {
         match self {
             Op::Query(query) => query.render(),
-            Op::Edit(edit) => format!("edit [{}] -> {:?}", edit.file.0, edit.contents),
+            Op::Edit(edit) => format!("edit [{}] -> {:?}", edit.file.0, edit.program.render().text),
         }
     }
 }

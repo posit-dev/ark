@@ -1,21 +1,33 @@
-//! Generates concrete scenarios from seeded source-graph motifs.
+//! Generates deterministic scenarios from seeded `source()`-graph motifs.
 //!
-//! Each seed selects a `source()` graph, renders its files as R code, and
-//! generates queries around one to three edits that toggle one source edge.
-//! For example, adding `b.R -> a.R` closes the cycle `a.R -> b.R -> a.R`.
-//! These are source cycles, not Salsa query cycles. The `Overlapping` motif has
-//! two source cycles sharing file 0, so removing one edge may leave the other
-//! cycle intact.
+//! Each history toggles one edge. These are source cycles, not Salsa query
+//! cycles. `Overlapping` has two cycles through file 0, so removing one edge
+//! can leave the other intact.
 //!
-//! Randomness is confined here. The resulting [`Scenario`] contains the exact
-//! workspace and operation history needed for deterministic execution and
-//! failure reporting.
+//! TODO(fuzz): This generator emits only `Source` and `Attach` effects, so the
+//! rest of the fuzz vocabulary never reaches generated exploration. That
+//! leaves out `Eval`, `Quote`, `QuoteHoles`, `Substitute`, `Assign`, `Rebind`,
+//! and `SourceDir`, the last of which resolves against this materializer under
+//! the `shallow_source_dir` and `recursive_source_dir_in_package` corpus
+//! scenarios but is never generated. Pick rates from measured cost and
+//! scenario diversity, since `sourceDir(".")` makes every script in a
+//! workspace source every other one.
 
+use oak_semantic::effects::fuzz::EffectRecipe;
+use oak_semantic::fuzz::Expr;
+use oak_semantic::fuzz::Program;
+use oak_semantic::fuzz::Stmt;
 use rand::rngs::StdRng;
 use rand::RngExt;
 use rand::SeedableRng;
 
 use crate::file_imports::CollationView;
+use crate::tests::fuzz::build::binding;
+use crate::tests::fuzz::build::function_def;
+use crate::tests::fuzz::build::library;
+use crate::tests::fuzz::build::qualified_source;
+use crate::tests::fuzz::build::shadow;
+use crate::tests::fuzz::build::source;
 use crate::tests::fuzz::scenario::Edit;
 use crate::tests::fuzz::scenario::Op;
 use crate::tests::fuzz::scenario::Query;
@@ -53,9 +65,8 @@ pub(super) fn generate(seed: u64) -> Vec<Scenario> {
         .collect()
 }
 
-/// Shape of the `source()` graph. The history toggles one designated edge,
-/// changing cycle status except for `Overlapping`, which retains a second cycle
-/// after that edge is removed.
+/// Shape of the `source()` graph. Each history toggles one edge.
+/// `Overlapping` remains cyclic after its toggled edge is removed.
 #[derive(Clone, Copy, Debug)]
 enum Motif {
     /// No edges. The toggle adds a self-loop.
@@ -119,19 +130,23 @@ struct Draft {
 
 struct FileDraft {
     path: String,
-    attaches: Vec<String>,
-    sources: Vec<Edge>,
-    bindings: Vec<String>,
-    /// Restrict shadowing to files without out-edges so it cannot remove an edge
-    /// required by the selected motif.
-    shadowed_call: Option<String>,
-    /// Keep a deferred identifier available to offset-keyed queries.
-    deferred: Option<String>,
+    program: Program,
 }
 
 struct Edge {
     target: FileId,
     qualified: bool,
+}
+
+struct FileParts {
+    path: String,
+    attaches: Vec<String>,
+    sources: Vec<Edge>,
+    /// Callee to shadow locally. Never chosen from motif sources because that
+    /// would remove an edge under test.
+    shadow: Option<&'static str>,
+    /// Supplies an identifier in deferred collation for offset-keyed queries.
+    deferred: Option<String>,
 }
 
 impl Draft {
@@ -153,42 +168,43 @@ impl Draft {
             }
         }
 
-        let mut files: Vec<FileDraft> = (0..count)
-            .map(|index| FileDraft {
-                path: file_path(owner, index),
-                attaches: Vec::new(),
-                sources: Vec::new(),
-                bindings: vec![binding(index)],
-                shadowed_call: None,
-                deferred: None,
-            })
+        let mut parts: Vec<FileParts> = (0..count)
+            .map(|index| FileParts::new(file_path(owner, index)))
             .collect();
 
         for (sourcing, target) in edges {
-            files[sourcing].sources.push(Edge {
+            parts[sourcing].sources.push(Edge {
                 target: FileId(target),
                 qualified: rng.random_bool(0.3),
             });
         }
 
-        for file in &mut files {
+        for part in &mut parts {
             if rng.random_bool(0.5) {
-                file.attaches.push(attachable(rng, &installed));
+                part.attaches.push(attachable(rng, &installed));
             }
             if rng.random_bool(0.4) {
-                file.deferred = Some(binding_name(rng.random_range(0..count)));
+                part.deferred = Some(binding_name(rng.random_range(0..count)));
             }
         }
 
-        // Avoid files with current or future motif edges because shadowing
-        // `source()` there could remove the edge that closes the cycle.
+        let paths: Vec<String> = parts.iter().map(|part| part.path.clone()).collect();
+        let mut files: Vec<FileDraft> = parts
+            .iter()
+            .enumerate()
+            .map(|(index, part)| part.to_draft(index, &paths))
+            .collect();
+
+        // Exclude motif edges so shadowing cannot remove the edge under test.
         let shadowable: Vec<usize> = (0..count)
-            .filter(|&index| index != closing.0 && files[index].sources.is_empty())
+            .filter(|&index| index != closing.0 && parts[index].sources.is_empty())
             .collect();
         if !shadowable.is_empty() && rng.random_bool(0.3) {
             let index = *pick(rng, &shadowable);
-            let target = rng.random_range(0..count);
-            files[index].shadowed_call = Some(files[target].path.clone());
+            if let Some(callee) = pick_option(rng, &files[index].program.callees()) {
+                parts[index].shadow = Some(callee.name);
+                files[index] = parts[index].to_draft(index, &paths);
+            }
         }
 
         Self {
@@ -213,7 +229,7 @@ impl Draft {
                 .map(|file| FileSpec {
                     owner: self.owner,
                     path: file.path.clone(),
-                    contents: self.render(file),
+                    program: file.program.clone(),
                 })
                 .collect(),
         }
@@ -238,62 +254,101 @@ impl Draft {
 
     fn toggle_closing(&mut self) -> Op {
         let (sourcing, target) = self.closing;
-        let sources = &mut self.files[sourcing.0].sources;
-        match sources.iter().position(|edge| edge.target == target) {
+        let target_path = self.files[target.0].path.clone();
+        let statements = &mut self.files[sourcing.0].program.statements;
+        let existing = statements.iter().position(|stmt| {
+            matches!(stmt, Stmt::Effect { recipe: EffectRecipe::Source { path, .. }, .. } if *path == target_path)
+        });
+        match existing {
             Some(position) => {
-                sources.remove(position);
+                statements.remove(position);
             },
-            None => sources.push(Edge {
-                target,
-                qualified: false,
-            }),
+            None => {
+                let index = leading_calls_end(statements);
+                statements.insert(index, source(&target_path));
+            },
         }
         self.edit(sourcing)
     }
 
-    /// Preserve edges and attaches so some invalidations are unrelated to cycle
-    /// structure.
+    /// Changes a binding without changing source edges or attached packages.
     fn touch(&mut self, rng: &mut StdRng) -> Op {
         let file = FileId(rng.random_range(0..self.files.len()));
-        let next = self.files[file.0].bindings.len();
-        self.files[file.0]
-            .bindings
-            .push(format!("touch_{}_{next} <- 1", file.0));
+        let statements = &mut self.files[file.0].program.statements;
+        let next = statements
+            .iter()
+            .filter(|stmt| {
+                matches!(stmt, Stmt::Bind {
+                    value: Expr::Num(_),
+                    ..
+                })
+            })
+            .count();
+        let touch = binding(&format!("touch_{}_{next}", file.0));
+        match statements.iter().position(|stmt| {
+            matches!(stmt, Stmt::Bind {
+                value: Expr::Function { .. },
+                ..
+            })
+        }) {
+            Some(index) => statements.insert(index, touch),
+            None => statements.push(touch),
+        }
         self.edit(file)
     }
 
     fn edit(&self, file: FileId) -> Op {
         Op::Edit(Edit {
             file,
-            contents: self.render(&self.files[file.0]),
+            program: self.files[file.0].program.clone(),
         })
     }
+}
 
-    fn render(&self, file: &FileDraft) -> String {
-        let mut out = String::new();
-        if let Some(target) = &file.shadowed_call {
-            out.push_str("source <- function(...) NULL\n");
-            out.push_str(&format!("source(\"{target}\")\n"));
+fn leading_calls_end(statements: &[Stmt]) -> usize {
+    statements
+        .iter()
+        .position(|stmt| matches!(stmt, Stmt::Bind { .. }))
+        .unwrap_or(statements.len())
+}
+
+impl FileParts {
+    fn new(path: String) -> Self {
+        FileParts {
+            path,
+            attaches: Vec::new(),
+            sources: Vec::new(),
+            shadow: None,
+            deferred: None,
         }
-        for package in &file.attaches {
-            out.push_str(&format!("library({package})\n"));
+    }
+
+    fn to_draft(&self, index: usize, paths: &[String]) -> FileDraft {
+        let mut statements = Vec::new();
+
+        if let Some(name) = self.shadow {
+            statements.push(shadow(name));
         }
-        for edge in &file.sources {
-            let callee = if edge.qualified {
-                "base::source"
+        for package in &self.attaches {
+            statements.push(library(package));
+        }
+        for edge in &self.sources {
+            let target = &paths[edge.target.0];
+            statements.push(if edge.qualified {
+                qualified_source(target)
             } else {
-                "source"
-            };
-            let target = &self.files[edge.target.0].path;
-            out.push_str(&format!("{callee}(\"{target}\")\n"));
+                source(target)
+            });
         }
-        for binding in &file.bindings {
-            out.push_str(&format!("{binding}\n"));
+        statements.push(binding(&binding_name(index)));
+        if let Some(name) = &self.deferred {
+            statements.push(function_def("read", vec![Stmt::use_of(name)]));
         }
-        if let Some(name) = &file.deferred {
-            out.push_str(&format!("read <- function() {name}\n"));
+
+        FileDraft {
+            path: self.path.clone(),
+            program: Program { statements },
         }
-        out
     }
 }
 
@@ -303,10 +358,6 @@ fn file_path(owner: Owner, index: usize) -> String {
         Owner::Script => format!("{name}.R"),
         Owner::Package => format!("R/{name}.R"),
     }
-}
-
-fn binding(index: usize) -> String {
-    format!("{} <- 1", binding_name(index))
 }
 
 fn binding_name(index: usize) -> String {
@@ -332,8 +383,8 @@ fn cold_entries(rng: &mut StdRng, spec: &WorkspaceSpec) -> Vec<Query> {
     ]
 }
 
-/// Enter each file-keyed `cycle_result` query directly. `Package::resolve()` is
-/// excluded because the generated workspaces have no NAMESPACE re-exports.
+/// Enter each file-keyed `cycle_result` query directly. `Package::resolve()`
+/// needs NAMESPACE re-exports, which these workspaces do not provide.
 fn cycle_entry(rng: &mut StdRng, spec: &WorkspaceSpec) -> Query {
     let file = random_file(rng, spec);
     let view = random_view(rng);
@@ -347,7 +398,7 @@ fn cycle_entry(rng: &mut StdRng, spec: &WorkspaceSpec) -> Query {
     }
 }
 
-/// Isolate each aggregate so it can be the first query Salsa enters.
+/// Run aggregates first to exercise their cold-entry cycle behavior.
 fn aggregate_entry(rng: &mut StdRng) -> Query {
     match rng.random_range(0..5) {
         0 => Query::AllPackageDependencies,
@@ -399,7 +450,7 @@ fn random_view(rng: &mut StdRng) -> CollationView {
     }
 }
 
-/// A name a file might bind, plus `source` so the shadowing case is queried.
+/// Include `source` to query the shadowed-call case.
 fn random_name(rng: &mut StdRng, spec: &WorkspaceSpec) -> String {
     if rng.random_bool(0.2) {
         return "source".to_string();
@@ -409,4 +460,11 @@ fn random_name(rng: &mut StdRng, spec: &WorkspaceSpec) -> String {
 
 fn pick<'items, T>(rng: &mut StdRng, items: &'items [T]) -> &'items T {
     &items[rng.random_range(0..items.len())]
+}
+
+fn pick_option<'items, T>(rng: &mut StdRng, items: &'items [T]) -> Option<&'items T> {
+    if items.is_empty() {
+        return None;
+    }
+    Some(&items[rng.random_range(0..items.len())])
 }
