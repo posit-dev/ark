@@ -2,6 +2,11 @@
 //!
 //! These are source cycles, not Salsa query cycles. Mutation may redirect or
 //! delete any edge, including one that makes a motif cyclic.
+//!
+//! Package re-export layers live in `packages`; draft assembly and edit-history
+//! generation stay together here to preserve their random draw order.
+
+mod packages;
 
 use oak_semantic::effects::fuzz::EffectRecipe;
 use oak_semantic::fuzz::Expr;
@@ -11,6 +16,12 @@ use rand::rngs::StdRng;
 use rand::RngExt;
 use rand::SeedableRng;
 
+use self::packages::empty_package;
+use self::packages::package_entry;
+use self::packages::reexport_layer;
+use self::packages::PackageLayer;
+use self::packages::PACKAGE_LAYERS;
+use self::packages::WORKSPACE_PACKAGE;
 use crate::fuzz::budgets::MAX_FILES;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
@@ -20,7 +31,6 @@ use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
 use crate::fuzz::choose::binding_name;
 use crate::fuzz::choose::cold_entries;
-use crate::fuzz::choose::export_name;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Shape;
 use crate::fuzz::scenario::Edit;
@@ -31,11 +41,8 @@ use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
 use crate::fuzz::spec::Owner;
 use crate::fuzz::spec::PackageId;
-use crate::fuzz::spec::PackageKind;
 use crate::fuzz::spec::PackageSpec;
-use crate::fuzz::spec::Reexport;
 use crate::fuzz::spec::WorkspaceSpec;
-use crate::NamespaceVisibility;
 
 const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
 
@@ -44,13 +51,6 @@ const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
 pub(super) const EFFECT_PACKAGES: [&str; 4] = ["S7", "magrittr", "shiny", "targets"];
 
 pub(super) const UNINSTALLED: &str = "pkgz";
-
-/// Name of the draft's single workspace package, when `owner` is
-/// `Owner::Package`.
-const WORKSPACE_PACKAGE: &str = "mypkg";
-
-/// Names of the two `Library` packages [`reexport_layer()`] chains together.
-const REEXPORT_LIBS: [&str; 2] = ["lib0", "lib1"];
 
 pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -80,30 +80,6 @@ pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
 
     scenarios
 }
-
-/// Whether a draft models re-export packages, and how its chain ends. Assigned
-/// by motif position rather than drawn, so every seed corpus contains each one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PackageLayer {
-    /// No re-export layer. Any workspace package has an empty namespace.
-    Bare,
-    /// `lib0` re-exports the name from `lib1`, which exports but never binds
-    /// it. Acyclic, and resolves to nothing.
-    Chain,
-    /// `lib0` and `lib1` re-export the name from each other, so
-    /// `Package::resolve()` revisits its own key.
-    Cycle,
-    /// The chain ends at the workspace package, which binds and exports the
-    /// name in one of its files.
-    Local,
-}
-
-const PACKAGE_LAYERS: [PackageLayer; 4] = [
-    PackageLayer::Bare,
-    PackageLayer::Chain,
-    PackageLayer::Cycle,
-    PackageLayer::Local,
-];
 
 /// Shape of the `source()` graph. `Overlapping` has two cycles through file 0,
 /// so dropping one edge can leave the other intact.
@@ -405,87 +381,6 @@ impl FileParts {
             program: Program { statements },
         }
     }
-}
-
-/// The chain always starts at `lib0`, which sits after the workspace package
-/// when the draft has one.
-fn package_entry(layer: PackageLayer, owner: Owner) -> Option<Query> {
-    if layer == PackageLayer::Bare {
-        return None;
-    }
-    let lib0 = match owner {
-        Owner::Package(_) => 1,
-        Owner::Script => 0,
-    };
-    Some(Query::PackageResolve(
-        PackageId(lib0),
-        export_name(0),
-        NamespaceVisibility::Exported,
-    ))
-}
-
-fn empty_package(name: &str) -> PackageSpec {
-    PackageSpec {
-        name: name.to_string(),
-        kind: PackageKind::Workspace,
-        exports: Vec::new(),
-        reexports: Vec::new(),
-    }
-}
-
-/// Supplies re-export edges for mutation. A locally terminating chain also
-/// needs a workspace package and a definition in one of its files.
-fn reexport_layer(
-    rng: &mut StdRng,
-    layer: PackageLayer,
-    parts: &mut [FileParts],
-) -> (Option<PackageSpec>, Vec<PackageSpec>) {
-    if layer == PackageLayer::Bare {
-        return (None, Vec::new());
-    }
-
-    let name = export_name(0);
-    let lib0 = PackageSpec {
-        name: REEXPORT_LIBS[0].to_string(),
-        kind: PackageKind::Library,
-        exports: vec![name.clone()],
-        reexports: vec![Reexport {
-            name: name.clone(),
-            from: REEXPORT_LIBS[1].to_string(),
-        }],
-    };
-    let mut lib1 = PackageSpec {
-        name: REEXPORT_LIBS[1].to_string(),
-        kind: PackageKind::Library,
-        exports: vec![name.clone()],
-        reexports: Vec::new(),
-    };
-
-    let workspace_package = match layer {
-        // `lib1` exports the name but re-exports nothing further, so the chain
-        // dead-ends without closing a cycle.
-        PackageLayer::Bare | PackageLayer::Chain => None,
-        PackageLayer::Cycle => {
-            lib1.reexports.push(Reexport {
-                name: name.clone(),
-                from: REEXPORT_LIBS[0].to_string(),
-            });
-            None
-        },
-        PackageLayer::Local => {
-            lib1.reexports.push(Reexport {
-                name: name.clone(),
-                from: WORKSPACE_PACKAGE.to_string(),
-            });
-            let index = rng.random_range(0..parts.len());
-            parts[index].local_export = Some(name.clone());
-            let mut package = empty_package(WORKSPACE_PACKAGE);
-            package.exports.push(name);
-            Some(package)
-        },
-    };
-
-    (workspace_package, vec![lib0, lib1])
 }
 
 pub(super) fn file_path(owner: Owner, index: usize) -> String {
