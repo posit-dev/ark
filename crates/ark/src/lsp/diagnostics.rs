@@ -1271,8 +1271,8 @@ mod tests {
 
     use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
-    use oak_db::Db;
     use oak_db::OakDatabase;
+    use oak_db::SourceDb;
     use oak_scan::DbScan;
     use tempfile::TempDir;
     use tower_lsp_server::ls_types as lsp_types;

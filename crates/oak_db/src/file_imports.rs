@@ -18,10 +18,10 @@ use crate::load_context::LoadKind;
 use crate::load_context::SearchPathTail;
 use crate::recovery::record;
 use crate::recovery::Recovery;
-use crate::resolver_db::FoundationDb;
 use crate::Db;
 use crate::File;
 use crate::Package;
+use crate::SourceDb;
 
 /// A layer in a file's import chain.
 ///
@@ -81,7 +81,7 @@ impl CrossFileLayers {
     /// layers (which outrank them) and the rest of the search path.
     pub(crate) fn lookup_order<'a>(
         &'a self,
-        db: FoundationDb<'_>,
+        db: &dyn SourceDb,
         own: &'a [ImportLayer],
     ) -> impl Iterator<Item = ImportLayer> + 'a {
         self.enclosing
@@ -94,7 +94,7 @@ impl CrossFileLayers {
 }
 
 impl SearchPathTail {
-    fn layers(self, db: FoundationDb<'_>) -> Vec<ImportLayer> {
+    fn layers(self, db: &dyn SourceDb) -> Vec<ImportLayer> {
         match self {
             SearchPathTail::Base => base_layer(db).into_iter().collect(),
             SearchPathTail::Default => default_search_path_layers(db),
@@ -316,7 +316,7 @@ impl File {
     fn imports_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
         let layers = self.resolution_layers(db, view.collation);
         let own = self.attach_layers(db, view.attaches);
-        layers.lookup_order(FoundationDb::new(db), &own).collect()
+        layers.lookup_order(db, &own).collect()
     }
 
     /// The file's own layers and the layers it inherits from the files that
@@ -383,7 +383,7 @@ impl File {
         let own = self.attach_layers(db, view.attaches);
         self.layers_by_sourcing_file(db, view.collation)
             .into_iter()
-            .map(|layers| layers.lookup_order(FoundationDb::new(db), &own).collect())
+            .map(|layers| layers.lookup_order(db, &own).collect())
             .collect()
     }
 
@@ -400,14 +400,7 @@ impl File {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.inherited_layers(db, CollationView::Deferred)
             .iter()
-            .map(|site| {
-                (
-                    site.file,
-                    site.layers
-                        .lookup_order(FoundationDb::new(db), &own)
-                        .collect(),
-                )
-            })
+            .map(|site| (site.file, site.layers.lookup_order(db, &own).collect()))
             .collect()
     }
 
@@ -451,7 +444,7 @@ impl File {
     pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.cross_file_layers(db, CollationView::Deferred)
-            .lookup_order(FoundationDb::new(db), &own)
+            .lookup_order(db, &own)
             .collect()
     }
 
@@ -493,11 +486,14 @@ impl File {
     /// `semantic_index()`.
     #[salsa::tracked(returns(ref), cycle_result = cross_file_layers_cycle_result)]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
-        lower_load_context(
-            db,
-            load_context(db, self, view),
-            PredecessorAttaches::Include,
-        )
+        let context = load_context(db, self, view);
+        let mut layers = lower_load_context(db, &context);
+        // Deferred successors should outrank this file's own attaches. Keeping
+        // them below only loses names shadowed by a package a successor reattaches.
+        let mut attaches = predecessor_attach_layers(db, &context.visible_files);
+        attaches.append(&mut layers.attaches);
+        layers.attaches = attaches;
+        layers
     }
 
     /// The collation members of `self`'s own `R/` directory, in load order.
@@ -507,7 +503,7 @@ impl File {
     /// `cross_file_layers` while `self`'s own semantic index is still being
     /// built. The query can't recurse into the index.
     #[salsa::tracked(returns(ref))]
-    pub(crate) fn collation_siblings(self, db: &dyn Db) -> Vec<File> {
+    pub(crate) fn collation_siblings(self, db: &dyn SourceDb) -> Vec<File> {
         let Some(dir) = self.path(db).as_path().and_then(Utf8Path::parent) else {
             return Vec::new();
         };
@@ -525,7 +521,20 @@ fn cross_file_layers_cycle_result(
     view: CollationView,
 ) -> CrossFileLayers {
     record(db, Recovery::CrossFileLayers(file, view));
-    lower_load_context(db, load_context(db, file, view), PredecessorAttaches::Skip)
+    cross_file_layers_fallback(db, file, view)
+}
+
+fn cross_file_layers_fallback(
+    db: &dyn SourceDb,
+    file: File,
+    view: CollationView,
+) -> CrossFileLayers {
+    #[cfg(resolver_boundary = "probe")]
+    let _ = file.attached_packages(db);
+
+    let mut layers = lower_load_context(db, &load_context(db, file, view));
+    layers.recovered_source_cycle = true;
+    layers
 }
 
 /// Return no inherited layers when this query is Salsa's repeated key in a
@@ -681,19 +690,14 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
     loaded
 }
 
-pub(crate) enum PredecessorAttaches {
-    Include,
-    Skip,
-}
-
 /// Lowers a context while preserving resolver precedence. Visible definitions
 /// and NAMESPACE imports rank above the file's attaches, and loader-provided
-/// search-path layers rank below them.
-pub(crate) fn lower_load_context(
-    db: &dyn Db,
-    context: LoadContext,
-    predecessors: PredecessorAttaches,
-) -> CrossFileLayers {
+/// search-path layers rank below them. Predecessor attaches are added only by
+/// the normal query, because reading them can re-enter semantic analysis.
+pub(crate) fn lower_load_context(db: &dyn SourceDb, context: &LoadContext) -> CrossFileLayers {
+    #[cfg(resolver_boundary = "probe")]
+    let _ = predecessor_attach_layers(db, &context.visible_files);
+
     let LoadContext {
         kind,
         visible_files,
@@ -708,29 +712,20 @@ pub(crate) fn lower_load_context(
         .collect();
     if let LoadKind::Namespace(package) = kind {
         let namespace = package.namespace(db);
-        extend_with_namespace_imports(package, namespace, &mut enclosing);
+        extend_with_namespace_imports(*package, namespace, &mut enclosing);
         extend_with_namespace_package_imports(db, namespace, &mut enclosing);
     }
 
-    // `Deferred` includes successor attaches that run later and should outrank this
-    // file's own. Ranking them below loses only names shadowed by a package a
-    // successor reattaches.
-    let recovered_source_cycle = matches!(&predecessors, PredecessorAttaches::Skip);
-    let mut attaches = match predecessors {
-        PredecessorAttaches::Include => predecessor_attach_layers(db, &visible_files),
-        PredecessorAttaches::Skip => Vec::new(),
-    };
-    attaches.extend(
-        implicit_attaches
-            .iter()
-            .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package)),
-    );
+    let attaches = implicit_attaches
+        .iter()
+        .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package))
+        .collect();
 
     CrossFileLayers {
         enclosing,
         attaches,
         tail: kind.search_path_tail(),
-        recovered_source_cycle,
+        recovered_source_cycle: false,
     }
 }
 
@@ -775,7 +770,7 @@ fn extend_with_namespace_imports(
 /// Push one `Package` layer per `import(pkg)` directive in the namespace
 /// (bulk package imports). Missing packages are silently dropped.
 fn extend_with_namespace_package_imports(
-    db: &dyn Db,
+    db: &dyn SourceDb,
     namespace: &Namespace,
     layers: &mut Vec<ImportLayer>,
 ) {
@@ -788,13 +783,13 @@ fn extend_with_namespace_package_imports(
 
 /// `base`, always the last thing R searches. `None` when it isn't scanned into
 /// any root (the R system library is normally on `.libPaths()`, so it is).
-fn base_layer(db: FoundationDb<'_>) -> Option<ImportLayer> {
+fn base_layer(db: &dyn SourceDb) -> Option<ImportLayer> {
     db.package_by_name("base").map(ImportLayer::Package)
 }
 
 /// The default startup search path as `Package` layers, `stats` first through
 /// `base` last. Packages absent from every root drop out.
-fn default_search_path_layers(db: FoundationDb<'_>) -> Vec<ImportLayer> {
+fn default_search_path_layers(db: &dyn SourceDb) -> Vec<ImportLayer> {
     crate::search::DEFAULT_SEARCH_PATH_PACKAGES
         .iter()
         .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package))

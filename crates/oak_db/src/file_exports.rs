@@ -58,7 +58,7 @@ impl File {
     ///
     /// Delegates the walk to [`SemanticIndex::exports`], then translates
     /// each `DefinitionKind::Import { file, name }` into
-    /// `ExportEntry::Import { file, name }` via [`Db::file_by_path`]. If
+    /// `ExportEntry::Import { file, name }` via [`crate::SourceDb::file_by_path`]. If
     /// the target file isn't interned yet, that Import is dropped
     /// silently. Expected, since [`SalsaImportsResolver`] only injects
     /// Imports when `file_by_path()` resolves the target.
