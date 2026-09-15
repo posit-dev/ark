@@ -1,16 +1,15 @@
-//! Fuzz suite entry points. See [`crate::fuzz`] for the model and coverage.
+//! Fuzz suite entry points. See [`crate::fuzz`] for the model and coverage, and
+//! `crates/oak_db/fuzz/README.md` for commands, CI policy, and artifacts.
 //!
-//! ```text
-//! just fuzz
-//! just fuzz-seed 1234
-//! ```
+//! Pull request CI runs these mutation and replay checks and type-checks the
+//! adapter. Run `just fuzz-driver` locally to exercise the libFuzzer integration.
 //!
-//! `SEED` controls both the starting corpus and the mutation session. Rerun
-//! `just fuzz-seed SEED` to reproduce a block.
+//! `just fuzz` runs every block. `just fuzz-seed SEED` reproduces one with
+//! operation tracing, which changes timing. The seed controls both the starting
+//! corpus and the mutation session.
 //!
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
-//! `just fuzz-seed` also traces every operation, which changes timing.
 
 use mutatis::check::Check;
 use mutatis::check::CheckError;
@@ -125,6 +124,53 @@ fn test_replay_block() {
     check_block(seed, BLOCK_ITERS);
 }
 
+/// Reproduce a saved scenario, whether written by `cargo fuzz` or by hand.
+/// Replay needs no fuzzing toolchain, so a crash the driver found is
+/// reproducible from a checkout with the stable toolchain.
+#[test]
+#[ignore = "opt-in: just fuzz-replay <path>"]
+fn test_replay_scenario() {
+    let path = match std::env::var("OAK_FUZZ_SCENARIO") {
+        Ok(path) => path,
+        Err(_) => panic!("set OAK_FUZZ_SCENARIO, or run `just fuzz-replay <path>`"),
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) => panic!("cannot read {path}: {err}"),
+    };
+    let scenario = match Scenario::from_json(&bytes) {
+        Ok(scenario) => scenario,
+        Err(err) => panic!("{path} is not a scenario: {err:?}"),
+    };
+
+    Runner::open().replay(&scenario);
+}
+
+/// Seed `cargo fuzz` with scenarios that already satisfy the JSON format.
+#[test]
+#[ignore = "opt-in: just fuzz-corpus"]
+fn test_write_seed_corpus() {
+    let dir = match std::env::var("OAK_FUZZ_CORPUS") {
+        Ok(dir) => dir,
+        Err(_) => panic!("set OAK_FUZZ_CORPUS, or run `just fuzz-corpus`"),
+    };
+    let dir = std::path::Path::new(&dir);
+    std::fs::create_dir_all(dir).unwrap();
+
+    for case in corpus::corpus() {
+        write_scenario_json(dir, case.name, &case.scenario);
+    }
+    for scenario in seed_corpus(0) {
+        let name = format!("seed{}_variant{}", scenario.seed, scenario.variant);
+        write_scenario_json(dir, &name, &scenario);
+    }
+}
+
+fn write_scenario_json(dir: &std::path::Path, name: &str, scenario: &Scenario) {
+    let json = scenario.to_json().unwrap();
+    std::fs::write(dir.join(format!("{name}.json")), json).unwrap();
+}
+
 // == Mutation coverage ==
 
 /// Credit only increases over the seed baseline, which already contains cycle
@@ -236,6 +282,33 @@ fn test_scenario_mutual_pair_opens_then_closes_again() {
 fn test_scenario_package_cold_entry_reaches_cross_file_layers_recovery() {
     let scenario = corpus::case("package_cold_entry_reaches_cross_file_layers_recovery");
     let _world = start(&scenario);
+
+    let mut fired = recovery::fired();
+    fired.sort();
+    fired.dedup();
+    assert_eq!(fired, [
+        "attached_packages(p/mypkg/R/a.R)",
+        "attached_packages(p/mypkg/R/b.R)",
+        "cross_file_layers(p/mypkg/R/b.R, Eager)",
+        "exports(p/mypkg/R/a.R)",
+        "exports(p/mypkg/R/b.R)",
+        "semantic_index(p/mypkg/R/a.R)",
+        "semantic_index(p/mypkg/R/b.R)",
+    ]);
+}
+
+/// A memoized cycle result does not survive a revision bump, so revalidating
+/// `cross_file_layers()` after the edit consults its handler again.
+#[test]
+fn test_scenario_package_edit_revalidates_cross_file_layers_recovery() {
+    let scenario = corpus::case("package_edit_revalidates_cross_file_layers_recovery");
+    let mut world = start(&scenario);
+
+    // Attribute only the post-edit firings, since the cold entry recovers too.
+    recovery::reset();
+    for op in &scenario.ops {
+        world.apply(op);
+    }
 
     let mut fired = recovery::fired();
     fired.sort();
