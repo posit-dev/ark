@@ -12,6 +12,7 @@ use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::file_reader::EmptyFileReader;
 use crate::fuzz::artifact::Artifact;
 use crate::fuzz::panics::catch_quietly;
 use crate::fuzz::panics::install;
@@ -186,7 +187,7 @@ pub(crate) struct World {
 impl World {
     /// Do not evaluate semantic queries here. `cold_entry` must be Salsa's first query.
     pub(crate) fn materialize(spec: &WorkspaceSpec) -> Self {
-        let mut db = OakDatabase::new();
+        let mut db = OakDatabase::with_file_reader(EmptyFileReader);
 
         let installed: Vec<Package> = spec
             .installed
