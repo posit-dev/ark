@@ -1,6 +1,11 @@
+use std::io;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use camino::Utf8Path;
+
+use crate::file_reader::DiskFileReader;
+use crate::file_reader::FileReader;
 use crate::Db;
 use crate::DbInputs;
 use crate::LibraryRoots;
@@ -13,9 +18,9 @@ use crate::WorkspaceRoots;
 /// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot` /
 /// `StaleRoot` inputs and lazy-initialises them on first access.
 #[salsa::db]
-#[derive(Default)]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
+    file_reader: Arc<dyn FileReader>,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
@@ -27,6 +32,19 @@ pub struct OakDatabase {
 impl OakDatabase {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a database whose queries read from the supplied reader.
+    pub(crate) fn with_file_reader(reader: impl FileReader + 'static) -> Self {
+        Self {
+            storage: salsa::Storage::default(),
+            file_reader: Arc::new(reader),
+            workspace_roots: Arc::default(),
+            library_roots: Arc::default(),
+            orphan_root: Arc::default(),
+            stale_root: Arc::default(),
+            holds: Arc::default(),
+        }
     }
 
     /// A snapshot handle onto the database for a background reader.
@@ -41,6 +59,7 @@ impl OakDatabase {
     pub fn snapshot(&self) -> Self {
         Self {
             storage: self.storage.clone(),
+            file_reader: Arc::clone(&self.file_reader),
             workspace_roots: Arc::clone(&self.workspace_roots),
             library_roots: Arc::clone(&self.library_roots),
             orphan_root: Arc::clone(&self.orphan_root),
@@ -57,6 +76,12 @@ impl OakDatabase {
     }
 }
 
+impl Default for OakDatabase {
+    fn default() -> Self {
+        Self::with_file_reader(DiskFileReader)
+    }
+}
+
 #[salsa::db]
 impl salsa::Database for OakDatabase {}
 
@@ -68,6 +93,10 @@ impl std::fmt::Debug for OakDatabase {
 
 #[salsa::db]
 impl DbInputs for OakDatabase {
+    fn read_to_string(&self, path: &Utf8Path) -> io::Result<String> {
+        self.file_reader.read_to_string(path)
+    }
+
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots
