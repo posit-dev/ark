@@ -1,7 +1,7 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use oak_db::Db;
+use oak_db::SourceDb;
 use oak_ide::NavigationTarget;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types::GotoDefinitionParams;

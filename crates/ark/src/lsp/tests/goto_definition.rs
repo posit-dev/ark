@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use aether_path::FilePath;
 use assert_matches::assert_matches;
-use oak_db::Db;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::GotoDefinitionParams;

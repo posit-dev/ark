@@ -8,11 +8,11 @@ use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
-use crate::Db;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::Package;
+use crate::SourceDb;
 
 #[test]
 fn test_file_by_path_finds_workspace_script() {
