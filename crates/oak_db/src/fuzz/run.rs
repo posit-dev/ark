@@ -61,6 +61,13 @@ impl Runner {
         run_scenario(scenario, &self.artifact)
     }
 
+    /// Runs `scenario` and lets a panic propagate, which is how a fuzzing
+    /// engine learns of a crash. The artifact is written ahead of each
+    /// operation, so an abort still names the operation in flight.
+    pub fn execute(&self, scenario: &Scenario) {
+        run(scenario, &self.artifact, traced())
+    }
+
     /// Re-runs `scenario` with operation tracing, letting a panic propagate.
     pub fn replay(&self, scenario: &Scenario) {
         run(scenario, &self.artifact, true)
@@ -431,6 +438,19 @@ mod tests {
             scenario.render()
         );
         assert_eq!(content, expected);
+    }
+
+    /// A fuzzing engine detects a crash only if the panic reaches it, so
+    /// `execute()` must not swallow what `check()` deliberately catches.
+    #[test]
+    fn test_execute_lets_a_panic_propagate() {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        scenario.cold_entry = Query::Diagnostics(FileId(9));
+
+        let runner = Runner::open();
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| runner.execute(&scenario)));
+
+        assert!(outcome.is_err());
     }
 
     /// `Runner::open()` installs the panic hook itself, so `check()` must recover

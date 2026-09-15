@@ -5,12 +5,17 @@ name: "Test Oak - Fuzz"
 on:
   workflow_call:
   workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *"
 
 jobs:
   fuzz:
     runs-on: ubuntu-latest
     name: "Fuzz: oak_db query cycles"
     timeout-minutes: 20
+    # Every block runs a fixed seed, so a scheduled rerun repeats the previous
+    # one exactly. Only the `driver` job below benefits from the schedule.
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +24,10 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/oak_db/fuzz
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
@@ -30,3 +39,185 @@ jobs:
           NEXTEST_PROFILE: "ci"
         run: |
           cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_block_/)'
+
+      # Asserts the driver still builds on stable, so type-checking it needs no
+      # nightly toolchain. This is the only driver signal a pull request gets,
+      # because the `driver` job below is skipped there.
+      - name: Check Fuzz Driver
+        run: cargo check --manifest-path crates/oak_db/fuzz/Cargo.toml
+
+  driver:
+    runs-on: ubuntu-latest
+    name: "Fuzz: coverage-guided driver"
+    timeout-minutes: 60
+    env:
+      # Scheduled runs get more search time. Pushes and manual runs give
+      # quicker feedback on the current revision.
+      FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 1800 || 300 }}
+    # Too slow for pull request feedback: a cold run installs `cargo-fuzz` and
+    # builds an instrumented release tree. `Check Fuzz Driver` above covers
+    # compile drift there instead. Run `just fuzz-driver` by hand when changing
+    # the adapter, serialization, or mutation.
+    if: github.event_name != 'pull_request'
+    # One corpus writer per ref. Overlapping runs would each restore the same
+    # corpus, diverge, and save in turn, so the later save would drop the
+    # earlier run's discoveries. Cancelling instead of queueing would discard
+    # a run that is already exploring.
+    concurrency:
+      group: oak-fuzz-corpus-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nightly Toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Report Rust Toolchain
+        run: rustup show
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/oak_db/fuzz
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Record the revision and tools before execution so a failed run still
+      # leaves enough context to reproduce its environment.
+      - name: Record Provenance
+        run: |
+          {
+            echo "revision: ${{ github.sha }}"
+            echo "event: ${{ github.event_name }}"
+            echo "fuzz budget: ${FUZZ_SECONDS}s"
+            echo "rustc: $(rustc +nightly --version)"
+            echo "cargo-fuzz: $(cargo fuzz --version)"
+          } | tee "$RUNNER_TEMP/provenance.txt"
+
+      # Each attempt needs a new immutable cache key. Restore the newest corpus
+      # in the same format version, shared by scheduled and main-push runs.
+      # Bump `v1` in both keys and the restore prefix when older `Scenario` JSON
+      # can no longer be decoded.
+      - name: Restore Corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: crates/oak_db/fuzz/corpus/scenario
+          key: oak-fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: oak-fuzz-corpus-v1-
+
+      # Regenerate historical seeds on every run because `cmin` can discard
+      # their coverage-redundant inputs and replaces filenames with hashes.
+      # The Rust fixtures preserve regressions independently of the cache.
+      - name: Write Seed Corpus
+        env:
+          OAK_FUZZ_CORPUS: "fuzz/corpus/scenario"
+        run: |
+          restored=$(ls -A crates/oak_db/fuzz/corpus/scenario 2>/dev/null | wc -l)
+          cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_write_seed_corpus)'
+          seeded=$(ls -A crates/oak_db/fuzz/corpus/scenario | wc -l)
+          echo "OAK_FUZZ_RESTORED=$restored" >> "$GITHUB_ENV"
+          echo "OAK_FUZZ_SEEDED=$seeded" >> "$GITHUB_ENV"
+
+      # Build separately so step timings distinguish compilation from search.
+      - name: Build Fuzz Driver
+        working-directory: crates/oak_db/fuzz
+        run: cargo +nightly fuzz build -s none scenario
+
+      # AddressSanitizer drops the rate below 1 run per second here, likely
+      # because `stacker::maybe_grow()` switches stacks. `-s none` keeps
+      # coverage instrumentation without it.
+      #
+      # `-max_total_time` bounds the job on a runner of unknown speed, where a
+      # run count would not. `-timeout` overrides libFuzzer's 1200s default.
+      - name: Run Fuzz Driver
+        working-directory: crates/oak_db/fuzz
+        run: |
+          set -o pipefail
+          cargo +nightly fuzz run -s none scenario corpus/scenario -- \
+            -max_total_time="$FUZZ_SECONDS" -max_len=32768 -timeout=20 \
+            2>&1 | tee "$RUNNER_TEMP/explore.log"
+          grep -E "^INFO: Seed:" "$RUNNER_TEMP/explore.log" >> "$RUNNER_TEMP/provenance.txt" || true
+
+      # Preserve exploration failures before any corpus maintenance runs.
+      - name: Upload Crash Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-driver-artifacts
+          path: |
+            crates/oak_db/fuzz/artifacts/
+            target/oak_fuzz/
+            ${{ runner.temp }}/provenance.txt
+            ${{ runner.temp }}/explore.log
+          if-no-files-found: ignore
+
+      # Remove coverage-redundant inputs before caching. cargo-fuzz 0.13.2 can
+      # report a failed merge and exit 0, and libFuzzer can continue merging
+      # after an input fails, so check both the log and artifacts. This step
+      # follows a clean exploration run, so any failure artifacts are new.
+      # Repeat `-timeout` because exploration's flags do not carry into `cmin`.
+      - name: Minimize Corpus
+        id: cmin
+        working-directory: crates/oak_db/fuzz
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          cargo +nightly fuzz cmin -s none scenario corpus/scenario -- -timeout=20 \
+            2>&1 | tee "$RUNNER_TEMP/cmin.log"
+          status=0
+          if grep -q "Failed to minimize corpus" "$RUNNER_TEMP/cmin.log"; then
+            echo "::error::cmin left the corpus unminimized"
+            status=1
+          fi
+          if [ -n "$(ls -A artifacts/scenario 2>/dev/null)" ]; then
+            echo "::error::the merge found a crashing input"
+            status=1
+          fi
+          exit $status
+
+      - name: Upload Minimization Artifacts
+        if: failure() && steps.cmin.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-cmin-artifacts
+          path: |
+            crates/oak_db/fuzz/artifacts/
+            target/oak_fuzz/
+            ${{ runner.temp }}/provenance.txt
+            ${{ runner.temp }}/explore.log
+            ${{ runner.temp }}/cmin.log
+          if-no-files-found: ignore
+
+      # Publish only after exploration and minimization both pass.
+      - name: Save Corpus
+        uses: actions/cache/save@v4
+        with:
+          path: crates/oak_db/fuzz/corpus/scenario
+          key: oak-fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Keep corpus counts and final coverage visible without opening the logs.
+      - name: Summarize Campaign
+        if: always()
+        run: |
+          {
+            echo "### Fuzz campaign"
+            echo
+            echo "| stage | corpus entries |"
+            echo "| --- | --- |"
+            echo "| restored from cache | ${OAK_FUZZ_RESTORED:-0} |"
+            echo "| after reseeding | ${OAK_FUZZ_SEEDED:-0} |"
+            echo "| after minimization | $(ls -A crates/oak_db/fuzz/corpus/scenario 2>/dev/null | wc -l) |"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/provenance.txt" 2>/dev/null
+            grep -E "DONE|Done .* runs" "$RUNNER_TEMP/explore.log" 2>/dev/null | tail -2
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

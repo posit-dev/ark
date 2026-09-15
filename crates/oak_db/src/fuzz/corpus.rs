@@ -41,6 +41,10 @@ pub fn corpus() -> Vec<Case> {
             scenario: package_cold_entry_reaches_cross_file_layers_recovery(),
         },
         Case {
+            name: "package_edit_revalidates_cross_file_layers_recovery",
+            scenario: package_edit_revalidates_cross_file_layers_recovery(),
+        },
+        Case {
             name: "same_file_shadow_suppresses_the_edge",
             scenario: same_file_shadow_suppresses_the_edge(),
         },
@@ -112,6 +116,20 @@ fn package_cold_entry_reaches_cross_file_layers_recovery() -> Scenario {
         Query::CrossFileLayers(FileId(1), CollationView::Eager),
         vec![],
     )
+}
+
+/// The cold entry memoizes `cross_file_layers()`, so the edit makes the cycle
+/// arise while Salsa revalidates that memo rather than while computing it.
+fn package_edit_revalidates_cross_file_layers_recovery() -> Scenario {
+    let initial = package("mypkg", &["base", "pkga"], vec![
+        ("R/a.R", program(vec![])),
+        ("R/b.R", program(vec![library("pkga")])),
+    ]);
+    let ops = vec![
+        replace(FileId(0), program(vec![source("R/b.R")])),
+        query(Query::CrossFileLayers(FileId(1), CollationView::Eager)),
+    ];
+    scenario(initial, Query::Imports(FileId(1)), ops)
 }
 
 fn same_file_shadow_suppresses_the_edge() -> Scenario {
@@ -254,6 +272,10 @@ fn scenario(initial: WorkspaceSpec, cold_entry: Query, ops: Vec<Op>) -> Scenario
 
 fn replace(file: FileId, program: Program) -> Op {
     Op::Edit(Edit { file, program })
+}
+
+fn query(query: Query) -> Op {
+    Op::Query(query)
 }
 
 #[cfg(test)]

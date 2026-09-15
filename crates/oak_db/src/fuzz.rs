@@ -1,7 +1,11 @@
 //! Exercises Salsa queries across mutated workspaces and edit histories.
 //!
 //! Each selected query must complete without panicking or hanging. Recovery
-//! firings provide context but do not identify Salsa's repeated key.
+//! firings provide context but do not identify Salsa's repeated key. The generic
+//! runner does not compare query results with expected values.
+//!
+//! See `crates/oak_db/fuzz/README.md` for commands, CI budgets, corpus
+//! maintenance, and failure replay. This module describes query coverage.
 //!
 //! [`seed_corpus()`] supplies fixed starting scenarios, and [`ScenarioMutator`]
 //! mutates them. The test suite replays shrunken failures so the trace, panic
