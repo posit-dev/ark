@@ -6,6 +6,7 @@ mod file;
 mod file_diagnostics;
 mod file_exports;
 mod file_imports;
+mod file_reader;
 mod file_resolve;
 mod file_revision;
 mod file_source_site;
