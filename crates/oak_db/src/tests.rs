@@ -1,4 +1,5 @@
 mod contrib;
+mod cycle_results;
 mod db;
 mod diagnostic_render;
 mod file;
