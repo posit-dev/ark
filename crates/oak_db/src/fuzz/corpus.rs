@@ -19,7 +19,12 @@ use crate::fuzz::scenario::Scenario;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
 use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::PackageId;
+use crate::fuzz::spec::PackageKind;
+use crate::fuzz::spec::PackageSpec;
+use crate::fuzz::spec::Reexport;
 use crate::fuzz::spec::WorkspaceSpec;
+use crate::NamespaceVisibility;
 
 pub struct Case {
     pub name: &'static str,
@@ -71,6 +76,34 @@ pub fn corpus() -> Vec<Case> {
         Case {
             name: "file_or_dir_source_at_a_file",
             scenario: file_or_dir_source_at_a_file(),
+        },
+        Case {
+            name: "acyclic_reexport_chain_resolves_to_the_definition",
+            scenario: acyclic_reexport_chain_resolves_to_the_definition(),
+        },
+        Case {
+            name: "mutual_reexport_has_no_terminal_definition",
+            scenario: mutual_reexport_has_no_terminal_definition(),
+        },
+        Case {
+            name: "reexport_chain_terminates_at_a_local_export",
+            scenario: reexport_chain_terminates_at_a_local_export(),
+        },
+        Case {
+            name: "attached_package_consumer_resolves_a_reexport",
+            scenario: attached_package_consumer_resolves_a_reexport(),
+        },
+        Case {
+            name: "attached_package_consumer_degrades_on_a_reexport_cycle",
+            scenario: attached_package_consumer_degrades_on_a_reexport_cycle(),
+        },
+        Case {
+            name: "namespace_import_layer_consumer_resolves_a_reexport",
+            scenario: namespace_import_layer_consumer_resolves_a_reexport(),
+        },
+        Case {
+            name: "package_export_shadows_the_source_effect",
+            scenario: package_export_shadows_the_source_effect(),
         },
     ]
 }
@@ -168,7 +201,7 @@ fn source_after_bindings() -> Scenario {
 fn library_in_function_body() -> Scenario {
     let initial = WorkspaceSpec {
         installed: vec!["base".to_string(), "pkga".to_string()],
-        package: None,
+        packages: vec![],
         files: file_specs(Owner::Script, vec![(
             "a.R",
             program(vec![
@@ -228,6 +261,199 @@ fn file_or_dir_source_at_a_file() -> Scenario {
     scenario(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
+/// `pkga` has no local definition, so resolution follows its import to `pkgb`.
+fn acyclic_reexport_chain_resolves_to_the_definition() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec!["base".to_string()],
+        packages: vec![
+            package_spec("pkga", PackageKind::Workspace, &["exp_a"], &[(
+                "exp_a", "pkgb",
+            )]),
+            package_spec("pkgb", PackageKind::Workspace, &["exp_a"], &[]),
+        ],
+        files: file_specs(Owner::Package(PackageId(1)), vec![(
+            "R/a.R",
+            program(vec![function_def("exp_a", vec![])]),
+        )]),
+    };
+    scenario(
+        initial,
+        Query::PackageResolve(
+            PackageId(0),
+            "exp_a".to_string(),
+            NamespaceVisibility::Exported,
+        ),
+        vec![],
+    )
+}
+
+/// Neither package defines `exp_a` locally. Following their mutual re-exports
+/// re-enters `Package::resolve()` with the same key.
+fn mutual_reexport_has_no_terminal_definition() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec![],
+        packages: vec![
+            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "lib1",
+            )]),
+            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "lib0",
+            )]),
+        ],
+        // Library packages own no files. A lone script keeps the workspace
+        // non-empty so `validate()` accepts the scenario.
+        files: file_specs(Owner::Script, vec![(
+            "a.R",
+            program(vec![binding("val_a")]),
+        )]),
+    };
+    scenario(
+        initial,
+        Query::PackageResolve(
+            PackageId(0),
+            "exp_a".to_string(),
+            NamespaceVisibility::Exported,
+        ),
+        vec![],
+    )
+}
+
+/// `lib0` re-exports from `lib1`, which re-exports from the workspace package
+/// `pkgw`, which defines `exp_a` locally. Separates chain depth (two hops
+/// through metadata-only packages) from the mutual-cycle case.
+fn reexport_chain_terminates_at_a_local_export() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec![],
+        packages: vec![
+            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "lib1",
+            )]),
+            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "pkgw",
+            )]),
+            package_spec("pkgw", PackageKind::Workspace, &["exp_a"], &[]),
+        ],
+        files: file_specs(Owner::Package(PackageId(2)), vec![(
+            "R/a.R",
+            program(vec![function_def("exp_a", vec![])]),
+        )]),
+    };
+    scenario(
+        initial,
+        Query::PackageResolve(
+            PackageId(0),
+            "exp_a".to_string(),
+            NamespaceVisibility::Exported,
+        ),
+        vec![],
+    )
+}
+
+/// A script attaches `lib0`, which re-exports `exp_a` from the workspace
+/// package `pkgw`. `File::resolve()` reaches `Package::resolve()` through the
+/// attach's `ImportLayer::Package`, not through a direct `PackageResolve` entry.
+fn attached_package_consumer_resolves_a_reexport() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec!["base".to_string()],
+        packages: vec![
+            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "pkgw",
+            )]),
+            package_spec("pkgw", PackageKind::Workspace, &["exp_a"], &[]),
+        ],
+        files: {
+            let mut files = file_specs(Owner::Package(PackageId(1)), vec![(
+                "R/a.R",
+                program(vec![function_def("exp_a", vec![])]),
+            )]);
+            files.extend(file_specs(Owner::Script, vec![(
+                "a.R",
+                program(vec![library("lib0")]),
+            )]));
+            files
+        },
+    };
+    scenario(
+        initial,
+        Query::Resolve(FileId(1), "exp_a".to_string()),
+        vec![],
+    )
+}
+
+/// The attaching script enters the mutual re-export cycle through file
+/// resolution, exercising recovery from a consumer request.
+fn attached_package_consumer_degrades_on_a_reexport_cycle() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec!["base".to_string()],
+        packages: vec![
+            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "lib1",
+            )]),
+            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
+                "exp_a", "lib0",
+            )]),
+        ],
+        files: file_specs(Owner::Script, vec![("a.R", program(vec![library("lib0")]))]),
+    };
+    scenario(
+        initial,
+        Query::Resolve(FileId(0), "exp_a".to_string()),
+        vec![],
+    )
+}
+
+/// `pkgc`'s own NAMESPACE carries `importFrom(pkgd, exp_a)` with no matching
+/// `export()`, so a file inside `pkgc` sees `exp_a` through
+/// `ImportLayer::From`, the collation-wide re-export layer, rather than
+/// through an attach.
+fn namespace_import_layer_consumer_resolves_a_reexport() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec!["base".to_string()],
+        packages: vec![
+            package_spec("pkgc", PackageKind::Workspace, &[], &[("exp_a", "pkgd")]),
+            package_spec("pkgd", PackageKind::Workspace, &["exp_a"], &[]),
+        ],
+        files: {
+            let mut files = file_specs(Owner::Package(PackageId(0)), vec![(
+                "R/a.R",
+                program(vec![binding("val_c")]),
+            )]);
+            files.extend(file_specs(Owner::Package(PackageId(1)), vec![(
+                "R/a.R",
+                program(vec![function_def("exp_a", vec![])]),
+            )]));
+            files
+        },
+    };
+    scenario(
+        initial,
+        Query::Resolve(FileId(0), "exp_a".to_string()),
+        vec![],
+    )
+}
+
+/// `lib0` exports `source`, so attaching it binds `source` as a plain export
+/// (no registered effect) that shadows `base`'s `source()` effect through
+/// `package_binding()`, before the search reaches `base`.
+fn package_export_shadows_the_source_effect() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec!["base".to_string()],
+        packages: vec![package_spec("lib0", PackageKind::Library, &["source"], &[])],
+        files: {
+            let mut files = file_specs(Owner::Script, vec![(
+                "a.R",
+                program(vec![library("lib0"), source("b.R")]),
+            )]);
+            files.extend(file_specs(Owner::Script, vec![(
+                "b.R",
+                program(vec![binding("val_b")]),
+            )]));
+            files
+        },
+    };
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
 fn program(statements: Vec<Stmt>) -> Program {
     Program { statements }
 }
@@ -236,7 +462,7 @@ fn program(statements: Vec<Stmt>) -> Program {
 fn scripts(files: Vec<(&str, Program)>) -> WorkspaceSpec {
     WorkspaceSpec {
         installed: vec!["base".to_string()],
-        package: None,
+        packages: vec![],
         files: file_specs(Owner::Script, files),
     }
 }
@@ -244,8 +470,32 @@ fn scripts(files: Vec<(&str, Program)>) -> WorkspaceSpec {
 fn package(name: &str, installed: &[&str], files: Vec<(&str, Program)>) -> WorkspaceSpec {
     WorkspaceSpec {
         installed: installed.iter().map(|name| name.to_string()).collect(),
-        package: Some(name.to_string()),
-        files: file_specs(Owner::Package, files),
+        packages: vec![empty_package(name)],
+        files: file_specs(Owner::Package(PackageId(0)), files),
+    }
+}
+
+fn empty_package(name: &str) -> PackageSpec {
+    package_spec(name, PackageKind::Workspace, &[], &[])
+}
+
+fn package_spec(
+    name: &str,
+    kind: PackageKind,
+    exports: &[&str],
+    reexports: &[(&str, &str)],
+) -> PackageSpec {
+    PackageSpec {
+        name: name.to_string(),
+        kind,
+        exports: exports.iter().map(|export| export.to_string()).collect(),
+        reexports: reexports
+            .iter()
+            .map(|(name, from)| Reexport {
+                name: name.to_string(),
+                from: from.to_string(),
+            })
+            .collect(),
     }
 }
 

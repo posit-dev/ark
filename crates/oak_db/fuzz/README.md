@@ -8,6 +8,8 @@ The generic runner requires every scenario to finish without panicking or hangin
 
 Recovery logs identify which handlers ran, but not which query was Salsa's repeated key. That key depends on query entry order. Focused regression tests assert particular recovery firings and semantic behavior separately from the mutated scenarios.
 
+Workspaces can also model packages: a `Workspace`-kind package owns its own root and files, and a `Library`-kind package sits in the library root with a synthetic NAMESPACE but no files. Mutation grows and shrinks their exports and `importFrom` re-exports, so a scenario can chain packages into an acyclic lookup, a mutual re-export cycle that drives `Package::resolve()`'s `cycle_result` handler, or a consumer path through a `library()` attach or a package's own re-exports. Library packages never own files, so a chain can only terminate at a local definition through a `Workspace`-kind package.
+
 ## Prerequisites
 
 ``` sh
@@ -78,9 +80,9 @@ Scheduled runs skip the ordinary blocks because their fixed seeds repeat the sam
 
 ## Corpus cache
 
-Each driver run restores the previous corpus, adds the current seeds, explores, minimizes, and saves. Cache keys are `oak-fuzz-corpus-v1-<run id>-<run attempt>`, restored with the `oak-fuzz-corpus-v1-` prefix.
+Each driver run restores the previous corpus, adds the current seeds, explores, minimizes, and saves. Cache keys are `oak-fuzz-corpus-v2-<run id>-<run attempt>`, restored with the `oak-fuzz-corpus-v2-` prefix.
 
-- Bump `v1` in both keys and the restore prefix when older `Scenario` JSON can no longer be decoded.
+- Bump the version in both keys and the restore prefix when the seed shape changes enough that the accumulated corpus is worth rebuilding, not only when old `Scenario` JSON stops decoding. The legacy JSON adapter keeps older saved inputs replayable regardless.
 - Reset exploration by bumping the version or deleting the caches. Regression seeds are regenerated on every run, including after cache eviction or `cmin`.
 - A concurrency group permits one writer per ref, so overlapping runs do not independently extend the same corpus and discard each other's discoveries.
 - Runs on other refs can restore the default branch's cache but save in their own cache scope. They do not update the main branch's corpus.

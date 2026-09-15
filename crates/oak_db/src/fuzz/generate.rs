@@ -19,15 +19,23 @@ use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
 use crate::fuzz::choose::binding_name;
 use crate::fuzz::choose::cold_entries;
+use crate::fuzz::choose::export_name;
 use crate::fuzz::choose::random_query;
+use crate::fuzz::choose::Shape;
 use crate::fuzz::mutate::MAX_FILES;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
 use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::PackageId;
+use crate::fuzz::spec::PackageKind;
+use crate::fuzz::spec::PackageSpec;
+use crate::fuzz::spec::Reexport;
 use crate::fuzz::spec::WorkspaceSpec;
+use crate::NamespaceVisibility;
 
 const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
 
@@ -37,16 +45,29 @@ pub(super) const EFFECT_PACKAGES: [&str; 4] = ["S7", "magrittr", "shiny", "targe
 
 pub(super) const UNINSTALLED: &str = "pkgz";
 
+/// Name of the draft's single workspace package, when `owner` is
+/// `Owner::Package`.
+const WORKSPACE_PACKAGE: &str = "mypkg";
+
+/// Names of the two `Library` packages [`reexport_layer()`] chains together.
+const REEXPORT_LIBS: [&str; 2] = ["lib0", "lib1"];
+
 pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut scenarios = Vec::new();
 
-    for motif in MOTIFS {
-        let mut draft = Draft::new(motif, &mut rng);
+    for (index, motif) in MOTIFS.into_iter().enumerate() {
+        let layer = PACKAGE_LAYERS[index % PACKAGE_LAYERS.len()];
+        let mut draft = Draft::new(motif, layer, &mut rng);
         let initial = draft.spec();
         let ops = draft.history(&mut rng);
 
-        for cold_entry in cold_entries(&mut rng, initial.files.len()) {
+        // Pair the chain with a matching entry so package recovery coverage
+        // does not depend on random query selection.
+        let mut entries = cold_entries(&mut rng, &Shape::of(&initial));
+        entries.extend(draft.package_entry.clone());
+
+        for cold_entry in entries {
             scenarios.push(Scenario {
                 seed,
                 variant: scenarios.len(),
@@ -59,6 +80,30 @@ pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
 
     scenarios
 }
+
+/// Whether a draft models re-export packages, and how its chain ends. Assigned
+/// by motif position rather than drawn, so every seed corpus contains each one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PackageLayer {
+    /// No re-export layer. Any workspace package has an empty namespace.
+    Bare,
+    /// `lib0` re-exports the name from `lib1`, which exports but never binds
+    /// it. Acyclic, and resolves to nothing.
+    Chain,
+    /// `lib0` and `lib1` re-export the name from each other, so
+    /// `Package::resolve()` revisits its own key.
+    Cycle,
+    /// The chain ends at the workspace package, which binds and exports the
+    /// name in one of its files.
+    Local,
+}
+
+const PACKAGE_LAYERS: [PackageLayer; 4] = [
+    PackageLayer::Bare,
+    PackageLayer::Chain,
+    PackageLayer::Cycle,
+    PackageLayer::Local,
+];
 
 /// Shape of the `source()` graph. `Overlapping` has two cycles through file 0,
 /// so dropping one edge can leave the other intact.
@@ -114,9 +159,11 @@ impl Motif {
 
 struct Draft {
     installed: Vec<String>,
-    package: Option<String>,
+    packages: Vec<PackageSpec>,
     owner: Owner,
     files: Vec<FileDraft>,
+    /// Enters the re-export chain this draft built, `None` without one.
+    package_entry: Option<Query>,
 }
 
 struct FileDraft {
@@ -136,17 +183,20 @@ struct FileParts {
     shadow: Option<&'static str>,
     /// Supplies an identifier in deferred collation for offset-keyed queries.
     deferred: Option<String>,
+    /// Supplies the local definition at the end of a re-export chain.
+    local_export: Option<String>,
 }
 
 impl Draft {
-    fn new(motif: Motif, rng: &mut StdRng) -> Self {
+    fn new(motif: Motif, layer: PackageLayer, rng: &mut StdRng) -> Self {
         let count = rng.random_range(motif.min_files()..=MAX_FILES);
         let edges = motif.edges(count);
 
-        let owner = if rng.random_bool(0.5) {
-            Owner::Script
+        // `Local` terminates at the workspace package, so it needs one.
+        let owner = if layer == PackageLayer::Local || rng.random_bool(0.5) {
+            Owner::Package(PackageId(0))
         } else {
-            Owner::Package
+            Owner::Script
         };
 
         let mut installed = vec!["base".to_string()];
@@ -168,9 +218,24 @@ impl Draft {
             });
         }
 
+        let (workspace_package, reexport_libs) = reexport_layer(rng, layer, &mut parts);
+        let mut packages = Vec::new();
+        match owner {
+            Owner::Package(_) => {
+                packages.push(workspace_package.unwrap_or_else(|| empty_package(WORKSPACE_PACKAGE)))
+            },
+            Owner::Script => {},
+        }
+        packages.extend(reexport_libs);
+
+        let attachable_names: Vec<String> = installed
+            .iter()
+            .cloned()
+            .chain(packages.iter().map(|package| package.name.clone()))
+            .collect();
         for part in &mut parts {
             if rng.random_bool(0.5) {
-                part.attaches.push(attachable(rng, &installed));
+                part.attaches.push(attachable(rng, &attachable_names));
             }
             if rng.random_bool(0.4) {
                 part.deferred = Some(binding_name(rng.random_range(0..count)));
@@ -193,11 +258,9 @@ impl Draft {
         }
 
         Self {
+            package_entry: package_entry(layer, owner),
             installed,
-            package: match owner {
-                Owner::Script => None,
-                Owner::Package => Some("mypkg".to_string()),
-            },
+            packages,
             owner,
             files,
         }
@@ -206,7 +269,7 @@ impl Draft {
     fn spec(&self) -> WorkspaceSpec {
         WorkspaceSpec {
             installed: self.installed.clone(),
-            package: self.package.clone(),
+            packages: self.packages.clone(),
             files: self
                 .files
                 .iter()
@@ -221,16 +284,18 @@ impl Draft {
 
     fn history(&mut self, rng: &mut StdRng) -> Vec<Op> {
         let mut ops = Vec::new();
-        let files = self.files.len();
+        // Edits change programs, never the file or package lists the queries
+        // draw from, so one shape serves the whole history.
+        let shape = Shape::of(&self.spec());
 
         for _ in 0..rng.random_range(1..=3) {
-            ops.push(Op::Query(random_query(rng, files)));
+            ops.push(Op::Query(random_query(rng, &shape)));
             if rng.random_bool(0.3) {
                 ops.push(self.touch(rng));
-                ops.push(Op::Query(random_query(rng, files)));
+                ops.push(Op::Query(random_query(rng, &shape)));
             }
             ops.push(self.toggle_edge(rng));
-            ops.push(Op::Query(random_query(rng, files)));
+            ops.push(Op::Query(random_query(rng, &shape)));
         }
 
         ops
@@ -306,6 +371,7 @@ impl FileParts {
             sources: Vec::new(),
             shadow: None,
             deferred: None,
+            local_export: None,
         }
     }
 
@@ -327,6 +393,9 @@ impl FileParts {
             });
         }
         statements.push(binding(&binding_name(index)));
+        if let Some(name) = &self.local_export {
+            statements.push(function_def(name, vec![]));
+        }
         if let Some(name) = &self.deferred {
             statements.push(function_def("read", vec![Stmt::use_of(name)]));
         }
@@ -338,11 +407,92 @@ impl FileParts {
     }
 }
 
+/// The chain always starts at `lib0`, which sits after the workspace package
+/// when the draft has one.
+fn package_entry(layer: PackageLayer, owner: Owner) -> Option<Query> {
+    if layer == PackageLayer::Bare {
+        return None;
+    }
+    let lib0 = match owner {
+        Owner::Package(_) => 1,
+        Owner::Script => 0,
+    };
+    Some(Query::PackageResolve(
+        PackageId(lib0),
+        export_name(0),
+        NamespaceVisibility::Exported,
+    ))
+}
+
+fn empty_package(name: &str) -> PackageSpec {
+    PackageSpec {
+        name: name.to_string(),
+        kind: PackageKind::Workspace,
+        exports: Vec::new(),
+        reexports: Vec::new(),
+    }
+}
+
+/// Supplies re-export edges for mutation. A locally terminating chain also
+/// needs a workspace package and a definition in one of its files.
+fn reexport_layer(
+    rng: &mut StdRng,
+    layer: PackageLayer,
+    parts: &mut [FileParts],
+) -> (Option<PackageSpec>, Vec<PackageSpec>) {
+    if layer == PackageLayer::Bare {
+        return (None, Vec::new());
+    }
+
+    let name = export_name(0);
+    let lib0 = PackageSpec {
+        name: REEXPORT_LIBS[0].to_string(),
+        kind: PackageKind::Library,
+        exports: vec![name.clone()],
+        reexports: vec![Reexport {
+            name: name.clone(),
+            from: REEXPORT_LIBS[1].to_string(),
+        }],
+    };
+    let mut lib1 = PackageSpec {
+        name: REEXPORT_LIBS[1].to_string(),
+        kind: PackageKind::Library,
+        exports: vec![name.clone()],
+        reexports: Vec::new(),
+    };
+
+    let workspace_package = match layer {
+        // `lib1` exports the name but re-exports nothing further, so the chain
+        // dead-ends without closing a cycle.
+        PackageLayer::Bare | PackageLayer::Chain => None,
+        PackageLayer::Cycle => {
+            lib1.reexports.push(Reexport {
+                name: name.clone(),
+                from: REEXPORT_LIBS[0].to_string(),
+            });
+            None
+        },
+        PackageLayer::Local => {
+            lib1.reexports.push(Reexport {
+                name: name.clone(),
+                from: WORKSPACE_PACKAGE.to_string(),
+            });
+            let index = rng.random_range(0..parts.len());
+            parts[index].local_export = Some(name.clone());
+            let mut package = empty_package(WORKSPACE_PACKAGE);
+            package.exports.push(name);
+            Some(package)
+        },
+    };
+
+    (workspace_package, vec![lib0, lib1])
+}
+
 pub(super) fn file_path(owner: Owner, index: usize) -> String {
     let name = (b'a' + index as u8) as char;
     match owner {
         Owner::Script => format!("{name}.R"),
-        Owner::Package => format!("R/{name}.R"),
+        Owner::Package(_) => format!("R/{name}.R"),
     }
 }
 

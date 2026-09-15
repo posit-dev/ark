@@ -104,14 +104,15 @@ jobs:
 
       # Each attempt needs a new immutable cache key. Restore the newest corpus
       # in the same format version, shared by scheduled and main-push runs.
-      # Bump `v1` in both keys and the restore prefix when older `Scenario` JSON
-      # can no longer be decoded.
+      # Bump both keys and the restore prefix to reset accumulated exploration.
+      # Cache resets are independent of saved-input compatibility, which the
+      # legacy decoder preserves for the single-package format.
       - name: Restore Corpus
         uses: actions/cache/restore@v4
         with:
           path: crates/oak_db/fuzz/corpus/scenario
-          key: oak-fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: oak-fuzz-corpus-v1-
+          key: oak-fuzz-corpus-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: oak-fuzz-corpus-v2-
 
       # Regenerate historical seeds on every run because `cmin` can discard
       # their coverage-redundant inputs and replaces filenames with hashes.
@@ -201,7 +202,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: crates/oak_db/fuzz/corpus/scenario
-          key: oak-fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          key: oak-fuzz-corpus-v2-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Keep corpus counts and final coverage visible without opening the logs.
       - name: Summarize Campaign
