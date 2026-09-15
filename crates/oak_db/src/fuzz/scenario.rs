@@ -104,6 +104,15 @@ impl Scenario {
     pub fn validate(&self) -> anyhow::Result<()> {
         let file_count = self.initial.files.len();
 
+        // `choose::random_file()` assumes a positive file count and
+        // `mutate::add_file()` copies the first file's owner, so mutation can
+        // neither target nor populate an empty workspace.
+        if file_count == 0 {
+            return Err(anyhow!("the workspace has no files"));
+        }
+
+        crate::fuzz::mutate::within_bounds(self)?;
+
         validate_file_id(self.cold_entry.file(), file_count, "cold_entry")?;
         for (index, op) in self.ops.iter().enumerate() {
             validate_file_id(op.file(), file_count, &format!("op {index}"))?;
@@ -252,6 +261,7 @@ mod tests {
     use oak_semantic::fuzz::Invocation;
     use oak_semantic::fuzz::Stmt;
 
+    use super::Edit;
     use super::FileId;
     use super::Op;
     use super::Owner;
@@ -259,6 +269,8 @@ mod tests {
     use super::Query;
     use super::Scenario;
     use super::WorkspaceSpec;
+    use crate::fuzz::build::binding;
+    use crate::fuzz::build::function_def;
     use crate::fuzz::build::source;
     use crate::fuzz::corpus;
     use crate::fuzz::corpus::corpus;
@@ -333,20 +345,89 @@ mod tests {
 
     #[test]
     fn test_out_of_range_cold_entry_is_rejected() {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        scenario.cold_entry = Query::Diagnostics(FileId(2));
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cold_entry references file 2 but the workspace has 2 files"
+        );
+    }
+
+    #[test]
+    fn test_oversized_workspace_is_rejected() {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let file = scenario.initial.files[1].clone();
+        while scenario.initial.files.len() <= 5 {
+            scenario.initial.files.push(file.clone());
+        }
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the workspace has 6 files but mutation produces at most 5"
+        );
+    }
+
+    /// Replacement programs need the same bounds as initial files because the
+    /// runner renders and installs them after the cold query.
+    #[test]
+    fn test_oversized_edit_replacement_is_rejected() {
+        let deep = function_def("outer", vec![function_def("middle", vec![function_def(
+            "inner",
+            vec![binding("val")],
+        )])]);
+        let wide = Program {
+            statements: (0..200)
+                .map(|index| binding(&format!("val_{index}")))
+                .collect(),
+        };
+
+        let mut nested = corpus::case("acyclic_pair_closes_then_reopens");
+        nested.ops.push(Op::Edit(Edit {
+            file: FileId(0),
+            program: Program {
+                statements: vec![deep],
+            },
+        }));
+        let error = nested.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "op 2 nests 4 levels but mutation produces at most 3"
+        );
+
+        let mut widened = corpus::case("acyclic_pair_closes_then_reopens");
+        widened.ops.push(Op::Edit(Edit {
+            file: FileId(0),
+            program: wide,
+        }));
+        let error = widened.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "op 2 has 200 statements, over the 28 ceiling"
+        );
+    }
+
+    /// A file-less workspace passes the file-id checks when every operation is
+    /// an aggregate query, but mutation then draws file 0 and indexes nothing.
+    #[test]
+    fn test_empty_workspace_is_rejected() {
         let scenario = Scenario {
             seed: 0,
             variant: 0,
             initial: WorkspaceSpec {
-                installed: vec![],
+                installed: vec!["base".to_string()],
                 package: None,
                 files: vec![],
             },
-            cold_entry: Query::Diagnostics(FileId(0)),
+            cold_entry: Query::AllPackageDependencies,
             ops: vec![],
         };
 
         let json = scenario.to_json().unwrap();
-        assert!(Scenario::from_json(json.as_bytes()).is_err());
+        let error = Scenario::from_json(json.as_bytes()).unwrap_err();
+        assert_eq!(error.to_string(), "the workspace has no files");
     }
 
     #[test]

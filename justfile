@@ -24,6 +24,23 @@ fuzz:
 fuzz-seed SEED:
   OAK_FUZZ_SEED={{SEED}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_block)'
 
+# Write the deterministic seed corpus to disk for the cargo-fuzz driver
+fuzz-corpus:
+  OAK_FUZZ_CORPUS=fuzz/corpus/scenario cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_write_seed_corpus)'
+
+# Replay one saved scenario, with operation tracing.
+# `PATH` is relative to the repository root, while the test runs in `crates/oak_db`.
+fuzz-replay PATH:
+  OAK_FUZZ_SCENARIO={{quote(absolute_path(PATH))}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_scenario)'
+
+# Run coverage-guided fuzzing without AddressSanitizer.
+# ASan completes fewer than 50 runs in five minutes here, versus about 500 per
+# second without it, likely because `stacker::maybe_grow()` switches stacks.
+# `-s none` disables ASan but retains coverage instrumentation.
+# `-timeout` overrides libFuzzer's 1200s default.
+fuzz-driver: fuzz-corpus
+  cd crates/oak_db/fuzz && cargo +nightly fuzz run -s none scenario corpus/scenario -- -runs=100000 -max_len=32768 -timeout=20
+
 # Run clippy
 clippy:
   cargo clippy --workspace --all-targets --all-features -- -D warnings

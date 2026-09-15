@@ -58,6 +58,61 @@ const MAX_OPS: usize = 16;
 /// cannot detect. The statement that crosses the line still lands.
 const MAX_TEXT: usize = 2_000;
 
+/// Allow decoded programs to exceed the mutation threshold by a bounded margin.
+/// A compound insertion can cross [`MAX_STATEMENTS`] in one step.
+const CEILING_STATEMENTS: usize = 2 * MAX_STATEMENTS;
+
+/// Limit rendered bytes while allowing an insertion to overshoot [`MAX_TEXT`].
+const CEILING_TEXT: usize = 2 * MAX_TEXT;
+
+/// Apply the same limits to initial programs and [`Op::Edit`] replacements.
+/// Statement and text ceilings allow overshoot of the mutation thresholds.
+pub(super) fn within_bounds(scenario: &Scenario) -> anyhow::Result<()> {
+    let files = scenario.initial.files.len();
+    if files > MAX_FILES {
+        return Err(anyhow::anyhow!(
+            "the workspace has {files} files but mutation produces at most {MAX_FILES}"
+        ));
+    }
+
+    let ops = scenario.ops.len();
+    if ops > MAX_OPS {
+        return Err(anyhow::anyhow!(
+            "the history has {ops} operations but mutation produces at most {MAX_OPS}"
+        ));
+    }
+
+    for (site, program) in sited_programs(scenario) {
+        for stmt in &program.statements {
+            let depth = height(stmt);
+            if depth > MAX_DEPTH {
+                return Err(anyhow::anyhow!(
+                    "{} nests {depth} levels but mutation produces at most {MAX_DEPTH}",
+                    site.render()
+                ));
+            }
+        }
+
+        let statements = count_statements(&program.statements);
+        if statements > CEILING_STATEMENTS {
+            return Err(anyhow::anyhow!(
+                "{} has {statements} statements, over the {CEILING_STATEMENTS} ceiling",
+                site.render()
+            ));
+        }
+
+        let width = program.render().text.len();
+        if width > CEILING_TEXT {
+            return Err(anyhow::anyhow!(
+                "{} renders {width} bytes, over the {CEILING_TEXT} ceiling",
+                site.render()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub struct ScenarioMutator;
 
 impl Mutate<Scenario> for ScenarioMutator {
@@ -617,16 +672,48 @@ struct Slot {
 
 /// Include programs from the initial workspace and every edit replacement.
 fn programs(scenario: &Scenario) -> Vec<&Program> {
-    let mut out: Vec<&Program> = scenario
+    sited_programs(scenario)
+        .into_iter()
+        .map(|(_, program)| program)
+        .collect()
+}
+
+/// Match the file and operation labels in the artifact when reporting a
+/// rejected program.
+enum ProgramSite {
+    File(usize),
+    Op(usize),
+}
+
+impl ProgramSite {
+    fn render(&self) -> String {
+        match self {
+            ProgramSite::File(index) => format!("file [{index}]"),
+            ProgramSite::Op(index) => format!("op {index}"),
+        }
+    }
+}
+
+/// Share the traversal between validation and mutation so both include edit
+/// replacements in the same order.
+fn sited_programs(scenario: &Scenario) -> Vec<(ProgramSite, &Program)> {
+    let mut out: Vec<(ProgramSite, &Program)> = scenario
         .initial
         .files
         .iter()
-        .map(|file| &file.program)
+        .enumerate()
+        .map(|(index, file)| (ProgramSite::File(index), &file.program))
         .collect();
-    out.extend(scenario.ops.iter().filter_map(|op| match op {
-        Op::Edit(edit) => Some(&edit.program),
-        Op::Query(_) => None,
-    }));
+    out.extend(
+        scenario
+            .ops
+            .iter()
+            .enumerate()
+            .filter_map(|(index, op)| match op {
+                Op::Edit(edit) => Some((ProgramSite::Op(index), &edit.program)),
+                Op::Query(_) => None,
+            }),
+    );
     out
 }
 
@@ -975,5 +1062,40 @@ mod tests {
 
         Step::RemoveSourceEdge.apply(&mut rng, &mut scenario);
         assert_eq!(slots_where(&scenario, is_source).len(), edges);
+    }
+
+    /// Check that repeated mutations keep initial and replacement programs
+    /// within the limits imposed on decoded scenarios.
+    #[test]
+    fn test_mutation_respects_declared_bounds() {
+        use mutatis::Session;
+
+        use crate::fuzz::seed_corpus;
+
+        let mut session = Session::new().seed(0);
+        let mut corpus = seed_corpus(0);
+
+        for round in 0..20_000 {
+            let entry = round % corpus.len();
+            if session
+                .mutate_with(&mut ScenarioMutator, &mut corpus[entry])
+                .is_err()
+            {
+                continue;
+            }
+
+            let scenario = &corpus[entry];
+            assert!(scenario.initial.files.len() <= MAX_FILES);
+            assert!(scenario.ops.len() <= MAX_OPS);
+            for program in programs(scenario) {
+                assert!(count_statements(&program.statements) <= CEILING_STATEMENTS);
+                assert!(program.render().text.len() <= CEILING_TEXT);
+                for stmt in &program.statements {
+                    assert!(height(stmt) <= MAX_DEPTH);
+                }
+            }
+
+            assert!(within_bounds(scenario).is_ok());
+        }
     }
 }
