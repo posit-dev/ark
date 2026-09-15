@@ -11,6 +11,9 @@
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
 
+use std::collections::HashMap;
+use std::collections::HashSet;
+
 use mutatis::check::Check;
 use mutatis::check::CheckError;
 use mutatis::check::CheckResult;
@@ -20,11 +23,14 @@ use crate::fuzz::corpus;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::start;
 use crate::fuzz::FileId;
+use crate::fuzz::PackageId;
 use crate::fuzz::Runner;
 use crate::fuzz::Scenario;
 use crate::fuzz::ScenarioMutator;
+use crate::fuzz::WorkspaceSpec;
 use crate::fuzz::World;
 use crate::recovery;
+use crate::NamespaceVisibility;
 
 /// Limit the default suite to a quick regression check.
 const SMOKE_ITERS: usize = 50;
@@ -34,6 +40,9 @@ const BLOCK_ITERS: usize = 3000;
 
 /// Cap shrinking because every attempt reruns the full scenario.
 const SHRINK_ITERS: usize = 150;
+
+/// Number of `test_block_*` seeds in the opt-in suite.
+const BLOCKS: u64 = 6;
 
 fn check_block(block: u64, iters: usize) {
     let runner = Runner::open();
@@ -229,6 +238,110 @@ fn cycle_transitions(scenario: &Scenario) -> Transitions {
     transitions
 }
 
+/// Checks graph changes between successive mutations, since scenario operations
+/// do not edit package metadata. This ignores imported names and export gates,
+/// so a graph cycle need not produce a `Package::resolve()` cycle.
+#[test]
+fn test_mutated_packages_close_and_reopen_reexport_cycles() {
+    const MUTATIONS: usize = 400;
+
+    let mut session = Session::new().seed(0);
+    let mut corpus = seed_corpus(0);
+    let mut cyclic: Vec<bool> = corpus
+        .iter()
+        .map(|scenario| has_reexport_cycle(&scenario.initial))
+        .collect();
+
+    let mut closed = false;
+    let mut reopened = false;
+
+    for round in 0..MUTATIONS {
+        let entry = round % corpus.len();
+        if session
+            .mutate_with(&mut ScenarioMutator, &mut corpus[entry])
+            .is_err()
+        {
+            continue;
+        }
+
+        let now = has_reexport_cycle(&corpus[entry].initial);
+        closed |= now && !cyclic[entry];
+        reopened |= !now && cyclic[entry];
+        cyclic[entry] = now;
+    }
+
+    assert!(closed);
+    assert!(reopened);
+}
+
+fn has_reexport_cycle(spec: &WorkspaceSpec) -> bool {
+    let edges: HashMap<&str, Vec<&str>> = spec
+        .packages
+        .iter()
+        .map(|package| {
+            let sources = package
+                .reexports
+                .iter()
+                .map(|reexport| reexport.from.as_str())
+                .collect();
+            (package.name.as_str(), sources)
+        })
+        .collect();
+
+    let mut visiting = HashSet::new();
+    let mut done = HashSet::new();
+    edges
+        .keys()
+        .any(|&name| reaches_itself(name, &edges, &mut visiting, &mut done))
+}
+
+fn reaches_itself<'a>(
+    name: &'a str,
+    edges: &HashMap<&'a str, Vec<&'a str>>,
+    visiting: &mut HashSet<&'a str>,
+    done: &mut HashSet<&'a str>,
+) -> bool {
+    if done.contains(name) {
+        return false;
+    }
+    if !visiting.insert(name) {
+        return true;
+    }
+    let cyclic = edges.get(name).is_some_and(|sources| {
+        sources
+            .iter()
+            .any(|source| reaches_itself(source, edges, visiting, done))
+    });
+    visiting.remove(name);
+    done.insert(name);
+    cyclic
+}
+
+/// Require actual recovery from each block's unmutated corpus. A structural
+/// cycle alone is insufficient, and mutation must not rescue missing seed coverage.
+#[test]
+fn test_every_seed_corpus_reaches_the_package_resolve_handler() {
+    let runner = Runner::open();
+    for block in 0..BLOCKS {
+        let reached = seed_corpus(block)
+            .iter()
+            .any(|scenario| package_resolve_recovered(&runner, scenario));
+
+        assert!(reached, "block {block} never reached `Package::resolve()`");
+    }
+}
+
+/// The runner resets the recovery log before each scenario, so the firings it
+/// leaves behind belong to `scenario` alone.
+fn package_resolve_recovered(runner: &Runner, scenario: &Scenario) -> bool {
+    if let Err(failure) = runner.check(scenario) {
+        panic!("{failure}");
+    }
+    recovery::fired()
+        .iter()
+        .any(|entry| entry.starts_with("Package::resolve("))
+}
+
 // == Scenario invariants ==
 
 const NO_TARGETS: [&str; 0] = [];
@@ -385,4 +498,137 @@ fn test_scenario_recursive_source_dir_resolves_package_scripts() {
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/R/b.R"]);
+}
+
+// == Package re-export cycles ==
+
+/// Checks the resolved definition and the metadata retained by NAMESPACE parsing.
+#[test]
+fn test_scenario_acyclic_reexport_chain_resolves_to_the_definition() {
+    let scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let world = start(&scenario);
+    let fired = recovery::fired();
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        ["p/pkgb/R/a.R"]
+    );
+    assert_eq!(world.package_exports(PackageId(0)), ["exp_a"]);
+    assert_eq!(world.package_imported_from(PackageId(0)), [(
+        "exp_a".to_string(),
+        "pkgb".to_string()
+    )]);
+    assert!(fired.is_empty());
+}
+
+/// Namespace overrides and explicit file ownership can hide incorrect metadata
+/// paths from resolution tests, so check the package layout directly.
+#[test]
+fn test_scenario_package_description_sits_at_the_package_root() {
+    let scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let world = start(&scenario);
+
+    assert_eq!(
+        world.package_description_path(PackageId(1)),
+        "p/pkgb/DESCRIPTION"
+    );
+    assert_eq!(
+        world.package_resolve(PackageId(1), "exp_a", NamespaceVisibility::Exported),
+        ["p/pkgb/R/a.R"]
+    );
+}
+
+#[test]
+fn test_scenario_library_package_description_sits_in_the_library_root() {
+    let scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+    let world = start(&scenario);
+
+    assert_eq!(
+        world.package_description_path(PackageId(0)),
+        "libs/lib0/DESCRIPTION"
+    );
+}
+
+/// Both package queries receive their own fallback. Recovery firings therefore
+/// do not identify which package was Salsa's repeated key.
+#[test]
+fn test_scenario_mutual_reexport_has_no_terminal_definition() {
+    let scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+    let world = start(&scenario);
+    let mut fired = recovery::fired();
+    fired.sort();
+    fired.dedup();
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        NO_TARGETS
+    );
+    assert_eq!(fired, [
+        "Package::resolve(lib0, exp_a, Exported)",
+        "Package::resolve(lib1, exp_a, Exported)"
+    ]);
+}
+
+#[test]
+fn test_scenario_reexport_chain_terminates_at_a_local_export() {
+    let scenario = corpus::case("reexport_chain_terminates_at_a_local_export");
+    let world = start(&scenario);
+    let fired = recovery::fired();
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        ["p/pkgw/R/a.R"]
+    );
+    assert!(fired.is_empty());
+}
+
+/// The attach reaches package resolution through `ImportLayer::Package`.
+#[test]
+fn test_scenario_attached_package_consumer_resolves_a_reexport() {
+    let scenario = corpus::case("attached_package_consumer_resolves_a_reexport");
+    let world = start(&scenario);
+    let fired = recovery::fired();
+
+    assert_eq!(world.file_resolve(FileId(1), "exp_a"), ["p/pkgw/R/a.R"]);
+    assert!(fired.is_empty());
+}
+
+/// Consumer lookup must reach recovery as well as the direct package entry.
+#[test]
+fn test_scenario_attached_package_consumer_degrades_on_a_reexport_cycle() {
+    let scenario = corpus::case("attached_package_consumer_degrades_on_a_reexport_cycle");
+    let world = start(&scenario);
+    let mut fired = recovery::fired();
+    fired.sort();
+    fired.dedup();
+
+    assert_eq!(world.file_resolve(FileId(0), "exp_a"), NO_TARGETS);
+    assert_eq!(fired, [
+        "Package::resolve(lib0, exp_a, Exported)",
+        "Package::resolve(lib1, exp_a, Exported)"
+    ]);
+}
+
+/// A package's own `importFrom` reaches a consumer file through
+/// `ImportLayer::From`, the collation-wide re-export layer, rather than
+/// through an attach.
+#[test]
+fn test_scenario_namespace_import_layer_consumer_resolves_a_reexport() {
+    let scenario = corpus::case("namespace_import_layer_consumer_resolves_a_reexport");
+    let world = start(&scenario);
+    let fired = recovery::fired();
+
+    assert_eq!(world.file_resolve(FileId(0), "exp_a"), ["p/pkgd/R/a.R"]);
+    assert!(fired.is_empty());
+}
+
+/// An attached package exporting `source` shadows the consumer's bare
+/// `source()` effect through `package_binding()`, the same way a local shadow
+/// suppresses the edge in [`test_scenario_same_file_shadow_suppresses_the_edge()`].
+#[test]
+fn test_scenario_package_export_shadows_the_source_effect() {
+    let scenario = corpus::case("package_export_shadows_the_source_effect");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);
 }
