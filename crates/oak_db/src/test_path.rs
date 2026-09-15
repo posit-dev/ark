@@ -1,24 +1,42 @@
-//! Test and fuzz paths need no files on disk. Their rendered names omit the
-//! platform-specific root so assertions work on Windows and Unix.
+//! Test and fuzz paths use native filesystem identities. Their databases supply
+//! fixture contents without reading these paths from the host filesystem.
 
 use aether_path::FilePath;
-use url::Url;
+use camino::Utf8Component;
+use camino::Utf8Path;
 
 pub(crate) fn file_path(name: &str) -> FilePath {
-    // Windows file URLs need a drive letter for `Url::to_file_path()`.
-    let url = if cfg!(windows) {
-        Url::parse(&format!("file:///C:/{name}")).unwrap()
-    } else {
-        Url::parse(&format!("file:///{name}")).unwrap()
-    };
-    FilePath::from_url(&url)
+    let root = if cfg!(windows) { "C:/" } else { "/" };
+    let path = Utf8Path::new(root).join(name.trim_start_matches('/'));
+    match FilePath::from_path_buf(path.into_std_path_buf()) {
+        Some(path) => path,
+        None => panic!("Invalid fixture path: {name}"),
+    }
 }
 
-/// Omit the file URL root, including the synthetic Windows drive letter, so
-/// assertions use the same relative names on every platform.
+/// Render fixture names without a platform-specific root or URL escaping.
 pub(crate) fn path_name(path: &FilePath) -> String {
-    let url = path.to_url();
-    let path = url.path();
-    let prefix = if cfg!(windows) { "/C:/" } else { "/" };
-    path.strip_prefix(prefix).unwrap_or(path).to_string()
+    let Some(path) = path.as_path() else {
+        panic!("Expected a filesystem fixture path: {path}");
+    };
+    path.components()
+        .filter_map(|component| match component {
+            Utf8Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_names_are_path_data() {
+        for name in ["ws/a #?%.R", "abs/b.R"] {
+            assert_eq!(path_name(&file_path(name)), name);
+            assert_eq!(file_path(&format!("/{name}")), file_path(name));
+        }
+    }
 }

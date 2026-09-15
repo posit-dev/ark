@@ -29,7 +29,7 @@ fn fixture_readers_ignore_existing_host_files() -> anyhow::Result<()> {
     assert_query_contents(&mut OakDatabase::new(), dir, true)?;
     assert_query_contents(&mut TestDb::new(), dir, false)?;
 
-    // The empty reader must also survive cloning into a background snapshot.
+    // The fuzz reader must also survive cloning into a background snapshot.
     let db = OakDatabase::with_file_reader(EmptyFileReader);
     let mut snapshot = db.snapshot();
     drop(db);
