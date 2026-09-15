@@ -44,7 +44,7 @@ pub struct Edit {
 }
 
 /// Production roots and direct entries to cycle-sensitive queries.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Query {
     Diagnostics(FileId),
     Imports(FileId),
@@ -69,7 +69,7 @@ pub enum Query {
 
 /// A semantic location for an offset-keyed query, resolved after each edit.
 /// Stored byte offsets could point into unrelated replacement text.
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Site {
     /// Start of the first `source()` or `library()` callee, including nested calls.
     FirstCall,
@@ -110,14 +110,12 @@ impl Scenario {
     pub fn validate(&self) -> anyhow::Result<()> {
         let file_count = self.initial.files.len();
 
-        // `choose::random_file()` assumes a positive file count and
-        // `mutate::add_file()` copies the first file's owner, so mutation can
-        // neither target nor populate an empty workspace.
+        // Query generation assumes at least one file to target.
         if file_count == 0 {
             return Err(anyhow!("the workspace has no files"));
         }
 
-        crate::fuzz::mutate::within_bounds(self)?;
+        crate::fuzz::limits::within_bounds(self)?;
 
         validate_file_id(self.cold_entry.file(), file_count, "cold_entry")?;
         for (index, op) in self.ops.iter().enumerate() {
@@ -535,7 +533,7 @@ mod tests {
         let error = scenario.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "the workspace has 6 files but mutation produces at most 5"
+            "the workspace has 6 files but replay accepts at most 5"
         );
     }
 
@@ -563,7 +561,7 @@ mod tests {
         let error = nested.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "op 2 nests 4 levels but mutation produces at most 3"
+            "op 2 nests 4 levels but replay accepts at most 3"
         );
 
         let mut widened = corpus::case("acyclic_pair_closes_then_reopens");
@@ -707,7 +705,7 @@ mod tests {
         let error = scenario.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "the workspace has 5 packages but mutation produces at most 3"
+            "the workspace has 5 packages but replay accepts at most 3"
         );
     }
 
@@ -724,7 +722,7 @@ mod tests {
         let error = scenario.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "package \"pkgb\" has 4 exports but mutation produces at most 3"
+            "package \"pkgb\" has 4 exports but replay accepts at most 3"
         );
     }
 
@@ -753,7 +751,7 @@ mod tests {
         let error = scenario.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "package \"pkga\" has 4 reexports but mutation produces at most 3"
+            "package \"pkga\" has 4 reexports but replay accepts at most 3"
         );
     }
 
