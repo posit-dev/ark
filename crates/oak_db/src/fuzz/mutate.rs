@@ -16,7 +16,6 @@ use oak_semantic::effects::fuzz::EffectRecipe;
 use oak_semantic::effects::fuzz::Form;
 use oak_semantic::effects::fuzz::SourceProvider;
 use oak_semantic::effects::TargetAccess;
-use oak_semantic::fuzz::Block;
 use oak_semantic::fuzz::Expr;
 use oak_semantic::fuzz::Invocation;
 use oak_semantic::fuzz::Program;
@@ -24,6 +23,14 @@ use oak_semantic::fuzz::Stmt;
 use oak_semantic::semantic_index::EvalEnv;
 use oak_semantic::semantic_index::EvalTiming;
 
+use crate::fuzz::budgets::MAX_DEPTH;
+use crate::fuzz::budgets::MAX_EXPORTS;
+use crate::fuzz::budgets::MAX_FILES;
+use crate::fuzz::budgets::MAX_OPS;
+use crate::fuzz::budgets::MAX_PACKAGES;
+use crate::fuzz::budgets::MAX_REEXPORTS;
+use crate::fuzz::budgets::MAX_STATEMENTS;
+use crate::fuzz::budgets::MAX_TEXT;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
@@ -41,7 +48,6 @@ use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
-use crate::fuzz::spec::is_identifier;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
 use crate::fuzz::spec::Owner;
@@ -49,186 +55,37 @@ use crate::fuzz::spec::PackageId;
 use crate::fuzz::spec::PackageKind;
 use crate::fuzz::spec::PackageSpec;
 use crate::fuzz::spec::Reexport;
+use crate::fuzz::traversal::block_at;
+use crate::fuzz::traversal::block_at_mut;
+use crate::fuzz::traversal::block_mut;
+use crate::fuzz::traversal::block_slots;
+use crate::fuzz::traversal::child_block;
+use crate::fuzz::traversal::count_statements;
+use crate::fuzz::traversal::height;
+use crate::fuzz::traversal::owner_of;
+use crate::fuzz::traversal::program_mut;
+use crate::fuzz::traversal::programs;
+use crate::fuzz::traversal::rebase_after_removal;
+use crate::fuzz::traversal::slots_where;
+use crate::fuzz::traversal::statement_mut;
+use crate::fuzz::traversal::take_statement;
+use crate::fuzz::traversal::Slot;
 
-pub(super) const MAX_FILES: usize = 5;
+// == Sampling choices ==
 
-/// Stop selecting programs at this nested-statement count. One compound
-/// insertion may cross the threshold.
-const MAX_STATEMENTS: usize = 14;
+// Favor queries so edit histories exercise several entry points per edit.
+const QUERY_PERCENT: u32 = 60;
+// Keep unresolved attachments reachable without dominating live packages.
+const UNINSTALLED_PERCENT: u32 = 15;
 
-/// Allow a top-level statement plus two nested statement levels.
-const MAX_DEPTH: usize = 3;
+// == Choice vocabularies ==
 
-/// Fit the longest [`seed_corpus()`] history, three rounds of five operations.
-///
-/// [`seed_corpus()`]: crate::fuzz::generate::seed_corpus
-const MAX_OPS: usize = 16;
-
-/// Stop growing a program past this rendered width, which the statement count
-/// cannot detect. The statement that crosses the line still lands.
-const MAX_TEXT: usize = 2_000;
-
-/// Allow decoded programs to exceed the mutation threshold by a bounded margin.
-/// A compound insertion can cross [`MAX_STATEMENTS`] in one step.
-const CEILING_STATEMENTS: usize = 2 * MAX_STATEMENTS;
-
-/// Limit rendered bytes while allowing an insertion to overshoot [`MAX_TEXT`].
-const CEILING_TEXT: usize = 2 * MAX_TEXT;
-
-const MAX_PACKAGES: usize = 3;
-
-const MAX_EXPORTS: usize = 3;
-
-const MAX_REEXPORTS: usize = 3;
-
-/// Applied to package names, export names, both fields of every `Reexport`,
-/// and the name carried by `Query::Resolve` and `Query::PackageResolve`.
-const MAX_NAME: usize = 32;
-
-/// Apply the same limits to initial programs and [`Op::Edit`] replacements.
-/// Statement and text ceilings allow overshoot of the mutation thresholds.
-pub(super) fn within_bounds(scenario: &Scenario) -> anyhow::Result<()> {
-    let files = scenario.initial.files.len();
-    if files > MAX_FILES {
-        return Err(anyhow::anyhow!(
-            "the workspace has {files} files but mutation produces at most {MAX_FILES}"
-        ));
-    }
-
-    let ops = scenario.ops.len();
-    if ops > MAX_OPS {
-        return Err(anyhow::anyhow!(
-            "the history has {ops} operations but mutation produces at most {MAX_OPS}"
-        ));
-    }
-
-    within_package_bounds(scenario)?;
-
-    for (context, name) in sited_query_names(scenario) {
-        within_name_bounds(name, &format!("{context} name"))?;
-    }
-
-    for (site, program) in sited_programs(scenario) {
-        for stmt in &program.statements {
-            let depth = height(stmt);
-            if depth > MAX_DEPTH {
-                return Err(anyhow::anyhow!(
-                    "{} nests {depth} levels but mutation produces at most {MAX_DEPTH}",
-                    site.render()
-                ));
-            }
-        }
-
-        let statements = count_statements(&program.statements);
-        if statements > CEILING_STATEMENTS {
-            return Err(anyhow::anyhow!(
-                "{} has {statements} statements, over the {CEILING_STATEMENTS} ceiling",
-                site.render()
-            ));
-        }
-
-        let width = program.render().text.len();
-        if width > CEILING_TEXT {
-            return Err(anyhow::anyhow!(
-                "{} renders {width} bytes, over the {CEILING_TEXT} ceiling",
-                site.render()
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn within_package_bounds(scenario: &Scenario) -> anyhow::Result<()> {
-    let packages = scenario.initial.packages.len();
-    if packages > MAX_PACKAGES {
-        return Err(anyhow::anyhow!(
-            "the workspace has {packages} packages but mutation produces at most {MAX_PACKAGES}"
-        ));
-    }
-
-    for (index, package) in scenario.initial.packages.iter().enumerate() {
-        let context = format!("package {index} name");
-        within_name_bounds(&package.name, &context)?;
-        within_identifier_charset(&package.name, &context)?;
-
-        if package.exports.len() > MAX_EXPORTS {
-            return Err(anyhow::anyhow!(
-                "package {:?} has {} exports but mutation produces at most {MAX_EXPORTS}",
-                package.name,
-                package.exports.len()
-            ));
-        }
-        for (export_index, export) in package.exports.iter().enumerate() {
-            let context = format!("package {index} export {export_index}");
-            within_name_bounds(export, &context)?;
-            within_identifier_charset(export, &context)?;
-        }
-
-        if package.reexports.len() > MAX_REEXPORTS {
-            return Err(anyhow::anyhow!(
-                "package {:?} has {} reexports but mutation produces at most {MAX_REEXPORTS}",
-                package.name,
-                package.reexports.len()
-            ));
-        }
-        for (reexport_index, reexport) in package.reexports.iter().enumerate() {
-            let name_context = format!("package {index} reexport {reexport_index} name");
-            within_name_bounds(&reexport.name, &name_context)?;
-            within_identifier_charset(&reexport.name, &name_context)?;
-
-            let from_context = format!("package {index} reexport {reexport_index} from");
-            within_name_bounds(&reexport.from, &from_context)?;
-            within_identifier_charset(&reexport.from, &from_context)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn within_name_bounds(name: &str, context: &str) -> anyhow::Result<()> {
-    if name.len() > MAX_NAME {
-        return Err(anyhow::anyhow!(
-            "{context} is {} bytes, over the {MAX_NAME} byte limit",
-            name.len()
-        ));
-    }
-    Ok(())
-}
-
-fn within_identifier_charset(name: &str, context: &str) -> anyhow::Result<()> {
-    if !is_identifier(name) {
-        return Err(anyhow::anyhow!(
-            "{context} {name:?} is not a valid identifier"
-        ));
-    }
-    Ok(())
-}
-
-/// Query names go directly to `Name::new()` without parsing, so only their
-/// size is restricted, not their spelling.
-fn sited_query_names(scenario: &Scenario) -> Vec<(String, &str)> {
-    let mut out = Vec::new();
-    if let Some(name) = query_name(&scenario.cold_entry) {
-        out.push(("cold_entry".to_string(), name));
-    }
-    for (index, op) in scenario.ops.iter().enumerate() {
-        if let Op::Query(query) = op {
-            if let Some(name) = query_name(query) {
-                out.push((format!("op {index}"), name));
-            }
-        }
-    }
-    out
-}
-
-fn query_name(query: &Query) -> Option<&str> {
-    match query {
-        Query::Resolve(_, name) => Some(name.as_str()),
-        Query::PackageResolve(_, name, _) => Some(name.as_str()),
-        _ => None,
-    }
-}
+const PROVIDERS: [SourceProvider; 3] = [
+    SourceProvider::File,
+    SourceProvider::Dir,
+    SourceProvider::FileOrDir,
+];
+const PACKAGE_NAMES: [&str; 3] = ["lib0", "lib1", "lib2"];
 
 pub struct ScenarioMutator;
 
@@ -332,7 +189,7 @@ impl Step {
             Step::AddSourceEdge | Step::InsertStatement => {
                 !insertable_block_slots(scenario).is_empty()
             },
-            Step::ShadowCallee => !shadowable_block_slots(scenario).is_empty(),
+            Step::ShadowCallee => !shadowable_slots(scenario).is_empty(),
             Step::RedirectSourceEdge | Step::RemoveSourceEdge | Step::SwapProvider => {
                 !slots_where(scenario, is_source).is_empty()
             },
@@ -355,7 +212,10 @@ impl Step {
             },
             Step::AddExport => !packages_with_export_room(scenario).is_empty(),
             Step::RemoveExport => !packages_with_exports(scenario).is_empty(),
-            Step::AddPackage => scenario.initial.packages.len() < MAX_PACKAGES,
+            Step::AddPackage => {
+                scenario.initial.packages.len() < MAX_PACKAGES &&
+                    !available_package_names(scenario).is_empty()
+            },
             Step::RemovePackage => !removable_packages(scenario).is_empty(),
         }
     }
@@ -373,10 +233,11 @@ impl Step {
             Step::ShadowCallee => shadow_callee(rng, scenario),
             Step::NestStatement => nest_statement(rng, scenario),
             Step::UnnestStatement => unnest_statement(rng, scenario),
-            Step::AddFile => add_file(scenario),
+            Step::AddFile => add_file(rng, scenario),
             Step::RemoveFile => remove_file(rng, scenario),
             Step::ChangeColdEntry => {
-                scenario.cold_entry = random_query(rng, &Shape::of(&scenario.initial))
+                scenario.cold_entry =
+                    different_query(rng, &Shape::of(&scenario.initial), &scenario.cold_entry)
             },
             Step::InsertOp => insert_op(rng, scenario),
             Step::AlterOp => alter_op(rng, scenario),
@@ -389,7 +250,7 @@ impl Step {
             Step::RemoveReexportEdge => remove_reexport_edge(rng, scenario),
             Step::AddExport => add_export(rng, scenario),
             Step::RemoveExport => remove_export(rng, scenario),
-            Step::AddPackage => add_package(scenario),
+            Step::AddPackage => add_package(rng, scenario),
             Step::RemovePackage => remove_package(rng, scenario),
         }
     }
@@ -422,7 +283,7 @@ fn redirect_source_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
         ..
     }) = statement_mut(scenario, &slot)
     else {
-        return;
+        panic!("source candidate is not a source: {slot:?}");
     };
     let others: Vec<String> = targets
         .into_iter()
@@ -435,12 +296,6 @@ fn redirect_source_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
 }
 
 fn swap_provider(rng: &mut impl Choose, scenario: &mut Scenario) {
-    const PROVIDERS: [SourceProvider; 3] = [
-        SourceProvider::File,
-        SourceProvider::Dir,
-        SourceProvider::FileOrDir,
-    ];
-
     let Some(slot) = pick(rng, slots_where(scenario, is_source)) else {
         return;
     };
@@ -449,7 +304,7 @@ fn swap_provider(rng: &mut impl Choose, scenario: &mut Scenario) {
         ..
     }) = statement_mut(scenario, &slot)
     else {
-        return;
+        panic!("source candidate is not a source: {slot:?}");
     };
     let others: Vec<SourceProvider> = PROVIDERS
         .into_iter()
@@ -463,7 +318,7 @@ fn flip_invocation(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     };
     let Some(Stmt::Effect { invocation, .. }) = statement_mut(scenario, &slot) else {
-        return;
+        panic!("invocation candidate is not an effect: {slot:?}");
     };
     *invocation = match invocation {
         Invocation::Bare => Invocation::Qualified,
@@ -578,17 +433,21 @@ fn palette_statement(rng: &mut impl Choose, scenario: &Scenario, room: usize) ->
 }
 
 fn shadow_callee(rng: &mut impl Choose, scenario: &mut Scenario) {
-    let Some(slot) = pick(rng, shadowable_block_slots(scenario)) else {
+    let Some(slot) = pick(rng, shadowable_slots(scenario)) else {
         return;
     };
-    let names: Vec<&'static str> = match programs(scenario).get(slot.program) {
-        Some(program) => program.callees().iter().map(|callee| callee.name).collect(),
-        None => return,
+    let Some(Stmt::Effect { recipe, .. }) = statement_mut(scenario, &slot) else {
+        panic!("shadow candidate is not an effect: {slot:?}");
     };
-    let Some(name) = pick(rng, names) else {
-        return;
+    let name = callee(recipe).name;
+    let Some(program) = program_mut(scenario, slot.program) else {
+        panic!("invalid shadow program: {slot:?}");
     };
-    insert_at(rng, scenario, &slot, shadow(name));
+    let Some((block, index)) = owner_of(&mut program.statements, &slot.path) else {
+        panic!("invalid shadow slot: {slot:?}");
+    };
+    // Put the binding in the callee's own block, immediately before the call.
+    block.insert(index, shadow(name));
 }
 
 fn reorder_statements(rng: &mut impl Choose, scenario: &mut Scenario) {
@@ -596,11 +455,9 @@ fn reorder_statements(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     };
     let Some(block) = block_mut(scenario, &slot) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
-    if block.len() < 2 {
-        return;
-    }
+    assert!(block.len() >= 2);
     let first = rng.index(block.len());
     let second = (first + 1 + rng.index(block.len() - 1)) % block.len();
     block.swap(first, second);
@@ -613,14 +470,14 @@ fn nest_statement(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     };
     let Some(mut target) = pick(rng, nest_targets(scenario, &moved)) else {
-        return;
+        panic!("nesting candidate has no destination: {moved:?}");
     };
 
     let Some(program) = program_mut(scenario, moved.program) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     let Some(stmt) = take_statement(&mut program.statements, &moved.path) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     rebase_after_removal(&mut target.path, &moved.path);
     match block_at_mut(&mut program.statements, &target.path) {
@@ -628,7 +485,7 @@ fn nest_statement(rng: &mut impl Choose, scenario: &mut Scenario) {
             let index = rng.index(block.len() + 1);
             block.insert(index, stmt);
         },
-        None => program.statements.push(stmt),
+        None => panic!("destination became invalid after moving {moved:?}"),
     }
 }
 
@@ -662,14 +519,14 @@ fn unnest_statement(rng: &mut impl Choose, scenario: &mut Scenario) {
     let index = moved.path[depth - 2] + 1;
 
     let Some(program) = program_mut(scenario, moved.program) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     let Some(stmt) = take_statement(&mut program.statements, &moved.path) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     match block_at_mut(&mut program.statements, &target) {
-        Some(block) => block.insert(index.min(block.len()), stmt),
-        None => program.statements.push(stmt),
+        Some(block) => block.insert(index, stmt),
+        None => panic!("destination became invalid after moving {moved:?}"),
     }
 }
 
@@ -678,10 +535,10 @@ fn remove_slot(rng: &mut impl Choose, scenario: &mut Scenario, slots: Vec<Slot>)
         return;
     };
     let Some(program) = program_mut(scenario, slot.program) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     let Some((owner, index)) = owner_of(&mut program.statements, &slot.path) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     owner.remove(index);
 }
@@ -689,14 +546,12 @@ fn remove_slot(rng: &mut impl Choose, scenario: &mut Scenario, slots: Vec<Slot>)
 /// Callers use [`insertable_block_slots()`] to enforce growth thresholds. The
 /// inserted statement's own body determines whether it fits the depth limit.
 fn insert_at(rng: &mut impl Choose, scenario: &mut Scenario, slot: &Slot, stmt: Stmt) {
-    if slot.path.len() + height(&stmt) > MAX_DEPTH {
-        return;
-    }
+    assert!(slot.path.len() + height(&stmt) <= MAX_DEPTH);
     let Some(program) = program_mut(scenario, slot.program) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     let Some(block) = block_at_mut(&mut program.statements, &slot.path) else {
-        return;
+        panic!("selected mutation address is invalid");
     };
     let index = rng.index(block.len() + 1);
     block.insert(index, stmt);
@@ -704,13 +559,22 @@ fn insert_at(rng: &mut impl Choose, scenario: &mut Scenario, slot: &Slot, stmt: 
 
 // == Files ==
 
-fn add_file(scenario: &mut Scenario) {
+fn add_file(rng: &mut impl Choose, scenario: &mut Scenario) {
     if scenario.initial.files.len() >= MAX_FILES {
         return;
     }
-    let Some(owner) = scenario.initial.files.first().map(|file| file.owner) else {
-        return;
-    };
+    let mut owners = vec![Owner::Script];
+    owners.extend(
+        scenario
+            .initial
+            .packages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, package)| {
+                (package.kind == PackageKind::Workspace).then_some(Owner::Package(PackageId(index)))
+            }),
+    );
+    let owner = owners[rng.index(owners.len())];
     let Some(index) = (0..MAX_FILES).find(|&index| {
         let path = file_path(owner, index);
         // Different packages can each own `R/a.R` under their own roots.
@@ -774,7 +638,7 @@ fn insert_op(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     }
     let files = scenario.initial.files.len();
-    let op = if rng.odds(60) {
+    let op = if rng.odds(QUERY_PERCENT) {
         Op::Query(random_query(rng, &Shape::of(&scenario.initial)))
     } else {
         let file = FileId(rng.index(files));
@@ -793,7 +657,7 @@ fn alter_op(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     };
     match &mut scenario.ops[index] {
-        Op::Query(query) => *query = random_query(rng, &Shape::of(&scenario.initial)),
+        Op::Query(query) => *query = different_query(rng, &Shape::of(&scenario.initial), query),
         Op::Edit(edit) => {
             let others: Vec<usize> = (0..files).filter(|&file| file != edit.file.0).collect();
             let Some(file) = pick(rng, others) else {
@@ -822,25 +686,29 @@ fn alterable_ops(scenario: &Scenario) -> Vec<usize> {
 
 // == Packages ==
 
-const LIB_POOL: [&str; 3] = ["lib0", "lib1", "lib2"];
-
 /// Combines `choose::export_name()`'s `exp_*` vocabulary with `val_*` binding
 /// names, so a mutated export can either match another package's reexport or
 /// a name a file actually binds.
-fn export_vocabulary(rng: &mut impl Choose) -> String {
-    if rng.odds(50) {
-        export_name(rng.index(3))
-    } else {
-        binding_name(rng.index(3))
-    }
+fn export_vocabulary() -> Vec<String> {
+    (0..EXPORT_NAMES)
+        .map(export_name)
+        .chain((0..MAX_FILES).map(binding_name))
+        .collect()
 }
 
 fn add_export(rng: &mut impl Choose, scenario: &mut Scenario) {
     let Some(index) = pick(rng, packages_with_export_room(scenario)) else {
         return;
     };
-    let export = export_vocabulary(rng);
-    scenario.initial.packages[index].exports.push(export);
+    let exports = &mut scenario.initial.packages[index].exports;
+    let free = export_vocabulary()
+        .into_iter()
+        .filter(|name| !exports.contains(name))
+        .collect();
+    let Some(export) = pick(rng, free) else {
+        panic!("export candidate has no available names");
+    };
+    exports.push(export);
 }
 
 fn remove_export(rng: &mut impl Choose, scenario: &mut Scenario) {
@@ -854,7 +722,13 @@ fn remove_export(rng: &mut impl Choose, scenario: &mut Scenario) {
 
 fn packages_with_export_room(scenario: &Scenario) -> Vec<usize> {
     (0..scenario.initial.packages.len())
-        .filter(|&index| scenario.initial.packages[index].exports.len() < MAX_EXPORTS)
+        .filter(|&index| {
+            let exports = &scenario.initial.packages[index].exports;
+            exports.len() < MAX_EXPORTS &&
+                export_vocabulary()
+                    .iter()
+                    .any(|name| !exports.contains(name))
+        })
         .collect()
 }
 
@@ -915,7 +789,13 @@ fn remove_reexport_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
 
 fn packages_with_reexport_room(scenario: &Scenario) -> Vec<usize> {
     (0..scenario.initial.packages.len())
-        .filter(|&index| scenario.initial.packages[index].reexports.len() < MAX_REEXPORTS)
+        .filter(|&index| {
+            let reexports = &scenario.initial.packages[index].reexports;
+            reexports.len() < MAX_REEXPORTS &&
+                (0..EXPORT_NAMES)
+                    .map(export_name)
+                    .any(|name| !reexports.iter().any(|edge| edge.name == name))
+        })
         .collect()
 }
 
@@ -949,26 +829,41 @@ fn reexport_sources(scenario: &Scenario) -> Vec<String> {
     sources
 }
 
-fn add_package(scenario: &mut Scenario) {
+fn add_package(rng: &mut impl Choose, scenario: &mut Scenario) {
     if scenario.initial.packages.len() >= MAX_PACKAGES {
         return;
     }
-    let existing: Vec<&str> = scenario
-        .initial
-        .packages
-        .iter()
-        .map(|package| package.name.as_str())
-        .chain(scenario.initial.installed.iter().map(String::as_str))
-        .collect();
-    let Some(&name) = LIB_POOL.iter().find(|name| !existing.contains(name)) else {
+    let Some(name) = pick(rng, available_package_names(scenario)) else {
         return;
     };
     scenario.initial.packages.push(PackageSpec {
         name: name.to_string(),
-        kind: PackageKind::Library,
+        kind: if rng.odds(50) {
+            PackageKind::Library
+        } else {
+            PackageKind::Workspace
+        },
         exports: Vec::new(),
         reexports: Vec::new(),
     });
+}
+
+fn available_package_names(scenario: &Scenario) -> Vec<&'static str> {
+    PACKAGE_NAMES
+        .into_iter()
+        .filter(|name| {
+            !scenario
+                .initial
+                .packages
+                .iter()
+                .any(|package| package.name == *name) &&
+                !scenario
+                    .initial
+                    .installed
+                    .iter()
+                    .any(|installed| installed == name)
+        })
+        .collect()
 }
 
 /// Delete owned files with the package. Moving them to another package would
@@ -1061,142 +956,7 @@ fn rebase_package(id: &mut PackageId, removed: usize, count: usize) {
     id.0 = index.min(count - 1);
 }
 
-// == Scenario traversal ==
-
-/// Address a statement by its program and index path through nested blocks.
-#[derive(Clone, Debug)]
-struct Slot {
-    program: usize,
-    path: Vec<usize>,
-}
-
-/// Include programs from the initial workspace and every edit replacement.
-fn programs(scenario: &Scenario) -> Vec<&Program> {
-    sited_programs(scenario)
-        .into_iter()
-        .map(|(_, program)| program)
-        .collect()
-}
-
-/// Match the file and operation labels in the artifact when reporting a
-/// rejected program.
-enum ProgramSite {
-    File(usize),
-    Op(usize),
-}
-
-impl ProgramSite {
-    fn render(&self) -> String {
-        match self {
-            ProgramSite::File(index) => format!("file [{index}]"),
-            ProgramSite::Op(index) => format!("op {index}"),
-        }
-    }
-}
-
-/// Share the traversal between validation and mutation so both include edit
-/// replacements in the same order.
-fn sited_programs(scenario: &Scenario) -> Vec<(ProgramSite, &Program)> {
-    let mut out: Vec<(ProgramSite, &Program)> = scenario
-        .initial
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (ProgramSite::File(index), &file.program))
-        .collect();
-    out.extend(
-        scenario
-            .ops
-            .iter()
-            .enumerate()
-            .filter_map(|(index, op)| match op {
-                Op::Edit(edit) => Some((ProgramSite::Op(index), &edit.program)),
-                Op::Query(_) => None,
-            }),
-    );
-    out
-}
-
-fn programs_mut(scenario: &mut Scenario) -> Vec<&mut Program> {
-    let mut out: Vec<&mut Program> = scenario
-        .initial
-        .files
-        .iter_mut()
-        .map(|file| &mut file.program)
-        .collect();
-    out.extend(scenario.ops.iter_mut().filter_map(|op| match op {
-        Op::Edit(edit) => Some(&mut edit.program),
-        Op::Query(_) => None,
-    }));
-    out
-}
-
-fn program_mut(scenario: &mut Scenario, index: usize) -> Option<&mut Program> {
-    programs_mut(scenario).into_iter().nth(index)
-}
-
-fn statement_mut<'scenario>(
-    scenario: &'scenario mut Scenario,
-    slot: &Slot,
-) -> Option<&'scenario mut Stmt> {
-    let program = program_mut(scenario, slot.program)?;
-    let (owner, index) = owner_of(&mut program.statements, &slot.path)?;
-    owner.get_mut(index)
-}
-
-fn block_mut<'scenario>(
-    scenario: &'scenario mut Scenario,
-    slot: &Slot,
-) -> Option<&'scenario mut Block> {
-    let program = program_mut(scenario, slot.program)?;
-    block_at_mut(&mut program.statements, &slot.path)
-}
-
-fn slots_where(scenario: &Scenario, keep: impl Fn(&Stmt) -> bool) -> Vec<Slot> {
-    let mut slots = Vec::new();
-    for (index, program) in programs(scenario).into_iter().enumerate() {
-        let mut path = Vec::new();
-        collect_statement_slots(&program.statements, index, &mut path, &keep, &mut slots);
-    }
-    slots
-}
-
-fn collect_statement_slots(
-    block: &Block,
-    program: usize,
-    path: &mut Vec<usize>,
-    keep: &impl Fn(&Stmt) -> bool,
-    slots: &mut Vec<Slot>,
-) {
-    for (index, stmt) in block.iter().enumerate() {
-        path.push(index);
-        if keep(stmt) {
-            slots.push(Slot {
-                program,
-                path: path.clone(),
-            });
-        }
-        if let Some(body) = child_block(stmt) {
-            collect_statement_slots(body, program, path, keep, slots);
-        }
-        path.pop();
-    }
-}
-
-/// Every block, addressed by the path of the statement that owns it. The empty
-/// path is a program's top level.
-fn block_slots(scenario: &Scenario) -> Vec<Slot> {
-    let mut slots = Vec::new();
-    for (index, program) in programs(scenario).into_iter().enumerate() {
-        slots.push(Slot {
-            program: index,
-            path: Vec::new(),
-        });
-        let mut path = Vec::new();
-        collect_block_slots(&program.statements, index, &mut path, &mut slots);
-    }
-    slots
-}
+// == Candidate selection ==
 
 fn open_block_slots(scenario: &Scenario) -> Vec<Slot> {
     let mut slots = block_slots(scenario);
@@ -1209,172 +969,34 @@ fn open_block_slots(scenario: &Scenario) -> Vec<Slot> {
 fn insertable_block_slots(scenario: &Scenario) -> Vec<Slot> {
     let programs = programs(scenario);
     let mut slots = open_block_slots(scenario);
-    slots.retain(|slot| match programs.get(slot.program) {
-        Some(program) => has_room(program),
-        None => false,
-    });
+    slots.retain(|slot| has_room(programs[slot.program]));
     slots
 }
 
-/// Require an existing callee so an inserted shadow can affect resolution.
-fn shadowable_block_slots(scenario: &Scenario) -> Vec<Slot> {
+/// Select bare calls whose own block can receive a shadow binding.
+fn shadowable_slots(scenario: &Scenario) -> Vec<Slot> {
     let programs = programs(scenario);
-    let mut slots = insertable_block_slots(scenario);
-    slots.retain(|slot| match programs.get(slot.program) {
-        Some(program) => !program.callees().is_empty(),
-        None => false,
-    });
-    slots
+    slots_where(scenario, |stmt| {
+        matches!(stmt, Stmt::Effect {
+            invocation: Invocation::Bare,
+            ..
+        })
+    })
+    .into_iter()
+    .filter(|slot| has_room(programs[slot.program]))
+    .collect()
 }
 
 fn reorderable_block_slots(scenario: &Scenario) -> Vec<Slot> {
     let programs = programs(scenario);
     let mut slots = block_slots(scenario);
-    slots.retain(|slot| match programs.get(slot.program) {
-        Some(program) => match block_at(&program.statements, &slot.path) {
+    slots.retain(
+        |slot| match block_at(&programs[slot.program].statements, &slot.path) {
             Some(block) => block.len() >= 2,
-            None => false,
+            None => panic!("invalid block candidate: {slot:?}"),
         },
-        None => false,
-    });
+    );
     slots
-}
-
-fn collect_block_slots(
-    block: &Block,
-    program: usize,
-    path: &mut Vec<usize>,
-    slots: &mut Vec<Slot>,
-) {
-    for (index, stmt) in block.iter().enumerate() {
-        let Some(body) = child_block(stmt) else {
-            continue;
-        };
-        path.push(index);
-        slots.push(Slot {
-            program,
-            path: path.clone(),
-        });
-        collect_block_slots(body, program, path, slots);
-        path.pop();
-    }
-}
-
-// == Block navigation ==
-
-fn block_at<'block>(block: &'block Block, path: &[usize]) -> Option<&'block Block> {
-    let mut current = block;
-    for &index in path {
-        current = child_block(current.get(index)?)?;
-    }
-    Some(current)
-}
-
-fn block_at_mut<'block>(block: &'block mut Block, path: &[usize]) -> Option<&'block mut Block> {
-    let mut current = block;
-    for &index in path {
-        current = child_block_mut(current.get_mut(index)?)?;
-    }
-    Some(current)
-}
-
-fn owner_of<'block>(
-    block: &'block mut Block,
-    path: &[usize],
-) -> Option<(&'block mut Block, usize)> {
-    let (last, parent) = path.split_last()?;
-    let owner = block_at_mut(block, parent)?;
-    if *last >= owner.len() {
-        return None;
-    }
-    Some((owner, *last))
-}
-
-fn take_statement(block: &mut Block, path: &[usize]) -> Option<Stmt> {
-    let (owner, index) = owner_of(block, path)?;
-    Some(owner.remove(index))
-}
-
-/// Rebases a block address after `removed` was taken out from under it.
-fn rebase_after_removal(path: &mut [usize], removed: &[usize]) {
-    let Some((last, parent)) = removed.split_last() else {
-        return;
-    };
-    if path.len() <= parent.len() || path[..parent.len()] != *parent {
-        return;
-    }
-    if path[parent.len()] > *last {
-        path[parent.len()] -= 1;
-    }
-}
-
-fn child_block(stmt: &Stmt) -> Option<&Block> {
-    match stmt {
-        Stmt::Bind { value, .. } | Stmt::Expr(value) => expr_block(value),
-        Stmt::Effect { recipe, .. } => recipe_block(recipe),
-    }
-}
-
-fn expr_block(expr: &Expr) -> Option<&Block> {
-    match expr {
-        Expr::Function { body } | Expr::Hole(body) => Some(body),
-        Expr::Num(_) | Expr::Null | Expr::Ident(_) | Expr::Call { .. } => None,
-    }
-}
-
-fn recipe_block(recipe: &EffectRecipe) -> Option<&Block> {
-    match recipe {
-        EffectRecipe::Eval { body, .. } |
-        EffectRecipe::Quote { body } |
-        EffectRecipe::QuoteHoles { body } |
-        EffectRecipe::Substitute { body } => Some(body),
-        EffectRecipe::Assign { value, .. } | EffectRecipe::Rebind { value, .. } => {
-            expr_block(value)
-        },
-        EffectRecipe::Source { .. } | EffectRecipe::Attach { .. } => None,
-    }
-}
-
-fn child_block_mut(stmt: &mut Stmt) -> Option<&mut Block> {
-    match stmt {
-        Stmt::Bind { value, .. } | Stmt::Expr(value) => expr_block_mut(value),
-        Stmt::Effect { recipe, .. } => recipe_block_mut(recipe),
-    }
-}
-
-fn expr_block_mut(expr: &mut Expr) -> Option<&mut Block> {
-    match expr {
-        Expr::Function { body } | Expr::Hole(body) => Some(body),
-        Expr::Num(_) | Expr::Null | Expr::Ident(_) | Expr::Call { .. } => None,
-    }
-}
-
-fn recipe_block_mut(recipe: &mut EffectRecipe) -> Option<&mut Block> {
-    match recipe {
-        EffectRecipe::Eval { body, .. } |
-        EffectRecipe::Quote { body } |
-        EffectRecipe::QuoteHoles { body } |
-        EffectRecipe::Substitute { body } => Some(body),
-        EffectRecipe::Assign { value, .. } | EffectRecipe::Rebind { value, .. } => {
-            expr_block_mut(value)
-        },
-        EffectRecipe::Source { .. } | EffectRecipe::Attach { .. } => None,
-    }
-}
-
-/// Count occupied statement levels. Empty bodies add no depth.
-fn height(stmt: &Stmt) -> usize {
-    match child_block(stmt) {
-        Some(body) => 1 + body.iter().map(height).max().unwrap_or(0),
-        None => 1,
-    }
-}
-
-fn count_statements(block: &Block) -> usize {
-    block
-        .iter()
-        .map(|stmt| 1 + child_block(stmt).map_or(0, count_statements))
-        .sum()
 }
 
 fn has_room(program: &Program) -> bool {
@@ -1413,10 +1035,19 @@ fn pick<T>(rng: &mut impl Choose, items: Vec<T>) -> Option<T> {
 }
 
 fn random_provider(rng: &mut impl Choose) -> SourceProvider {
-    match rng.index(3) {
-        0 => SourceProvider::File,
-        1 => SourceProvider::Dir,
-        _ => SourceProvider::FileOrDir,
+    PROVIDERS[rng.index(PROVIDERS.len())]
+}
+
+/// Keep the existing distribution for the first draw. A collision switches to
+/// a different aggregate without an unbounded rejection loop.
+fn different_query(rng: &mut impl Choose, shape: &Shape, current: &Query) -> Query {
+    let candidate = random_query(rng, shape);
+    if candidate != *current {
+        return candidate;
+    }
+    match current {
+        Query::AllPackageDependencies => Query::AllWorkspaceFileDependencies,
+        _ => Query::AllPackageDependencies,
     }
 }
 
@@ -1443,7 +1074,7 @@ fn attachable(rng: &mut impl Choose, scenario: &Scenario) -> String {
         )
         .filter(|name| *name != "base")
         .collect();
-    if candidates.is_empty() || rng.odds(15) {
+    if candidates.is_empty() || rng.odds(UNINSTALLED_PERCENT) {
         return UNINSTALLED.to_string();
     }
     candidates[rng.index(candidates.len())].to_string()
@@ -1451,11 +1082,174 @@ fn attachable(rng: &mut impl Choose, scenario: &Scenario) -> String {
 
 #[cfg(test)]
 mod tests {
+    use mutatis::Session;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     use super::*;
+    use crate::fuzz::build::qualified_source;
+    use crate::fuzz::build::source;
     use crate::fuzz::corpus;
+    use crate::fuzz::limits::within_bounds;
+    use crate::fuzz::seed_corpus;
+
+    struct FixedChoice(usize);
+
+    impl Choose for FixedChoice {
+        fn index(&mut self, len: usize) -> usize {
+            assert!(len > 0);
+            self.0 % len
+        }
+
+        fn odds(&mut self, _percent: u32) -> bool {
+            false
+        }
+    }
+
+    fn scenario_with(statements: Vec<Stmt>) -> Scenario {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        scenario.initial.files.truncate(1);
+        scenario.initial.files[0].program = Program { statements };
+        scenario.ops.clear();
+        scenario.cold_entry = Query::Diagnostics(FileId(0));
+        scenario
+    }
+
+    #[test]
+    fn test_nesting_rebases_a_later_destination() {
+        let mut scenario = scenario_with(vec![binding("value"), function_def("fun", vec![])]);
+        nest_statement(&mut FixedChoice(0), &mut scenario);
+        let expected = Program {
+            statements: vec![function_def("fun", vec![binding("value")])],
+        };
+        assert_eq!(
+            scenario.initial.files[0].program.render().text,
+            expected.render().text
+        );
+
+        unnest_statement(&mut FixedChoice(0), &mut scenario);
+        let expected = Program {
+            statements: vec![function_def("fun", vec![]), binding("value")],
+        };
+        assert_eq!(
+            scenario.initial.files[0].program.render().text,
+            expected.render().text
+        );
+    }
+
+    #[test]
+    fn test_shadow_is_inserted_before_a_bare_call_in_its_own_block() {
+        let mut scenario = scenario_with(vec![
+            qualified_source("a.R"),
+            function_def("fun", vec![source("a.R")]),
+        ]);
+        shadow_callee(&mut FixedChoice(0), &mut scenario);
+        let expected = Program {
+            statements: vec![
+                qualified_source("a.R"),
+                function_def("fun", vec![shadow("source"), source("a.R")]),
+            ],
+        };
+        assert_eq!(
+            scenario.initial.files[0].program.render().text,
+            expected.render().text
+        );
+        let qualified = scenario_with(vec![qualified_source("a.R")]);
+        assert!(!Step::ShadowCallee.applies(&qualified));
+    }
+
+    #[test]
+    fn test_query_collision_still_changes_the_query() {
+        let scenario = scenario_with(vec![]);
+        let shape = Shape::of(&scenario.initial);
+        let current = random_query(&mut FixedChoice(0), &shape);
+        assert_eq!(
+            different_query(&mut FixedChoice(0), &shape, &current),
+            Query::AllPackageDependencies
+        );
+    }
+
+    #[test]
+    fn test_exports_do_not_repeat_existing_names() {
+        let mut scenario = scenario_with(vec![]);
+        add_package(&mut FixedChoice(0), &mut scenario);
+        for _ in 0..MAX_EXPORTS {
+            add_export(&mut FixedChoice(0), &mut scenario);
+        }
+        assert_eq!(scenario.initial.packages[0].exports, [
+            "exp_0", "exp_1", "exp_2"
+        ]);
+        assert!(!Step::AddExport.applies(&scenario));
+    }
+
+    #[test]
+    fn test_package_and_file_mutations_rebuild_workspace_ownership() {
+        let mut scenario = scenario_with(vec![]);
+        add_package(&mut FixedChoice(0), &mut scenario);
+        assert_eq!(scenario.initial.packages[0].kind, PackageKind::Workspace);
+        add_file(&mut FixedChoice(1), &mut scenario);
+        assert_eq!(
+            scenario.initial.files[1].owner,
+            Owner::Package(PackageId(0))
+        );
+        assert_eq!(scenario.initial.files[1].path, "R/a.R");
+        assert!(scenario.validate().is_ok());
+
+        remove_package(&mut FixedChoice(0), &mut scenario);
+        assert_eq!(scenario.initial.files.len(), 1);
+        assert_eq!(scenario.initial.packages.len(), 0);
+        assert!(scenario.validate().is_ok());
+
+        add_package(&mut FixedChoice(0), &mut scenario);
+        add_file(&mut FixedChoice(1), &mut scenario);
+        add_file(&mut FixedChoice(0), &mut scenario);
+        assert_eq!(
+            scenario.initial.files[1].owner,
+            Owner::Package(PackageId(0))
+        );
+        assert_eq!(scenario.initial.files[2].owner, Owner::Script);
+        assert!(scenario.validate().is_ok());
+    }
+
+    #[test]
+    fn test_every_shrink_step_makes_progress() {
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut corpus = seed_corpus(0);
+        corpus.push(scenario_with(vec![function_def("outer", vec![
+            function_def("inner", vec![binding("value")]),
+        ])]));
+        for step in STEPS.into_iter().filter(|step| step.shrinks()) {
+            let mut exercised = false;
+            for original in &corpus {
+                if !step.applies(original) {
+                    continue;
+                }
+                let mut scenario = original.clone();
+                let before = complexity(&scenario);
+                step.apply(&mut rng, &mut scenario);
+                assert!(complexity(&scenario) < before);
+                assert!(scenario.validate().is_ok());
+                exercised = true;
+            }
+            assert!(exercised);
+        }
+    }
+
+    // Unnesting keeps node counts unchanged but decreases total statement depth.
+    fn complexity(scenario: &Scenario) -> (usize, usize) {
+        let slots = slots_where(scenario, |_| true);
+        let count = scenario.initial.files.len() +
+            scenario.initial.packages.len() +
+            scenario.ops.len() +
+            slots.len() +
+            scenario
+                .initial
+                .packages
+                .iter()
+                .map(|package| package.exports.len() + package.reexports.len())
+                .sum::<usize>();
+        (count, slots.iter().map(|slot| slot.path.len()).sum())
+    }
 
     /// Test source-edge steps directly because `InsertStatement` can also add
     /// `source()` calls.
@@ -1476,10 +1270,6 @@ mod tests {
     /// within the limits imposed on decoded scenarios.
     #[test]
     fn test_mutation_respects_declared_bounds() {
-        use mutatis::Session;
-
-        use crate::fuzz::seed_corpus;
-
         let mut session = Session::new().seed(0);
         let mut corpus = seed_corpus(0);
 
@@ -1501,8 +1291,8 @@ mod tests {
                 assert!(package.reexports.len() <= MAX_REEXPORTS);
             }
             for program in programs(scenario) {
-                assert!(count_statements(&program.statements) <= CEILING_STATEMENTS);
-                assert!(program.render().text.len() <= CEILING_TEXT);
+                assert!(count_statements(&program.statements) <= MAX_STATEMENTS + 1);
+
                 for stmt in &program.statements {
                     assert!(height(stmt) <= MAX_DEPTH);
                 }
