@@ -8,6 +8,7 @@ use crate::tests::test_db::file_path;
 use crate::tests::test_db::TestDb;
 use crate::File;
 use crate::FileRevision;
+use crate::OakDatabase;
 
 /// File entities are created directly with `File::new` so these tests
 /// stay focused on per-query behavior (caching, backdating) without
@@ -35,7 +36,7 @@ fn test_source_text_rereads_disk_when_revision_bumps() {
     fs::write(&path, "v1\n").unwrap();
     let url = FilePath::from_path_buf(path.clone()).unwrap();
 
-    let mut db = TestDb::new();
+    let mut db = OakDatabase::new();
     let file = File::new(&db, url, FileRevision::zero(), None, None);
     assert_eq!(file.source_text(&db), "v1\n");
 
