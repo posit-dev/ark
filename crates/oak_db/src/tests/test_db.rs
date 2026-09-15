@@ -27,6 +27,7 @@ use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
 use crate::RootKind;
+use crate::SourceDb;
 use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
@@ -137,7 +138,7 @@ impl DbInputs for TestDb {
 }
 
 #[salsa::db]
-impl Db for TestDb {
+impl SourceDb for TestDb {
     fn file_by_path(&self, path: &FilePath) -> Option<crate::File> {
         crate::db::file_by_path_query(self, path)
     }
@@ -226,6 +227,9 @@ pub(super) fn make_package(
     pkg.set_files(db).to(entities.clone());
     (pkg, entities)
 }
+
+#[salsa::db]
+impl Db for TestDb {}
 
 #[cfg(test)]
 mod tests {

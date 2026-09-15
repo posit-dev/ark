@@ -1,6 +1,6 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
-use oak_db::Db;
+use oak_db::SourceDb;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types::Location;
 use tower_lsp_server::ls_types::ReferenceParams;
