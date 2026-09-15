@@ -19,6 +19,7 @@ mod package;
 mod package_resolve;
 mod parse;
 mod recovery;
+mod resolver_db;
 mod search;
 mod storage;
 mod workspace;
