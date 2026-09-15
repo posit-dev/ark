@@ -1,4 +1,3 @@
-use std::fs;
 use std::io;
 
 use aether_path::FilePath;
@@ -117,7 +116,7 @@ impl Package {
         };
 
         let namespace_path = dir.join("NAMESPACE");
-        match fs::read_to_string(namespace_path.as_std_path()) {
+        match db.read_to_string(&namespace_path) {
             Ok(text) => Namespace::parse(&text).log_err().unwrap_or_default(),
             // A package needn't ship a `NAMESPACE`, so absence is the normal
             // case and stays quiet. A file that exists but can't be read is
@@ -220,7 +219,7 @@ impl Package {
         report_untracked_if_zero(db, self.description_revision(db));
 
         let path = self.description_path(db).as_path()?;
-        match fs::read_to_string(path.as_std_path()) {
+        match db.read_to_string(path) {
             Ok(text) => Description::parse(&text).log_err(),
             // A missing `DESCRIPTION` is the normal "gone after a rescan" case
             // and stays quiet. A file that exists but can't be read is logged
@@ -260,7 +259,7 @@ impl Package {
         // The `index_revision()` early exit handled workspace packages, so we only handle
         // installed packages here. If an `INDEX` is missing, we silently return an empty
         // one ({translations} is an example). Otherwise, failure to parse logs an error.
-        match fs::read_to_string(path.as_std_path()) {
+        match db.read_to_string(&path) {
             Ok(text) => Some(Index::parse(&text)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Some(Index::default()),
             Err(err) => {
