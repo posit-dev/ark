@@ -1,17 +1,32 @@
 //! Named scenarios with a concrete workspace and edit history.
+//!
+//! This module registers cases and provides their shared constructors. Source
+//! and attachment cases live in `source`; re-export cases live in `packages`.
 
-use oak_semantic::effects::fuzz::SourceProvider;
-use oak_semantic::fuzz::Invocation;
+mod packages;
+mod source;
+
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 
-use crate::file_imports::CollationView;
-use crate::fuzz::build::binding;
-use crate::fuzz::build::function_def;
-use crate::fuzz::build::library;
-use crate::fuzz::build::shadow;
-use crate::fuzz::build::source;
-use crate::fuzz::build::source_with;
+use self::packages::acyclic_reexport_chain_resolves_to_the_definition;
+use self::packages::attached_package_consumer_degrades_on_a_reexport_cycle;
+use self::packages::attached_package_consumer_resolves_a_reexport;
+use self::packages::mutual_reexport_has_no_terminal_definition;
+use self::packages::namespace_import_layer_consumer_resolves_a_reexport;
+use self::packages::package_export_shadows_the_source_effect;
+use self::packages::reexport_chain_terminates_at_a_local_export;
+use self::source::acyclic_pair_closes_then_reopens;
+use self::source::file_or_dir_source_at_a_file;
+use self::source::library_in_function_body;
+use self::source::mutual_pair_opens_then_closes_again;
+use self::source::nested_source_in_function_body;
+use self::source::package_cold_entry_reaches_cross_file_layers_recovery;
+use self::source::package_edit_revalidates_cross_file_layers_recovery;
+use self::source::recursive_source_dir_in_package;
+use self::source::same_file_shadow_suppresses_the_edge;
+use self::source::shallow_source_dir;
+use self::source::source_after_bindings;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
@@ -24,7 +39,6 @@ use crate::fuzz::spec::PackageKind;
 use crate::fuzz::spec::PackageSpec;
 use crate::fuzz::spec::Reexport;
 use crate::fuzz::spec::WorkspaceSpec;
-use crate::NamespaceVisibility;
 
 pub struct Case {
     pub name: &'static str,
@@ -113,345 +127,6 @@ pub fn case(name: &str) -> Scenario {
         Some(case) => case.scenario,
         None => panic!("no corpus case named {name:?}"),
     }
-}
-
-fn acyclic_pair_closes_then_reopens() -> Scenario {
-    let initial = scripts(vec![
-        ("a.R", program(vec![source("b.R"), binding("val_a")])),
-        ("b.R", program(vec![binding("val_b")])),
-    ]);
-    let ops = vec![
-        replace(FileId(1), program(vec![source("a.R"), binding("val_b")])),
-        replace(FileId(1), program(vec![binding("val_b")])),
-    ];
-    scenario(initial, Query::Diagnostics(FileId(0)), ops)
-}
-
-fn mutual_pair_opens_then_closes_again() -> Scenario {
-    let initial = scripts(vec![
-        ("a.R", program(vec![source("b.R"), binding("val_a")])),
-        ("b.R", program(vec![source("a.R"), binding("val_b")])),
-    ]);
-    let ops = vec![
-        replace(FileId(1), program(vec![binding("val_b")])),
-        replace(FileId(1), program(vec![source("a.R"), binding("val_b")])),
-    ];
-    scenario(initial, Query::Diagnostics(FileId(1)), ops)
-}
-
-fn package_cold_entry_reaches_cross_file_layers_recovery() -> Scenario {
-    let initial = package("mypkg", &["base", "pkga"], vec![
-        ("R/a.R", program(vec![library("pkga"), source("R/b.R")])),
-        ("R/b.R", program(vec![library("pkga")])),
-    ]);
-    scenario(
-        initial,
-        Query::CrossFileLayers(FileId(1), CollationView::Eager),
-        vec![],
-    )
-}
-
-/// The cold entry memoizes `cross_file_layers()`, so the edit makes the cycle
-/// arise while Salsa revalidates that memo rather than while computing it.
-fn package_edit_revalidates_cross_file_layers_recovery() -> Scenario {
-    let initial = package("mypkg", &["base", "pkga"], vec![
-        ("R/a.R", program(vec![])),
-        ("R/b.R", program(vec![library("pkga")])),
-    ]);
-    let ops = vec![
-        replace(FileId(0), program(vec![source("R/b.R")])),
-        query(Query::CrossFileLayers(FileId(1), CollationView::Eager)),
-    ];
-    scenario(initial, Query::Imports(FileId(1)), ops)
-}
-
-fn same_file_shadow_suppresses_the_edge() -> Scenario {
-    let initial = scripts(vec![
-        (
-            "a.R",
-            program(vec![shadow("source"), source("b.R"), binding("val_a")]),
-        ),
-        ("b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-fn nested_source_in_function_body() -> Scenario {
-    let initial = scripts(vec![
-        (
-            "a.R",
-            program(vec![
-                function_def("read", vec![source("b.R")]),
-                binding("val_a"),
-            ]),
-        ),
-        ("b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-fn source_after_bindings() -> Scenario {
-    let initial = scripts(vec![
-        ("a.R", program(vec![binding("val_a"), source("b.R")])),
-        ("b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-fn library_in_function_body() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string(), "pkga".to_string()],
-        packages: vec![],
-        files: file_specs(Owner::Script, vec![(
-            "a.R",
-            program(vec![
-                function_def("attach", vec![library("pkga")]),
-                binding("val_a"),
-            ]),
-        )]),
-    };
-    scenario(initial, Query::AttachedPackages(FileId(0)), vec![])
-}
-
-fn shallow_source_dir() -> Scenario {
-    let initial = scripts(vec![
-        (
-            "a.R",
-            program(vec![source_with(
-                ".",
-                SourceProvider::Dir,
-                Invocation::Bare,
-            )]),
-        ),
-        ("b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-/// Qualify `tar_source()` so it resolves without attaching `targets`.
-fn recursive_source_dir_in_package() -> Scenario {
-    let initial = package("mypkg", &["base", "targets"], vec![
-        (
-            "R/a.R",
-            program(vec![source_with(
-                "R",
-                SourceProvider::FileOrDir,
-                Invocation::Qualified,
-            )]),
-        ),
-        ("R/b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-/// `tar_source()` takes a file or a directory, and `scan_source()` tries
-/// `resolve_source()` before falling back to the directory walk.
-fn file_or_dir_source_at_a_file() -> Scenario {
-    let initial = package("mypkg", &["base", "targets"], vec![
-        (
-            "R/a.R",
-            program(vec![source_with(
-                "R/b.R",
-                SourceProvider::FileOrDir,
-                Invocation::Qualified,
-            )]),
-        ),
-        ("R/b.R", program(vec![binding("val_b")])),
-    ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
-}
-
-/// `pkga` has no local definition, so resolution follows its import to `pkgb`.
-fn acyclic_reexport_chain_resolves_to_the_definition() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string()],
-        packages: vec![
-            package_spec("pkga", PackageKind::Workspace, &["exp_a"], &[(
-                "exp_a", "pkgb",
-            )]),
-            package_spec("pkgb", PackageKind::Workspace, &["exp_a"], &[]),
-        ],
-        files: file_specs(Owner::Package(PackageId(1)), vec![(
-            "R/a.R",
-            program(vec![function_def("exp_a", vec![])]),
-        )]),
-    };
-    scenario(
-        initial,
-        Query::PackageResolve(
-            PackageId(0),
-            "exp_a".to_string(),
-            NamespaceVisibility::Exported,
-        ),
-        vec![],
-    )
-}
-
-/// Neither package defines `exp_a` locally. Following their mutual re-exports
-/// re-enters `Package::resolve()` with the same key.
-fn mutual_reexport_has_no_terminal_definition() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec![],
-        packages: vec![
-            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "lib1",
-            )]),
-            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "lib0",
-            )]),
-        ],
-        // Library packages own no files. A lone script keeps the workspace
-        // non-empty so `validate()` accepts the scenario.
-        files: file_specs(Owner::Script, vec![(
-            "a.R",
-            program(vec![binding("val_a")]),
-        )]),
-    };
-    scenario(
-        initial,
-        Query::PackageResolve(
-            PackageId(0),
-            "exp_a".to_string(),
-            NamespaceVisibility::Exported,
-        ),
-        vec![],
-    )
-}
-
-/// `lib0` re-exports from `lib1`, which re-exports from the workspace package
-/// `pkgw`, which defines `exp_a` locally. Separates chain depth (two hops
-/// through metadata-only packages) from the mutual-cycle case.
-fn reexport_chain_terminates_at_a_local_export() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec![],
-        packages: vec![
-            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "lib1",
-            )]),
-            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "pkgw",
-            )]),
-            package_spec("pkgw", PackageKind::Workspace, &["exp_a"], &[]),
-        ],
-        files: file_specs(Owner::Package(PackageId(2)), vec![(
-            "R/a.R",
-            program(vec![function_def("exp_a", vec![])]),
-        )]),
-    };
-    scenario(
-        initial,
-        Query::PackageResolve(
-            PackageId(0),
-            "exp_a".to_string(),
-            NamespaceVisibility::Exported,
-        ),
-        vec![],
-    )
-}
-
-/// A script attaches `lib0`, which re-exports `exp_a` from the workspace
-/// package `pkgw`. `File::resolve()` reaches `Package::resolve()` through the
-/// attach's `ImportLayer::Package`, not through a direct `PackageResolve` entry.
-fn attached_package_consumer_resolves_a_reexport() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string()],
-        packages: vec![
-            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "pkgw",
-            )]),
-            package_spec("pkgw", PackageKind::Workspace, &["exp_a"], &[]),
-        ],
-        files: {
-            let mut files = file_specs(Owner::Package(PackageId(1)), vec![(
-                "R/a.R",
-                program(vec![function_def("exp_a", vec![])]),
-            )]);
-            files.extend(file_specs(Owner::Script, vec![(
-                "a.R",
-                program(vec![library("lib0")]),
-            )]));
-            files
-        },
-    };
-    scenario(
-        initial,
-        Query::Resolve(FileId(1), "exp_a".to_string()),
-        vec![],
-    )
-}
-
-/// The attaching script enters the mutual re-export cycle through file
-/// resolution, exercising recovery from a consumer request.
-fn attached_package_consumer_degrades_on_a_reexport_cycle() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string()],
-        packages: vec![
-            package_spec("lib0", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "lib1",
-            )]),
-            package_spec("lib1", PackageKind::Library, &["exp_a"], &[(
-                "exp_a", "lib0",
-            )]),
-        ],
-        files: file_specs(Owner::Script, vec![("a.R", program(vec![library("lib0")]))]),
-    };
-    scenario(
-        initial,
-        Query::Resolve(FileId(0), "exp_a".to_string()),
-        vec![],
-    )
-}
-
-/// `pkgc`'s own NAMESPACE carries `importFrom(pkgd, exp_a)` with no matching
-/// `export()`, so a file inside `pkgc` sees `exp_a` through
-/// `ImportLayer::From`, the collation-wide re-export layer, rather than
-/// through an attach.
-fn namespace_import_layer_consumer_resolves_a_reexport() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string()],
-        packages: vec![
-            package_spec("pkgc", PackageKind::Workspace, &[], &[("exp_a", "pkgd")]),
-            package_spec("pkgd", PackageKind::Workspace, &["exp_a"], &[]),
-        ],
-        files: {
-            let mut files = file_specs(Owner::Package(PackageId(0)), vec![(
-                "R/a.R",
-                program(vec![binding("val_c")]),
-            )]);
-            files.extend(file_specs(Owner::Package(PackageId(1)), vec![(
-                "R/a.R",
-                program(vec![function_def("exp_a", vec![])]),
-            )]));
-            files
-        },
-    };
-    scenario(
-        initial,
-        Query::Resolve(FileId(0), "exp_a".to_string()),
-        vec![],
-    )
-}
-
-/// `lib0` exports `source`, so attaching it binds `source` as a plain export
-/// (no registered effect) that shadows `base`'s `source()` effect through
-/// `package_binding()`, before the search reaches `base`.
-fn package_export_shadows_the_source_effect() -> Scenario {
-    let initial = WorkspaceSpec {
-        installed: vec!["base".to_string()],
-        packages: vec![package_spec("lib0", PackageKind::Library, &["source"], &[])],
-        files: {
-            let mut files = file_specs(Owner::Script, vec![(
-                "a.R",
-                program(vec![library("lib0"), source("b.R")]),
-            )]);
-            files.extend(file_specs(Owner::Script, vec![(
-                "b.R",
-                program(vec![binding("val_b")]),
-            )]));
-            files
-        },
-    };
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 fn program(statements: Vec<Stmt>) -> Program {
