@@ -4,12 +4,17 @@ use std::fmt::Write;
 
 use anyhow::anyhow;
 use anyhow::Context;
+use oak_package_metadata::namespace::Namespace;
 use oak_semantic::fuzz::Program;
 
 use crate::file_imports::CollationView;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::PackageId;
+use crate::fuzz::spec::PackageKind;
+use crate::fuzz::spec::PackageSpec;
 use crate::fuzz::spec::WorkspaceSpec;
+use crate::NamespaceVisibility;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Scenario {
@@ -59,6 +64,7 @@ pub enum Query {
     AttachedPackagesAnywhere(FileId),
     InheritedLayers(FileId, CollationView),
     CrossFileLayers(FileId, CollationView),
+    PackageResolve(PackageId, String, NamespaceVisibility),
 }
 
 /// A semantic location for an offset-keyed query, resolved after each edit.
@@ -118,20 +124,106 @@ impl Scenario {
             validate_file_id(op.file(), file_count, &format!("op {index}"))?;
         }
 
-        let package_owned = self
-            .initial
-            .files
-            .iter()
-            .find(|file| file.owner == Owner::Package);
-        if let (Some(file), None) = (package_owned, &self.initial.package) {
-            return Err(anyhow!(
-                "file {} is package-owned but the workspace declares no package",
-                file.path
-            ));
+        let package_count = self.initial.packages.len();
+        validate_package_id(self.cold_entry.package(), package_count, "cold_entry")?;
+        for (index, op) in self.ops.iter().enumerate() {
+            if let Op::Query(query) = op {
+                validate_package_id(query.package(), package_count, &format!("op {index}"))?;
+            }
+        }
+
+        for file in &self.initial.files {
+            let Owner::Package(id) = file.owner else {
+                continue;
+            };
+            let Some(package) = self.initial.packages.get(id.0) else {
+                return Err(anyhow!(
+                    "file {} owner references package {} but the workspace has {package_count} packages",
+                    file.path, id.0
+                ));
+            };
+            if package.kind != PackageKind::Workspace {
+                return Err(anyhow!(
+                    "file {} is owned by library package {}",
+                    file.path,
+                    package.name
+                ));
+            }
+        }
+
+        let mut names: Vec<&str> = self.initial.installed.iter().map(String::as_str).collect();
+        for package in &self.initial.packages {
+            if package.name == "base" {
+                return Err(anyhow!("package cannot be named \"base\""));
+            }
+            if names.contains(&package.name.as_str()) {
+                return Err(anyhow!(
+                    "package name \"{}\" is used more than once",
+                    package.name
+                ));
+            }
+            names.push(&package.name);
+            validate_namespace(package)?;
         }
 
         Ok(())
     }
+}
+
+/// Reject directives that fail to parse or lose names during parsing.
+/// [`is_identifier()`] admits R reserved words such as `if`, which fail to
+/// parse, and literals such as `TRUE`, which parse but yield no name.
+///
+/// A second `importFrom()` for a name is rejected rather than collapsed. The
+/// parser keeps one of them, and the report would then describe an edge the
+/// database does not have.
+fn validate_namespace(package: &PackageSpec) -> anyhow::Result<()> {
+    let mut reexported: Vec<&str> = Vec::new();
+    for reexport in &package.reexports {
+        if reexported.contains(&reexport.name.as_str()) {
+            return Err(anyhow!(
+                "package {} re-exports {} more than once",
+                package.name,
+                reexport.name
+            ));
+        }
+        reexported.push(&reexport.name);
+    }
+
+    let namespace = match Namespace::parse(&package.namespace_text()) {
+        Ok(namespace) => namespace,
+        Err(err) => {
+            return Err(anyhow!(
+                "package {} renders a NAMESPACE that does not parse: {err}",
+                package.name
+            ))
+        },
+    };
+
+    for export in &package.exports {
+        if !namespace.exports.contains_str(export) {
+            return Err(anyhow!(
+                "package {} exports {export}, which the NAMESPACE parser reads as no name",
+                package.name
+            ));
+        }
+    }
+    for reexport in &package.reexports {
+        let read_back = namespace
+            .imports
+            .iter()
+            .any(|import| import.name == reexport.name && import.package == reexport.from);
+        if !read_back {
+            return Err(anyhow!(
+                "package {} imports {} from {}, which the NAMESPACE parser reads as no name",
+                package.name,
+                reexport.name,
+                reexport.from
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// `file` is `None` for the aggregate queries, which have no file to check.
@@ -143,6 +235,23 @@ fn validate_file_id(file: Option<FileId>, file_count: usize, context: &str) -> a
         return Err(anyhow!(
             "{context} references file {} but the workspace has {file_count} files",
             file.0
+        ));
+    }
+    Ok(())
+}
+
+fn validate_package_id(
+    package: Option<PackageId>,
+    package_count: usize,
+    context: &str,
+) -> anyhow::Result<()> {
+    let Some(package) = package else {
+        return Ok(());
+    };
+    if package.0 >= package_count {
+        return Err(anyhow!(
+            "{context} references package {} but the workspace has {package_count} packages",
+            package.0
         ));
     }
     Ok(())
@@ -192,7 +301,8 @@ impl Query {
             Query::AllWorkspaceFileDependencies |
             Query::AllWorkspaceLoaderDependencies |
             Query::AllWorkspacePackageDependencies |
-            Query::DefaultSearchPathPackages => None,
+            Query::DefaultSearchPathPackages |
+            Query::PackageResolve(..) => None,
         }
     }
 
@@ -215,7 +325,22 @@ impl Query {
             Query::AllWorkspaceFileDependencies |
             Query::AllWorkspaceLoaderDependencies |
             Query::AllWorkspacePackageDependencies |
-            Query::DefaultSearchPathPackages => None,
+            Query::DefaultSearchPathPackages |
+            Query::PackageResolve(..) => None,
+        }
+    }
+
+    pub(super) fn package(&self) -> Option<PackageId> {
+        match self {
+            Query::PackageResolve(package, _, _) => Some(*package),
+            _ => None,
+        }
+    }
+
+    pub(super) fn package_mut(&mut self) -> Option<&mut PackageId> {
+        match self {
+            Query::PackageResolve(package, _, _) => Some(package),
+            _ => None,
         }
     }
 
@@ -249,6 +374,9 @@ impl Query {
             Query::CrossFileLayers(file, view) => {
                 format!("cross_file_layers[{}] {view:?}", file.0)
             },
+            Query::PackageResolve(package, name, visibility) => {
+                format!("package_resolve[p{}] {name} {visibility:?}", package.0)
+            },
         }
     }
 }
@@ -265,6 +393,7 @@ mod tests {
     use super::FileId;
     use super::Op;
     use super::Owner;
+    use super::PackageId;
     use super::Program;
     use super::Query;
     use super::Scenario;
@@ -275,7 +404,9 @@ mod tests {
     use crate::fuzz::corpus;
     use crate::fuzz::corpus::corpus;
     use crate::fuzz::seed_corpus;
+    use crate::fuzz::spec::Reexport;
     use crate::fuzz::ScenarioMutator;
+    use crate::NamespaceVisibility;
 
     #[test]
     fn test_corpus_scenarios_round_trip() {
@@ -288,6 +419,44 @@ mod tests {
             assert_eq!(restored.header(), case.scenario.header());
             assert_eq!(restored.render(), case.scenario.render());
         }
+    }
+
+    /// Legacy input decodes to the canonical model and serializes in that format.
+    #[test]
+    fn test_legacy_package_field_decodes_into_packages() {
+        let scenario = corpus::case("recursive_source_dir_in_package");
+        let json = scenario.to_json().unwrap();
+
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let initial = value.get_mut("initial").unwrap().as_object_mut().unwrap();
+        let packages = initial.remove("packages").unwrap();
+        let name = packages[0]["name"].as_str().unwrap().to_string();
+        initial.insert("package".to_string(), serde_json::Value::String(name));
+        for file in initial["files"].as_array_mut().unwrap() {
+            if file["owner"] == serde_json::json!({"Package": 0}) {
+                file["owner"] = serde_json::Value::String("Package".to_string());
+            }
+        }
+
+        let legacy = serde_json::to_string(&value).unwrap();
+        let restored = Scenario::from_json(legacy.as_bytes()).unwrap();
+
+        assert_eq!(restored.render(), scenario.render());
+        assert_eq!(restored.to_json().unwrap(), json);
+    }
+
+    #[test]
+    fn test_legacy_package_and_packages_together_is_rejected() {
+        let scenario = corpus::case("recursive_source_dir_in_package");
+        let json = scenario.to_json().unwrap();
+
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let initial = value.get_mut("initial").unwrap().as_object_mut().unwrap();
+        let name = initial["packages"][0]["name"].as_str().unwrap().to_string();
+        initial.insert("package".to_string(), serde_json::Value::String(name));
+
+        let ambiguous = serde_json::to_string(&value).unwrap();
+        assert!(Scenario::from_json(ambiguous.as_bytes()).is_err());
     }
 
     /// Exercise combinations beyond the fixed corpus. The separate
@@ -418,7 +587,7 @@ mod tests {
             variant: 0,
             initial: WorkspaceSpec {
                 installed: vec!["base".to_string()],
-                package: None,
+                packages: vec![],
                 files: vec![],
             },
             cold_entry: Query::AllPackageDependencies,
@@ -443,14 +612,14 @@ mod tests {
     }
 
     #[test]
-    fn test_package_owned_file_without_package_is_rejected() {
+    fn test_package_owned_file_with_out_of_range_package_is_rejected() {
         let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
-        scenario.initial.files[0].owner = Owner::Package;
+        scenario.initial.files[0].owner = Owner::Package(PackageId(0));
 
         let error = scenario.validate().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "file a.R is package-owned but the workspace declares no package"
+            "file a.R owner references package 0 but the workspace has 0 packages"
         );
     }
 
@@ -472,5 +641,263 @@ mod tests {
         for scenario in seed_corpus(0) {
             assert!(scenario.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn test_out_of_range_package_id_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.cold_entry = Query::PackageResolve(
+            PackageId(5),
+            "exp_a".to_string(),
+            NamespaceVisibility::Exported,
+        );
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cold_entry references package 5 but the workspace has 2 packages"
+        );
+    }
+
+    #[test]
+    fn test_file_owned_by_library_package_is_rejected() {
+        let mut scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+        scenario.initial.files[0].owner = Owner::Package(PackageId(0));
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "file a.R is owned by library package lib0"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_package_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        let mut duplicate = scenario.initial.packages[1].clone();
+        duplicate.name = scenario.initial.packages[0].name.clone();
+        scenario.initial.packages.push(duplicate);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package name \"pkga\" is used more than once"
+        );
+    }
+
+    #[test]
+    fn test_base_named_package_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].name = "base".to_string();
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(error.to_string(), "package cannot be named \"base\"");
+    }
+
+    #[test]
+    fn test_over_max_packages_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        let extra = scenario.initial.packages[1].clone();
+        for index in 0..3 {
+            let mut package = extra.clone();
+            package.name = format!("pkg{index}");
+            scenario.initial.packages.push(package);
+        }
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the workspace has 5 packages but mutation produces at most 3"
+        );
+    }
+
+    #[test]
+    fn test_over_max_exports_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[1].exports = vec![
+            "exp_a".to_string(),
+            "exp_b".to_string(),
+            "exp_c".to_string(),
+            "exp_d".to_string(),
+        ];
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package \"pkgb\" has 4 exports but mutation produces at most 3"
+        );
+    }
+
+    #[test]
+    fn test_over_max_reexports_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].reexports = vec![
+            Reexport {
+                name: "exp_a".to_string(),
+                from: "pkgb".to_string(),
+            },
+            Reexport {
+                name: "exp_b".to_string(),
+                from: "pkgb".to_string(),
+            },
+            Reexport {
+                name: "exp_c".to_string(),
+                from: "pkgb".to_string(),
+            },
+            Reexport {
+                name: "exp_d".to_string(),
+                from: "pkgb".to_string(),
+            },
+        ];
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package \"pkga\" has 4 reexports but mutation produces at most 3"
+        );
+    }
+
+    #[test]
+    fn test_oversized_package_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].name = "a".repeat(40);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package 0 name is 40 bytes, over the 32 byte limit"
+        );
+    }
+
+    #[test]
+    fn test_oversized_export_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[1].exports.push("b".repeat(40));
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package 1 export 1 is 40 bytes, over the 32 byte limit"
+        );
+    }
+
+    #[test]
+    fn test_oversized_reexport_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].reexports[0].name = "c".repeat(40);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package 0 reexport 0 name is 40 bytes, over the 32 byte limit"
+        );
+    }
+
+    #[test]
+    fn test_oversized_reexport_source_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].reexports[0].from = "d".repeat(40);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package 0 reexport 0 from is 40 bytes, over the 32 byte limit"
+        );
+    }
+
+    #[test]
+    fn test_oversized_package_resolve_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.cold_entry =
+            Query::PackageResolve(PackageId(0), "e".repeat(40), NamespaceVisibility::Exported);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cold_entry name is 40 bytes, over the 32 byte limit"
+        );
+    }
+
+    #[test]
+    fn test_non_identifier_export_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[1]
+            .exports
+            .push("1bad".to_string());
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package 1 export 1 \"1bad\" is not a valid identifier"
+        );
+    }
+
+    /// `is_identifier()` admits reserved words, so the boundary has to consult
+    /// the parser itself. Otherwise the materializer meets NAMESPACE text that
+    /// cannot parse and panics on an input the driver can reach.
+    #[test]
+    fn test_reserved_word_export_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[1].exports[0] = "if".to_string();
+
+        let error = scenario.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .starts_with("package pkgb renders a NAMESPACE that does not parse:"));
+    }
+
+    #[test]
+    fn test_reserved_word_reexport_source_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].reexports[0].from = "function".to_string();
+
+        let error = scenario.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .starts_with("package pkga renders a NAMESPACE that does not parse:"));
+    }
+
+    /// A literal parses but is not an identifier, so the directive silently
+    /// carries no name at all.
+    #[test]
+    fn test_literal_export_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[1].exports[0] = "TRUE".to_string();
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package pkgb exports TRUE, which the NAMESPACE parser reads as no name"
+        );
+    }
+
+    #[test]
+    fn test_literal_reexport_source_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        scenario.initial.packages[0].reexports[0].from = "NULL".to_string();
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package pkga imports exp_a from NULL, which the NAMESPACE parser reads as no name"
+        );
+    }
+
+    /// The parser keeps one `importFrom` per name, so a spec carrying two
+    /// would describe an edge the database does not have.
+    #[test]
+    fn test_duplicate_reexport_name_is_rejected() {
+        let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+        let duplicate = Reexport {
+            name: scenario.initial.packages[0].reexports[0].name.clone(),
+            from: "pkgz".to_string(),
+        };
+        scenario.initial.packages[0].reexports.push(duplicate);
+
+        let error = scenario.validate().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "package pkga re-exports exp_a more than once"
+        );
     }
 }

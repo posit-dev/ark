@@ -30,15 +30,25 @@ use crate::fuzz::build::library;
 use crate::fuzz::build::shadow;
 use crate::fuzz::build::source_with;
 use crate::fuzz::choose::binding_name;
+use crate::fuzz::choose::export_name;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Choose;
+use crate::fuzz::choose::Shape;
+use crate::fuzz::choose::EXPORT_NAMES;
 use crate::fuzz::generate::file_path;
 use crate::fuzz::generate::UNINSTALLED;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
+use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
+use crate::fuzz::spec::is_identifier;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
+use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::PackageId;
+use crate::fuzz::spec::PackageKind;
+use crate::fuzz::spec::PackageSpec;
+use crate::fuzz::spec::Reexport;
 
 pub(super) const MAX_FILES: usize = 5;
 
@@ -65,6 +75,16 @@ const CEILING_STATEMENTS: usize = 2 * MAX_STATEMENTS;
 /// Limit rendered bytes while allowing an insertion to overshoot [`MAX_TEXT`].
 const CEILING_TEXT: usize = 2 * MAX_TEXT;
 
+const MAX_PACKAGES: usize = 3;
+
+const MAX_EXPORTS: usize = 3;
+
+const MAX_REEXPORTS: usize = 3;
+
+/// Applied to package names, export names, both fields of every `Reexport`,
+/// and the name carried by `Query::Resolve` and `Query::PackageResolve`.
+const MAX_NAME: usize = 32;
+
 /// Apply the same limits to initial programs and [`Op::Edit`] replacements.
 /// Statement and text ceilings allow overshoot of the mutation thresholds.
 pub(super) fn within_bounds(scenario: &Scenario) -> anyhow::Result<()> {
@@ -80,6 +100,12 @@ pub(super) fn within_bounds(scenario: &Scenario) -> anyhow::Result<()> {
         return Err(anyhow::anyhow!(
             "the history has {ops} operations but mutation produces at most {MAX_OPS}"
         ));
+    }
+
+    within_package_bounds(scenario)?;
+
+    for (context, name) in sited_query_names(scenario) {
+        within_name_bounds(name, &format!("{context} name"))?;
     }
 
     for (site, program) in sited_programs(scenario) {
@@ -111,6 +137,97 @@ pub(super) fn within_bounds(scenario: &Scenario) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn within_package_bounds(scenario: &Scenario) -> anyhow::Result<()> {
+    let packages = scenario.initial.packages.len();
+    if packages > MAX_PACKAGES {
+        return Err(anyhow::anyhow!(
+            "the workspace has {packages} packages but mutation produces at most {MAX_PACKAGES}"
+        ));
+    }
+
+    for (index, package) in scenario.initial.packages.iter().enumerate() {
+        let context = format!("package {index} name");
+        within_name_bounds(&package.name, &context)?;
+        within_identifier_charset(&package.name, &context)?;
+
+        if package.exports.len() > MAX_EXPORTS {
+            return Err(anyhow::anyhow!(
+                "package {:?} has {} exports but mutation produces at most {MAX_EXPORTS}",
+                package.name,
+                package.exports.len()
+            ));
+        }
+        for (export_index, export) in package.exports.iter().enumerate() {
+            let context = format!("package {index} export {export_index}");
+            within_name_bounds(export, &context)?;
+            within_identifier_charset(export, &context)?;
+        }
+
+        if package.reexports.len() > MAX_REEXPORTS {
+            return Err(anyhow::anyhow!(
+                "package {:?} has {} reexports but mutation produces at most {MAX_REEXPORTS}",
+                package.name,
+                package.reexports.len()
+            ));
+        }
+        for (reexport_index, reexport) in package.reexports.iter().enumerate() {
+            let name_context = format!("package {index} reexport {reexport_index} name");
+            within_name_bounds(&reexport.name, &name_context)?;
+            within_identifier_charset(&reexport.name, &name_context)?;
+
+            let from_context = format!("package {index} reexport {reexport_index} from");
+            within_name_bounds(&reexport.from, &from_context)?;
+            within_identifier_charset(&reexport.from, &from_context)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn within_name_bounds(name: &str, context: &str) -> anyhow::Result<()> {
+    if name.len() > MAX_NAME {
+        return Err(anyhow::anyhow!(
+            "{context} is {} bytes, over the {MAX_NAME} byte limit",
+            name.len()
+        ));
+    }
+    Ok(())
+}
+
+fn within_identifier_charset(name: &str, context: &str) -> anyhow::Result<()> {
+    if !is_identifier(name) {
+        return Err(anyhow::anyhow!(
+            "{context} {name:?} is not a valid identifier"
+        ));
+    }
+    Ok(())
+}
+
+/// Query names go directly to `Name::new()` without parsing, so only their
+/// size is restricted, not their spelling.
+fn sited_query_names(scenario: &Scenario) -> Vec<(String, &str)> {
+    let mut out = Vec::new();
+    if let Some(name) = query_name(&scenario.cold_entry) {
+        out.push(("cold_entry".to_string(), name));
+    }
+    for (index, op) in scenario.ops.iter().enumerate() {
+        if let Op::Query(query) = op {
+            if let Some(name) = query_name(query) {
+                out.push((format!("op {index}"), name));
+            }
+        }
+    }
+    out
+}
+
+fn query_name(query: &Query) -> Option<&str> {
+    match query {
+        Query::Resolve(_, name) => Some(name.as_str()),
+        Query::PackageResolve(_, name, _) => Some(name.as_str()),
+        _ => None,
+    }
 }
 
 pub struct ScenarioMutator;
@@ -155,9 +272,16 @@ enum Step {
     InsertOp,
     AlterOp,
     RemoveOp,
+    AddReexportEdge,
+    RedirectReexportEdge,
+    RemoveReexportEdge,
+    AddExport,
+    RemoveExport,
+    AddPackage,
+    RemovePackage,
 }
 
-const STEPS: [Step; 17] = [
+const STEPS: [Step; 24] = [
     Step::AddSourceEdge,
     Step::RedirectSourceEdge,
     Step::RemoveSourceEdge,
@@ -175,6 +299,13 @@ const STEPS: [Step; 17] = [
     Step::InsertOp,
     Step::AlterOp,
     Step::RemoveOp,
+    Step::AddReexportEdge,
+    Step::RedirectReexportEdge,
+    Step::RemoveReexportEdge,
+    Step::AddExport,
+    Step::RemoveExport,
+    Step::AddPackage,
+    Step::RemovePackage,
 ];
 
 impl Step {
@@ -187,7 +318,10 @@ impl Step {
                 Step::RemoveStatement |
                 Step::UnnestStatement |
                 Step::RemoveFile |
-                Step::RemoveOp
+                Step::RemoveOp |
+                Step::RemoveReexportEdge |
+                Step::RemoveExport |
+                Step::RemovePackage
         )
     }
 
@@ -215,6 +349,14 @@ impl Step {
             Step::InsertOp => scenario.ops.len() < MAX_OPS,
             Step::AlterOp => !alterable_ops(scenario).is_empty(),
             Step::RemoveOp => !scenario.ops.is_empty(),
+            Step::AddReexportEdge => !packages_with_reexport_room(scenario).is_empty(),
+            Step::RedirectReexportEdge | Step::RemoveReexportEdge => {
+                !reexport_slots(scenario).is_empty()
+            },
+            Step::AddExport => !packages_with_export_room(scenario).is_empty(),
+            Step::RemoveExport => !packages_with_exports(scenario).is_empty(),
+            Step::AddPackage => scenario.initial.packages.len() < MAX_PACKAGES,
+            Step::RemovePackage => !removable_packages(scenario).is_empty(),
         }
     }
 
@@ -234,7 +376,7 @@ impl Step {
             Step::AddFile => add_file(scenario),
             Step::RemoveFile => remove_file(rng, scenario),
             Step::ChangeColdEntry => {
-                scenario.cold_entry = random_query(rng, scenario.initial.files.len())
+                scenario.cold_entry = random_query(rng, &Shape::of(&scenario.initial))
             },
             Step::InsertOp => insert_op(rng, scenario),
             Step::AlterOp => alter_op(rng, scenario),
@@ -242,6 +384,13 @@ impl Step {
                 let index = rng.index(scenario.ops.len());
                 scenario.ops.remove(index);
             },
+            Step::AddReexportEdge => add_reexport_edge(rng, scenario),
+            Step::RedirectReexportEdge => redirect_reexport_edge(rng, scenario),
+            Step::RemoveReexportEdge => remove_reexport_edge(rng, scenario),
+            Step::AddExport => add_export(rng, scenario),
+            Step::RemoveExport => remove_export(rng, scenario),
+            Step::AddPackage => add_package(scenario),
+            Step::RemovePackage => remove_package(rng, scenario),
         }
     }
 }
@@ -337,7 +486,12 @@ fn source_targets(scenario: &Scenario) -> Vec<String> {
         .map(|file| file.path.clone())
         .collect();
     targets.push(".".to_string());
-    if scenario.initial.package.is_some() {
+    if scenario
+        .initial
+        .packages
+        .iter()
+        .any(|package| package.kind == PackageKind::Workspace)
+    {
         targets.push("R".to_string());
     }
     targets
@@ -559,7 +713,12 @@ fn add_file(scenario: &mut Scenario) {
     };
     let Some(index) = (0..MAX_FILES).find(|&index| {
         let path = file_path(owner, index);
-        !scenario.initial.files.iter().any(|file| file.path == path)
+        // Different packages can each own `R/a.R` under their own roots.
+        !scenario
+            .initial
+            .files
+            .iter()
+            .any(|file| file.owner == owner && file.path == path)
     }) else {
         return;
     };
@@ -616,7 +775,7 @@ fn insert_op(rng: &mut impl Choose, scenario: &mut Scenario) {
     }
     let files = scenario.initial.files.len();
     let op = if rng.odds(60) {
-        Op::Query(random_query(rng, files))
+        Op::Query(random_query(rng, &Shape::of(&scenario.initial)))
     } else {
         let file = FileId(rng.index(files));
         Op::Edit(Edit {
@@ -634,7 +793,7 @@ fn alter_op(rng: &mut impl Choose, scenario: &mut Scenario) {
         return;
     };
     match &mut scenario.ops[index] {
-        Op::Query(query) => *query = random_query(rng, files),
+        Op::Query(query) => *query = random_query(rng, &Shape::of(&scenario.initial)),
         Op::Edit(edit) => {
             let others: Vec<usize> = (0..files).filter(|&file| file != edit.file.0).collect();
             let Some(file) = pick(rng, others) else {
@@ -659,6 +818,247 @@ fn alterable_ops(scenario: &Scenario) -> Vec<usize> {
         })
         .map(|(index, _)| index)
         .collect()
+}
+
+// == Packages ==
+
+const LIB_POOL: [&str; 3] = ["lib0", "lib1", "lib2"];
+
+/// Combines `choose::export_name()`'s `exp_*` vocabulary with `val_*` binding
+/// names, so a mutated export can either match another package's reexport or
+/// a name a file actually binds.
+fn export_vocabulary(rng: &mut impl Choose) -> String {
+    if rng.odds(50) {
+        export_name(rng.index(3))
+    } else {
+        binding_name(rng.index(3))
+    }
+}
+
+fn add_export(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some(index) = pick(rng, packages_with_export_room(scenario)) else {
+        return;
+    };
+    let export = export_vocabulary(rng);
+    scenario.initial.packages[index].exports.push(export);
+}
+
+fn remove_export(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some(index) = pick(rng, packages_with_exports(scenario)) else {
+        return;
+    };
+    let exports = &mut scenario.initial.packages[index].exports;
+    let removed = rng.index(exports.len());
+    exports.remove(removed);
+}
+
+fn packages_with_export_room(scenario: &Scenario) -> Vec<usize> {
+    (0..scenario.initial.packages.len())
+        .filter(|&index| scenario.initial.packages[index].exports.len() < MAX_EXPORTS)
+        .collect()
+}
+
+fn packages_with_exports(scenario: &Scenario) -> Vec<usize> {
+    (0..scenario.initial.packages.len())
+        .filter(|&index| !scenario.initial.packages[index].exports.is_empty())
+        .collect()
+}
+
+fn add_reexport_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some(index) = pick(rng, packages_with_reexport_room(scenario)) else {
+        return;
+    };
+    let from = reexport_source(rng, scenario);
+    // Keep one `importFrom()` per name so parsing cannot discard an edge.
+    let taken: Vec<&str> = scenario.initial.packages[index]
+        .reexports
+        .iter()
+        .map(|reexport| reexport.name.as_str())
+        .collect();
+    let free: Vec<String> = (0..EXPORT_NAMES)
+        .map(export_name)
+        .filter(|name| !taken.contains(&name.as_str()))
+        .collect();
+    let Some(name) = pick(rng, free) else {
+        return;
+    };
+    scenario.initial.packages[index]
+        .reexports
+        .push(Reexport { name, from });
+}
+
+fn redirect_reexport_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some((package, reexport)) = pick(rng, reexport_slots(scenario)) else {
+        return;
+    };
+    let current = scenario.initial.packages[package].reexports[reexport]
+        .from
+        .clone();
+    let others: Vec<String> = reexport_sources(scenario)
+        .into_iter()
+        .filter(|candidate| *candidate != current)
+        .collect();
+    let Some(from) = pick(rng, others) else {
+        return;
+    };
+    scenario.initial.packages[package].reexports[reexport].from = from;
+}
+
+fn remove_reexport_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some((package, reexport)) = pick(rng, reexport_slots(scenario)) else {
+        return;
+    };
+    scenario.initial.packages[package]
+        .reexports
+        .remove(reexport);
+}
+
+fn packages_with_reexport_room(scenario: &Scenario) -> Vec<usize> {
+    (0..scenario.initial.packages.len())
+        .filter(|&index| scenario.initial.packages[index].reexports.len() < MAX_REEXPORTS)
+        .collect()
+}
+
+fn reexport_slots(scenario: &Scenario) -> Vec<(usize, usize)> {
+    scenario
+        .initial
+        .packages
+        .iter()
+        .enumerate()
+        .flat_map(|(package, spec)| {
+            (0..spec.reexports.len()).map(move |reexport| (package, reexport))
+        })
+        .collect()
+}
+
+fn reexport_source(rng: &mut impl Choose, scenario: &Scenario) -> String {
+    let sources = reexport_sources(scenario);
+    sources[rng.index(sources.len())].clone()
+}
+
+/// Modeled package names plus one known-absent name, so a dangling import
+/// stays reachable.
+fn reexport_sources(scenario: &Scenario) -> Vec<String> {
+    let mut sources: Vec<String> = scenario
+        .initial
+        .packages
+        .iter()
+        .map(|package| package.name.clone())
+        .collect();
+    sources.push(UNINSTALLED.to_string());
+    sources
+}
+
+fn add_package(scenario: &mut Scenario) {
+    if scenario.initial.packages.len() >= MAX_PACKAGES {
+        return;
+    }
+    let existing: Vec<&str> = scenario
+        .initial
+        .packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .chain(scenario.initial.installed.iter().map(String::as_str))
+        .collect();
+    let Some(&name) = LIB_POOL.iter().find(|name| !existing.contains(name)) else {
+        return;
+    };
+    scenario.initial.packages.push(PackageSpec {
+        name: name.to_string(),
+        kind: PackageKind::Library,
+        exports: Vec::new(),
+        reexports: Vec::new(),
+    });
+}
+
+/// Delete owned files with the package. Moving them to another package would
+/// change the root used to resolve their `source()` paths.
+fn remove_package(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some(removed) = pick(rng, removable_packages(scenario)) else {
+        return;
+    };
+    remove_owned_files(scenario, removed);
+    scenario.initial.packages.remove(removed);
+    repair_package_ids(rng, scenario, removed);
+}
+
+/// Packages whose removal still leaves at least one file, matching the
+/// `validate()` rule that a workspace has files.
+fn removable_packages(scenario: &Scenario) -> Vec<usize> {
+    let total = scenario.initial.files.len();
+    (0..scenario.initial.packages.len())
+        .filter(|&index| owned_file_count(scenario, index) < total)
+        .collect()
+}
+
+fn owned_file_count(scenario: &Scenario, package: usize) -> usize {
+    scenario
+        .initial
+        .files
+        .iter()
+        .filter(|file| matches!(file.owner, Owner::Package(id) if id.0 == package))
+        .count()
+}
+
+/// Remove higher file indices first so pending removals keep their indices.
+fn remove_owned_files(scenario: &mut Scenario, package: usize) {
+    let owned: Vec<usize> = scenario
+        .initial
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| matches!(file.owner, Owner::Package(id) if id.0 == package))
+        .map(|(index, _)| index)
+        .collect();
+    for index in owned.into_iter().rev() {
+        scenario.initial.files.remove(index);
+        repair_file_ids(scenario, index);
+    }
+}
+
+/// Retarget queries to surviving packages. If none remain, replace package
+/// queries with queries supported by the remaining workspace.
+fn repair_package_ids(rng: &mut impl Choose, scenario: &mut Scenario, removed: usize) {
+    let count = scenario.initial.packages.len();
+    if count == 0 {
+        let shape = Shape::of(&scenario.initial);
+        if scenario.cold_entry.package().is_some() {
+            scenario.cold_entry = random_query(rng, &shape);
+        }
+        for op in &mut scenario.ops {
+            if let Op::Query(query) = op {
+                if query.package().is_some() {
+                    *query = random_query(rng, &shape);
+                }
+            }
+        }
+        return;
+    }
+
+    if let Some(id) = scenario.cold_entry.package_mut() {
+        rebase_package(id, removed, count);
+    }
+    for op in &mut scenario.ops {
+        if let Op::Query(query) = op {
+            if let Some(id) = query.package_mut() {
+                rebase_package(id, removed, count);
+            }
+        }
+    }
+    for file in &mut scenario.initial.files {
+        if let Owner::Package(id) = &mut file.owner {
+            rebase_package(id, removed, count);
+        }
+    }
+}
+
+fn rebase_package(id: &mut PackageId, removed: usize, count: usize) {
+    let index = match id.0 {
+        index if index < removed => index,
+        index if index > removed => index - 1,
+        _ => removed,
+    };
+    id.0 = index.min(count - 1);
 }
 
 // == Scenario traversal ==
@@ -1029,16 +1429,24 @@ fn random_invocation(rng: &mut impl Choose) -> Invocation {
 }
 
 fn attachable(rng: &mut impl Choose, scenario: &Scenario) -> String {
-    let candidates: Vec<&String> = scenario
+    let candidates: Vec<&str> = scenario
         .initial
         .installed
         .iter()
+        .map(String::as_str)
+        .chain(
+            scenario
+                .initial
+                .packages
+                .iter()
+                .map(|package| package.name.as_str()),
+        )
         .filter(|name| *name != "base")
         .collect();
     if candidates.is_empty() || rng.odds(15) {
         return UNINSTALLED.to_string();
     }
-    candidates[rng.index(candidates.len())].clone()
+    candidates[rng.index(candidates.len())].to_string()
 }
 
 #[cfg(test)]
@@ -1087,6 +1495,11 @@ mod tests {
             let scenario = &corpus[entry];
             assert!(scenario.initial.files.len() <= MAX_FILES);
             assert!(scenario.ops.len() <= MAX_OPS);
+            assert!(scenario.initial.packages.len() <= MAX_PACKAGES);
+            for package in &scenario.initial.packages {
+                assert!(package.exports.len() <= MAX_EXPORTS);
+                assert!(package.reexports.len() <= MAX_REEXPORTS);
+            }
             for program in programs(scenario) {
                 assert!(count_statements(&program.statements) <= CEILING_STATEMENTS);
                 assert!(program.render().text.len() <= CEILING_TEXT);
