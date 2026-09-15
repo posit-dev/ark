@@ -23,10 +23,10 @@ impl FileReader for DiskFileReader {
 }
 
 /// Fixtures supply source and namespace overrides; all other files are absent.
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzz"))]
 pub(crate) struct EmptyFileReader;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzz"))]
 impl FileReader for EmptyFileReader {
     fn read_to_string(&self, _path: &Utf8Path) -> io::Result<String> {
         Err(io::ErrorKind::NotFound.into())
