@@ -9,9 +9,9 @@ use rustc_hash::FxHashMap;
 use stdext::result::ResultExt;
 
 use crate::file_revision::report_untracked_if_zero;
-use crate::Db;
 use crate::File;
 use crate::FileRevision;
+use crate::SourceDb;
 
 #[salsa::input(debug)]
 pub struct Package {
@@ -22,7 +22,7 @@ pub struct Package {
     /// URL distinguishes them.
     ///
     /// The package's owning [`Root`] is not stored as a field. It is
-    /// derived from live-graph containment via [`Db::root_by_package`]: a
+    /// derived from live-graph containment via [`SourceDb::root_by_package`]: a
     /// package belongs to whichever `Root.packages` currently holds it.
     /// Workspace-vs-library is then `root.kind(db)`.
     #[returns(ref)]
@@ -99,7 +99,7 @@ impl Package {
     ///
     /// A missing or unparseable `NAMESPACE` yields an empty `Namespace`.
     #[salsa::tracked(returns(ref))]
-    pub fn namespace(self, db: &dyn Db) -> Namespace {
+    pub fn namespace(self, db: &dyn SourceDb) -> Namespace {
         if let Some(namespace) = self.namespace_override(db) {
             return namespace.clone();
         }
@@ -134,11 +134,11 @@ impl Package {
     /// directly instead of scanning [`Namespace::imports`].
     ///
     /// The value is the source package's name, not a resolved `Package`:
-    /// resolving through [`Db::package_by_name`] depends on which roots are
+    /// resolving through [`SourceDb::package_by_name`] depends on which roots are
     /// live, and baking that in here would invalidate this index on every
     /// root change. Call sites resolve the name themselves.
     #[salsa::tracked(returns(ref))]
-    pub(crate) fn imported_from(self, db: &dyn Db) -> FxHashMap<String, String> {
+    pub(crate) fn imported_from(self, db: &dyn SourceDb) -> FxHashMap<String, String> {
         self.namespace(db)
             .imports
             .iter()
@@ -153,7 +153,7 @@ impl Package {
     /// without changing `Version:` backdates here, so downstream isn't
     /// disturbed.
     #[salsa::tracked(returns(ref))]
-    pub fn version(self, db: &dyn Db) -> Option<String> {
+    pub fn version(self, db: &dyn SourceDb) -> Option<String> {
         self.description(db)
             .as_ref()
             .map(|description| description.version.clone())
@@ -164,7 +164,7 @@ impl Package {
     ///
     /// Build timestamps change on every install, so backdating probably isn't that
     /// important here, so we don't track this method.
-    pub fn built(self, db: &dyn Db) -> Option<String> {
+    pub fn built(self, db: &dyn SourceDb) -> Option<String> {
         self.description(db)
             .as_ref()
             .and_then(|description| description.built.clone())
@@ -174,7 +174,7 @@ impl Package {
     /// is missing or has no `Priority:` field (only base and recommended packages have
     /// one)
     #[salsa::tracked(returns(ref))]
-    pub fn priority(self, db: &dyn Db) -> Option<Priority> {
+    pub fn priority(self, db: &dyn SourceDb) -> Option<Priority> {
         self.description(db)
             .as_ref()
             .and_then(|description| description.priority.clone())
@@ -184,7 +184,7 @@ impl Package {
     /// is missing. Narrow query over [`Package::description`], same backdating story as
     /// [`Package::version`].
     #[salsa::tracked(returns(ref))]
-    pub fn depends(self, db: &dyn Db) -> Option<Vec<String>> {
+    pub fn depends(self, db: &dyn SourceDb) -> Option<Vec<String>> {
         self.description(db)
             .as_ref()
             .map(|description| description.depends.clone())
@@ -195,7 +195,7 @@ impl Package {
     /// over [`Package::description`], same backdating story as
     /// [`Package::version`].
     #[salsa::tracked(returns(ref))]
-    pub fn collation(self, db: &dyn Db) -> Option<Vec<String>> {
+    pub fn collation(self, db: &dyn SourceDb) -> Option<Vec<String>> {
         self.description(db)
             .as_ref()
             .and_then(|description| description.collate())
@@ -214,7 +214,7 @@ impl Package {
     /// the other direction: a real `DESCRIPTION` edit that doesn't touch
     /// `Version:` / `Collate:` re-runs this query but backdates there.
     #[salsa::tracked(returns(ref))]
-    pub(crate) fn description(self, db: &dyn Db) -> Option<Description> {
+    pub(crate) fn description(self, db: &dyn SourceDb) -> Option<Description> {
         // Depend on `description_revision()` so a bump forces a re-read
         report_untracked_if_zero(db, self.description_revision(db));
 
@@ -239,7 +239,7 @@ impl Package {
     /// Returns an empty `Index` for installed packages with missing or unreadable
     /// indexes.
     #[salsa::tracked(returns(ref))]
-    pub fn index(self, db: &dyn Db) -> Option<Index> {
+    pub fn index(self, db: &dyn SourceDb) -> Option<Index> {
         // Depend on `index_revision()` so a bump forces a re-read.
         // Workspace packages don't have an `INDEX`.
         let revision = self.index_revision(db)?;

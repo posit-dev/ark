@@ -10,9 +10,9 @@ use camino::Utf8Path;
 
 use crate::directory::collation_basename_key;
 use crate::file_imports::CollationView;
-use crate::Db;
 use crate::File;
 use crate::Package;
+use crate::SourceDb;
 
 /// Files, namespace imports, and packages supplied by a file's loader.
 ///
@@ -52,7 +52,7 @@ const PACKAGE_LOADER: LoaderInfo = LoaderInfo {
 
 /// The loader that owns `file`, if one does. Reads only paths and source text,
 /// so it is safe to call while a semantic index is being built.
-pub(crate) fn loader(db: &dyn Db, file: File) -> Option<LoaderInfo> {
+pub(crate) fn loader(db: &dyn SourceDb, file: File) -> Option<LoaderInfo> {
     load_context(db, file, CollationView::Deferred).loader
 }
 
@@ -95,7 +95,10 @@ pub(crate) enum SearchPathTail {
 /// Selects the first matching loader. Classifications overlap, so `testthat`
 /// precedes package loading and package ownership precedes directory
 /// conventions.
-pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> LoadContext {
+pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -> LoadContext {
+    #[cfg(resolver_boundary = "probe")]
+    let _ = file.semantic_index(db);
+
     if let Some(context) = contrib::testthat::load_context(db, file, view) {
         return context;
     }
@@ -117,7 +120,7 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Load
 /// Package membership alone does not make a file loadable. `data-raw/`, `inst/`,
 /// and `R/` files omitted from `Collate:` are `package.scripts()` and remain
 /// standalone.
-fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+fn package_load_context(db: &dyn SourceDb, file: File, view: CollationView) -> Option<LoadContext> {
     let package = file.package(db)?;
     let files = package.files(db);
 
@@ -142,7 +145,11 @@ fn standalone_load_context() -> LoadContext {
 }
 
 /// The `R/`-directory collation members visible to `file`, in LIFO order.
-pub(crate) fn collation_visible_files(db: &dyn Db, file: File, view: CollationView) -> Vec<File> {
+pub(crate) fn collation_visible_files(
+    db: &dyn SourceDb,
+    file: File,
+    view: CollationView,
+) -> Vec<File> {
     let files = file.collation_siblings(db);
 
     // Before scanning moves `file` out of `OrphanRoot`, it is absent from this
@@ -177,7 +184,7 @@ pub(crate) fn visible_siblings(
 /// Whether `file` sits directly in an `R/` directory, which Shiny autoloads
 /// alongside its app. The directory name is case-sensitive to match
 /// [`load_context()`] and the package scanner.
-pub(crate) fn in_r_directory(file: File, db: &dyn Db) -> bool {
+pub(crate) fn in_r_directory(file: File, db: &dyn SourceDb) -> bool {
     let Some(path) = file.path(db).as_path() else {
         return false;
     };

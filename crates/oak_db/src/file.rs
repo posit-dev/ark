@@ -17,6 +17,7 @@ use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::Root;
+use crate::SourceDb;
 
 /// A source file tracked by Salsa.
 ///
@@ -79,7 +80,7 @@ impl File {
     ///
     /// A virtual path or an unreadable file yields empty text (matches ty).
     #[salsa::tracked(returns(ref), lru = 128)]
-    pub fn source_text(self, db: &dyn Db) -> String {
+    pub fn source_text(self, db: &dyn SourceDb) -> String {
         if let Some(text) = self.source_text_override(db) {
             return text.clone();
         }
@@ -122,7 +123,7 @@ impl File {
     /// memory cleanly. Derived queries (e.g. `semantic_index`) store
     /// `AstPtr`s rather than tree nodes, so they don't pin an evicted tree.
     #[salsa::tracked(returns(ref), lru = 128)]
-    pub(crate) fn parse(self, db: &dyn Db) -> OakParse {
+    pub(crate) fn parse(self, db: &dyn SourceDb) -> OakParse {
         OakParse::new(aether_parser::parse(
             self.source_text(db).as_str(),
             aether_parser::RParserOptions::default(),
@@ -302,7 +303,7 @@ impl File {
     /// The root containing this file, if any.
     ///
     /// Packaged files ask the db which live root holds the package via
-    /// [`Db::root_by_package`]. That branch covers library files too, which
+    /// [`SourceDb::root_by_package`]. That branch covers library files too, which
     /// normally have a package. It also keeps the common case cheap: it
     /// depends on each root's package list, not its full file set.
     ///
@@ -319,7 +320,7 @@ impl File {
     /// Callers that need to distinguish workspace from library roots
     /// inspect `root.kind(db)`.
     #[salsa::tracked(returns(copy))]
-    pub fn root(self, db: &dyn Db) -> Option<Root> {
+    pub fn root(self, db: &dyn SourceDb) -> Option<Root> {
         if let Some(pkg) = self.package(db) {
             return db.root_by_package(pkg);
         }
@@ -332,7 +333,7 @@ impl File {
 /// every workspace folder. Private helper: the only caller is
 /// [`File::root`], as the fallback for an orphan file no scan has reached
 /// yet (path prefix is all we have until a scan lands).
-fn root_by_path(db: &dyn Db, path: &FilePath) -> Option<Root> {
+fn root_by_path(db: &dyn SourceDb, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
     let path = path.as_path()?;
     db.workspace_roots()
@@ -374,35 +375,33 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
 
 fn attached_packages_cycle_result<'db>(
     db: &'db dyn Db,
-    id: salsa::Id,
+    _id: salsa::Id,
     file: File,
 ) -> Vec<Name<'db>> {
     record(db, Recovery::AttachedPackages(file));
-    attached_packages_fallback(db, id, file)
+    Vec::new()
 }
 
 fn attached_packages_anywhere_cycle_result<'db>(
     db: &'db dyn Db,
-    id: salsa::Id,
+    _id: salsa::Id,
     file: File,
 ) -> Vec<Name<'db>> {
     record(db, Recovery::AttachedPackagesAnywhere(file));
-    attached_packages_fallback(db, id, file)
-}
-
-/// Return no attaches. [`File::semantic_index`] recovery rebuilds with
-/// `NoopImportsResolver`, which emits [`SemanticDiagnostic::SourceCycle`] and
-/// also reports no attaches.
-fn attached_packages_fallback<'db>(db: &'db dyn Db, _id: salsa::Id, file: File) -> Vec<Name<'db>> {
-    log::warn!(
-        "Cyclic attaches detected at {}. Reporting no attached packages.",
-        file.path(db),
-    );
     Vec::new()
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
     record(db, Recovery::SemanticIndex(file));
+    semantic_index_fallback(db, file)
+}
+
+fn semantic_index_fallback(db: &dyn SourceDb, file: File) -> SemanticIndex {
+    #[cfg(resolver_boundary = "probe")]
+    let _ = file.semantic_index(db);
+    #[cfg(resolver_boundary = "probe")]
+    let _: &dyn Db = db;
+
     log::warn!(
         "Cyclic `source()` detected at {}. Rebuilding without cross-file resolution.",
         file.path(db),

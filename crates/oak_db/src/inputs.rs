@@ -56,7 +56,7 @@ pub enum RootKind {
 /// [`StaleRoot`] aren't included -- they have separate access patterns
 /// (scanner upsert only, never analysis), so they stay as their own input.
 ///
-/// `Db::live_roots()` yields these in lookup precedence (workspace first, then
+/// `crate::SourceDb::live_roots()` yields these in lookup precedence (workspace first, then
 /// library, then orphan).
 ///
 /// TODO(salsa): this enum carries the workspace-vs-library distinction in its
@@ -121,7 +121,7 @@ impl LibraryRoots {
 ///
 /// Singleton: there is one `OrphanRoot` per concrete database, lazily
 /// initialised by the implementation. The `files` field is what
-/// [`crate::Db::file_by_path`] consults to find unanchored files.
+/// [`crate::SourceDb::file_by_path`] consults to find unanchored files.
 #[salsa::input(debug)]
 pub struct OrphanRoot {
     /// **Placement invariant.** Files here must have `package(db) ==
@@ -150,8 +150,8 @@ impl OrphanRoot {
 /// agent / multi-repo workflows where the same workspace folder gets
 /// added and removed repeatedly across a session.
 ///
-/// **Not consulted by analysis.** `Db::file_by_path` and
-/// `Db::package_by_name` walk workspace / library roots and (for files)
+/// **Not consulted by analysis.** `crate::SourceDb::file_by_path` and
+/// `crate::SourceDb::package_by_name` walk workspace / library roots and (for files)
 /// `OrphanRoot` only. Entities in `StaleRoot` are invisible to
 /// completions, goto-def, etc. — they correspond to folders the user
 /// has explicitly removed.

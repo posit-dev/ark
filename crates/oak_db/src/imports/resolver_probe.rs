@@ -7,6 +7,9 @@
 //! that `allowed_calls()` compiles, so unrelated errors
 //! cannot make a rejected call look like successful enforcement.
 
+#[cfg(resolver_boundary = "control")]
+use aether_path::FilePath;
+
 use super::SalsaImportsResolver;
 #[cfg(any(resolver_boundary = "probe", resolver_boundary = "control"))]
 use crate::file_imports::CollationView;
@@ -36,35 +39,29 @@ impl<'db> SalsaImportsResolver<'db> {
 
     #[cfg(resolver_boundary = "probe")]
     fn escapes_through_private_field(&self) {
-        let _: &dyn Db = self.db.foundation;
+        let _: &dyn Db = self.db.db;
     }
 
     #[cfg(resolver_boundary = "probe")]
-    fn foundation_calls_exports(&self) {
-        let _ = self.db.foundation().exports(self.file);
+    fn sources_call_exports(&self) {
+        let _ = self.file.exports(self.db.as_source_db());
     }
 
     #[cfg(resolver_boundary = "probe")]
-    fn foundation_calls_attached_packages(&self) {
-        let _ = self.db.foundation().attached_package_names(self.file);
+    fn sources_call_attached_packages(&self) {
+        let _ = self.file.attached_packages(self.db.as_source_db());
     }
 
     #[cfg(resolver_boundary = "probe")]
-    fn foundation_calls_cross_file_layers(&self) {
+    fn sources_call_cross_file_layers(&self) {
         let _ = self
-            .db
-            .foundation()
-            .cross_file_layers(self.file, CollationView::Eager);
+            .file
+            .cross_file_layers(self.db.as_source_db(), CollationView::Eager);
     }
 
     #[cfg(resolver_boundary = "probe")]
-    fn foundation_escapes_to_dyn_db(&self) {
-        let _: &dyn Db = self.db.foundation();
-    }
-
-    #[cfg(resolver_boundary = "probe")]
-    fn foundation_escapes_through_private_field(&self) {
-        let _: &dyn Db = self.db.foundation().db;
+    fn sources_escape_to_dyn_db(&self) {
+        let _: &dyn Db = self.db.as_source_db();
     }
 
     #[cfg(resolver_boundary = "control")]
@@ -72,6 +69,12 @@ impl<'db> SalsaImportsResolver<'db> {
         let _ = self.db.exports(self.file);
         let _ = self.db.attached_package_names(self.file);
         let _ = self.db.cross_file_layers(self.file, CollationView::Eager);
-        let _ = self.db.foundation().file_path(self.file);
+        let _ = self.file.path(self.db.as_source_db());
+        let _ = self.file.parse(self.db.as_source_db());
+    }
+
+    #[cfg(resolver_boundary = "control")]
+    fn borrowed_path(&self) -> &'db FilePath {
+        self.file.path(self.db.as_source_db())
     }
 }

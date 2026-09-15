@@ -10,6 +10,7 @@ use crate::Db;
 use crate::DbInputs;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
+use crate::SourceDb;
 use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
@@ -117,7 +118,7 @@ impl DbInputs for OakDatabase {
 }
 
 #[salsa::db]
-impl Db for OakDatabase {
+impl SourceDb for OakDatabase {
     fn file_by_path(&self, path: &aether_path::FilePath) -> Option<crate::File> {
         crate::db::file_by_path_query(self, path)
     }
@@ -134,3 +135,6 @@ impl Db for OakDatabase {
         crate::db::live_roots_query(self)
     }
 }
+
+#[salsa::db]
+impl Db for OakDatabase {}

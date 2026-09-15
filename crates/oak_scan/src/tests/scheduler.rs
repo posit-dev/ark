@@ -12,9 +12,9 @@ use std::fs;
 use std::path::Path;
 
 use aether_path::FilePath;
-use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;

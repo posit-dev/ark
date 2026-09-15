@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
-use oak_db::Db;
 use oak_db::DbInputs;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;

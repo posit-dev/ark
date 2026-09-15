@@ -4,7 +4,6 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::file_imports::CollationView;
-use crate::resolver_db::FoundationDb;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
@@ -873,10 +872,10 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
     for view in [CollationView::Eager, CollationView::Deferred] {
         let scan_side = helpers.cross_file_layers(&db, view);
         assert!(scan_side
-            .lookup_order(FoundationDb::new(&db), &[])
+            .lookup_order(&db, &[])
             .any(|layer| matches!(layer, ImportLayer::File(file) if file == sibling)));
         assert!(!scan_side
-            .lookup_order(FoundationDb::new(&db), &[])
+            .lookup_order(&db, &[])
             .any(|layer| matches!(layer, ImportLayer::SourcingFile { .. })));
     }
 }
