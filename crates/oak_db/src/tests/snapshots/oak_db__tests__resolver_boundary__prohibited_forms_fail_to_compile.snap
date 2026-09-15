@@ -1,0 +1,15 @@
+---
+source: crates/oak_db/src/tests/resolver_boundary.rs
+description: "Each line is one prohibited form rejected at the resolver or foundation boundary in crates/oak_db/src/imports/resolver_probe.rs. Line numbers shift when that module is edited. A NEW or MISSING line means the boundary itself changed and needs review, not a blind `cargo insta accept`."
+expression: "lines.join(\"\\n\")"
+---
+crates/oak_db/src/imports/resolver_probe.rs:19:42: error[E0308]: mismatched types: expected `&dyn Db`, found `ResolverDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:24:39: error[E0308]: mismatched types: expected `&dyn Db`, found `ResolverDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:29:35: error[E0308]: mismatched types: expected `&dyn Db`, found `ResolverDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:34:26: error[E0308]: mismatched types: expected `&dyn Db`, found `ResolverDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:39:34: error[E0616]: field `foundation` of struct `ResolverDb` is private: private field
+crates/oak_db/src/imports/resolver_probe.rs:44:38: error[E0599]: no method named `exports` found for struct `FoundationDb<'db>` in the current scope: method not found in `FoundationDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:49:38: error[E0599]: no method named `attached_package_names` found for struct `FoundationDb<'db>` in the current scope
+crates/oak_db/src/imports/resolver_probe.rs:57:14: error[E0599]: no method named `cross_file_layers` found for struct `FoundationDb<'db>` in the current scope: method not found in `FoundationDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:62:26: error[E0308]: mismatched types: expected `&dyn Db`, found `FoundationDb<'_>`
+crates/oak_db/src/imports/resolver_probe.rs:67:47: error[E0616]: field `db` of struct `FoundationDb` is private: private field

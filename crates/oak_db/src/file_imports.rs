@@ -18,6 +18,7 @@ use crate::load_context::LoadKind;
 use crate::load_context::SearchPathTail;
 use crate::recovery::record;
 use crate::recovery::Recovery;
+use crate::resolver_db::FoundationDb;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -80,7 +81,7 @@ impl CrossFileLayers {
     /// layers (which outrank them) and the rest of the search path.
     pub(crate) fn lookup_order<'a>(
         &'a self,
-        db: &'a dyn Db,
+        db: FoundationDb<'_>,
         own: &'a [ImportLayer],
     ) -> impl Iterator<Item = ImportLayer> + 'a {
         self.enclosing
@@ -93,7 +94,7 @@ impl CrossFileLayers {
 }
 
 impl SearchPathTail {
-    fn layers(self, db: &dyn Db) -> Vec<ImportLayer> {
+    fn layers(self, db: FoundationDb<'_>) -> Vec<ImportLayer> {
         match self {
             SearchPathTail::Base => base_layer(db).into_iter().collect(),
             SearchPathTail::Default => default_search_path_layers(db),
@@ -315,7 +316,7 @@ impl File {
     fn imports_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
         let layers = self.resolution_layers(db, view.collation);
         let own = self.attach_layers(db, view.attaches);
-        layers.lookup_order(db, &own).collect()
+        layers.lookup_order(FoundationDb::new(db), &own).collect()
     }
 
     /// The file's own layers and the layers it inherits from the files that
@@ -382,7 +383,7 @@ impl File {
         let own = self.attach_layers(db, view.attaches);
         self.layers_by_sourcing_file(db, view.collation)
             .into_iter()
-            .map(|layers| layers.lookup_order(db, &own).collect())
+            .map(|layers| layers.lookup_order(FoundationDb::new(db), &own).collect())
             .collect()
     }
 
@@ -399,7 +400,14 @@ impl File {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.inherited_layers(db, CollationView::Deferred)
             .iter()
-            .map(|site| (site.file, site.layers.lookup_order(db, &own).collect()))
+            .map(|site| {
+                (
+                    site.file,
+                    site.layers
+                        .lookup_order(FoundationDb::new(db), &own)
+                        .collect(),
+                )
+            })
             .collect()
     }
 
@@ -443,7 +451,7 @@ impl File {
     pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.cross_file_layers(db, CollationView::Deferred)
-            .lookup_order(db, &own)
+            .lookup_order(FoundationDb::new(db), &own)
             .collect()
     }
 
@@ -780,13 +788,13 @@ fn extend_with_namespace_package_imports(
 
 /// `base`, always the last thing R searches. `None` when it isn't scanned into
 /// any root (the R system library is normally on `.libPaths()`, so it is).
-fn base_layer(db: &dyn Db) -> Option<ImportLayer> {
+fn base_layer(db: FoundationDb<'_>) -> Option<ImportLayer> {
     db.package_by_name("base").map(ImportLayer::Package)
 }
 
 /// The default startup search path as `Package` layers, `stats` first through
 /// `base` last. Packages absent from every root drop out.
-fn default_search_path_layers(db: &dyn Db) -> Vec<ImportLayer> {
+fn default_search_path_layers(db: FoundationDb<'_>) -> Vec<ImportLayer> {
     crate::search::DEFAULT_SEARCH_PATH_PACKAGES
         .iter()
         .filter_map(|name| db.package_by_name(name).map(ImportLayer::Package))

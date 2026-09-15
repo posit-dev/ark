@@ -15,6 +15,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_package_metadata::namespace::Namespace;
 use rustc_hash::FxHashMap;
+use salsa::plumbing::AsId;
 use salsa::Setter;
 
 use crate::Db;
@@ -71,20 +72,32 @@ impl TestDb {
         }
     }
 
-    /// Count `WillExecute` events whose `database_key`'s Debug form
-    /// contains `name`. Salsa's `DatabaseKeyIndex::fmt` resolves the
-    /// underlying function name only when a database is attached to the
-    /// current thread, so we wrap the scan in `salsa::attach`.
+    /// Matches query names by substring in the key's `Debug` representation.
     pub(super) fn executions(&self, name: &str) -> usize {
+        self.count_executions(|key| format!("{key:?}").contains(name))
+    }
+
+    /// Like [`TestDb::executions()`], restricted to `file`.
+    ///
+    /// Only valid when [`File`] is the query's sole key, so Salsa uses its ID
+    /// directly. Queries such as [`File::cross_file_layers()`] intern a tuple
+    /// of arguments instead, so comparing their key index to a file ID cannot
+    /// identify that file's executions.
+    pub(super) fn executions_for(&self, name: &str, file: File) -> usize {
+        let id = file.as_id();
+        self.count_executions(|key| key.key_index() == id && format!("{key:?}").contains(name))
+    }
+
+    /// [`salsa::attach()`] lets the key's `Debug` formatter resolve query names
+    /// using this database.
+    fn count_executions(&self, matches: impl Fn(salsa::DatabaseKeyIndex) -> bool) -> usize {
         salsa::attach(self, || {
             self.events
                 .lock()
                 .unwrap()
                 .iter()
                 .filter(|event| match &event.kind {
-                    salsa::EventKind::WillExecute { database_key } => {
-                        format!("{database_key:?}").contains(name)
-                    },
+                    salsa::EventKind::WillExecute { database_key } => matches(*database_key),
                     _ => false,
                 })
                 .count()
