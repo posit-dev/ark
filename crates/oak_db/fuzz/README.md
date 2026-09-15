@@ -10,6 +10,12 @@ Recovery logs identify which handlers ran, but not which query was Salsa's repea
 
 Workspaces can also model packages: a `Workspace`-kind package owns its own root and files, and a `Library`-kind package sits in the library root with a synthetic NAMESPACE but no files. Mutation grows and shrinks their exports and `importFrom` re-exports, so a scenario can chain packages into an acyclic lookup, a mutual re-export cycle that drives `Package::resolve()`'s `cycle_result` handler, or a consumer path through a `library()` attach or a package's own re-exports. Library packages never own files, so a chain can only terminate at a local definition through a `Workspace`-kind package.
 
+## Mutation budgets and replay limits
+
+[Generation budgets](../src/fuzz/budgets.rs) keep scenarios small enough for fast checks. [Replay limits](../src/fuzz/limits.rs) independently bound accepted artifacts, including edit replacements. Keep replay limits stable when tuning generation budgets so saved failures remain replayable. Statement and text limits leave room for one insertion to cross a growth threshold.
+
+[The mutator](../src/fuzz/mutate.rs) separates sampling probabilities from choice vocabularies. It can add both workspace and library packages, and add files to loose scripts or any workspace package. [Shared traversal](../src/fuzz/traversal.rs) addresses initial programs and edit replacements for both mutation and validation.
+
 ## Prerequisites
 
 ``` sh

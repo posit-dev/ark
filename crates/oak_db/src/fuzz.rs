@@ -37,15 +37,18 @@
 //! dependencies, not as entry points.
 
 mod artifact;
+mod budgets;
 mod build;
 mod choose;
 pub mod corpus;
 mod generate;
+mod limits;
 mod mutate;
 mod panics;
 mod run;
 mod scenario;
 mod spec;
+mod traversal;
 
 pub use generate::seed_corpus;
 pub use mutate::ScenarioMutator;

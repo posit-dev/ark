@@ -11,6 +11,7 @@ use rand::rngs::StdRng;
 use rand::RngExt;
 use rand::SeedableRng;
 
+use crate::fuzz::budgets::MAX_FILES;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
@@ -22,7 +23,6 @@ use crate::fuzz::choose::cold_entries;
 use crate::fuzz::choose::export_name;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Shape;
-use crate::fuzz::mutate::MAX_FILES;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
