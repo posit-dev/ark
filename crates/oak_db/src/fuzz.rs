@@ -14,20 +14,27 @@
 //!
 //! # Coverage
 //!
-//! [`Query`] covers 18 of the 50 tracked queries in the Salsa inventory. It
+//! [`Query`] covers 19 of the 50 tracked queries in the Salsa inventory. It
 //! includes the production roots `diagnostics()`, `imports()`, `imports_at()`,
 //! `resolve_at()`, `resolve()`, `used_packages()`, and `sourced_by()`, all five
-//! workspace aggregates, and cold entry into the six file-keyed queries with
-//! `cycle_result` handlers.
+//! workspace aggregates, and cold entry into the seven queries with
+//! `cycle_result` handlers, including `Package::resolve()`.
 //!
 //! Mutation reaches every `EffectRecipe` variant, both invocation forms, and
 //! all three `SourceProvider` variants, including an effect escaped through a
-//! `bquote()` hole.
+//! `bquote()` hole. It also reaches `Package::resolve()` both directly through
+//! `Query::PackageResolve` and indirectly through a consumer's `library()`
+//! attach or a package's own `importFrom`, across acyclic chains, mutual
+//! re-export cycles, and effect-name shadowing through `package_binding()`.
 //!
-//! `Package::resolve()` is excluded because these workspaces have no NAMESPACE
-//! re-exports. Testthat and shiny layouts, file renaming, and metadata or
-//! revision edits stay out of reach. Queries outside [`Query`] are covered only
-//! as dependencies, not as entry points.
+//! Each seed corpus contains a re-export cycle with a matching cold entry.
+//! `seed_corpus()` assigns package layers by motif position so unrelated changes
+//! to random draws cannot remove that coverage.
+//!
+//! Library packages are metadata-only. Library-owned sources, `import()` bulk
+//! imports, testthat and shiny layouts, file renaming, and metadata or revision
+//! edits are excluded. Queries outside [`Query`] are covered only as
+//! dependencies, not as entry points.
 
 mod artifact;
 mod build;
@@ -57,6 +64,7 @@ pub use scenario::Site;
 pub use spec::FileId;
 pub use spec::FileSpec;
 pub use spec::Owner;
+pub use spec::PackageId;
 pub use spec::WorkspaceSpec;
 
 pub use crate::file_imports::CollationView;

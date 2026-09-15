@@ -22,6 +22,8 @@ use crate::fuzz::scenario::Scenario;
 use crate::fuzz::scenario::Site;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::Owner;
+use crate::fuzz::spec::PackageId;
+use crate::fuzz::spec::PackageKind;
 use crate::fuzz::spec::WorkspaceSpec;
 use crate::fuzz::spec::LIBRARY_ROOT;
 use crate::fuzz::spec::SCRIPT_ROOT;
@@ -35,6 +37,8 @@ use crate::DiagnosticKind;
 use crate::File;
 use crate::FileRevision;
 use crate::Name;
+#[cfg(test)]
+use crate::NamespaceVisibility;
 use crate::OakDatabase;
 use crate::Package;
 use crate::Root;
@@ -175,6 +179,8 @@ pub(crate) struct World {
     spec: WorkspaceSpec,
     /// Indexed by [`FileId`] to match [`WorkspaceSpec::files`].
     files: Vec<File>,
+    /// Indexed by [`PackageId`] to match [`WorkspaceSpec::packages`].
+    packages: Vec<Package>,
 }
 
 impl World {
@@ -199,38 +205,58 @@ impl World {
                 )
             })
             .collect();
+
+        // Parse the modeled directives with the production parser and supply an
+        // override to avoid disk reads at synthetic paths. Validation has already
+        // checked this text, so a parse failure here is a harness error.
+        let packages: Vec<Package> = spec
+            .packages
+            .iter()
+            .map(|package_spec| {
+                let namespace = match Namespace::parse(&package_spec.namespace_text()) {
+                    Ok(namespace) => namespace,
+                    Err(err) => panic!(
+                        "harness bug: generated NAMESPACE for {:?} failed to parse: {err:?}",
+                        package_spec.name
+                    ),
+                };
+                Package::new(
+                    &db,
+                    file_path(&format!("{}/DESCRIPTION", package_spec.directory())),
+                    package_spec.name.clone(),
+                    FileRevision::zero(),
+                    FileRevision::zero(),
+                    None,
+                    Some(namespace),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            })
+            .collect();
+
+        let mut library_packages = installed;
+        library_packages.extend(
+            spec.packages
+                .iter()
+                .zip(&packages)
+                .filter(|(package_spec, _)| package_spec.kind == PackageKind::Library)
+                .map(|(_, &package)| package),
+        );
         let library = Root::new(
             &db,
             file_path(LIBRARY_ROOT),
             RootKind::Library,
             vec![],
-            installed,
+            library_packages,
         );
         db.library_roots().set_roots(&mut db).to(vec![library]);
-
-        // Avoid reading a `NAMESPACE` beside the URL-only `DESCRIPTION` path.
-        // `workspace::as_packages()` classifies this package from its root kind.
-        let package = match (&spec.package, spec.package_root()) {
-            (Some(name), Some(root)) => Some(Package::new(
-                &db,
-                file_path(&format!("{root}/DESCRIPTION")),
-                name.clone(),
-                FileRevision::zero(),
-                FileRevision::zero(),
-                None,
-                Some(Namespace::default()),
-                Vec::new(),
-                Vec::new(),
-            )),
-            _ => None,
-        };
 
         let files: Vec<File> = spec
             .ids()
             .map(|id| {
                 let owner = match spec.file(id).owner {
                     Owner::Script => None,
-                    Owner::Package => package,
+                    Owner::Package(package_id) => Some(packages[package_id.0]),
                 };
                 File::new(
                     &db,
@@ -242,15 +268,12 @@ impl World {
             })
             .collect();
 
-        let owned = |owner: Owner| -> Vec<File> {
-            spec.ids()
-                .filter(|&id| spec.file(id).owner == owner)
-                .map(|id| files[id.0])
-                .collect()
-        };
-
         let mut roots = Vec::new();
-        let scripts = owned(Owner::Script);
+        let scripts: Vec<File> = spec
+            .ids()
+            .filter(|&id| spec.file(id).owner == Owner::Script)
+            .map(|id| files[id.0])
+            .collect();
         if !scripts.is_empty() {
             roots.push(Root::new(
                 &db,
@@ -260,11 +283,23 @@ impl World {
                 vec![],
             ));
         }
-        if let (Some(package), Some(root)) = (package, spec.package_root()) {
-            package.set_files(&mut db).to(owned(Owner::Package));
+
+        for (index, package_spec) in spec.packages.iter().enumerate() {
+            if package_spec.kind != PackageKind::Workspace {
+                continue;
+            }
+            let package = packages[index];
+            let package_files: Vec<File> = spec
+                .ids()
+                .filter(
+                    |&id| matches!(spec.file(id).owner, Owner::Package(owner) if owner.0 == index),
+                )
+                .map(|id| files[id.0])
+                .collect();
+            package.set_files(&mut db).to(package_files);
             roots.push(Root::new(
                 &db,
-                file_path(&root),
+                file_path(&package_spec.directory()),
                 RootKind::Workspace,
                 vec![],
                 vec![package],
@@ -276,6 +311,7 @@ impl World {
             db,
             spec: spec.clone(),
             files,
+            packages,
         }
     }
 
@@ -351,11 +387,20 @@ impl World {
             Query::CrossFileLayers(id, view) => {
                 let _ = self.file(*id).cross_file_layers(db, *view);
             },
+            Query::PackageResolve(id, name, visibility) => {
+                let _ = self
+                    .package(*id)
+                    .resolve(db, Name::new(db, name.as_str()), *visibility);
+            },
         }
     }
 
     fn file(&self, id: FileId) -> File {
         self.files[id.0]
+    }
+
+    fn package(&self, id: PackageId) -> Package {
+        self.packages[id.0]
     }
 
     fn offset(&self, id: FileId, site: Site) -> TextSize {
@@ -407,6 +452,51 @@ impl World {
             .diagnostics(&self.db)
             .iter()
             .any(|diagnostic| diagnostic.kind() == DiagnosticKind::SourceCycle)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn package_description_path(&self, id: PackageId) -> String {
+        path_name(self.package(id).description_path(&self.db))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn package_exports(&self, id: PackageId) -> Vec<String> {
+        self.package(id).namespace(&self.db).exports.to_vec()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn package_imported_from(&self, id: PackageId) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = self
+            .package(id)
+            .imported_from(&self.db)
+            .iter()
+            .map(|(name, source)| (name.clone(), source.clone()))
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[cfg(test)]
+    pub(crate) fn package_resolve(
+        &self,
+        id: PackageId,
+        name: &str,
+        visibility: NamespaceVisibility,
+    ) -> Vec<String> {
+        self.package(id)
+            .resolve(&self.db, Name::new(&self.db, name), visibility)
+            .iter()
+            .map(|definition| path_name(definition.file(&self.db).path(&self.db)))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn file_resolve(&self, id: FileId, name: &str) -> Vec<String> {
+        self.file(id)
+            .resolve(&self.db, Name::new(&self.db, name))
+            .iter()
+            .map(|definition| path_name(definition.file(&self.db).path(&self.db)))
+            .collect()
     }
 }
 
