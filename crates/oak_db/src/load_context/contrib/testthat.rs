@@ -6,8 +6,14 @@ use crate::file_imports::CollationView;
 use crate::load_context::visible_siblings;
 use crate::load_context::LoadContext;
 use crate::load_context::LoadKind;
+use crate::load_context::LoaderInfo;
 use crate::Db;
 use crate::File;
+
+const LOADER: LoaderInfo = LoaderInfo {
+    name: "testthat",
+    loads: "`helper*.R` and `setup*.R` before your tests",
+};
 
 /// A `tests/testthat/` file. It runs with the package loaded and `testthat`
 /// attached, after testthat has sourced the package's `helper*.R` and
@@ -45,6 +51,7 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Opti
         kind: LoadKind::Namespace(package),
         visible_files,
         implicit_attaches: vec!["testthat"],
+        loader: Some(LOADER),
     })
 }
 

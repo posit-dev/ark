@@ -399,33 +399,6 @@ fn test_cross_file_layers_memoized_across_effect_calls() {
 }
 
 #[test]
-fn test_script_r_directory_siblings_see_each_other() {
-    // Non-package scripts in an `R/` directory are collated alphabetically,
-    // exactly like a package `R/` with no `Collate:` (#15144, #14790).
-    let mut db = TestDb::new();
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/R/a.R"),
-        FileRevision::zero(),
-        Some("a_val <- 1\n".to_string()),
-        None,
-    );
-    let b = File::new(
-        &db,
-        file_path("ws/R/b.R"),
-        FileRevision::zero(),
-        Some("b_val <- 2\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a, b]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(shape(&db, a.imports(&db)), vec!["File(b.R)".to_string()]);
-    assert_eq!(shape(&db, b.imports(&db)), vec!["File(a.R)".to_string()]);
-}
-
-#[test]
 fn test_script_outside_r_directory_stays_standalone() {
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
@@ -448,6 +421,128 @@ fn test_script_outside_r_directory_stays_standalone() {
 
     assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
     assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
+}
+
+#[test]
+fn test_loose_r_directory_scripts_stay_standalone() {
+    // Same shape as `test_script_outside_r_directory_stays_standalone`, but
+    // under `R/` instead of `scripts/`. The implicit alphabetical `R/`
+    // collation fallback is gone, so the directory name carries no special
+    // meaning for a loose script.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    let b = File::new(
+        &db,
+        file_path("ws/R/b.R"),
+        FileRevision::zero(),
+        Some("b_val <- 2\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
+    assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
+}
+
+/// One workspace root with a single loose script at `ws/{dir}/test.R`.
+/// Returns its `imports()` shape and diagnostics count.
+fn single_script_under(dir: &str) -> (Vec<String>, usize) {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let file = File::new(
+        &db,
+        file_path(&format!("ws/{dir}/test.R")),
+        FileRevision::zero(),
+        Some("x <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![file]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    (shape(&db, file.imports(&db)), file.diagnostics(&db).len())
+}
+
+#[test]
+fn test_single_r_directory_script_matches_an_ordinary_directory() {
+    // https://github.com/posit-dev/positron/issues/15631: a lone script under
+    // `R/` was reported to crash, and renaming `R/` to `Code/` was reported to
+    // fix it (never reproduced; see `test_single_r_file_does_not_panic` in
+    // `tests/workspace.rs`). `R/` is not a recognized loader directory for a
+    // loose script, so it must behave exactly like any other directory name.
+    let under_r = single_script_under("R");
+
+    // Pin the absolute result too, so the comparison can't pass by both sides
+    // breaking the same way.
+    assert_eq!(under_r, (Vec::new(), 0));
+    assert_eq!(under_r, single_script_under("Code"));
+}
+
+#[test]
+fn test_separate_shiny_apps_in_different_workspace_roots_do_not_cross_collate() {
+    // Loader-based replacement for `test_separate_r_directories_do_not_cross_collate`,
+    // deleted along with the implicit alphabetical `R/` fallback it exercised.
+    // Two workspace roots, each running its own Shiny app with an `R/`
+    // autoload directory of the same basename, so a file in one root's `R/`
+    // never sees the other root's file of the same name.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "pkga", "pkgb"]);
+
+    let one = workspace_root(&db, "ws/one");
+    let app_one = File::new(
+        &db,
+        file_path("ws/one/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a_one = File::new(
+        &db,
+        file_path("ws/one/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkga)\n".to_string()),
+        None,
+    );
+    one.set_scripts(&mut db).to(vec![app_one, a_one]);
+
+    let two = workspace_root(&db, "ws/two");
+    let app_two = File::new(
+        &db,
+        file_path("ws/two/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
+    let a_two = File::new(
+        &db,
+        file_path("ws/two/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkgb)\n".to_string()),
+        None,
+    );
+    two.set_scripts(&mut db).to(vec![app_two, a_two]);
+
+    db.workspace_roots().set_roots(&mut db).to(vec![one, two]);
+
+    assert_eq!(shape(&db, app_one.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(pkga)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, app_two.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(pkgb)".to_string(),
+        "Package(shiny)".to_string(),
+        "Package(base)".to_string(),
+    ]);
 }
 
 #[test]
@@ -493,106 +588,23 @@ fn test_package_owned_r_file_excluded_from_collate_stays_standalone() {
 }
 
 #[test]
-fn test_script_r_directory_predecessor_attach_reaches_sibling() {
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["dplyr"]);
-
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/R/a.R"),
-        FileRevision::zero(),
-        Some("library(dplyr)\n".to_string()),
-        None,
-    );
-    let b = File::new(
-        &db,
-        file_path("ws/R/b.R"),
-        FileRevision::zero(),
-        Some("x <- 1\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a, b]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(shape(&db, b.imports(&db)), vec![
-        "File(a.R)".to_string(),
-        "Package(dplyr)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_script_r_directory_below_uses_full_default_search_path() {
-    // `SearchPathTail::Base` is for package code whose dependencies come from
-    // the NAMESPACE. A script needs the complete default search path.
-    let mut db = TestDb::new();
-    install_packages(&mut db, &[
-        "stats",
-        "graphics",
-        "grDevices",
-        "utils",
-        "datasets",
-        "methods",
-        "base",
-    ]);
-
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/R/a.R"),
-        FileRevision::zero(),
-        Some("x <- 1\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(shape(&db, a.imports(&db)), vec![
-        "Package(stats)".to_string(),
-        "Package(graphics)".to_string(),
-        "Package(grDevices)".to_string(),
-        "Package(utils)".to_string(),
-        "Package(datasets)".to_string(),
-        "Package(methods)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
-fn test_separate_r_directories_do_not_cross_collate() {
-    // Each `R/` directory collates independently, keyed on its parent path,
-    // so a monorepo with several `R/` folders doesn't cross-collate.
-    let mut db = TestDb::new();
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/one/R/a.R"),
-        FileRevision::zero(),
-        Some("a_val <- 1\n".to_string()),
-        None,
-    );
-    let b = File::new(
-        &db,
-        file_path("ws/two/R/b.R"),
-        FileRevision::zero(),
-        Some("b_val <- 2\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a, b]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(shape(&db, a.imports(&db)), Vec::<String>::new());
-    assert_eq!(shape(&db, b.imports(&db)), Vec::<String>::new());
-}
-
-#[test]
 fn test_cross_file_layers_backdates_on_unrelated_script_change() {
     // `collation_siblings` reads every workspace root's `scripts`, so a
     // script added anywhere forces it to re-execute. But the result filtered
     // to `a`/`b`'s own `R/` directory is unchanged, so salsa backdates it and
     // `cross_file_layers` never re-executes.
+    //
+    // `a`/`b` need a real loader to read `collation_siblings` at all, so the
+    // app's `R/` directory autoloads through Shiny.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let a = File::new(
         &db,
         file_path("ws/R/a.R"),
@@ -607,7 +619,7 @@ fn test_cross_file_layers_backdates_on_unrelated_script_change() {
         Some("b_val <- 2\n".to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![a, b]);
+    root.set_scripts(&mut db).to(vec![app, a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let _ = a.imports(&db);
@@ -620,7 +632,7 @@ fn test_cross_file_layers_backdates_on_unrelated_script_change() {
         Some("z_val <- 1\n".to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![a, b, elsewhere]);
+    root.set_scripts(&mut db).to(vec![app, a, b, elsewhere]);
 
     let _ = a.imports(&db);
     assert_eq!(db.executions("cross_file_layers"), 1);
@@ -759,44 +771,19 @@ fn test_multiple_sourcing_files_appear_ordered_by_path() {
 }
 
 #[test]
-fn test_inheritance_replaces_the_r_directory_fallback() {
-    // A non-package `R/` directory only implies collation. Because `main.R`
-    // explicitly sources `a.R` but not `b.R`, the inferred context is replaced
-    // and `b.R` drops out.
-    let mut db = TestDb::new();
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/R/a.R"),
-        FileRevision::zero(),
-        Some("a_val <- 1\n".to_string()),
-        None,
-    );
-    let b = File::new(
-        &db,
-        file_path("ws/R/b.R"),
-        FileRevision::zero(),
-        Some("b_val <- 2\n".to_string()),
-        None,
-    );
-    let main = File::new(
-        &db,
-        file_path("ws/main.R"),
-        FileRevision::zero(),
-        Some("source(\"R/a.R\")\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a, b, main]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(shape(&db, a.imports(&db)), vec!["File(main.R)".to_string()]);
-}
-
-#[test]
 fn test_file_nobody_sources_keeps_its_own_cross_file_layers() {
+    // A Shiny app's `R/` directory really does autoload, so `b.R` (which
+    // nothing sources) still resolves through its own collation context.
     let mut db = TestDb::new();
-    install_packages(&mut db, &["dplyr", "base"]);
+    install_packages(&mut db, &["dplyr", "shiny", "base"]);
     let root = workspace_root(&db, "ws");
+    let app = File::new(
+        &db,
+        file_path("ws/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let a = File::new(
         &db,
         file_path("ws/R/a.R"),
@@ -811,14 +798,15 @@ fn test_file_nobody_sources_keeps_its_own_cross_file_layers() {
         Some("x <- 1\n".to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![a, b]);
+    root.set_scripts(&mut db).to(vec![app, a, b]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    // Nobody sources `b.R`, so it keeps exactly the collation view
-    // `cross_file_layers` alone would give it.
+    // Nobody sources `b.R`, so it keeps exactly the collation view its Shiny
+    // autoload context gives it.
     assert_eq!(shape(&db, b.imports(&db)), vec![
         "File(a.R)".to_string(),
         "Package(dplyr)".to_string(),
+        "Package(shiny)".to_string(),
         "Package(base)".to_string(),
     ]);
 }
@@ -836,6 +824,16 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
     install_packages(&mut db, &["base"]);
     let root = workspace_root(&db, "w");
 
+    // A Shiny app makes `w/R/` a real loader, so `sibling` collates before
+    // `helpers.R` and gives the scan side a real `File` layer to tell apart
+    // from a `SourcingFile` one.
+    let app = File::new(
+        &db,
+        file_path("w/app.R"),
+        FileRevision::zero(),
+        Some("shinyApp(ui, server)\n".to_string()),
+        None,
+    );
     let main = File::new(
         &db,
         file_path("w/main.R"),
@@ -843,8 +841,6 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
         Some("cfg <- 1\nsource(\"R/helpers.R\")\n".to_string()),
         None,
     );
-    // Collates before `helpers.R`, so the scan side has a real `File` layer to
-    // tell apart from a `SourcingFile` one.
     let sibling = File::new(
         &db,
         file_path("w/R/a_sib.R"),
@@ -860,7 +856,8 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
         Some(helpers_source.to_string()),
         None,
     );
-    root.set_scripts(&mut db).to(vec![main, sibling, helpers]);
+    root.set_scripts(&mut db)
+        .to(vec![app, main, sibling, helpers]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     // The read side narrows `main.R` to what had run by its `source()` call.
@@ -1115,50 +1112,6 @@ fn test_shiny_autoload_survives_an_explicit_source() {
 }
 
 #[test]
-fn test_source_cycle_keeps_the_r_directory_fallback() {
-    // Cycle recovery leaves no inherited source sites, so `a.R` keeps its
-    // fallback collation context and still sees `b.R`.
-    let mut db = TestDb::new();
-    install_packages(&mut db, &["base"]);
-    let root = workspace_root(&db, "ws");
-    let a = File::new(
-        &db,
-        file_path("ws/R/a.R"),
-        FileRevision::zero(),
-        Some("source(\"R/c.R\")\n".to_string()),
-        None,
-    );
-    let b = File::new(
-        &db,
-        file_path("ws/R/b.R"),
-        FileRevision::zero(),
-        Some("b_val <- 2\n".to_string()),
-        None,
-    );
-    let c = File::new(
-        &db,
-        file_path("ws/R/c.R"),
-        FileRevision::zero(),
-        Some("source(\"R/a.R\")\n".to_string()),
-        None,
-    );
-    root.set_scripts(&mut db).to(vec![a, b, c]);
-    db.workspace_roots().set_roots(&mut db).to(vec![root]);
-
-    assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
-
-    // Per-sourcing-file resolution retains one fallback context when recovery
-    // removes every inherited source site.
-    let contexts = a.imports_by_sourcing_file(&db);
-    assert_eq!(contexts.len(), 1);
-    assert_eq!(shape(&db, &contexts[0]), vec![
-        "File(c.R)".to_string(),
-        "File(b.R)".to_string(),
-        "Package(base)".to_string(),
-    ]);
-}
-
-#[test]
 fn test_mutual_sourcing_devolves_to_standalone_scripts() {
     // A mutual pair cycles `semantic_index` through `exports`, and the cycling
     // side is rebuilt with `NoopImportsResolver`, whose `resolve_effects`
@@ -1248,6 +1201,67 @@ fn test_qualified_mutual_sourcing_records_sites_but_no_edges() {
     assert_eq!(
         shape(&db, b.imports(&db)),
         vec!["Package(base)".to_string()]
+    );
+}
+
+#[test]
+fn test_package_backward_source_into_collation_successor_cycles() {
+    // Same shape as Shiny's `R/` autoload, but through package collation:
+    // `a.R` precedes `b.R` and also sources it. `LoadKind::Namespace` fixes
+    // load order, so unlike the Shiny case there's no source-site
+    // inheritance to muddy the shape, but the cycle through
+    // `cross_file_layers` -> `attached_packages` -> `semantic_index` is the
+    // same, and recovery degrades both files identically: both attaches are
+    // lost, the source edge itself disappears, and both carry the same
+    // `SourceCycle` diagnostic even though only `a.R` calls `source()`.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "pkga", "pkgb"]);
+    let workspace = workspace_root(&db, "w");
+    let pkg = Package::new(
+        &db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    );
+    let a = File::new(
+        &db,
+        file_path("w/pkg/R/a.R"),
+        FileRevision::zero(),
+        Some("library(pkga)\nsource(\"pkg/R/b.R\")\n".to_string()),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_path("w/pkg/R/b.R"),
+        FileRevision::zero(),
+        Some("library(pkgb)\n".to_string()),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert_eq!(shape(&db, a.imports(&db)), vec![
+        "File(b.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert_eq!(shape(&db, b.imports(&db)), vec![
+        "File(a.R)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+    assert!(a.sourced_by(&db).is_empty());
+    assert!(b.sourced_by(&db).is_empty());
+
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert_eq!(
+        a.diagnostics(&db)[0].message(),
+        b.diagnostics(&db)[0].message()
     );
 }
 

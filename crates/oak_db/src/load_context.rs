@@ -28,6 +28,32 @@ pub(crate) struct LoadContext {
     /// Packages attached by the loader, omitting packages unavailable in every
     /// root during lowering.
     pub implicit_attaches: Vec<&'static str>,
+
+    /// Which loader produced this context. Resolution ignores it; diagnostics
+    /// use it to name what already loads the file.
+    pub loader: Option<LoaderInfo>,
+}
+
+/// How a loader names itself in user reports. Whichever module recognises the
+/// loader supplies it, so a new one doesn't touch this file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoaderInfo {
+    /// Sentence subject, e.g. `"testthat"`.
+    pub name: &'static str,
+
+    /// Completes "<name> already loads <loads>".
+    pub loads: &'static str,
+}
+
+const PACKAGE_LOADER: LoaderInfo = LoaderInfo {
+    name: "The package",
+    loads: "its `R/` files in collation order",
+};
+
+/// The loader that owns `file`, if one does. Reads only paths and source text,
+/// so it is safe to call while a semantic index is being built.
+pub(crate) fn loader(db: &dyn Db, file: File) -> Option<LoaderInfo> {
+    load_context(db, file, CollationView::Deferred).loader
 }
 
 /// Resolver context selected by the loader.
@@ -41,10 +67,6 @@ pub(crate) enum LoadKind {
 
     /// Use the default session search path and allow source-site inheritance.
     Session,
-
-    /// Session-like context inferred from a non-package `R/` layout. An explicit
-    /// source site supplies the actual context, so it replaces this fallback.
-    Fallback,
 }
 
 impl LoadKind {
@@ -54,15 +76,10 @@ impl LoadKind {
         matches!(self, LoadKind::Namespace(_))
     }
 
-    /// Whether source-site inheritance replaces this context instead of joining it.
-    pub fn is_fallback(self) -> bool {
-        matches!(self, LoadKind::Fallback)
-    }
-
     pub fn search_path_tail(self) -> SearchPathTail {
         match self {
             LoadKind::Namespace(_) => SearchPathTail::Base,
-            LoadKind::Session | LoadKind::Fallback => SearchPathTail::Default,
+            LoadKind::Session => SearchPathTail::Default,
         }
     }
 }
@@ -92,14 +109,6 @@ pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Load
         return context;
     }
 
-    // Only unowned `R/` files use directory collation. A package file excluded
-    // from `Collate:` has no loader and remains standalone.
-    if file.package(db).is_none() {
-        if let Some(context) = script_load_context(db, file, view) {
-            return context;
-        }
-    }
-
     standalone_load_context()
 }
 
@@ -118,19 +127,7 @@ fn package_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<
         kind: LoadKind::Namespace(package),
         visible_files: visible_siblings(file, files, view, prefix_len),
         implicit_attaches: Vec::new(),
-    })
-}
-
-/// A non-package script in an `R/` directory, collated alphabetically, like a
-/// package `R/` directory without `Collate:`.
-fn script_load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
-    if !in_r_directory(file, db) {
-        return None;
-    }
-    Some(LoadContext {
-        kind: LoadKind::Fallback,
-        visible_files: collation_visible_files(db, file, view),
-        implicit_attaches: Vec::new(),
+        loader: Some(PACKAGE_LOADER),
     })
 }
 
@@ -140,6 +137,7 @@ fn standalone_load_context() -> LoadContext {
         kind: LoadKind::Session,
         visible_files: Vec::new(),
         implicit_attaches: Vec::new(),
+        loader: None,
     }
 }
 
@@ -176,8 +174,8 @@ pub(crate) fn visible_siblings(
     }
 }
 
-/// Whether `file` sits directly in an `R/` directory, which triggers collation
-/// for non-package scripts. The directory name is case-sensitive to match
+/// Whether `file` sits directly in an `R/` directory, which Shiny autoloads
+/// alongside its app. The directory name is case-sensitive to match
 /// [`load_context()`] and the package scanner.
 pub(crate) fn in_r_directory(file: File, db: &dyn Db) -> bool {
     let Some(path) = file.path(db).as_path() else {

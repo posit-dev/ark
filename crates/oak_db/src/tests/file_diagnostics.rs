@@ -7,6 +7,7 @@ use salsa::Setter;
 use stdext::SortedVec;
 
 use crate::tests::diagnostic_render::render;
+use crate::tests::file_imports::shape;
 use crate::tests::resolver::install_packages;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
@@ -453,8 +454,9 @@ fn test_diagnostic_inherited_attach_shadows_a_callee() {
 
 #[test]
 fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
-    // `zzz-shadow.R` and `main.R` both bind `library` to a plain function, so
-    // either winner leaves the call equally non-NSE.
+    // `zzz-shadow.R` (autoloaded alongside `helpers.R` by the Shiny app) and
+    // `main.R` both bind `library` to a plain function, so either winner leaves
+    // the call equally non-NSE.
     //
     // The shadow must be a successor. A predecessor prevents `library(dplyr)`
     // from reaching `semantic_calls()` during the eager scan.
@@ -462,6 +464,7 @@ fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
     install_package_binding(&mut db, "base", &["source", "library"]);
     install_package_binding(&mut db, "dplyr", &[]);
     let root = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
     let main = new_file(
         &db,
         "w/main.R",
@@ -470,7 +473,8 @@ fn test_diagnostic_no_inherited_shadow_when_neither_binding_is_effectful() {
     let helpers_source = "library(dplyr)\n";
     let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
     let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
-    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    root.set_scripts(&mut db)
+        .to(vec![app, main, helpers, shadow]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     insta::assert_snapshot!(render(
@@ -648,17 +652,19 @@ fn test_diagnostic_inherited_shadow_names_every_differing_context() {
 
 #[test]
 fn test_diagnostic_inherited_shadow_when_only_the_standalone_view_binds() {
-    // Standalone `helpers.R` resolves `library` through the later `R/` sibling.
-    // The inherited context excludes that collation fallback and reaches base's
-    // builtin without a scanned base root.
+    // Standalone `helpers.R` resolves `library` through its Shiny-autoloaded
+    // `R/` sibling. The `main.R` source-site context excludes that sibling and
+    // reaches base's builtin without a scanned base root.
     let mut db = TestDb::new();
     install_package_binding(&mut db, "dplyr", &[]);
     let root = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
     let main = new_file(&db, "w/main.R", "source(\"R/helpers.R\")\n");
     let helpers_source = "library(dplyr)\n";
     let helpers = new_file(&db, "w/R/helpers.R", helpers_source);
     let shadow = new_file(&db, "w/R/zzz-shadow.R", "library <- function(...) NULL\n");
-    root.set_scripts(&mut db).to(vec![main, helpers, shadow]);
+    root.set_scripts(&mut db)
+        .to(vec![app, main, helpers, shadow]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     insta::assert_snapshot!(render(
@@ -742,4 +748,353 @@ fn cyclic_pair(db: &mut TestDb, a_source: &str, b_source: &str) -> (File, File) 
     root.set_scripts(db).to(vec![a, b]);
     db.workspace_roots().set_roots(db).to(vec![root]);
     (a, b)
+}
+
+#[test]
+fn test_diagnostic_source_cycle_with_three_participants() {
+    // `a.R` -> `b.R` -> `c.R` -> `a.R`. Recovery isn't special-cased to
+    // pairs: every file on the ring gets its own `SourceCycle` diagnostic.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let a_source = "source(\"b.R\")\n";
+    let b_source = "source(\"c.R\")\n";
+    let c_source = "source(\"a.R\")\n";
+    let a = new_file(&db, "w/a.R", a_source);
+    let b = new_file(&db, "w/b.R", b_source);
+    let c = new_file(&db, "w/c.R", c_source);
+    root.set_scripts(&mut db).to(vec![a, b, c]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert_eq!(c.diagnostics(&db).len(), 1);
+    insta::assert_snapshot!(render("w/a.R", a_source, a.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_not_reported_on_a_caller_outside_the_cycle() {
+    // `main.R` sources into the cyclic `a.R` / `b.R` pair but isn't itself a
+    // cycle participant. `FallbackImmediate` fans out to the files salsa
+    // actually re-entered, not to every caller reachable from them, so
+    // `main.R` stays clean while `a.R` and `b.R` each get one diagnostic.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main_source = "source(\"a.R\")\n";
+    let a_source = "source(\"b.R\")\n";
+    let b_source = "source(\"a.R\")\n";
+    let main = new_file(&db, "w/main.R", main_source);
+    let a = new_file(&db, "w/a.R", a_source);
+    let b = new_file(&db, "w/b.R", b_source);
+    root.set_scripts(&mut db).to(vec![main, a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(main.diagnostics(&db).is_empty());
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+}
+
+const BACK_EDGE_SOURCING: &str = "library(pkga)\nsource(\"R/b.R\")\n";
+const BACK_EDGE_SUCCESSOR: &str = "library(pkgb)\n";
+const PKG_BACK_EDGE_SOURCING: &str = "library(pkga)\nsource(\"pkg/R/b.R\")\n";
+const TESTTHAT_BACK_EDGE_SOURCING: &str = "library(pkga)\nsource(\"pkg/tests/testthat/setup.R\")\n";
+
+#[test]
+fn test_diagnostic_source_cycle_shiny_autoload_sourcing_file() {
+    // `R/a.R` is the file that actually writes the `source()` call, so the
+    // "mutual `source()` calls" wording is at least half true here.
+    let mut db = TestDb::new();
+    let (a, _b) = shiny_back_edge(&mut db);
+
+    insta::assert_snapshot!(render("w/R/a.R", BACK_EDGE_SOURCING, a.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_shiny_autoload_successor() {
+    // `R/b.R` contains no `source()` call at all. It is degraded because
+    // `FallbackImmediate` hands every cycle participant its fallback, so the
+    // message's premise is simply false for this file.
+    let mut db = TestDb::new();
+    let (_a, b) = shiny_back_edge(&mut db);
+
+    insta::assert_snapshot!(render("w/R/b.R", BACK_EDGE_SUCCESSOR, b.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_package_collation_sourcing_file() {
+    let mut db = TestDb::new();
+    let (a, _b) = package_back_edge(&mut db);
+
+    insta::assert_snapshot!(render(
+        "w/pkg/R/a.R",
+        PKG_BACK_EDGE_SOURCING,
+        a.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_package_collation_successor() {
+    // `source()` inside a package's `R/` is already wrong on its own, and
+    // `b.R` carries the same generic message without having written one.
+    let mut db = TestDb::new();
+    let (_a, b) = package_back_edge(&mut db);
+
+    insta::assert_snapshot!(render(
+        "w/pkg/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+        b.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_testthat_support_sourcing_file() {
+    let mut db = TestDb::new();
+    let (helper, _setup) = testthat_back_edge(&mut db);
+
+    insta::assert_snapshot!(render(
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+        helper.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_source_cycle_testthat_support_successor() {
+    // testthat already sources `setup.R` after `helper.R`, so the explicit
+    // call is a double load rather than a cycle the user wrote.
+    let mut db = TestDb::new();
+    let (_helper, setup) = testthat_back_edge(&mut db);
+
+    insta::assert_snapshot!(render(
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+        setup.diagnostics(&db)
+    ));
+}
+
+/// Query `first`'s diagnostics before anything else touches `db`, then read
+/// `second`'s diagnostics and both files' `imports()`. Returns rendered
+/// diagnostics and import shapes for `first` then `second`, so callers can
+/// compare across entry orders.
+fn probe_entry_order(
+    db: &TestDb,
+    first: File,
+    first_path: &str,
+    first_source: &str,
+    second: File,
+    second_path: &str,
+    second_source: &str,
+) -> (String, String, Vec<String>, Vec<String>) {
+    let first_render = render(first_path, first_source, first.diagnostics(db));
+    let second_render = render(second_path, second_source, second.diagnostics(db));
+    let first_shape = shape(db, first.imports(db));
+    let second_shape = shape(db, second.imports(db));
+    (first_render, second_render, first_shape, second_shape)
+}
+
+#[test]
+fn test_diagnostic_source_cycle_shiny_autoload_entry_order_does_not_matter() {
+    // PR 1393's central finding: which query salsa re-enters, and therefore
+    // which recovery handler fires, depends on which file is queried first.
+    // Build two separate databases, enter one via the sourcing file and the
+    // other via its successor, and require the same outcome either way.
+    let mut sourcing_first = TestDb::new();
+    let (a1, b1) = shiny_back_edge(&mut sourcing_first);
+    let (a1_render, b1_render, a1_shape, b1_shape) = probe_entry_order(
+        &sourcing_first,
+        a1,
+        "w/R/a.R",
+        BACK_EDGE_SOURCING,
+        b1,
+        "w/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (a2, b2) = shiny_back_edge(&mut successor_first);
+    let (b2_render, a2_render, b2_shape, a2_shape) = probe_entry_order(
+        &successor_first,
+        b2,
+        "w/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+        a2,
+        "w/R/a.R",
+        BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(a1_render, a2_render);
+    assert_eq!(b1_render, b2_render);
+    assert_eq!(a1_shape, a2_shape);
+    assert_eq!(b1_shape, b2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_package_collation_entry_order_does_not_matter() {
+    let mut sourcing_first = TestDb::new();
+    let (a1, b1) = package_back_edge(&mut sourcing_first);
+    let (a1_render, b1_render, a1_shape, b1_shape) = probe_entry_order(
+        &sourcing_first,
+        a1,
+        "w/pkg/R/a.R",
+        PKG_BACK_EDGE_SOURCING,
+        b1,
+        "w/pkg/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (a2, b2) = package_back_edge(&mut successor_first);
+    let (b2_render, a2_render, b2_shape, a2_shape) = probe_entry_order(
+        &successor_first,
+        b2,
+        "w/pkg/R/b.R",
+        BACK_EDGE_SUCCESSOR,
+        a2,
+        "w/pkg/R/a.R",
+        PKG_BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(a1_render, a2_render);
+    assert_eq!(b1_render, b2_render);
+    assert_eq!(a1_shape, a2_shape);
+    assert_eq!(b1_shape, b2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_testthat_support_entry_order_does_not_matter() {
+    let mut sourcing_first = TestDb::new();
+    let (helper1, setup1) = testthat_back_edge(&mut sourcing_first);
+    let (helper1_render, setup1_render, helper1_shape, setup1_shape) = probe_entry_order(
+        &sourcing_first,
+        helper1,
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+        setup1,
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+    );
+
+    let mut successor_first = TestDb::new();
+    let (helper2, setup2) = testthat_back_edge(&mut successor_first);
+    let (setup2_render, helper2_render, setup2_shape, helper2_shape) = probe_entry_order(
+        &successor_first,
+        setup2,
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+        helper2,
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+    );
+
+    assert_eq!(helper1_render, helper2_render);
+    assert_eq!(setup1_render, setup2_render);
+    assert_eq!(helper1_shape, helper2_shape);
+    assert_eq!(setup1_shape, setup2_shape);
+}
+
+#[test]
+fn test_diagnostic_source_cycle_confined_to_its_own_workspace_root() {
+    // Two workspace roots: `w` runs a Shiny app with a back-edge cycle in its
+    // `R/` autoload, `h` is an unrelated healthy workspace. Recovery degrades
+    // every cycle participant, and `h`'s file is not one, so it must come out
+    // clean even though both roots share the same `WorkspaceRoots` and
+    // `LibraryRoots` inputs.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "shiny", "pkga", "pkgb", "pkgc"]);
+
+    let cycling = workspace_root(&db, "w");
+    let app = new_file(&db, "w/app.R", "shinyApp(ui, server)\n");
+    let a = new_file(&db, "w/R/a.R", BACK_EDGE_SOURCING);
+    let b = new_file(&db, "w/R/b.R", BACK_EDGE_SUCCESSOR);
+    cycling.set_scripts(&mut db).to(vec![app, a, b]);
+
+    let healthy = workspace_root(&db, "h");
+    let healthy_source = "library(pkgc)\n";
+    let healthy_file = new_file(&db, "h/main.R", healthy_source);
+    healthy.set_scripts(&mut db).to(vec![healthy_file]);
+
+    db.workspace_roots()
+        .set_roots(&mut db)
+        .to(vec![cycling, healthy]);
+
+    assert_eq!(a.diagnostics(&db).len(), 1);
+    assert_eq!(b.diagnostics(&db).len(), 1);
+    assert!(healthy_file.diagnostics(&db).is_empty());
+    assert_eq!(shape(&db, healthy_file.imports(&db)), vec![
+        "Package(pkgc)".to_string(),
+        "Package(base)".to_string(),
+    ]);
+}
+
+/// A Shiny app whose autoloaded `R/a.R` sources its collation successor
+/// `R/b.R`. Returns the two `R/` files, sourcing file first.
+fn shiny_back_edge(db: &mut TestDb) -> (File, File) {
+    install_packages(db, &["base", "shiny", "pkga", "pkgb"]);
+    let root = workspace_root(&*db, "w");
+    let app = new_file(&*db, "w/app.R", "shinyApp(ui, server)\n");
+    let a = new_file(&*db, "w/R/a.R", BACK_EDGE_SOURCING);
+    let b = new_file(&*db, "w/R/b.R", BACK_EDGE_SUCCESSOR);
+    root.set_scripts(db).to(vec![app, a, b]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    (a, b)
+}
+
+/// The same back edge inside a package's `R/` collation.
+fn package_back_edge(db: &mut TestDb) -> (File, File) {
+    install_packages(db, &["base", "pkga", "pkgb"]);
+    let workspace = workspace_root(&*db, "w");
+    let pkg = back_edge_package(&*db);
+    let a = package_file(&*db, "w/pkg/R/a.R", PKG_BACK_EDGE_SOURCING, pkg);
+    let b = package_file(&*db, "w/pkg/R/b.R", BACK_EDGE_SUCCESSOR, pkg);
+    pkg.set_files(db).to(vec![a, b]);
+    workspace.set_packages(db).to(vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![workspace]);
+    (a, b)
+}
+
+/// The same back edge across testthat support files, which sort `helper.R`
+/// before `setup.R`.
+fn testthat_back_edge(db: &mut TestDb) -> (File, File) {
+    install_packages(db, &["testthat", "base", "pkga", "pkgb"]);
+    let workspace = workspace_root(&*db, "w");
+    let pkg = back_edge_package(&*db);
+    let helper = package_file(
+        &*db,
+        "w/pkg/tests/testthat/helper.R",
+        TESTTHAT_BACK_EDGE_SOURCING,
+        pkg,
+    );
+    let setup = package_file(
+        &*db,
+        "w/pkg/tests/testthat/setup.R",
+        BACK_EDGE_SUCCESSOR,
+        pkg,
+    );
+    pkg.set_scripts(db).to(vec![helper, setup]);
+    workspace.set_packages(db).to(vec![pkg]);
+    db.workspace_roots().set_roots(db).to(vec![workspace]);
+    (helper, setup)
+}
+
+fn back_edge_package(db: &TestDb) -> Package {
+    Package::new(
+        db,
+        file_path("w/pkg/DESCRIPTION"),
+        "pkg".to_string(),
+        FileRevision::zero(),
+        FileRevision::zero(),
+        None,
+        Some(Namespace::default()),
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn package_file(db: &TestDb, path: &str, contents: &str, pkg: Package) -> File {
+    File::new(
+        db,
+        file_path(path),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(pkg),
+    )
 }
