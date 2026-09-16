@@ -25,6 +25,6 @@ pub(crate) use snapshot::WorldStateSnapshot;
 pub(crate) use warmup::warm_workspace_index;
 
 /// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
-fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
+pub(crate) fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
     salsa::Cancelled::catch(AssertUnwindSafe(f)).ok()
 }

@@ -5,13 +5,15 @@
 //
 //
 
-use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 
 use crossbeam::channel::Sender;
-use stdext::panic_message;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
+use crate::lsp::main_loop::LspServiceContext;
+use crate::panic;
+use crate::panic::Recovery;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -31,14 +33,20 @@ impl IoPool {
     /// of stack. Each lane picks its own size from the deepest call tree its
     /// jobs can reach, so use [`stdext::DEFAULT_STACK_SIZE`] unless you've
     /// bounded that.
-    pub(crate) fn new(name: &'static str, threads: usize, stack_size: usize) -> Self {
+    pub(crate) fn new(
+        name: &'static str,
+        threads: usize,
+        stack_size: usize,
+        service_context: Arc<LspServiceContext>,
+    ) -> Self {
         let (jobs_tx, jobs_rx) = crossbeam::channel::unbounded::<Job>();
 
         for _ in 0..threads {
             let jobs_rx = jobs_rx.clone();
+            let service_context = Arc::clone(&service_context);
             spawn_with_stack_size!(name, stack_size, move || {
                 while let Ok(job) = jobs_rx.recv() {
-                    run_job(job);
+                    run_job(job, &service_context);
                 }
             });
         }
@@ -53,11 +61,31 @@ impl IoPool {
     }
 }
 
-fn run_job(job: Job) {
-    if let Err(err) = std::panic::catch_unwind(AssertUnwindSafe(job)) {
-        lsp::log_error!(
-            "An I/O job panicked: {msg}",
-            msg = panic_message(err.as_ref())
-        );
+fn run_job(job: Job, service_context: &LspServiceContext) {
+    if let Err(payload) = panic::catch_unwind(Recovery::Always, job) {
+        let message = panic::message(&payload);
+        lsp::log_error!("An I/O job panicked: {message}");
+        service_context.report_background_panic();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Install the production hook so a missing `catch_unwind()` aborts the
+    /// process instead of silently losing the worker panic.
+    #[test]
+    fn test_pool_survives_panicking_job() {
+        crate::panic::install();
+
+        let context = Arc::new(LspServiceContext::new());
+        let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE, context);
+        pool.submit(|| panic!("Test panic in an I/O job"));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        pool.submit(move || tx.send(()).unwrap());
+
+        rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
     }
 }

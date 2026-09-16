@@ -1,4 +1,4 @@
-mod client;
+pub(crate) mod client;
 mod description_writer;
 mod events;
 mod namespace_writer;
