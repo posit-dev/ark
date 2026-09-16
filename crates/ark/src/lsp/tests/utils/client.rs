@@ -35,6 +35,7 @@ pub(crate) struct TestClient {
     client: Client,
     settings: Arc<Mutex<HashMap<String, Value>>>,
     requests: Arc<Mutex<Vec<String>>>,
+    notifications: Arc<Mutex<Vec<(String, Value)>>>,
 
     /// Aborts the peer on drop.
     _peer: JoinSet<()>,
@@ -68,18 +69,21 @@ impl TestClient {
                 .collect(),
         ));
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let notifications = Arc::new(Mutex::new(Vec::new()));
 
         let mut peer = JoinSet::new();
         peer.spawn(answer_requests(
             socket,
             Arc::clone(&settings),
             Arc::clone(&requests),
+            Arc::clone(&notifications),
         ));
 
         Self {
             client,
             settings,
             requests,
+            notifications,
             _peer: peer,
         }
     }
@@ -98,10 +102,14 @@ impl TestClient {
             .insert(section.to_string(), value);
     }
 
-    /// Methods of the requests the peer has answered, in order. Notifications
-    /// aren't recorded.
+    /// Methods of the requests the peer has answered, in order.
     pub(crate) fn answered_requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
+    }
+
+    /// Methods and params of the notifications the server has sent, in order.
+    pub(crate) fn notifications(&self) -> Vec<(String, Value)> {
+        self.notifications.lock().unwrap().clone()
     }
 }
 
@@ -110,6 +118,7 @@ async fn answer_requests(
     socket: ClientSocket,
     settings: Arc<Mutex<HashMap<String, Value>>>,
     requests: Arc<Mutex<Vec<String>>>,
+    notifications: Arc<Mutex<Vec<(String, Value)>>>,
 ) {
     let (mut incoming, mut outgoing) = socket.split();
 
@@ -119,6 +128,10 @@ async fn answer_requests(
         // A notification, such as `textDocument/publishDiagnostics`, carries no
         // id and gets no reply.
         let Some(id) = id else {
+            notifications
+                .lock()
+                .unwrap()
+                .push((method.to_string(), params.unwrap_or(Value::Null)));
             continue;
         };
 

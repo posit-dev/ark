@@ -91,8 +91,24 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 /// LSPs to send log messages and tasks to the newer LSPs.
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
-pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
-static BACKGROUND_PANIC_REPORTED: AtomicBool = AtomicBool::new(false);
+/// Latches when the LSP main loop panics. Scoped to one LSP session, so a
+/// reconnect starts clean in case the panic was transient.
+#[derive(Debug)]
+pub(crate) struct CrashFlag(AtomicBool);
+
+impl CrashFlag {
+    pub(crate) fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
@@ -134,7 +150,7 @@ pub(crate) struct DidCloseVirtualDocumentParams {
 pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(DiagnosticsPublication),
-    ShowMessage(lsp_types::MessageType, String),
+    ReportBackgroundPanic,
     Shutdown,
 }
 
@@ -266,6 +282,7 @@ impl LspState {
 /// The auxiliary loop currently handles:
 /// - Log messages.
 /// - Diagnostics publication.
+/// - Background task panic reports.
 struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
@@ -273,6 +290,7 @@ struct AuxiliaryState {
     /// open file, but most runs produce the same result, so we skip the publish
     /// when it matches what the client already has.
     published_diagnostics: HashMap<FilePath, Vec<Diagnostic>>,
+    background_panic_reported: bool,
 }
 
 impl GlobalState {
@@ -345,7 +363,11 @@ impl GlobalState {
     ///
     /// The returned [`LoopHandles`] owns everything the loops need. Drop it to
     /// shut the loops down and release the owned state.
-    pub(crate) fn start(self, server_shutdown_tx: Sender<()>) -> LoopHandles {
+    pub(crate) fn start(
+        self,
+        server_shutdown_tx: Sender<()>,
+        crashed: Arc<CrashFlag>,
+    ) -> LoopHandles {
         let mut aux = tokio::task::JoinSet::<()>::new();
 
         // The auxiliary loop is fully async and never blocks. Must be started
@@ -368,14 +390,15 @@ impl GlobalState {
             let outcome = panic::catch_unwind(Recovery::Always, {
                 let server_shutdown_tx = server_shutdown_tx.clone();
                 let handle = handle.clone();
-                move || handle.block_on(self.main_loop(shutdown_rx, server_shutdown_tx))
+                let crashed = Arc::clone(&crashed);
+                move || handle.block_on(self.main_loop(shutdown_rx, server_shutdown_tx, crashed))
             });
 
             // Handle panics that bypass `handle_event()`'s recovery boundary.
             if let Err(payload) = outcome {
                 let message = panic::message(&payload);
                 lsp::log_error!("Panic in the main loop: {message}");
-                LSP_HAS_CRASHED.store(true, Ordering::Release);
+                crashed.set();
 
                 let report = panic::catch_unwind(Recovery::Always, || {
                     handle.block_on(report_crash(&client))
@@ -405,6 +428,7 @@ impl GlobalState {
         mut self,
         mut shutdown_rx: oneshot::Receiver<()>,
         server_shutdown_tx: Sender<()>,
+        crashed: Arc<CrashFlag>,
     ) {
         loop {
             tokio::select! {
@@ -436,7 +460,7 @@ impl GlobalState {
                                 // the panic because a handler may have partially written its state.
                                 let message = panic::message(&payload);
                                 lsp::log_error!("Panic while handling event: {message}");
-                                LSP_HAS_CRASHED.store(true, Ordering::Release);
+                                crashed.set();
                                 report_crash(&self.client).await;
                                 let _ = server_shutdown_tx.send(()).await;
                                 break;
@@ -784,9 +808,9 @@ impl GlobalState {
 /// notification often won't get sent out before shutdown occurs. The request
 /// returns control to us when the user acknowledges the message. It doesn't
 /// matter if that takes awhile because we shut down right after, and we've
-/// already flipped the `LSP_HAS_CRASHED` global flag. We do bound it with a 5
-/// second timeout just in case the user ignores the message entirely, so we can
-/// still shutdown.
+/// already set the session's `CrashFlag`. We do bound it with a 5 second
+/// timeout just in case the user ignores the message entirely, so we can still
+/// shutdown.
 async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
@@ -1074,6 +1098,7 @@ impl AuxiliaryState {
             client,
             auxiliary_event_rx,
             published_diagnostics: HashMap::new(),
+            background_panic_reported: false,
         }
     }
 
@@ -1088,9 +1113,7 @@ impl AuxiliaryState {
                 AuxiliaryEvent::PublishDiagnostics(publication) => {
                     self.publish_diagnostics(publication).await
                 },
-                AuxiliaryEvent::ShowMessage(level, message) => {
-                    self.client.show_message(level, message).await
-                },
+                AuxiliaryEvent::ReportBackgroundPanic => self.report_background_panic().await,
                 AuxiliaryEvent::Shutdown => break,
             }
         }
@@ -1108,6 +1131,25 @@ impl AuxiliaryState {
             Some(event) => event,
             None => AuxiliaryEvent::Shutdown,
         }
+    }
+
+    async fn report_background_panic(&mut self) {
+        if std::mem::replace(&mut self.background_panic_reported, true) {
+            return;
+        }
+
+        self.client
+            .show_message(
+                MessageType::ERROR,
+                String::from(
+                    "An R language server background task encountered an internal error. \
+                     Some smart features may be temporarily unavailable. \
+                     See https://positron.posit.co/troubleshooting.html#python-and-r-logs \
+                     for full logs and report the problem at \
+                     https://github.com/posit-dev/positron/issues.",
+                ),
+            )
+            .await;
     }
 
     /// Publish diagnostics, skipping the client round-trip when the set is
@@ -1175,11 +1217,6 @@ fn send_auxiliary(event: AuxiliaryEvent) {
 }
 
 pub(crate) fn report_background_panic() {
-    // Only report once to avoid spamming the user
-    if BACKGROUND_PANIC_REPORTED.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
     let Ok(auxiliary_event_tx) = AUXILIARY_EVENT_TX.read() else {
         log::warn!("Can't lock auxiliary event sender to report a background panic");
         return;
@@ -1189,17 +1226,7 @@ pub(crate) fn report_background_panic() {
         return;
     };
 
-    let event = AuxiliaryEvent::ShowMessage(
-        MessageType::ERROR,
-        String::from(
-            "An R language server background task encountered an internal error. \
-             Some smart features may be temporarily unavailable. \
-             See https://positron.posit.co/troubleshooting.html#python-and-r-logs \
-             for full logs and report the problem at \
-             https://github.com/posit-dev/positron/issues.",
-        ),
-    );
-    if let Err(err) = auxiliary_event_tx.send(event) {
+    if let Err(err) = auxiliary_event_tx.send(AuxiliaryEvent::ReportBackgroundPanic) {
         log::warn!("LSP is shut down, can't report a background panic:\n{err:?}");
     }
 }
@@ -1291,33 +1318,40 @@ mod tests {
     use url::Url;
 
     use super::classify_event_unwind;
-    use super::init_aux_for_test;
     use super::report_background_panic;
     use super::respond;
+    use super::send_auxiliary;
     use super::tokio_unbounded_channel;
     use super::AuxiliaryEvent;
+    use super::AuxiliaryState;
     use super::EventUnwind;
-    use super::MessageType;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
     use crate::lsp::state::WorldState;
+    use crate::lsp::tests::utils::client::TestClient;
     use crate::lsp::traits::url::UrlExt;
 
-    #[test]
-    fn test_background_panic_is_reported_once() {
-        let mut events_rx = init_aux_for_test();
+    #[tokio::test]
+    async fn test_background_panic_is_reported_once() {
+        let client = TestClient::new(&[]).await;
+        let auxiliary = AuxiliaryState::new(client.client());
+        let auxiliary_loop = tokio::spawn(auxiliary.start());
 
         report_background_panic();
         report_background_panic();
+        send_auxiliary(AuxiliaryEvent::Shutdown);
+        auxiliary_loop.await.unwrap();
 
-        let event = events_rx.try_recv();
-        let Ok(AuxiliaryEvent::ShowMessage(level, message)) = event else {
-            panic!("Expected a show-message event");
-        };
-        assert_eq!(level, MessageType::ERROR);
+        // The socket is FIFO, so a round-trip flushes the notifications the peer
+        // has not read yet.
+        let _ = client.client().configuration(vec![]).await;
+
+        let notifications = client.notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].0, "window/showMessage");
+        let message = notifications[0].1["message"].as_str().unwrap();
         assert!(message.contains("background task encountered an internal error"));
-        assert!(events_rx.try_recv().is_err());
     }
 
     #[test]

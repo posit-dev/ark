@@ -8,7 +8,6 @@
 #![allow(deprecated)]
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use amalthea::comm::server_comm::ServerStartMessage;
@@ -33,7 +32,7 @@ use tower_lsp_server::LanguageServer;
 use tower_lsp_server::LspService;
 use tower_lsp_server::Server;
 
-use super::main_loop::LSP_HAS_CRASHED;
+use super::main_loop::CrashFlag;
 use crate::console::Console;
 use crate::console::ConsoleNotification;
 use crate::lsp::handlers::VirtualDocumentParams;
@@ -208,6 +207,10 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
+    /// Set as soon as the main loop panics, so requests arriving before the
+    /// connection closes get a clean error.
+    crashed: Arc<CrashFlag>,
+
     /// Handle to the LSP loops. Drop it to shut the loops down and drop all
     /// owned state.
     _main_loop: LoopHandles,
@@ -215,7 +218,7 @@ struct Backend {
 
 impl Backend {
     async fn request(&self, request: LspRequest) -> RequestResponse {
-        if LSP_HAS_CRASHED.load(Ordering::Acquire) {
+        if self.crashed.is_set() {
             return RequestResponse::Disabled;
         }
 
@@ -238,6 +241,10 @@ impl Backend {
     }
 
     fn notify(&self, notif: LspNotification) {
+        if self.crashed.is_set() {
+            return;
+        }
+
         // Relay notification to main loop
         if self
             .events_tx
@@ -575,9 +582,10 @@ pub(crate) fn start_lsp(
         let init = |client: Client| {
             let state = GlobalState::new(client, r_home, console_notification_tx);
             let events_tx = state.events_tx();
+            let crashed = Arc::new(CrashFlag::new());
 
             // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start(shutdown_tx);
+            let main_loop = state.start(shutdown_tx, Arc::clone(&crashed));
 
             // Forward event channel along to `Console`.
             // This also updates an outdated channel after a reconnect.
@@ -594,6 +602,7 @@ pub(crate) fn start_lsp(
 
             Backend {
                 events_tx,
+                crashed,
                 _main_loop: main_loop,
             }
         };

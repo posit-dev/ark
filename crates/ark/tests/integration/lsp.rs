@@ -160,6 +160,31 @@ fn test_lsp_panicking_main_loop_reports_crash() {
     lsp.disconnect_abruptly();
 }
 
+// A crash is scoped to the session that crashed, so the next one must serve
+// requests rather than answer every one of them with `Disabled`.
+#[test]
+fn test_lsp_reconnect_after_crash_is_functional() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Panic while handling event");
+    lsp.send_notification("ark/testPanicNotification", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+    lsp.disconnect_abruptly();
+
+    let mut lsp = frontend.start_lsp();
+    assert!(lsp.server_capabilities().completion_provider.is_some());
+
+    let uri = lsp.open_document("reconnect_after_crash.R", "pas");
+    let items = lsp.completions(&uri, 0, 3);
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"paste"));
+
+    assert!(lsp.show_messages().is_empty());
+}
+
 // The two cases below test errors that don't depend on the rename
 // implementation's resolution capabilities. New-name validation always
 // applies (R language constraints), so these tests stay valid once
