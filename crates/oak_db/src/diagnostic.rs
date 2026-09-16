@@ -215,7 +215,10 @@ fn lower_uninstalled_package(package: &str, range: TextRange) -> Diagnostic {
 fn lower_source_cycle(loader: Option<LoaderInfo>) -> Diagnostic {
     let cause = match loader {
         Some(LoaderInfo { name, loads }) => {
-            format!("{name} already loads {loads}, so a `source()` call between them is redundant.")
+            format!(
+                "{name} already loads {loads}.\n\
+                 A `source()` call into a file that the loader also loads creates this cycle."
+            )
         },
         None => "These files may `source()` each other, or `source()` a file that a loader such \
                  as a Shiny app or testthat suite already loads for them."

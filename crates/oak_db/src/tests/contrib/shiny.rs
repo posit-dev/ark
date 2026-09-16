@@ -458,18 +458,18 @@ fn test_backward_source_into_collation_successor_cycles() {
     assert!(a.sourced_by(&db).is_empty());
     assert!(b.sourced_by(&db).is_empty());
 
-    // Both files carry a `SourceCycle` diagnostic with the same generic
+    // Both files carry a `SourceCycle` diagnostic with the same loader-specific
     // message, even though `b.R` has no `source()` call of its own: it is
     // degraded collaterally by the recovery, not because it takes part in
-    // mutual sourcing. The message's premise ("mutual `source()` calls")
-    // doesn't actually hold for this shape.
+    // mutual sourcing.
     assert_eq!(a.diagnostics(&db).len(), 1);
     assert_eq!(b.diagnostics(&db).len(), 1);
     assert_eq!(
         a.diagnostics(&db)[0].message(),
         "This file is part of a cycle in how the project's files load each other.\n\
          This Shiny app already loads its `global.R` and `R/` files through \
-         `shiny::loadSupport()`, so a `source()` call between them is redundant.\n\
+         `shiny::loadSupport()`.\n\
+         A `source()` call into a file that the loader also loads creates this cycle.\n\
          Language analysis will be incomplete until the cycle is resolved."
     );
     assert_eq!(
