@@ -17,6 +17,7 @@ use stdext::spawn;
 use super::catch_cancellation;
 use super::snapshot::WorldStateSnapshot;
 use crate::lsp;
+use crate::lsp::main_loop::LspServiceContext;
 use crate::panic;
 use crate::panic::Recovery;
 
@@ -41,11 +42,11 @@ pub(crate) struct AnalysisPool {
 }
 
 impl AnalysisPool {
-    pub(crate) fn new() -> Self {
-        Self::with_threads(analysis_threads())
+    pub(crate) fn new(service_context: Arc<LspServiceContext>) -> Self {
+        Self::with_threads(analysis_threads(), service_context)
     }
 
-    fn with_threads(threads: usize) -> Self {
+    fn with_threads(threads: usize, service_context: Arc<LspServiceContext>) -> Self {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue {
                 entries: VecDeque::new(),
@@ -56,7 +57,8 @@ impl AnalysisPool {
 
         for _ in 0..threads {
             let shared = Arc::clone(&shared);
-            spawn!("oak-analysis", move || work(shared));
+            let service_context = Arc::clone(&service_context);
+            spawn!("oak-analysis", move || work(shared, service_context));
         }
 
         Self { shared }
@@ -156,12 +158,12 @@ struct Entry {
     run: Box<dyn FnOnce(WorldStateSnapshot) + Send>,
 }
 
-fn work(shared: Arc<Shared>) {
+fn work(shared: Arc<Shared>, service_context: Arc<LspServiceContext>) {
     // `run_entry` takes the entry by value, so the snapshot has dropped by the
     // time we ask for the next one. A worker parked on `next_entry` doesn't
     // hold a db handle and can't block a writer.
     while let Some(entry) = shared.next_entry() {
-        run_entry(entry);
+        run_entry(entry, &service_context);
     }
 }
 
@@ -192,7 +194,7 @@ impl Shared {
     }
 }
 
-fn run_entry(entry: Entry) {
+fn run_entry(entry: Entry, service_context: &LspServiceContext) {
     let Entry { snapshot, run, .. } = entry;
 
     // A writer parked on this handle would only cancel the task at its first
@@ -207,7 +209,7 @@ fn run_entry(entry: Entry) {
     {
         let message = panic::message(&payload);
         lsp::log_error!("An analysis task panicked: {message}");
-        crate::lsp::main_loop::report_background_panic();
+        service_context.report_background_panic();
     }
 }
 
@@ -218,6 +220,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::AnalysisPool;
+    use crate::lsp::main_loop::LspServiceContext;
     use crate::lsp::state::WorldState;
 
     /// A queued task whose snapshot is already cancelled must be dropped without
@@ -229,7 +232,8 @@ mod tests {
     #[test]
     fn test_pool_drops_cancelled_task_without_running() {
         let state = WorldState::default();
-        let pool = AnalysisPool::with_threads(1);
+        let context = Arc::new(LspServiceContext::new());
+        let pool = AnalysisPool::with_threads(1, context);
 
         let cancelled = state.snapshot();
         cancelled.cancellation_token().cancel();
@@ -258,7 +262,8 @@ mod tests {
         crate::panic::install();
 
         let state = WorldState::default();
-        let pool = AnalysisPool::with_threads(1);
+        let context = Arc::new(LspServiceContext::new());
+        let pool = AnalysisPool::with_threads(1, context);
 
         pool.spawn(state.snapshot(), |_snapshot| {
             panic!("Test panic in an analysis task")

@@ -91,22 +91,35 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 /// LSPs to send log messages and tasks to the newer LSPs.
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
 
-/// Latches when the LSP main loop panics. Scoped to one LSP session, so a
-/// reconnect starts clean in case the panic was transient.
+/// State shared across one LSP service.
 #[derive(Debug)]
-pub(crate) struct CrashFlag(AtomicBool);
+pub(crate) struct LspServiceContext {
+    crashed: AtomicBool,
+    background_panic_reported: AtomicBool,
+}
 
-impl CrashFlag {
+impl LspServiceContext {
     pub(crate) fn new() -> Self {
-        Self(AtomicBool::new(false))
+        Self {
+            crashed: AtomicBool::new(false),
+            background_panic_reported: AtomicBool::new(false),
+        }
     }
 
-    pub(crate) fn is_set(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+    pub(crate) fn has_crashed(&self) -> bool {
+        self.crashed.load(Ordering::Acquire)
     }
 
-    pub(crate) fn set(&self) {
-        self.0.store(true, Ordering::Release);
+    pub(crate) fn set_crashed(&self) {
+        self.crashed.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn report_background_panic(&self) {
+        if self.background_panic_reported.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        report_background_panic();
     }
 }
 
@@ -243,6 +256,9 @@ pub(crate) struct LspState {
     /// behind a background task that can't drop its db snapshot. See
     /// [`crate::lsp::watchdog`].
     pub(crate) watchdog: Watchdog,
+
+    /// State shared with the backend, main loop, and background pools.
+    service_context: Arc<LspServiceContext>,
 }
 
 impl LspState {
@@ -250,25 +266,34 @@ impl LspState {
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
         source_scheduler: SourceScheduler,
     ) -> Self {
+        let service_context = Arc::new(LspServiceContext::new());
+
         Self {
             capabilities: Capabilities::default(),
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
             source_scheduler,
-            analysis_pool: AnalysisPool::new(),
+            analysis_pool: AnalysisPool::new(Arc::clone(&service_context)),
             diagnostics: DiagnosticsState::default(),
             // Stack size: `ScanRequest::run()` walks the filesystem with
             // `ignore::Walk` and `WalkDir`, both iterative, and parses
             // DESCRIPTION line by line.
-            scan_pool: IoPool::new("oak-scan", 1, stdext::SMALL_STACK_SIZE),
+            scan_pool: IoPool::new(
+                "oak-scan",
+                1,
+                stdext::SMALL_STACK_SIZE,
+                Arc::clone(&service_context),
+            ),
             // Full stack because a fetch runs a rustls handshake, zstd and tar
             // decoding, and an R subprocess.
             source_pool: IoPool::new(
                 "oak-source",
                 SOURCE_POOL_THREADS,
                 stdext::DEFAULT_STACK_SIZE,
+                Arc::clone(&service_context),
             ),
             watchdog: Watchdog::new(),
+            service_context,
         }
     }
 }
@@ -290,7 +315,6 @@ struct AuxiliaryState {
     /// open file, but most runs produce the same result, so we skip the publish
     /// when it matches what the client already has.
     published_diagnostics: HashMap<FilePath, Vec<Diagnostic>>,
-    background_panic_reported: bool,
 }
 
 impl GlobalState {
@@ -359,15 +383,15 @@ impl GlobalState {
         self.events_tx.clone()
     }
 
+    pub(crate) fn service_context(&self) -> &Arc<LspServiceContext> {
+        &self.lsp_state.service_context
+    }
+
     /// Start the main and auxiliary loops.
     ///
     /// The returned [`LoopHandles`] owns everything the loops need. Drop it to
     /// shut the loops down and release the owned state.
-    pub(crate) fn start(
-        self,
-        server_shutdown_tx: Sender<()>,
-        crashed: Arc<CrashFlag>,
-    ) -> LoopHandles {
+    pub(crate) fn start(self, server_shutdown_tx: Sender<()>) -> LoopHandles {
         let mut aux = tokio::task::JoinSet::<()>::new();
 
         // The auxiliary loop is fully async and never blocks. Must be started
@@ -385,20 +409,27 @@ impl GlobalState {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let handle = Handle::current();
         let client = self.client.clone();
+        let service_context = Arc::clone(&self.lsp_state.service_context);
 
         let main_loop = spawn!("oak-main-loop", move || {
             let outcome = panic::catch_unwind(Recovery::Always, {
                 let server_shutdown_tx = server_shutdown_tx.clone();
                 let handle = handle.clone();
-                let crashed = Arc::clone(&crashed);
-                move || handle.block_on(self.main_loop(shutdown_rx, server_shutdown_tx, crashed))
+                let service_context = Arc::clone(&service_context);
+                move || {
+                    handle.block_on(self.main_loop(
+                        shutdown_rx,
+                        server_shutdown_tx,
+                        service_context,
+                    ))
+                }
             });
 
             // Handle panics that bypass `handle_event()`'s recovery boundary.
             if let Err(payload) = outcome {
                 let message = panic::message(&payload);
                 lsp::log_error!("Panic in the main loop: {message}");
-                crashed.set();
+                service_context.set_crashed();
 
                 let report = panic::catch_unwind(Recovery::Always, || {
                     handle.block_on(report_crash(&client))
@@ -428,7 +459,7 @@ impl GlobalState {
         mut self,
         mut shutdown_rx: oneshot::Receiver<()>,
         server_shutdown_tx: Sender<()>,
-        crashed: Arc<CrashFlag>,
+        service_context: Arc<LspServiceContext>,
     ) {
         loop {
             tokio::select! {
@@ -460,7 +491,7 @@ impl GlobalState {
                                 // the panic because a handler may have partially written its state.
                                 let message = panic::message(&payload);
                                 lsp::log_error!("Panic while handling event: {message}");
-                                crashed.set();
+                                service_context.set_crashed();
                                 report_crash(&self.client).await;
                                 let _ = server_shutdown_tx.send(()).await;
                                 break;
@@ -1098,7 +1129,6 @@ impl AuxiliaryState {
             client,
             auxiliary_event_rx,
             published_diagnostics: HashMap::new(),
-            background_panic_reported: false,
         }
     }
 
@@ -1133,11 +1163,7 @@ impl AuxiliaryState {
         }
     }
 
-    async fn report_background_panic(&mut self) {
-        if std::mem::replace(&mut self.background_panic_reported, true) {
-            return;
-        }
-
+    async fn report_background_panic(&self) {
         self.client
             .show_message(
                 MessageType::ERROR,
@@ -1216,7 +1242,7 @@ fn send_auxiliary(event: AuxiliaryEvent) {
     })
 }
 
-pub(crate) fn report_background_panic() {
+fn report_background_panic() {
     let Ok(auxiliary_event_tx) = AUXILIARY_EVENT_TX.read() else {
         log::warn!("Can't lock auxiliary event sender to report a background panic");
         return;
@@ -1318,13 +1344,13 @@ mod tests {
     use url::Url;
 
     use super::classify_event_unwind;
-    use super::report_background_panic;
     use super::respond;
     use super::send_auxiliary;
     use super::tokio_unbounded_channel;
     use super::AuxiliaryEvent;
     use super::AuxiliaryState;
     use super::EventUnwind;
+    use super::LspServiceContext;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
@@ -1333,13 +1359,16 @@ mod tests {
     use crate::lsp::traits::url::UrlExt;
 
     #[tokio::test]
-    async fn test_background_panic_is_reported_once() {
+    async fn test_background_panic_is_reported_once_per_session() {
         let client = TestClient::new(&[]).await;
         let auxiliary = AuxiliaryState::new(client.client());
         let auxiliary_loop = tokio::spawn(auxiliary.start());
+        let first_session = LspServiceContext::new();
+        let second_session = LspServiceContext::new();
 
-        report_background_panic();
-        report_background_panic();
+        first_session.report_background_panic();
+        first_session.report_background_panic();
+        second_session.report_background_panic();
         send_auxiliary(AuxiliaryEvent::Shutdown);
         auxiliary_loop.await.unwrap();
 
@@ -1348,8 +1377,9 @@ mod tests {
         let _ = client.client().configuration(vec![]).await;
 
         let notifications = client.notifications();
-        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications.len(), 2);
         assert_eq!(notifications[0].0, "window/showMessage");
+        assert_eq!(notifications[1].0, "window/showMessage");
         let message = notifications[0].1["message"].as_str().unwrap();
         assert!(message.contains("background task encountered an internal error"));
     }

@@ -32,7 +32,7 @@ use tower_lsp_server::LanguageServer;
 use tower_lsp_server::LspService;
 use tower_lsp_server::Server;
 
-use super::main_loop::CrashFlag;
+use super::main_loop::LspServiceContext;
 use crate::console::Console;
 use crate::console::ConsoleNotification;
 use crate::lsp::handlers::VirtualDocumentParams;
@@ -207,9 +207,8 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
-    /// Set as soon as the main loop panics, so requests arriving before the
-    /// connection closes get a clean error.
-    crashed: Arc<CrashFlag>,
+    /// State shared with the main loop and its background pools.
+    service_context: Arc<LspServiceContext>,
 
     /// Handle to the LSP loops. Drop it to shut the loops down and drop all
     /// owned state.
@@ -218,7 +217,7 @@ struct Backend {
 
 impl Backend {
     async fn request(&self, request: LspRequest) -> RequestResponse {
-        if self.crashed.is_set() {
+        if self.service_context.has_crashed() {
             return RequestResponse::Disabled;
         }
 
@@ -241,7 +240,7 @@ impl Backend {
     }
 
     fn notify(&self, notif: LspNotification) {
-        if self.crashed.is_set() {
+        if self.service_context.has_crashed() {
             return;
         }
 
@@ -582,10 +581,10 @@ pub(crate) fn start_lsp(
         let init = |client: Client| {
             let state = GlobalState::new(client, r_home, console_notification_tx);
             let events_tx = state.events_tx();
-            let crashed = Arc::new(CrashFlag::new());
+            let service_context = Arc::clone(state.service_context());
 
             // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start(shutdown_tx, Arc::clone(&crashed));
+            let main_loop = state.start(shutdown_tx);
 
             // Forward event channel along to `Console`.
             // This also updates an outdated channel after a reconnect.
@@ -602,7 +601,7 @@ pub(crate) fn start_lsp(
 
             Backend {
                 events_tx,
-                crashed,
+                service_context,
                 _main_loop: main_loop,
             }
         };

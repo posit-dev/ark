@@ -5,10 +5,13 @@
 //
 //
 
+use std::sync::Arc;
+
 use crossbeam::channel::Sender;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
+use crate::lsp::main_loop::LspServiceContext;
 use crate::panic;
 use crate::panic::Recovery;
 
@@ -30,14 +33,20 @@ impl IoPool {
     /// of stack. Each lane picks its own size from the deepest call tree its
     /// jobs can reach, so use [`stdext::DEFAULT_STACK_SIZE`] unless you've
     /// bounded that.
-    pub(crate) fn new(name: &'static str, threads: usize, stack_size: usize) -> Self {
+    pub(crate) fn new(
+        name: &'static str,
+        threads: usize,
+        stack_size: usize,
+        service_context: Arc<LspServiceContext>,
+    ) -> Self {
         let (jobs_tx, jobs_rx) = crossbeam::channel::unbounded::<Job>();
 
         for _ in 0..threads {
             let jobs_rx = jobs_rx.clone();
+            let service_context = Arc::clone(&service_context);
             spawn_with_stack_size!(name, stack_size, move || {
                 while let Ok(job) = jobs_rx.recv() {
-                    run_job(job);
+                    run_job(job, &service_context);
                 }
             });
         }
@@ -52,11 +61,11 @@ impl IoPool {
     }
 }
 
-fn run_job(job: Job) {
+fn run_job(job: Job, service_context: &LspServiceContext) {
     if let Err(payload) = panic::catch_unwind(Recovery::Always, job) {
         let message = panic::message(&payload);
         lsp::log_error!("An I/O job panicked: {message}");
-        crate::lsp::main_loop::report_background_panic();
+        service_context.report_background_panic();
     }
 }
 
@@ -70,7 +79,8 @@ mod tests {
     fn test_pool_survives_panicking_job() {
         crate::panic::install();
 
-        let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE);
+        let context = Arc::new(LspServiceContext::new());
+        let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE, context);
         pool.submit(|| panic!("Test panic in an I/O job"));
 
         let (tx, rx) = std::sync::mpsc::channel();
