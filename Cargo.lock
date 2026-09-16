@@ -499,7 +499,7 @@ name = "ark_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -1693,7 +1693,7 @@ name = "harp_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
 
 [[package]]
