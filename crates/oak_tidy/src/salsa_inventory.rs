@@ -1,6 +1,10 @@
 use std::fs;
 use std::path::Path;
 
+use proc_macro2::Delimiter;
+use proc_macro2::Ident;
+use proc_macro2::TokenStream;
+use proc_macro2::TokenTree;
 use quote::ToTokens;
 use syn::punctuated::Punctuated;
 use syn::Attribute;
@@ -15,10 +19,12 @@ use syn::ReturnType;
 use syn::Signature;
 use syn::Stmt;
 use syn::Token;
+use syn::UseTree;
 use walkdir::WalkDir;
 
 pub const UPDATE_CHECKLIST: &str = "\
 Updating this snapshot means the Salsa query surface changed. Before accepting it, review the changed query by following `doc/oak/salsa.md`.";
+#[derive(Clone, Copy)]
 enum SalsaKind {
     Input,
     Interned,
@@ -48,7 +54,7 @@ struct QueryEntry {
 
 /// Attributes the structured walk finds on an item it does not otherwise inventory: the
 /// attribute on a `#[salsa::tracked] impl` block, and salsa-attributed items excluded by
-/// `#[cfg(test)]`. Both are still picked up by the text scan in `reconcile_attribute_count()`.
+/// `#[cfg(test)]`. Both are still picked up by the token scan in `reconcile_attribute_count()`.
 #[derive(Default)]
 struct FileCounts {
     tracked_impl_blocks: usize,
@@ -116,7 +122,7 @@ fn render_from_sources(files: &[(String, String)]) -> String {
 
         let queries_added = inventory.queries.len() - queries_before;
         let structs_added = struct_count(&inventory) - structs_before;
-        reconcile_attribute_count(source, rel_path, queries_added, structs_added, &counts);
+        reconcile_attribute_count(&file, rel_path, queries_added, structs_added, &counts);
     }
 
     render_report(inventory)
@@ -136,46 +142,62 @@ fn struct_count(inventory: &Inventory) -> usize {
     inventory.inputs.len() + inventory.interned.len() + inventory.tracked_structs.len()
 }
 
-/// Cross-checks the structured walk against an independent line-anchored text scan, so a
-/// declaration form the walk does not know about fails loudly instead of vanishing silently.
+/// Cross-checks the structured walk against an independent token scan, so a declaration form the
+/// walk does not know about fails loudly instead of vanishing silently.
 fn reconcile_attribute_count(
-    source: &str,
+    file: &syn::File,
     rel_path: &str,
     queries: usize,
     salsa_structs: usize,
     counts: &FileCounts,
 ) {
-    let text_scanned = count_salsa_attribute_lines(source);
+    let token_scanned = count_salsa_attributes(file.to_token_stream());
     let accounted = queries + counts.tracked_impl_blocks + salsa_structs + counts.skipped_cfg_test;
-    if text_scanned != accounted {
+    if token_scanned != accounted {
         panic!(
-            "{rel_path}: text scan found {text_scanned} salsa attribute(s) but the structured walk only accounts for {accounted} (queries={queries}, tracked_impl_blocks={}, salsa_structs={salsa_structs}, skipped_cfg_test={}); a salsa declaration form is present that the walk does not handle",
+            "{rel_path}: token scan found {token_scanned} salsa attribute(s) but the structured walk only accounts for {accounted} (queries={queries}, tracked_impl_blocks={}, salsa_structs={salsa_structs}, skipped_cfg_test={}); a salsa declaration form is present that the walk does not handle",
             counts.tracked_impl_blocks, counts.skipped_cfg_test,
         );
     }
 }
 
-const SALSA_ATTR_LINE_PREFIXES: [&str; 6] = [
-    "#[salsa::tracked",
-    "#[salsa::input",
-    "#[salsa::interned",
-    "#[salsa_macros::tracked",
-    "#[salsa_macros::input",
-    "#[salsa_macros::interned",
-];
+fn count_salsa_attributes(tokens: TokenStream) -> usize {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut count = 0;
+    let mut index = 0;
 
-/// Line-anchored so a doc comment mentioning `#[salsa::tracked]` mid-line after `///` is not
-/// mistaken for a declaration.
-fn count_salsa_attribute_lines(source: &str) -> usize {
-    source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            SALSA_ATTR_LINE_PREFIXES
-                .iter()
-                .any(|prefix| trimmed.starts_with(prefix))
-        })
-        .count()
+    while index < tokens.len() {
+        if matches!(&tokens[index], TokenTree::Punct(punct) if punct.as_char() == '#') {
+            let Some(TokenTree::Group(group)) = tokens.get(index + 1) else {
+                index += 1;
+                continue;
+            };
+            if group.delimiter() == Delimiter::Bracket {
+                if let Ok(meta) = syn::parse2::<Meta>(group.stream()) {
+                    count += count_salsa_attributes_in_meta(&meta);
+                }
+                index += 2;
+                continue;
+            }
+        }
+
+        if let TokenTree::Group(group) = &tokens[index] {
+            count += count_salsa_attributes(group.stream());
+        }
+        index += 1;
+    }
+
+    count
+}
+
+fn count_salsa_attributes_in_meta(meta: &Meta) -> usize {
+    if salsa_meta_kind(meta).is_some() {
+        return 1;
+    }
+    cfg_attr_metas(meta)
+        .iter()
+        .map(count_salsa_attributes_in_meta)
+        .sum()
 }
 
 fn collect_items(
@@ -198,6 +220,20 @@ fn collect_item(
     counts: &mut FileCounts,
 ) {
     match item {
+        Item::Use(item_use) => {
+            if has_cfg_test(&item_use.attrs) {
+                return;
+            }
+            check_use_spelling(&item_use.tree, rel_path, &mut Vec::new());
+        },
+        Item::ExternCrate(item_extern_crate) => {
+            if has_cfg_test(&item_extern_crate.attrs) {
+                return;
+            }
+            if item_extern_crate.rename.is_some() {
+                check_crate_alias(&item_extern_crate.ident, &[], rel_path);
+            }
+        },
         Item::Fn(item_fn) => {
             if has_cfg_test(&item_fn.attrs) {
                 counts.skipped_cfg_test += count_salsa_attributes_in_item(item);
@@ -218,11 +254,7 @@ fn collect_item(
             }
             let impl_self_ty = normalize_tokens(item_impl.self_ty.as_ref());
             check_item_attr_spelling(&item_impl.attrs, rel_path, &format!("impl {impl_self_ty}"));
-            if item_impl
-                .attrs
-                .iter()
-                .any(|attr| salsa_attr_kind(attr).is_some())
-            {
+            if find_salsa_meta(&item_impl.attrs).is_some() {
                 counts.tracked_impl_blocks += 1;
             }
             for impl_item in &item_impl.items {
@@ -300,7 +332,7 @@ fn collect_nested_items(
 
 /// Counts salsa attributes under a `#[cfg(test)]`-gated item so that the reconciliation in
 /// `reconcile_attribute_count()` still balances: the walk excludes this subtree from the
-/// inventory, but the raw text scan does not respect `#[cfg(test)]` boundaries.
+/// inventory, but the token scan does not respect `#[cfg(test)]` boundaries.
 fn count_salsa_attributes_in_item(item: &Item) -> usize {
     match item {
         Item::Fn(item_fn) => count_salsa_attributes_in_fn(&item_fn.attrs, &item_fn.block.stmts),
@@ -348,10 +380,11 @@ fn has_cfg_test(attrs: &[Attribute]) -> bool {
 }
 
 fn is_salsa_attributed(attrs: &[Attribute]) -> bool {
-    attrs.iter().any(|attr| salsa_attr_kind(attr).is_some())
+    find_salsa_meta(attrs).is_some()
 }
 
 const BARE_SALSA_ATTR_NAMES: [&str; 3] = ["tracked", "input", "interned"];
+const SALSA_CRATE_NAMES: [&str; 2] = ["salsa", "salsa_macros"];
 
 /// Field attributes such as `#[tracked]` are legitimate (see `FIELD_SALSA_ATTRS`); this only
 /// checks attributes on the item itself (fn, impl, struct).
@@ -367,16 +400,76 @@ fn check_item_attr_spelling(attrs: &[Attribute], rel_path: &str, item_desc: &str
     }
 }
 
+/// An import or re-export of a Salsa declaration macro, or of the `salsa`/`salsa_macros` crate
+/// itself, lets callers invoke it under a name `check_item_attr_spelling()` does not recognize
+/// (e.g. `use salsa::tracked as query;` or `use salsa as sal;`), which would produce a real
+/// query that `salsa_meta_kind()` cannot see either. Reject the import itself so the
+/// qualified-spelling rule cannot be bypassed by renaming.
+fn check_use_spelling(tree: &UseTree, rel_path: &str, prefix: &mut Vec<String>) {
+    match tree {
+        UseTree::Path(use_path) => {
+            prefix.push(use_path.ident.to_string());
+            check_use_spelling(&use_path.tree, rel_path, prefix);
+            prefix.pop();
+        },
+        UseTree::Group(use_group) => {
+            for tree in &use_group.items {
+                check_use_spelling(tree, rel_path, prefix);
+            }
+        },
+        UseTree::Name(use_name) => {
+            check_use_leaf_spelling(&use_name.ident, prefix, rel_path);
+        },
+        UseTree::Rename(use_rename) => {
+            check_use_leaf_spelling(&use_rename.ident, prefix, rel_path);
+            check_crate_alias(&use_rename.ident, prefix, rel_path);
+        },
+        UseTree::Glob(_) => {},
+    }
+}
+
+fn check_use_leaf_spelling(ident: &Ident, prefix: &[String], rel_path: &str) {
+    let name = ident.to_string();
+    if !BARE_SALSA_ATTR_NAMES.contains(&name.as_str()) {
+        return;
+    }
+    let Some(parent) = prefix.last() else {
+        return;
+    };
+    if parent == "salsa" || parent == "salsa_macros" {
+        panic!(
+            "{rel_path}: `use {}::{name}` imports or re-exports a Salsa declaration macro; invoke it as `#[{parent}::{name}]` at each use site instead",
+            prefix.join("::"),
+        );
+    }
+}
+
+/// `self` inside a `use` group refers to the enclosing path (e.g. the `salsa` in
+/// `use salsa::{self as sal, tracked};`), so its renamed identity is the last pushed prefix
+/// segment rather than `ident` itself.
+fn check_crate_alias(ident: &Ident, prefix: &[String], rel_path: &str) {
+    let name = ident.to_string();
+    let renamed = if name == "self" {
+        prefix.last().map(String::as_str)
+    } else {
+        Some(name.as_str())
+    };
+    let Some(renamed) = renamed else {
+        return;
+    };
+    if SALSA_CRATE_NAMES.contains(&renamed) {
+        panic!(
+            "{rel_path}: `use ... as ...` renames the `{renamed}` crate; this would let its declaration macros be invoked under a name `check_item_attr_spelling()` cannot recognize. Import `{renamed}` under its own name instead."
+        );
+    }
+}
+
 fn collect_tracked_struct(item_struct: &ItemStruct, rel_path: &str, inventory: &mut Inventory) {
-    let Some((kind, attr)) = item_struct
-        .attrs
-        .iter()
-        .find_map(|attr| Some((salsa_attr_kind(attr)?, attr)))
-    else {
+    let Some((kind, meta)) = find_salsa_meta(&item_struct.attrs) else {
         return;
     };
 
-    let options = parse_salsa_metas(attr)
+    let options = parse_salsa_metas(&meta)
         .iter()
         .map(render_meta)
         .collect::<Vec<_>>();
@@ -407,7 +500,15 @@ fn render_struct_fields(fields: &Fields) -> Vec<String> {
     named.named.iter().map(render_field).collect()
 }
 
-const FIELD_SALSA_ATTRS: [&str; 5] = ["tracked", "no_eq", "returns", "id", "default"];
+const FIELD_SALSA_ATTRS: [&str; 7] = [
+    "tracked",
+    "no_eq",
+    "returns",
+    "default",
+    "salsa_value",
+    "get",
+    "set",
+];
 
 fn render_field(field: &Field) -> String {
     let Some(ident) = &field.ident else {
@@ -440,14 +541,11 @@ fn collect_tracked_fn(
     rel_path: &str,
     inventory: &mut Inventory,
 ) {
-    let Some(attr) = attrs
-        .iter()
-        .find(|attr| matches!(salsa_attr_kind(attr), Some(SalsaKind::Tracked)))
-    else {
+    let Some((SalsaKind::Tracked, meta)) = find_salsa_meta(attrs) else {
         return;
     };
 
-    let metas = parse_salsa_metas(attr);
+    let metas = parse_salsa_metas(&meta);
     let options = metas.iter().map(render_meta).collect::<Vec<_>>();
     let cycle_recovery = cycle_recovery_of(&metas);
     let qualified_name = match self_ty {
@@ -495,8 +593,23 @@ fn render_return(sig: &Signature) -> String {
     }
 }
 
-fn salsa_attr_kind(attr: &Attribute) -> Option<SalsaKind> {
-    let mut segments = attr.path().segments.iter().rev();
+fn find_salsa_meta(attrs: &[Attribute]) -> Option<(SalsaKind, Meta)> {
+    attrs
+        .iter()
+        .find_map(|attr| find_salsa_meta_in_meta(&attr.meta))
+}
+
+fn find_salsa_meta_in_meta(meta: &Meta) -> Option<(SalsaKind, Meta)> {
+    if let Some(kind) = salsa_meta_kind(meta) {
+        return Some((kind, meta.clone()));
+    }
+    cfg_attr_metas(meta)
+        .iter()
+        .find_map(find_salsa_meta_in_meta)
+}
+
+fn salsa_meta_kind(meta: &Meta) -> Option<SalsaKind> {
+    let mut segments = meta.path().segments.iter().rev();
     let kind = match segments.next()?.ident.to_string().as_str() {
         "input" => SalsaKind::Input,
         "interned" => SalsaKind::Interned,
@@ -511,11 +624,25 @@ fn salsa_attr_kind(attr: &Attribute) -> Option<SalsaKind> {
 }
 
 /// Bare Salsa attributes, such as `#[salsa::tracked]`, have no options.
-fn parse_salsa_metas(attr: &Attribute) -> Vec<Meta> {
-    let Meta::List(_) = &attr.meta else {
+fn cfg_attr_metas(meta: &Meta) -> Vec<Meta> {
+    let Meta::List(list) = meta else {
         return Vec::new();
     };
-    match attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
+    if !list.path.is_ident("cfg_attr") {
+        return Vec::new();
+    }
+    let metas = match list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
+        Ok(metas) => metas,
+        Err(err) => panic!("failed to parse cfg_attr arguments: {err}"),
+    };
+    metas.into_iter().skip(1).collect()
+}
+
+fn parse_salsa_metas(meta: &Meta) -> Vec<Meta> {
+    let Meta::List(list) = meta else {
+        return Vec::new();
+    };
+    match list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
         Ok(metas) => metas.into_iter().collect(),
         Err(err) => panic!("failed to parse salsa attribute options: {err}"),
     }

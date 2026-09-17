@@ -142,6 +142,36 @@ foo.rs: struct Definition<'db> [debug]
 }
 
 #[test]
+fn renders_tracked_struct_with_get_set_and_salsa_value_field_options() {
+    let source = "\
+#[salsa::tracked]
+pub struct Definition<'db> {
+    #[get(kind)]
+    kind: DefinitionKind,
+    #[set(set_revision)]
+    revision: FileRevision,
+    #[salsa_value(unsafe(not_salsa_serialize))]
+    plain: u32,
+}
+";
+    let expected = "\
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+foo.rs: struct Definition<'db>
+  kind: DefinitionKind [get(kind)]
+  revision: FileRevision [set(set_revision)]
+  plain: u32 [salsa_value(unsafe (not_salsa_serialize))]
+
+== tracked queries ==
+
+== cycle recovery ==";
+    assert_eq!(report(&[("foo.rs", source)]), expected);
+}
+
+#[test]
 fn renders_query_option_returns_ref() {
     let source = "\
 #[salsa::tracked(returns(ref))]
@@ -405,6 +435,61 @@ foo.rs: fn foo(db: &dyn Db) -> u32
 }
 
 #[test]
+fn renders_spaced_salsa_attribute() {
+    let source = "\
+#[ salsa::tracked ]
+fn foo(db: &dyn Db) -> u32 {
+    0
+}
+";
+    let expected = "\
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+
+== tracked queries ==
+foo.rs: fn foo(db: &dyn Db) -> u32
+
+== cycle recovery ==";
+    assert_eq!(report(&[("foo.rs", source)]), expected);
+}
+
+#[test]
+fn renders_salsa_attribute_inside_cfg_attr() {
+    let source = "\
+#[cfg_attr(feature = \"queries\", salsa::tracked(returns(ref)))]
+fn foo(db: &dyn Db) -> u32 {
+    0
+}
+";
+    let expected = "\
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+
+== tracked queries ==
+foo.rs: fn foo(db: &dyn Db) -> u32 [returns(ref)]
+
+== cycle recovery ==";
+    assert_eq!(report(&[("foo.rs", source)]), expected);
+}
+
+#[test]
+fn salsa_attribute_text_inside_string_is_ignored() {
+    let source = "\
+const EXAMPLE: &str = r#\"
+#[salsa::tracked]
+fn example() {}
+\"#;
+";
+    assert_eq!(report(&[("foo.rs", source)]), EMPTY_REPORT);
+}
+
+#[test]
 #[should_panic]
 fn bare_tracked_on_item_panics() {
     let source = "\
@@ -414,6 +499,94 @@ fn foo(db: &dyn Db) -> u32 {
 }
 ";
     report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "imports or re-exports a Salsa declaration macro")]
+fn renamed_import_of_tracked_macro_panics() {
+    let source = "\
+use salsa::tracked as query;
+
+#[query]
+fn foo(db: &dyn Db) -> u32 {
+    0
+}
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "imports or re-exports a Salsa declaration macro")]
+fn grouped_import_of_input_macro_panics() {
+    let source = "\
+use salsa::{Setter, input};
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "imports or re-exports a Salsa declaration macro")]
+fn reexport_of_interned_macro_from_salsa_macros_panics() {
+    let source = "\
+pub use salsa_macros::interned;
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "renames the `salsa` crate")]
+fn aliased_crate_import_panics() {
+    let source = "\
+use salsa as sal;
+
+#[sal::tracked]
+fn foo(db: &dyn Db) -> u32 {
+    0
+}
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "renames the `salsa` crate")]
+fn aliased_crate_self_import_panics() {
+    let source = "\
+use salsa::{self as sal};
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+#[should_panic(expected = "renames the `salsa_macros` crate")]
+fn aliased_extern_crate_panics() {
+    let source = "\
+extern crate salsa_macros as sal;
+";
+    report(&[("foo.rs", source)]);
+}
+
+#[test]
+fn unrelated_use_import_does_not_panic() {
+    let source = "\
+use salsa::Setter;
+
+#[salsa::tracked]
+fn foo(db: &dyn Db) -> u32 {
+    0
+}
+";
+    let expected = "\
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+
+== tracked queries ==
+foo.rs: fn foo(db: &dyn Db) -> u32
+
+== cycle recovery ==";
+    assert_eq!(report(&[("foo.rs", source)]), expected);
 }
 
 /// The reconciliation is the net for declaration forms nobody enumerated, so it
