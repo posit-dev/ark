@@ -491,9 +491,8 @@ fn test_alteration_settles_a_pending_replacement_at_the_operation_limit() {
     );
 }
 
-/// Retargeting a query that already observes a replacement pending at its
-/// position would settle one demand by dropping another, so that position is
-/// not offered.
+/// Retargeting must not settle one replacement by removing another's only
+/// direct observer.
 #[test]
 fn test_alteration_does_not_exchange_one_pending_replacement_for_another() {
     let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
@@ -504,12 +503,56 @@ fn test_alteration_does_not_exchange_one_pending_replacement_for_another() {
     ];
     assert!(settleable_queries(&scenario).is_empty());
 
-    // An aggregate observes neither replacement, so it can take either.
+    // The aggregate is not a direct observer, so either replacement is safe.
     scenario.ops[2] = Op::Query(Query::AllWorkspaceFileDependencies);
     assert_eq!(settleable_queries(&scenario), [
         (2, FileId(0)),
         (2, FileId(1))
     ]);
+}
+
+/// A settled history offers no repair because every replacement already has a
+/// later direct observer.
+#[test]
+fn test_a_settled_history_offers_no_retargeting_repair() {
+    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    scenario.ops = vec![
+        edit_of(&scenario, FileId(0)),
+        edit_of(&scenario, FileId(1)),
+        Op::Query(Query::Diagnostics(FileId(0))),
+        Op::Query(Query::Diagnostics(FileId(1))),
+    ];
+
+    assert!(pending_replacements(&scenario, scenario.ops.len()).is_empty());
+    assert!(settleable_queries(&scenario).is_empty());
+
+    // Ordinary alteration stays free to remove an observation.
+    Step::AlterOp.apply(&mut FixedChoice(0), &mut scenario);
+    assert!(scenario.validate().is_ok());
+}
+
+/// A query before the final replacement observes only an intermediate program,
+/// so it cannot settle that file.
+#[test]
+fn test_repair_skips_a_position_before_a_later_replacement() {
+    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    scenario.ops = vec![
+        edit_of(&scenario, FileId(0)),
+        Op::Query(Query::AllWorkspaceFileDependencies),
+        edit_of(&scenario, FileId(0)),
+        Op::Query(Query::AllWorkspaceFileDependencies),
+    ];
+    assert_eq!(pending_replacements(&scenario, scenario.ops.len()), [
+        FileId(0)
+    ]);
+
+    assert_eq!(settleable_queries(&scenario), [(3, FileId(0))]);
+
+    Step::AlterOp.apply(&mut PreferObserver, &mut scenario);
+
+    assert_eq!(scenario.ops.len(), 4);
+    assert!(scenario.validate().is_ok());
+    assert!(pending_replacements(&scenario, scenario.ops.len()).is_empty());
 }
 
 /// No existing query can observe a replacement that occurs after every query.
