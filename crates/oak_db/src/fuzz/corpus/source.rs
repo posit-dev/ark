@@ -10,10 +10,14 @@ use super::query;
 use super::replace;
 use super::scenario;
 use super::scripts;
+use super::scripts_with;
 use crate::file_imports::CollationView;
 use crate::fuzz::build::binding;
+use crate::fuzz::build::eager_block;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
+use crate::fuzz::build::quote_hole;
+use crate::fuzz::build::quoted;
 use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
 use crate::fuzz::build::source_with;
@@ -148,6 +152,93 @@ pub(super) fn recursive_source_dir_in_package() -> Scenario {
             )]),
         ),
         ("R/b.R", program(vec![binding("val_b")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// `sourceDir()` walks one level, so it excludes the nested file.
+pub(super) fn shallow_source_dir_excludes_nested() -> Scenario {
+    let initial = scripts(vec![
+        (
+            "a.R",
+            program(vec![source_with(
+                ".",
+                SourceProvider::Dir,
+                Invocation::Bare,
+            )]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
+        ("sub/c.R", program(vec![binding("val_nested")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// Unlike `sourceDir()`, `tar_source()` walks recursively and includes the
+/// nested file.
+pub(super) fn recursive_source_dir_includes_nested() -> Scenario {
+    let initial = scripts_with(&["base", "targets"], vec![
+        (
+            "a.R",
+            program(vec![source_with(
+                ".",
+                SourceProvider::FileOrDir,
+                Invocation::Qualified,
+            )]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
+        ("sub/c.R", program(vec![binding("val_nested")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// `local()` runs eagerly, so its `source()` call forms an edge while the file
+/// loads.
+pub(super) fn source_in_eager_block() -> Scenario {
+    let initial = scripts(vec![
+        (
+            "a.R",
+            program(vec![eager_block(vec![source("b.R")]), binding("val_a")]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// `quote()` does not evaluate its argument, so the nested `source()` call
+/// forms no edge.
+pub(super) fn quote_suppresses_source_effect() -> Scenario {
+    let initial = scripts(vec![
+        (
+            "a.R",
+            program(vec![quoted(vec![source("b.R")]), binding("val_a")]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// A `bquote()` hole evaluates its contents, so the nested `source()` call
+/// forms an edge.
+pub(super) fn quote_hole_escapes_source_effect() -> Scenario {
+    let initial = scripts(vec![
+        (
+            "a.R",
+            program(vec![quote_hole(vec![source("b.R")]), binding("val_a")]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
+    ]);
+    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+}
+
+/// A later binding cannot suppress an earlier call, unlike
+/// [`same_file_shadow_suppresses_the_edge()`], where the binding comes first.
+pub(super) fn shadow_after_source_call() -> Scenario {
+    let initial = scripts(vec![
+        (
+            "a.R",
+            program(vec![source("b.R"), shadow("source"), binding("val_a")]),
+        ),
+        ("b.R", program(vec![binding("val_b")])),
     ]);
     scenario(initial, Query::Diagnostics(FileId(0)), vec![])
 }
