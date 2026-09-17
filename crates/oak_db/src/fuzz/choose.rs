@@ -95,8 +95,35 @@ pub(super) fn cold_entries(rng: &mut impl Choose, shape: &Shape) -> Vec<Query> {
     ]
 }
 
-/// Selects a query keyed on `file` that directly analyzes its program.
-/// Workspace aggregates are excluded because they do not target one replacement.
+/// Returns the file for queries known to demand that file's semantic index
+/// directly. `None` does not mean the query cannot analyze it indirectly.
+/// For example, `sourced_by()` reports importers, while load-context queries can
+/// name a file without reading its program.
+pub(super) fn observed_file(query: &Query) -> Option<FileId> {
+    match query {
+        Query::Diagnostics(file) |
+        Query::Imports(file) |
+        Query::ImportsAt(file, _) |
+        Query::ResolveAt(file, _) |
+        Query::Resolve(file, _) |
+        Query::UsedPackages(file) |
+        Query::SemanticIndex(file) |
+        Query::Exports(file) |
+        Query::AttachedPackages(file) |
+        Query::AttachedPackagesAnywhere(file) => Some(*file),
+        Query::SourcedBy(_) |
+        Query::InheritedLayers(..) |
+        Query::CrossFileLayers(..) |
+        Query::AllPackageDependencies |
+        Query::AllWorkspaceFileDependencies |
+        Query::AllWorkspaceLoaderDependencies |
+        Query::AllWorkspacePackageDependencies |
+        Query::DefaultSearchPathPackages |
+        Query::PackageResolve(..) => None,
+    }
+}
+
+/// Selects a direct observer of `file`, as recognized by [`observed_file()`].
 pub(super) fn observing_query(rng: &mut impl Choose, shape: &Shape, file: FileId) -> Query {
     match rng.index(8) {
         0 => Query::Diagnostics(file),
