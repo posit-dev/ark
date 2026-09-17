@@ -17,7 +17,6 @@ mod inputs;
 mod package_resolve;
 mod recovery;
 mod resolver;
-mod resolver_boundary;
 mod source_firewall;
 pub(crate) mod test_db;
 mod tidy;

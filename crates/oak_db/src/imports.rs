@@ -23,8 +23,6 @@ use crate::Package;
 use crate::RootKind;
 use crate::SourceDb;
 
-mod resolver_probe;
-
 /// Salsa-backed [`ImportsResolver`] consumed by the per-file semantic
 /// index builder. One instance per call to [`File::semantic_index`].
 ///

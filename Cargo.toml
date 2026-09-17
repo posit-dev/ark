@@ -19,9 +19,6 @@ edition = "2021"
 license = "MIT"
 authors = ["Posit Software, PBC"]
 
-[workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(resolver_boundary, values("probe", "control"))'] }
-
 [workspace.lints.clippy]
 result_large_err = "allow"
 too_many_arguments = "allow"
