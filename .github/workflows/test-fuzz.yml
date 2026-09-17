@@ -105,8 +105,6 @@ jobs:
       # Each attempt needs a new immutable cache key. Restore the newest corpus
       # in the same format version, shared by scheduled and main-push runs.
       # Bump both keys and the restore prefix to reset accumulated exploration.
-      # Cache resets are independent of saved-input compatibility, which the
-      # legacy decoder preserves for the single-package format.
       - name: Restore Corpus
         uses: actions/cache/restore@v4
         with:
