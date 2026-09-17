@@ -22,18 +22,18 @@ use crate::NamespaceVisibility;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Scenario {
     /// Identifies the originating corpus, not the mutated scenario.
-    pub seed: u64,
+    pub(crate) seed: u64,
     /// Position in the seed corpus.
-    pub variant: usize,
-    pub initial: WorkspaceSpec,
+    pub(crate) variant: usize,
+    pub(crate) initial: WorkspaceSpec,
     /// Run first on a fresh database because Salsa's repeated key depends on
     /// entry order.
-    pub cold_entry: Query,
-    pub ops: Vec<Op>,
+    pub(crate) cold_entry: Query,
+    pub(crate) ops: Vec<Op>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Op {
+pub(crate) enum Op {
     Query(Query),
     Edit(Edit),
 }
@@ -41,14 +41,14 @@ pub enum Op {
 /// Use the same source override as `upsert_editor()` so edits do not bump the
 /// file revision.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Edit {
-    pub file: FileId,
-    pub program: Program,
+pub(crate) struct Edit {
+    pub(crate) file: FileId,
+    pub(crate) program: Program,
 }
 
 /// Production roots and direct entries to cycle-sensitive queries.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Query {
+pub(crate) enum Query {
     Diagnostics(FileId),
     Imports(FileId),
     ImportsAt(FileId, Site),
@@ -73,7 +73,7 @@ pub enum Query {
 /// A semantic location for an offset-keyed query, resolved after each edit.
 /// Stored byte offsets could point into unrelated replacement text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Site {
+pub(crate) enum Site {
     /// Start of the first `source()` or `library()` callee, including nested calls.
     FirstCall,
     /// Start of the last identifier, which can be in deferred collation.

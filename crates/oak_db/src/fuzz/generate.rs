@@ -52,7 +52,7 @@ pub(super) const EFFECT_PACKAGES: [&str; 4] = ["S7", "magrittr", "shiny", "targe
 
 pub(super) const UNINSTALLED: &str = "pkgz";
 
-pub fn seed_corpus(seed: u64) -> Vec<Scenario> {
+pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut scenarios = Vec::new();
 

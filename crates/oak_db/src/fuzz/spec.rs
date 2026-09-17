@@ -14,15 +14,15 @@ pub(super) const PACKAGE_ROOT: &str = "p";
 /// Index into [`WorkspaceSpec::files`]. Stable across edits so operations keep
 /// naming the same file.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub struct FileId(pub usize);
+pub(crate) struct FileId(pub(crate) usize);
 
 /// Index into [`WorkspaceSpec::packages`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub struct PackageId(pub usize);
+pub(crate) struct PackageId(pub(crate) usize);
 
 /// Determines the root against which relative `source()` paths resolve.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Owner {
+pub(crate) enum Owner {
     /// A loose script under the scripts workspace root.
     Script,
     /// An `R/` file of a workspace package, under that package's own root.
@@ -30,15 +30,15 @@ pub enum Owner {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct FileSpec {
-    pub owner: Owner,
+pub(crate) struct FileSpec {
+    pub(crate) owner: Owner,
     /// Relative to the owning root because `source()` resolves from `anchor_dir()`.
-    pub path: String,
-    pub program: Program,
+    pub(crate) path: String,
+    pub(crate) program: Program,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub enum PackageKind {
+pub(crate) enum PackageKind {
     /// Has its own root at `p/{name}` and can own files.
     Workspace,
     /// Sits in the library root with metadata but no files.
@@ -47,20 +47,20 @@ pub enum PackageKind {
 
 /// One `importFrom(from, name)` directive.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Reexport {
-    pub name: String,
+pub(crate) struct Reexport {
+    pub(crate) name: String,
     /// Keeps the import dangling when its source package is removed.
-    pub from: String,
+    pub(crate) from: String,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct PackageSpec {
-    pub name: String,
-    pub kind: PackageKind,
+pub(crate) struct PackageSpec {
+    pub(crate) name: String,
+    pub(crate) kind: PackageKind,
     /// Rendered as `export()` directives.
-    pub exports: Vec<String>,
+    pub(crate) exports: Vec<String>,
     /// Rendered as `importFrom()` directives.
-    pub reexports: Vec<Reexport>,
+    pub(crate) reexports: Vec<Reexport>,
 }
 
 impl PackageSpec {
@@ -88,12 +88,12 @@ impl PackageSpec {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct WorkspaceSpec {
+pub(crate) struct WorkspaceSpec {
     /// Includes `base` when `source()` or `library()` needs it to resolve.
-    pub installed: Vec<String>,
-    pub packages: Vec<PackageSpec>,
+    pub(crate) installed: Vec<String>,
+    pub(crate) packages: Vec<PackageSpec>,
     /// Indexed by [`FileId`]. Order is script order or package collation order.
-    pub files: Vec<FileSpec>,
+    pub(crate) files: Vec<FileSpec>,
 }
 
 /// Restricts the name's spelling, but does not exclude R keywords or literals.
