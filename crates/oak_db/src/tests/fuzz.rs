@@ -2,11 +2,11 @@
 //! `crates/oak_db/fuzz/README.md` for commands, CI policy, and artifacts.
 //!
 //! Pull request CI runs these mutation and replay checks and type-checks the
-//! adapter. Run `just fuzz-driver` locally to exercise the libFuzzer integration.
+//! adapter. Run `just fuzz-explore` locally to exercise the libFuzzer integration.
 //!
-//! `just fuzz` runs every block. `just fuzz-seed SEED` reproduces one with
-//! operation tracing, which changes timing. The seed controls both the starting
-//! corpus and the mutation session.
+//! `just fuzz` runs every block. `just fuzz-replay-seed SEED` reproduces one
+//! with operation tracing, which changes timing. The seed controls both the
+//! starting corpus and the mutation session.
 //!
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
@@ -119,14 +119,14 @@ fn test_block_5() {
 }
 
 #[test]
-#[ignore = "opt-in: just fuzz-seed <seed>"]
+#[ignore = "opt-in: just fuzz-replay-seed <seed>"]
 fn test_replay_block() {
     let seed = match std::env::var("OAK_FUZZ_SEED") {
         Ok(seed) => match seed.parse::<u64>() {
             Ok(seed) => seed,
             Err(err) => panic!("OAK_FUZZ_SEED is not a u64: {err}"),
         },
-        Err(_) => panic!("set OAK_FUZZ_SEED, or run `just fuzz-seed <seed>`"),
+        Err(_) => panic!("set OAK_FUZZ_SEED, or run `just fuzz-replay-seed <seed>`"),
     };
     check_block(seed, BLOCK_ITERS);
 }
@@ -135,11 +135,11 @@ fn test_replay_block() {
 /// Replay needs no fuzzing toolchain, so a crash the driver found is
 /// reproducible from a checkout with the stable toolchain.
 #[test]
-#[ignore = "opt-in: just fuzz-replay <path>"]
+#[ignore = "opt-in: just fuzz-replay-scenario <path>"]
 fn test_replay_scenario() {
     let path = match std::env::var("OAK_FUZZ_SCENARIO") {
         Ok(path) => path,
-        Err(_) => panic!("set OAK_FUZZ_SCENARIO, or run `just fuzz-replay <path>`"),
+        Err(_) => panic!("set OAK_FUZZ_SCENARIO, or run `just fuzz-replay-scenario <path>`"),
     };
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
