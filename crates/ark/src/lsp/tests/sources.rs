@@ -426,7 +426,7 @@ fn test_initialization_options_read_nested_objects_only() {
 }
 
 /// Turning the setting back on fetches the packages Oak saw while it was off,
-/// which is what `doc/configuration-oak.md` promises. This works because both
+/// which is what `doc/oak/configuration.md` promises. This works because both
 /// early returns in `schedule()` come before the loop that records a package,
 /// so a declined package stays unseen rather than being marked `Finished`.
 ///
