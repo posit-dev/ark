@@ -37,8 +37,6 @@ use crate::fuzz::build::library;
 use crate::fuzz::build::qualified_source;
 use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
-use crate::fuzz::choose::observed_file;
-use crate::fuzz::choose::observing_query;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Choose;
 use crate::fuzz::choose::Shape;
@@ -47,7 +45,6 @@ use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
-use crate::fuzz::scenario::Site;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
@@ -62,10 +59,6 @@ use crate::fuzz::traversal::height;
 use crate::fuzz::traversal::programs;
 use crate::fuzz::traversal::slots_where;
 use crate::fuzz::World;
-use crate::NamespaceVisibility;
-
-/// Number of fixed-seed blocks exercised by the opt-in suite.
-const BLOCK_SEEDS: u64 = 6;
 
 struct FixedChoice(usize);
 
@@ -77,6 +70,21 @@ impl Choose for FixedChoice {
 
     fn odds(&mut self, _percent: u32) -> bool {
         false
+    }
+}
+
+/// Exercise the history-repair branch directly, without asserting how often
+/// random sampling happens to select it.
+struct PreferObserver;
+
+impl Choose for PreferObserver {
+    fn index(&mut self, len: usize) -> usize {
+        assert!(len > 0);
+        0
+    }
+
+    fn odds(&mut self, _percent: u32) -> bool {
+        true
     }
 }
 
@@ -395,64 +403,6 @@ fn test_source_candidates_retain_unresolvable_draws() {
     assert!(unresolvable < 400);
 }
 
-// == Edits reaching analysis ==
-
-/// Most inserted edits should be followed by a query that analyzes them.
-#[test]
-fn test_inserted_edits_are_usually_paired_with_an_observing_query() {
-    let mut rng = StdRng::seed_from_u64(0);
-    let mut edits = 0;
-    let mut paired = 0;
-
-    for _ in 0..200 {
-        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
-        scenario.ops.clear();
-        Step::InsertOp.apply(&mut rng, &mut scenario);
-
-        let Some(Op::Edit(edit)) = scenario.ops.first() else {
-            continue;
-        };
-        edits += 1;
-        if matches!(scenario.ops.get(1), Some(Op::Query(query)) if observed_file(query) == Some(edit.file))
-        {
-            paired += 1;
-        }
-    }
-
-    assert!(edits > 0);
-    assert!(paired * 2 > edits);
-}
-
-/// Generated histories should usually observe replacements without eliminating
-/// intentionally unobserved `touch()` edits.
-#[test]
-fn test_seed_histories_usually_query_the_edited_file() {
-    let mut edits = 0;
-    let mut observed = 0;
-
-    for seed in 0..BLOCK_SEEDS {
-        for scenario in seed_corpus(seed) {
-            for (index, op) in scenario.ops.iter().enumerate() {
-                let Op::Edit(edit) = op else {
-                    continue;
-                };
-                edits += 1;
-                let Some(Op::Query(query)) = scenario.ops.get(index + 1) else {
-                    continue;
-                };
-                if observed_file(query) == Some(edit.file) {
-                    observed += 1;
-                }
-            }
-        }
-    }
-
-    assert!(edits > 0);
-    // Intentionally unobserved `touch()` edits keep the expected rate below one,
-    // but paired post-edit queries must still contribute substantially.
-    assert!(observed * 5 > edits * 2);
-}
-
 /// A redirect must change a lone self-source rather than report a successful
 /// no-op when no other local file exists.
 #[test]
@@ -472,124 +422,73 @@ fn test_redirect_moves_a_lone_self_source() {
     }
 }
 
-/// Keeps [`observed_file()`] and [`observing_query()`] aligned on the direct
-/// observer set. The `index_demand` tests verify that classification against
-/// Salsa execution events.
+// == History repair ==
+
+/// Naming the edited file is not enough, and observing an earlier replacement
+/// must not settle a later edit of that file.
 #[test]
-fn test_observed_file_recognizes_direct_observers() {
-    let file = FileId(0);
+fn test_pending_replacements_require_a_later_direct_observer() {
+    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    scenario.ops = vec![
+        edit_of(&scenario, FileId(0)),
+        Op::Query(Query::Diagnostics(FileId(1))),
+        Op::Query(Query::CrossFileLayers(FileId(0), CollationView::Eager)),
+        Op::Query(Query::AllWorkspacePackageDependencies),
+        Op::Query(Query::Diagnostics(FileId(0))),
+        edit_of(&scenario, FileId(0)),
+    ];
 
-    for query in [
-        Query::Diagnostics(file),
-        Query::Imports(file),
-        Query::ImportsAt(file, Site::Eof),
-        Query::ResolveAt(file, Site::Eof),
-        Query::Resolve(file, "val_0".to_string()),
-        Query::UsedPackages(file),
-        Query::SemanticIndex(file),
-        Query::Exports(file),
-        Query::AttachedPackages(file),
-        Query::AttachedPackagesAnywhere(file),
-    ] {
-        assert_eq!(observed_file(&query), Some(file));
-    }
-
-    for query in [
-        Query::SourcedBy(file),
-        Query::InheritedLayers(file, CollationView::Eager),
-        Query::CrossFileLayers(file, CollationView::Eager),
-        Query::AllWorkspaceFileDependencies,
-        Query::PackageResolve(
-            PackageId(0),
-            "exp_0".to_string(),
-            NamespaceVisibility::Exported,
-        ),
-    ] {
-        assert_eq!(observed_file(&query), None);
-    }
-
-    let shape = Shape::of(&corpus::case("acyclic_pair_closes_then_reopens").initial);
-    let mut kinds: Vec<String> = Vec::new();
-    for draw in 0..40 {
-        let query = observing_query(&mut StdRng::seed_from_u64(draw), &shape, file);
-        assert_eq!(observed_file(&query), Some(file));
-
-        let rendered = query.render();
-        let kind = match rendered.split_once('[') {
-            Some((kind, _)) => kind.to_string(),
-            None => panic!("query {rendered} names no file"),
-        };
-        if !kinds.contains(&kind) {
-            kinds.push(kind);
-        }
-    }
-
-    kinds.sort();
-    assert_eq!(kinds, [
-        "diagnostics",
-        "exports",
-        "imports",
-        "imports_at",
-        "resolve",
-        "resolve_at",
-        "semantic_index",
-        "used_packages"
-    ]);
+    assert_eq!(pending_replacements(&scenario, 4), [FileId(0)]);
+    assert!(pending_replacements(&scenario, 5).is_empty());
+    assert_eq!(pending_replacements(&scenario, 6), [FileId(0)]);
 }
 
 /// An inserted direct observer can repair a replacement left pending anywhere
 /// earlier in the history.
 #[test]
-fn test_inserted_queries_settle_a_pending_replacement() {
-    let mut rng = StdRng::seed_from_u64(0);
-    let mut settled = 0;
+fn test_inserted_queries_settle_a_pending_replacement() -> anyhow::Result<()> {
+    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    scenario.ops = vec![
+        edit_of(&scenario, FileId(0)),
+        edit_of(&scenario, FileId(1)),
+        Op::Query(Query::Diagnostics(FileId(0))),
+    ];
+    let before = scenario.clone();
 
-    for _ in 0..200 {
-        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
-        scenario.ops = vec![
-            edit_of(&scenario, FileId(0)),
-            edit_of(&scenario, FileId(1)),
-            Op::Query(Query::AllWorkspaceFileDependencies),
-        ];
-        let before = pending_replacements(&scenario, scenario.ops.len()).len();
-        assert_eq!(before, 2);
+    Step::InsertOp.apply(&mut PreferObserver, &mut scenario);
 
-        Step::InsertOp.apply(&mut rng, &mut scenario);
-        if pending_replacements(&scenario, scenario.ops.len()).len() < before {
-            settled += 1;
-        }
-        assert!(scenario.ops.len() <= MAX_OPS);
-        assert!(scenario.validate().is_ok());
-    }
-
-    // The query and observer draws combine to a 42% repair probability, so the
-    // observed rate should exceed one third.
-    assert!(settled * 3 > 200);
+    assert_eq!(scenario.ops.len(), before.ops.len() + 1);
+    assert!(scenario.validate().is_ok());
+    assert!(pending_replacements(&scenario, scenario.ops.len()).is_empty());
+    let Some(Op::Query(query)) = scenario.ops.pop() else {
+        panic!("repair did not append a query");
+    };
+    assert_eq!(query.file(), Some(FileId(1)));
+    assert_eq!(scenario.to_json()?, before.to_json()?);
+    Ok(())
 }
 
-/// At [`MAX_OPS`], retargeting an existing query is the only way to add a direct
-/// observer.
+/// A full history can still be repaired when a query follows the pending edit.
 #[test]
 fn test_alteration_settles_a_pending_replacement_at_the_operation_limit() {
-    let mut rng = StdRng::seed_from_u64(0);
     let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
-    scenario.ops = (0..MAX_OPS)
-        .map(|index| match index % 2 {
-            0 => edit_of(&scenario, FileId(index % 2)),
-            _ => Op::Query(Query::AllWorkspaceFileDependencies),
-        })
+    scenario.ops = (0..MAX_OPS - 2)
+        .map(|_| Op::Query(Query::Diagnostics(FileId(1))))
         .collect();
-    assert!(!pending_replacements(&scenario, scenario.ops.len()).is_empty());
+    scenario.ops.push(edit_of(&scenario, FileId(0)));
+    scenario
+        .ops
+        .push(Op::Query(Query::AllWorkspacePackageDependencies));
     assert!(!Step::InsertOp.applies(&scenario));
 
-    let mut settled = false;
-    for _ in 0..40 {
-        Step::AlterOp.apply(&mut rng, &mut scenario);
-        settled |= pending_replacements(&scenario, scenario.ops.len()).is_empty();
-        assert_eq!(scenario.ops.len(), MAX_OPS);
-        assert!(scenario.validate().is_ok());
-    }
-    assert!(settled);
+    Step::AlterOp.apply(&mut PreferObserver, &mut scenario);
+
+    assert_eq!(scenario.ops.len(), MAX_OPS);
+    assert!(scenario.validate().is_ok());
+    assert!(pending_replacements(&scenario, scenario.ops.len()).is_empty());
+    assert!(
+        matches!(scenario.ops.last(), Some(Op::Query(query)) if query.file() == Some(FileId(0)))
+    );
 }
 
 /// Retargeting a query that already observes a replacement pending at its
@@ -613,51 +512,26 @@ fn test_alteration_does_not_exchange_one_pending_replacement_for_another() {
     ]);
 }
 
+/// No existing query can observe a replacement that occurs after every query.
+#[test]
+fn test_a_full_history_with_a_final_edit_has_no_retargeting_repair() {
+    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    scenario.ops = (0..MAX_OPS - 1)
+        .map(|_| Op::Query(Query::Diagnostics(FileId(0))))
+        .collect();
+    scenario.ops.push(edit_of(&scenario, FileId(0)));
+
+    assert_eq!(pending_replacements(&scenario, MAX_OPS), [FileId(0)]);
+    assert!(settleable_queries(&scenario).is_empty());
+    assert!(!Step::InsertOp.applies(&scenario));
+    assert!(scenario.validate().is_ok());
+}
+
 fn edit_of(scenario: &Scenario, file: FileId) -> Op {
     Op::Edit(Edit {
         file,
         program: scenario.initial.file(file).program.clone(),
     })
-}
-
-/// Repeated mutation should retain direct observers for most replacements even
-/// after queries are removed or retargeted.
-#[test]
-fn test_mutated_histories_keep_analysis_opportunities() {
-    const ROUNDS: usize = 4_000;
-    const SAMPLE_EVERY: usize = 50;
-
-    let mut sampled = 0;
-    let mut unsettled = 0;
-
-    for seed in 0..2 {
-        let mut session = Session::new().seed(seed);
-        let mut corpus = seed_corpus(seed);
-
-        for round in 0..ROUNDS {
-            let entry = round % corpus.len();
-            if session
-                .mutate_with(&mut ScenarioMutator, &mut corpus[entry])
-                .is_err()
-            {
-                continue;
-            }
-            if round % SAMPLE_EVERY != 0 {
-                continue;
-            }
-            for scenario in &corpus {
-                sampled += 1;
-                if !pending_replacements(scenario, scenario.ops.len()).is_empty() {
-                    unsettled += 1;
-                }
-            }
-        }
-    }
-
-    assert!(sampled > 0);
-    // Fixed seeds make this deterministic. Deliberately unpaired edits keep the
-    // rate above zero; losing history-aware repairs raises it above 30%.
-    assert!(unsettled * 10 < sampled * 3);
 }
 
 /// Do not spend the statement budget on a duplicate shadow in the same block.

@@ -1112,6 +1112,25 @@ fn test_shiny_autoload_survives_an_explicit_source() {
     ]);
 }
 
+/// A cross-file query can name a file without analyzing its body. This is why
+/// the fuzz history heuristic cannot treat every file-keyed query as an observer.
+#[test]
+fn test_cross_file_layers_does_not_demand_a_single_file_packages_index() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let (pkg, files) = make_package(&mut db, "mypkg", Namespace::default(), &[(
+        "ws/mypkg/R/a.R",
+        "library(base)\nsource(\"other.R\")\nval <- 1\n",
+    )]);
+    let root = workspace_root(&db, "ws/mypkg");
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let _ = files[0].cross_file_layers(&db, CollationView::Eager);
+
+    assert_eq!(db.executions_for("File::semantic_index", files[0]), 0);
+}
+
 #[test]
 fn test_cold_entry_to_cross_file_layers_recovers() {
     // A cold `cross_file_layers(b.R, Eager)` entry re-enters through `a.R`'s
