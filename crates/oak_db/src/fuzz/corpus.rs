@@ -23,10 +23,16 @@ use self::source::mutual_pair_opens_then_closes_again;
 use self::source::nested_source_in_function_body;
 use self::source::package_cold_entry_reaches_cross_file_layers_recovery;
 use self::source::package_edit_revalidates_cross_file_layers_recovery;
+use self::source::quote_hole_escapes_source_effect;
+use self::source::quote_suppresses_source_effect;
 use self::source::recursive_source_dir_in_package;
+use self::source::recursive_source_dir_includes_nested;
 use self::source::same_file_shadow_suppresses_the_edge;
+use self::source::shadow_after_source_call;
 use self::source::shallow_source_dir;
+use self::source::shallow_source_dir_excludes_nested;
 use self::source::source_after_bindings;
+use self::source::source_in_eager_block;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
@@ -88,6 +94,30 @@ pub(crate) fn corpus() -> Vec<Case> {
             scenario: recursive_source_dir_in_package(),
         },
         Case {
+            name: "shallow_source_dir_excludes_nested",
+            scenario: shallow_source_dir_excludes_nested(),
+        },
+        Case {
+            name: "recursive_source_dir_includes_nested",
+            scenario: recursive_source_dir_includes_nested(),
+        },
+        Case {
+            name: "source_in_eager_block",
+            scenario: source_in_eager_block(),
+        },
+        Case {
+            name: "quote_suppresses_source_effect",
+            scenario: quote_suppresses_source_effect(),
+        },
+        Case {
+            name: "quote_hole_escapes_source_effect",
+            scenario: quote_hole_escapes_source_effect(),
+        },
+        Case {
+            name: "shadow_after_source_call",
+            scenario: shadow_after_source_call(),
+        },
+        Case {
             name: "file_or_dir_source_at_a_file",
             scenario: file_or_dir_source_at_a_file(),
         },
@@ -137,6 +167,15 @@ fn program(statements: Vec<Stmt>) -> Program {
 fn scripts(files: Vec<(&str, Program)>) -> WorkspaceSpec {
     WorkspaceSpec {
         installed: vec!["base".to_string()],
+        packages: vec![],
+        files: file_specs(Owner::Script, files),
+    }
+}
+
+/// Uses a caller-specified installed set so qualified effect calls can resolve.
+fn scripts_with(installed: &[&str], files: Vec<(&str, Program)>) -> WorkspaceSpec {
+    WorkspaceSpec {
+        installed: installed.iter().map(|name| name.to_string()).collect(),
         packages: vec![],
         files: file_specs(Owner::Script, files),
     }
