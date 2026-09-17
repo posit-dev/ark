@@ -23,6 +23,7 @@ A query's body does not show every query it can reach. For example, `File::seman
 3.  From each starting operation, trace whether execution can return to the same query key.
 4.  Check every starting operation, even after finding a cycle through another query. The query under review needs a handler if any path can return to it.
 5.  Record the starting operations you checked and any path you could not trace to the end. An incomplete path is a gap in the analysis, not evidence that no cycle exists.
+6.  Run `just fuzz` after changing an `oak_db` query or cycle handler. The suite mutates workspaces and edit histories, exercises representative production and workspace-aggregate entry points, and can enter each cycle-handled query on a fresh database. Use `just fuzz-seed <seed>` to inspect operation and recovery traces. The suite supplements the dependency trace above; passing it does not establish that an unexercised path is cycle-free.
 
 ## Known recursive paths
 
