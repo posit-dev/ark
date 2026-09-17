@@ -529,9 +529,6 @@ fn cross_file_layers_fallback(
     file: File,
     view: CollationView,
 ) -> CrossFileLayers {
-    #[cfg(resolver_boundary = "probe")]
-    let _ = file.attached_packages(db);
-
     let mut layers = lower_load_context(db, &load_context(db, file, view));
     layers.recovered_source_cycle = true;
     layers
@@ -695,9 +692,6 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
 /// search-path layers rank below them. Predecessor attaches are added only by
 /// the normal query, because reading them can re-enter semantic analysis.
 pub(crate) fn lower_load_context(db: &dyn SourceDb, context: &LoadContext) -> CrossFileLayers {
-    #[cfg(resolver_boundary = "probe")]
-    let _ = predecessor_attach_layers(db, &context.visible_files);
-
     let LoadContext {
         kind,
         visible_files,
