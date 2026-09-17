@@ -397,11 +397,6 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
 }
 
 fn semantic_index_fallback(db: &dyn SourceDb, file: File) -> SemanticIndex {
-    #[cfg(resolver_boundary = "probe")]
-    let _ = file.semantic_index(db);
-    #[cfg(resolver_boundary = "probe")]
-    let _: &dyn Db = db;
-
     log::warn!(
         "Cyclic `source()` detected at {}. Rebuilding without cross-file resolution.",
         file.path(db),

@@ -96,9 +96,6 @@ pub(crate) enum SearchPathTail {
 /// precedes package loading and package ownership precedes directory
 /// conventions.
 pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -> LoadContext {
-    #[cfg(resolver_boundary = "probe")]
-    let _ = file.semantic_index(db);
-
     if let Some(context) = contrib::testthat::load_context(db, file, view) {
         return context;
     }
