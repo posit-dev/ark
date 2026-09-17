@@ -8,6 +8,8 @@ use oak_semantic::fuzz::Stmt;
 
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Scenario;
+use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::Owner;
 
 // == Scenario traversal ==
 
@@ -63,6 +65,19 @@ pub(super) fn sited_programs(scenario: &Scenario) -> Vec<(ProgramSite, &Program)
             }),
     );
     out
+}
+
+/// Returns the owner whose root resolves relative paths in `slot`. An edit
+/// replacement retains the owner of the file it replaces.
+pub(super) fn slot_owner(scenario: &Scenario, slot: &Slot) -> Owner {
+    let file = match sited_programs(scenario)[slot.program].0 {
+        ProgramSite::File(index) => FileId(index),
+        ProgramSite::Op(index) => match &scenario.ops[index] {
+            Op::Edit(edit) => edit.file,
+            Op::Query(_) => panic!("slot {slot:?} addresses a query"),
+        },
+    };
+    scenario.initial.file(file).owner
 }
 
 fn programs_mut(scenario: &mut Scenario) -> Vec<&mut Program> {

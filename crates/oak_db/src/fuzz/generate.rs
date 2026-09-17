@@ -31,6 +31,7 @@ use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
 use crate::fuzz::choose::binding_name;
 use crate::fuzz::choose::cold_entries;
+use crate::fuzz::choose::observing_query;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Shape;
 use crate::fuzz::scenario::Edit;
@@ -45,6 +46,14 @@ use crate::fuzz::spec::PackageSpec;
 use crate::fuzz::spec::WorkspaceSpec;
 
 const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
+
+const OBSERVE_EDIT_ODDS: f64 = 0.7;
+
+/// Keep the smallest source-graph motifs flat, then add nested paths for
+/// directory-walk coverage.
+const NESTED_FROM: usize = 3;
+
+const NESTED_DIR: &str = "sub";
 
 /// Install every package named by [`EffectRecipe`] so mutated calls such as
 /// `shiny::reactive()` and `library(S7)` can resolve.
@@ -265,16 +274,35 @@ impl Draft {
         let shape = Shape::of(&self.spec());
 
         for _ in 0..rng.random_range(1..=3) {
+            // Preserve unrelated entry points instead of making every query follow an edit.
             ops.push(Op::Query(random_query(rng, &shape)));
             if rng.random_bool(0.3) {
-                ops.push(self.touch(rng));
+                // Keep consecutive, unobserved replacements reachable.
+                let touch = self.touch(rng);
+                ops.push(touch);
                 ops.push(Op::Query(random_query(rng, &shape)));
             }
-            ops.push(self.toggle_edge(rng));
-            ops.push(Op::Query(random_query(rng, &shape)));
+            let edit = self.toggle_edge(rng);
+            let edited = edit.file();
+            ops.push(edit);
+            ops.push(self.query_after_edit(rng, &shape, edited));
         }
 
         ops
+    }
+
+    /// Usually targets the edited file, while random draws preserve unrelated
+    /// entry points. Inferring true consumers would duplicate effect resolution,
+    /// including shadow and provider suppression. Source motifs still exercise
+    /// cross-file paths.
+    fn query_after_edit(&self, rng: &mut StdRng, shape: &Shape, edited: Option<FileId>) -> Op {
+        let Some(edited) = edited else {
+            return Op::Query(random_query(rng, shape));
+        };
+        if !rng.random_bool(OBSERVE_EDIT_ODDS) {
+            return Op::Query(random_query(rng, shape));
+        }
+        Op::Query(observing_query(rng, shape, edited))
     }
 
     fn toggle_edge(&mut self, rng: &mut StdRng) -> Op {
@@ -383,12 +411,18 @@ impl FileParts {
     }
 }
 
+/// Places later files in a subdirectory so shallow and recursive walks differ.
+/// Deriving the path from `index` lets `add_file()` probe for an unused path.
 pub(super) fn file_path(owner: Owner, index: usize) -> String {
     let name = (b'a' + index as u8) as char;
-    match owner {
-        Owner::Script => format!("{name}.R"),
-        Owner::Package(_) => format!("R/{name}.R"),
+    let dir = match owner {
+        Owner::Script => String::new(),
+        Owner::Package(_) => "R/".to_string(),
+    };
+    if index >= NESTED_FROM {
+        return format!("{dir}{NESTED_DIR}/{name}.R");
     }
+    format!("{dir}{name}.R")
 }
 
 fn attachable(rng: &mut StdRng, installed: &[String]) -> String {
