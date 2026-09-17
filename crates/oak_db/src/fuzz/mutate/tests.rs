@@ -1,6 +1,7 @@
 //! Regression checks for mutation coverage, invariants, and shrinking.
 
 use mutatis::Session;
+use oak_semantic::effects::fuzz::SourceProvider;
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 use rand::rngs::StdRng;
@@ -9,6 +10,7 @@ use rand::SeedableRng;
 use super::history::different_query;
 use super::program::is_source;
 use super::program::nest_statement;
+use super::program::redirect_source_edge;
 use super::program::shadow_callee;
 use super::program::unnest_statement;
 use super::workspace::add_export;
@@ -34,18 +36,26 @@ use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Choose;
 use crate::fuzz::choose::Shape;
 use crate::fuzz::corpus;
-use crate::fuzz::limits::within_bounds;
+use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::FileSpec;
 use crate::fuzz::spec::Owner;
 use crate::fuzz::spec::PackageId;
 use crate::fuzz::spec::PackageKind;
+use crate::fuzz::spec::PackageSpec;
+use crate::fuzz::spec::WorkspaceSpec;
+use crate::fuzz::targets::SourceCandidates;
 use crate::fuzz::traversal::count_statements;
 use crate::fuzz::traversal::height;
 use crate::fuzz::traversal::programs;
 use crate::fuzz::traversal::slots_where;
+use crate::fuzz::World;
+
+/// Number of fixed-seed blocks exercised by the opt-in suite.
+const BLOCK_SEEDS: u64 = 6;
 
 struct FixedChoice(usize);
 
@@ -252,6 +262,202 @@ fn test_mutation_respects_declared_bounds() {
             }
         }
 
-        assert!(within_bounds(scenario).is_ok());
+        // Full validation includes replay limits and structural invariants, so
+        // every mutated failure can be decoded for replay.
+        assert!(scenario.validate().is_ok());
+    }
+}
+
+// == Context-aware source targets ==
+
+/// Includes a nested file so candidate selection can distinguish files from
+/// directories.
+fn script_layout() -> WorkspaceSpec {
+    WorkspaceSpec {
+        installed: vec!["base".to_string(), "targets".to_string()],
+        packages: vec![],
+        files: vec![
+            file_spec(Owner::Script, "a.R"),
+            file_spec(Owner::Script, "b.R"),
+            file_spec(Owner::Script, "sub/c.R"),
+        ],
+    }
+}
+
+fn package_layout() -> WorkspaceSpec {
+    WorkspaceSpec {
+        installed: vec!["base".to_string(), "targets".to_string()],
+        packages: vec![PackageSpec {
+            name: "mypkg".to_string(),
+            kind: PackageKind::Workspace,
+            exports: Vec::new(),
+            reexports: Vec::new(),
+        }],
+        files: vec![
+            file_spec(Owner::Package(PackageId(0)), "R/a.R"),
+            file_spec(Owner::Package(PackageId(0)), "R/b.R"),
+            file_spec(Owner::Package(PackageId(0)), "R/sub/c.R"),
+        ],
+    }
+}
+
+fn file_spec(owner: Owner, path: &str) -> FileSpec {
+    FileSpec {
+        owner,
+        path: path.to_string(),
+        program: Program {
+            statements: vec![binding("val")],
+        },
+    }
+}
+
+/// `anchor_dir()` resolves against the calling file's root, so paths owned only
+/// by another root must not count as local candidates.
+#[test]
+fn test_source_candidates_separate_roots_and_kinds() {
+    let mut spec = script_layout();
+    spec.packages = package_layout().packages;
+    spec.files.extend(package_layout().files);
+
+    let scripts = SourceCandidates::for_owner(&spec, Owner::Script);
+    assert!(scripts.accepts(SourceProvider::File, "a.R"));
+    assert!(scripts.accepts(SourceProvider::File, "sub/c.R"));
+    assert!(scripts.accepts(SourceProvider::Dir, "."));
+    assert!(scripts.accepts(SourceProvider::Dir, "sub"));
+    assert!(!scripts.accepts(SourceProvider::File, "R/a.R"));
+    assert!(!scripts.accepts(SourceProvider::Dir, "R"));
+    assert!(!scripts.accepts(SourceProvider::File, "."));
+
+    let package = SourceCandidates::for_owner(&spec, Owner::Package(PackageId(0)));
+    assert!(package.accepts(SourceProvider::File, "R/a.R"));
+    assert!(package.accepts(SourceProvider::Dir, "R"));
+    assert!(package.accepts(SourceProvider::Dir, "R/sub"));
+    assert!(!package.accepts(SourceProvider::File, "a.R"));
+    assert!(package.accepts(SourceProvider::FileOrDir, "R/sub/c.R"));
+    assert!(package.accepts(SourceProvider::FileOrDir, "R/sub"));
+}
+
+/// Checks drawn paths with the production resolver rather than trusting the
+/// candidate pool's own classification.
+#[test]
+fn test_drawn_file_targets_resolve_in_both_layouts() {
+    for (owner, spec) in [
+        (Owner::Script, script_layout()),
+        (Owner::Package(PackageId(0)), package_layout()),
+    ] {
+        let candidates = SourceCandidates::for_owner(&spec, owner);
+        let mut rng = StdRng::seed_from_u64(0);
+
+        for _ in 0..30 {
+            let target = candidates.resolvable(&mut rng, SourceProvider::File);
+            let expected = match spec.ids().find(|&id| spec.file(id).path == target) {
+                Some(id) => spec.absolute_path(id),
+                None => panic!("drawn file target {target} names no file"),
+            };
+            // The probe file sources the draw, so drawing the probe itself
+            // forms a cycle and `NoopImportsResolver` leaves no edge to read.
+            if target == spec.file(FileId(0)).path {
+                continue;
+            }
+
+            let mut probe = spec.clone();
+            probe.files[0].program = Program {
+                statements: vec![source(&target)],
+            };
+            let world = World::materialize(&probe);
+            assert_eq!(world.source_targets(FileId(0)), [expected]);
+        }
+    }
+}
+
+/// Keeps both resolvable and unresolvable paths reachable.
+#[test]
+fn test_source_candidates_retain_unresolvable_draws() {
+    let spec = script_layout();
+    let candidates = SourceCandidates::for_owner(&spec, Owner::Script);
+    let mut rng = StdRng::seed_from_u64(0);
+
+    let unresolvable = (0..400)
+        .map(|_| candidates.target(&mut rng, SourceProvider::File))
+        .filter(|target| !candidates.accepts(SourceProvider::File, target))
+        .count();
+    assert!(unresolvable > 0);
+    assert!(unresolvable < 400);
+}
+
+// == Edits reaching analysis ==
+
+/// Most inserted edits should be followed by a query that observes them.
+#[test]
+fn test_inserted_edits_are_usually_paired_with_an_observing_query() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let mut edits = 0;
+    let mut paired = 0;
+
+    for _ in 0..200 {
+        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        scenario.ops.clear();
+        Step::InsertOp.apply(&mut rng, &mut scenario);
+
+        let Some(Op::Edit(edit)) = scenario.ops.first() else {
+            continue;
+        };
+        edits += 1;
+        if matches!(scenario.ops.get(1), Some(Op::Query(query)) if query.file() == Some(edit.file))
+        {
+            paired += 1;
+        }
+    }
+
+    assert!(edits > 0);
+    assert!(paired * 2 > edits);
+}
+
+/// Generated histories should usually observe replacements without eliminating
+/// intentionally unobserved `touch()` edits.
+#[test]
+fn test_seed_histories_usually_query_the_edited_file() {
+    let mut edits = 0;
+    let mut observed = 0;
+
+    for seed in 0..BLOCK_SEEDS {
+        for scenario in seed_corpus(seed) {
+            for (index, op) in scenario.ops.iter().enumerate() {
+                let Op::Edit(edit) = op else {
+                    continue;
+                };
+                edits += 1;
+                let Some(Op::Query(query)) = scenario.ops.get(index + 1) else {
+                    continue;
+                };
+                if query.file() == Some(edit.file) {
+                    observed += 1;
+                }
+            }
+        }
+    }
+
+    assert!(edits > 0);
+    // Intentionally unobserved `touch()` edits keep the expected rate below one,
+    // but paired post-edit queries must still contribute substantially.
+    assert!(observed * 5 > edits * 2);
+}
+
+/// A redirect must change a lone self-source rather than report a successful
+/// no-op when no other local file exists.
+#[test]
+fn test_redirect_moves_a_lone_self_source() {
+    let mut scenario = scenario_with(vec![source("a.R")]);
+    scenario.initial.files[0].path = "a.R".to_string();
+    let mut rng = StdRng::seed_from_u64(0);
+
+    for _ in 0..20 {
+        let before = scenario.initial.files[0].program.render().text;
+        redirect_source_edge(&mut rng, &mut scenario);
+        assert_ne!(scenario.initial.files[0].program.render().text, before);
+        // Restore the self-source so every iteration exercises the collision fallback.
+        scenario.initial.files[0].program = Program {
+            statements: vec![source("a.R")],
+        };
     }
 }

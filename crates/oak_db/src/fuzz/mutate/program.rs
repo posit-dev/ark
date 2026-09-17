@@ -26,7 +26,7 @@ use crate::fuzz::choose::binding_name;
 use crate::fuzz::choose::Choose;
 use crate::fuzz::generate::UNINSTALLED;
 use crate::fuzz::scenario::Scenario;
-use crate::fuzz::spec::PackageKind;
+use crate::fuzz::targets::SourceCandidates;
 use crate::fuzz::traversal::block_at;
 use crate::fuzz::traversal::block_at_mut;
 use crate::fuzz::traversal::block_mut;
@@ -38,6 +38,7 @@ use crate::fuzz::traversal::owner_of;
 use crate::fuzz::traversal::program_mut;
 use crate::fuzz::traversal::programs;
 use crate::fuzz::traversal::rebase_after_removal;
+use crate::fuzz::traversal::slot_owner;
 use crate::fuzz::traversal::slots_where;
 use crate::fuzz::traversal::statement_mut;
 use crate::fuzz::traversal::take_statement;
@@ -58,13 +59,16 @@ const PROVIDERS: [SourceProvider; 3] = [
 
 // == Source edges ==
 
+/// Selects the insertion slot before the target because relative source paths
+/// resolve against the containing file's root.
 pub(super) fn add_source_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
-    let target = random_target(rng, scenario);
-    let provider = random_provider(rng);
-    let invocation = random_invocation(rng);
     let Some(slot) = pick(rng, insertable_block_slots(scenario)) else {
         return;
     };
+    let candidates = SourceCandidates::for_owner(&scenario.initial, slot_owner(scenario, &slot));
+    let provider = random_provider(rng);
+    let target = candidates.target(rng, provider);
+    let invocation = random_invocation(rng);
     insert_at(
         rng,
         scenario,
@@ -74,22 +78,18 @@ pub(super) fn add_source_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
 }
 
 pub(super) fn redirect_source_edge(rng: &mut impl Choose, scenario: &mut Scenario) {
-    let targets = source_targets(scenario);
     let Some(slot) = pick(rng, slots_where(scenario, is_source)) else {
         return;
     };
+    let candidates = SourceCandidates::for_owner(&scenario.initial, slot_owner(scenario, &slot));
     let Some(Stmt::Effect {
-        recipe: EffectRecipe::Source { path, .. },
+        recipe: EffectRecipe::Source { path, provider },
         ..
     }) = statement_mut(scenario, &slot)
     else {
         panic!("source candidate is not a source: {slot:?}");
     };
-    let others: Vec<String> = targets
-        .into_iter()
-        .filter(|candidate| candidate != path)
-        .collect();
-    let Some(target) = pick(rng, others) else {
+    let Some(target) = candidates.redirect(rng, *provider, path) else {
         return;
     };
     *path = target;
@@ -99,8 +99,9 @@ pub(super) fn swap_provider(rng: &mut impl Choose, scenario: &mut Scenario) {
     let Some(slot) = pick(rng, slots_where(scenario, is_source)) else {
         return;
     };
+    let candidates = SourceCandidates::for_owner(&scenario.initial, slot_owner(scenario, &slot));
     let Some(Stmt::Effect {
-        recipe: EffectRecipe::Source { provider, .. },
+        recipe: EffectRecipe::Source { path, provider },
         ..
     }) = statement_mut(scenario, &slot)
     else {
@@ -110,7 +111,14 @@ pub(super) fn swap_provider(rng: &mut impl Choose, scenario: &mut Scenario) {
         .into_iter()
         .filter(|candidate| candidate != provider)
         .collect();
-    *provider = others[rng.index(others.len())];
+    let swapped = others[rng.index(others.len())];
+    *provider = swapped;
+
+    // Preserve a compatible path. Otherwise redraw so provider swaps do not
+    // mostly produce mismatched path kinds.
+    if !candidates.accepts(swapped, path) {
+        *path = candidates.target(rng, swapped);
+    }
 }
 
 pub(super) fn flip_invocation(rng: &mut impl Choose, scenario: &mut Scenario) {
@@ -126,56 +134,40 @@ pub(super) fn flip_invocation(rng: &mut impl Choose, scenario: &mut Scenario) {
     };
 }
 
-fn random_target(rng: &mut impl Choose, scenario: &Scenario) -> String {
-    let targets = source_targets(scenario);
-    targets[rng.index(targets.len())].clone()
-}
-
-/// Cover every [`SourceProvider`] with a live file, a directory, or a package's
-/// `R/` directory. The `.` entry keeps the result nonempty.
-fn source_targets(scenario: &Scenario) -> Vec<String> {
-    let mut targets: Vec<String> = scenario
-        .initial
-        .files
-        .iter()
-        .map(|file| file.path.clone())
-        .collect();
-    targets.push(".".to_string());
-    if scenario
-        .initial
-        .packages
-        .iter()
-        .any(|package| package.kind == PackageKind::Workspace)
-    {
-        targets.push("R".to_string());
-    }
-    targets
-}
-
 // == Statements ==
 
 pub(super) fn insert_statement(rng: &mut impl Choose, scenario: &mut Scenario) {
     let Some(slot) = pick(rng, insertable_block_slots(scenario)) else {
         return;
     };
-    let stmt = palette_statement(rng, scenario, MAX_DEPTH - slot.path.len());
+    let candidates = SourceCandidates::for_owner(&scenario.initial, slot_owner(scenario, &slot));
+    let stmt = palette_statement(rng, scenario, &candidates, MAX_DEPTH - slot.path.len());
     insert_at(rng, scenario, &slot, stmt);
 }
 
-/// Cover every renderable recipe, not only the seed corpus's `source()` and
-/// `library()` calls. `room` limits the inserted statement's nesting depth.
-fn palette_statement(rng: &mut impl Choose, scenario: &Scenario, room: usize) -> Stmt {
+/// Covers every renderable recipe, not only the seed corpus's `source()` and
+/// `library()` calls. `room` limits nesting, and `candidates` belongs to the
+/// containing file's root.
+fn palette_statement(
+    rng: &mut impl Choose,
+    scenario: &Scenario,
+    candidates: &SourceCandidates,
+    room: usize,
+) -> Stmt {
     let name = binding_name(rng.index(MAX_FILES));
     match rng.index(11) {
         0 => binding(&name),
         1 => function_def(&name, vec![]),
         2 => Stmt::use_of(&name),
         3 => library(&attachable(rng, scenario)),
-        4 => source_with(
-            &random_target(rng, scenario),
-            random_provider(rng),
-            random_invocation(rng),
-        ),
+        4 => {
+            let provider = random_provider(rng);
+            source_with(
+                &candidates.target(rng, provider),
+                provider,
+                random_invocation(rng),
+            )
+        },
         5 => Stmt::effect(
             EffectRecipe::Assign {
                 name,

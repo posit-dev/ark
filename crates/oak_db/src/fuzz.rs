@@ -50,6 +50,7 @@ mod panics;
 mod run;
 mod scenario;
 mod spec;
+mod targets;
 mod traversal;
 
 #[cfg(test)]

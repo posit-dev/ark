@@ -95,6 +95,21 @@ pub(super) fn cold_entries(rng: &mut impl Choose, shape: &Shape) -> Vec<Query> {
     ]
 }
 
+/// Selects a query keyed on `file` that directly analyzes its program.
+/// Workspace aggregates are excluded because they do not target one replacement.
+pub(super) fn observing_query(rng: &mut impl Choose, shape: &Shape, file: FileId) -> Query {
+    match rng.index(8) {
+        0 => Query::Diagnostics(file),
+        1 => Query::Imports(file),
+        2 => Query::ImportsAt(file, random_site(rng)),
+        3 => Query::ResolveAt(file, random_site(rng)),
+        4 => Query::Resolve(file, random_name(rng, shape)),
+        5 => Query::UsedPackages(file),
+        6 => Query::SemanticIndex(file),
+        _ => Query::Exports(file),
+    }
+}
+
 pub(super) fn random_query(rng: &mut impl Choose, shape: &Shape) -> Query {
     match rng.index(3) {
         0 => production_entry(rng, shape),

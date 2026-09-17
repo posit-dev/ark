@@ -160,6 +160,64 @@ fn test_scenario_file_or_dir_source_resolves_a_file_target() {
     assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/R/b.R"]);
 }
 
+/// `sourceDir()` walks one level, so it excludes the nested script.
+#[test]
+fn test_scenario_shallow_source_dir_excludes_nested() {
+    let scenario = corpus::case("shallow_source_dir_excludes_nested");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
+}
+
+/// Unlike `sourceDir()`, `tar_source()` includes the nested script.
+#[test]
+fn test_scenario_recursive_source_dir_includes_nested() {
+    let scenario = corpus::case("recursive_source_dir_includes_nested");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), ["w/b.R", "w/sub/c.R"]);
+}
+
+/// `local()` runs eagerly, so its nested `source()` call forms an edge.
+#[test]
+fn test_scenario_source_in_eager_block_forms_an_edge() {
+    let scenario = corpus::case("source_in_eager_block");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
+}
+
+/// `quote()` does not evaluate its argument, so its nested `source()` call
+/// forms no edge.
+#[test]
+fn test_scenario_quote_suppresses_source_effect() {
+    let scenario = corpus::case("quote_suppresses_source_effect");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);
+}
+
+/// A `bquote()` hole evaluates its contents, so its nested `source()` call
+/// forms an edge.
+#[test]
+fn test_scenario_quote_hole_escapes_source_effect() {
+    let scenario = corpus::case("quote_hole_escapes_source_effect");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
+}
+
+/// A later binding cannot suppress an earlier call, unlike
+/// [`test_scenario_same_file_shadow_suppresses_the_edge()`], where the binding
+/// comes first.
+#[test]
+fn test_scenario_shadow_after_source_call_keeps_the_edge() {
+    let scenario = corpus::case("shadow_after_source_call");
+    let world = start(&scenario);
+
+    assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
+}
+
 #[test]
 fn test_scenario_recursive_source_dir_resolves_package_scripts() {
     let scenario = corpus::case("recursive_source_dir_in_package");
