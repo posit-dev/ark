@@ -366,7 +366,7 @@ pub(super) fn insertable_block_slots(scenario: &Scenario) -> Vec<Slot> {
     slots
 }
 
-/// Select bare calls whose own block can receive a shadow binding.
+/// Selects bare calls without an earlier explicit binding in the same block.
 pub(super) fn shadowable_slots(scenario: &Scenario) -> Vec<Slot> {
     let programs = programs(scenario);
     slots_where(scenario, |stmt| {
@@ -377,7 +377,28 @@ pub(super) fn shadowable_slots(scenario: &Scenario) -> Vec<Slot> {
     })
     .into_iter()
     .filter(|slot| has_room(programs[slot.program]))
+    .filter(|slot| !shadowed_in_its_block(programs[slot.program], slot))
     .collect()
+}
+
+/// Detects an equivalent explicit binding earlier in the call's own block, so
+/// [`shadow_callee()`] does not spend the statement budget on a duplicate.
+/// Enclosing scopes are deliberately ignored because matching their effect would
+/// duplicate the builder's scope rules.
+fn shadowed_in_its_block(program: &Program, slot: &Slot) -> bool {
+    let Some((index, parent)) = slot.path.split_last() else {
+        panic!("shadow candidate has no statement path: {slot:?}");
+    };
+    let Some(block) = block_at(&program.statements, parent) else {
+        panic!("invalid shadow candidate block: {slot:?}");
+    };
+    let Some(Stmt::Effect { recipe, .. }) = block.get(*index) else {
+        panic!("shadow candidate is not an effect: {slot:?}");
+    };
+    let name = callee(recipe).name;
+    block[..*index]
+        .iter()
+        .any(|stmt| matches!(stmt, Stmt::Bind { name: bound, .. } if *bound == name))
 }
 
 pub(super) fn reorderable_block_slots(scenario: &Scenario) -> Vec<Slot> {
