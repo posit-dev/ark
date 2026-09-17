@@ -2,7 +2,6 @@
 
 use std::fmt::Write;
 
-use anyhow::anyhow;
 use oak_semantic::fuzz::Program;
 
 pub(super) const SCRIPT_ROOT: &str = "w";
@@ -22,40 +21,12 @@ pub struct FileId(pub usize);
 pub struct PackageId(pub usize);
 
 /// Determines the root against which relative `source()` paths resolve.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Owner {
     /// A loose script under the scripts workspace root.
     Script,
     /// An `R/` file of a workspace package, under that package's own root.
     Package(PackageId),
-}
-
-/// Maps the legacy `"Package"` owner to slot 0, where the workspace decoder
-/// places the single package from that format.
-impl<'de> serde::Deserialize<'de> for Owner {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum Repr {
-            Tag(String),
-            Package {
-                #[serde(rename = "Package")]
-                id: usize,
-            },
-        }
-
-        match Repr::deserialize(deserializer)? {
-            Repr::Tag(tag) if tag == "Script" => Ok(Owner::Script),
-            Repr::Tag(tag) if tag == "Package" => Ok(Owner::Package(PackageId(0))),
-            Repr::Tag(tag) => Err(serde::de::Error::custom(format!(
-                "unknown Owner tag {tag:?}"
-            ))),
-            Repr::Package { id } => Ok(Owner::Package(PackageId(id))),
-        }
-    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -117,51 +88,12 @@ impl PackageSpec {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "WorkspaceSpecRepr")]
 pub struct WorkspaceSpec {
     /// Includes `base` when `source()` or `library()` needs it to resolve.
     pub installed: Vec<String>,
     pub packages: Vec<PackageSpec>,
     /// Indexed by [`FileId`]. Order is script order or package collation order.
     pub files: Vec<FileSpec>,
-}
-
-/// Decodes both the current shape and the pre-multi-package shape, so a
-/// scenario saved before `packages` existed keeps replaying.
-#[derive(serde::Deserialize)]
-struct WorkspaceSpecRepr {
-    installed: Vec<String>,
-    files: Vec<FileSpec>,
-    #[serde(default)]
-    packages: Vec<PackageSpec>,
-    #[serde(default)]
-    package: Option<String>,
-}
-
-impl TryFrom<WorkspaceSpecRepr> for WorkspaceSpec {
-    type Error = anyhow::Error;
-
-    fn try_from(repr: WorkspaceSpecRepr) -> anyhow::Result<Self> {
-        let packages = match (repr.package, repr.packages.is_empty()) {
-            (Some(_), false) => {
-                return Err(anyhow!(
-                    "scenario carries both the legacy `package` field and `packages`"
-                ))
-            },
-            (Some(name), true) => vec![PackageSpec {
-                name,
-                kind: PackageKind::Workspace,
-                exports: Vec::new(),
-                reexports: Vec::new(),
-            }],
-            (None, _) => repr.packages,
-        };
-        Ok(WorkspaceSpec {
-            installed: repr.installed,
-            packages,
-            files: repr.files,
-        })
-    }
 }
 
 /// Restricts the name's spelling, but does not exclude R keywords or literals.

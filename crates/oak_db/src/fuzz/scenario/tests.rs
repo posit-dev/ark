@@ -1,4 +1,4 @@
-//! Scenario serialization, compatibility, and validation regression tests.
+//! Scenario serialization and validation regression tests.
 
 use mutatis::Session;
 use oak_semantic::effects::fuzz::EffectRecipe;
@@ -36,44 +36,6 @@ fn test_corpus_scenarios_round_trip() {
         assert_eq!(restored.header(), case.scenario.header());
         assert_eq!(restored.render(), case.scenario.render());
     }
-}
-
-/// Legacy input decodes to the canonical model and serializes in that format.
-#[test]
-fn test_legacy_package_field_decodes_into_packages() {
-    let scenario = corpus::case("recursive_source_dir_in_package");
-    let json = scenario.to_json().unwrap();
-
-    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let initial = value.get_mut("initial").unwrap().as_object_mut().unwrap();
-    let packages = initial.remove("packages").unwrap();
-    let name = packages[0]["name"].as_str().unwrap().to_string();
-    initial.insert("package".to_string(), serde_json::Value::String(name));
-    for file in initial["files"].as_array_mut().unwrap() {
-        if file["owner"] == serde_json::json!({"Package": 0}) {
-            file["owner"] = serde_json::Value::String("Package".to_string());
-        }
-    }
-
-    let legacy = serde_json::to_string(&value).unwrap();
-    let restored = Scenario::from_json(legacy.as_bytes()).unwrap();
-
-    assert_eq!(restored.render(), scenario.render());
-    assert_eq!(restored.to_json().unwrap(), json);
-}
-
-#[test]
-fn test_legacy_package_and_packages_together_is_rejected() {
-    let scenario = corpus::case("recursive_source_dir_in_package");
-    let json = scenario.to_json().unwrap();
-
-    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let initial = value.get_mut("initial").unwrap().as_object_mut().unwrap();
-    let name = initial["packages"][0]["name"].as_str().unwrap().to_string();
-    initial.insert("package".to_string(), serde_json::Value::String(name));
-
-    let ambiguous = serde_json::to_string(&value).unwrap();
-    assert!(Scenario::from_json(ambiguous.as_bytes()).is_err());
 }
 
 /// Exercise combinations beyond the fixed corpus. The separate

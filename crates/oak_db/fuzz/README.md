@@ -88,7 +88,7 @@ Scheduled runs skip the ordinary blocks because their fixed seeds repeat the sam
 
 Each driver run restores the previous corpus, adds the current seeds, explores, minimizes, and saves. Cache keys are `oak-fuzz-corpus-v2-<run id>-<run attempt>`, restored with the `oak-fuzz-corpus-v2-` prefix.
 
-- Bump the version in both keys and the restore prefix when the seed shape changes enough that the accumulated corpus is worth rebuilding, not only when old `Scenario` JSON stops decoding. The legacy JSON adapter keeps older saved inputs replayable regardless.
+- Bump the version in both keys and the restore prefix when the seed shape changes enough that the accumulated corpus is worth rebuilding. A saved input that no longer decodes is skipped by the target rather than failing the run, so a bump discards stale exploration instead of repairing compatibility.
 - Reset exploration by bumping the version or deleting the caches. Regression seeds are regenerated on every run, including after cache eviction or `cmin`.
 - A concurrency group permits one writer per ref, so overlapping runs do not independently extend the same corpus and discard each other's discoveries.
 - Runs on other refs can restore the default branch's cache but save in their own cache scope. They do not update the main branch's corpus.
