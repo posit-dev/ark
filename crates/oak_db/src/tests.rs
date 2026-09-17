@@ -14,7 +14,6 @@ mod file_root;
 mod file_source_site;
 mod fuzz;
 mod identifier;
-mod index_demand;
 mod inputs;
 mod package_resolve;
 mod recovery;
