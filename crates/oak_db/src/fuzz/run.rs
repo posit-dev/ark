@@ -42,7 +42,7 @@ impl Runner {
     }
 
     /// Runs `scenario`, returning a panic's message and location on failure.
-    pub fn check(&self, scenario: &Scenario) -> std::result::Result<(), String> {
+    pub(crate) fn check(&self, scenario: &Scenario) -> std::result::Result<(), String> {
         run_scenario(scenario, &self.artifact)
     }
 
@@ -54,17 +54,17 @@ impl Runner {
     }
 
     /// Re-runs `scenario` with operation tracing, letting a panic propagate.
-    pub fn replay(&self, scenario: &Scenario) {
+    pub(crate) fn replay(&self, scenario: &Scenario) {
         run(scenario, &self.artifact, true)
     }
 
     /// Path of the artifact naming the scenario and operation in flight.
-    pub fn artifact_path(&self) -> &Path {
+    pub(crate) fn artifact_path(&self) -> &Path {
         self.artifact.path()
     }
 
     /// Truncates the artifact after a clean run.
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.artifact.clear()
     }
 }
