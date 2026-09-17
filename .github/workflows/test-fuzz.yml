@@ -6,7 +6,8 @@ on:
   workflow_call:
   workflow_dispatch:
   schedule:
-    - cron: "0 5 * * *"
+    # Thursdays at 05:00 UTC.
+    - cron: "0 5 * * 4"
 
 jobs:
   fuzz:
@@ -56,7 +57,7 @@ jobs:
       FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 1800 || 300 }}
     # Too slow for pull request feedback: a cold run installs `cargo-fuzz` and
     # builds an instrumented release tree. `Check Fuzz Driver` above covers
-    # compile drift there instead. Run `just fuzz-driver` by hand when changing
+    # compile drift there instead. Run `just fuzz-explore` by hand when changing
     # the adapter, serialization, or mutation.
     if: github.event_name != 'pull_request'
     # One corpus writer per ref. Overlapping runs would each restore the same

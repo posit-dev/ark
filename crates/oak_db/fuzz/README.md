@@ -1,124 +1,127 @@
 # Fuzzing Oak query cycles
 
-This runbook covers local commands, CI, corpus maintenance, and failure replay. See the [`oak_db::fuzz` module](../src/fuzz.rs) for the scenario model and query coverage, and [the test entry points](../src/tests/fuzz.rs) for ordinary checks.
+The fuzz suite exercises Salsa queries across generated workspaces and edit histories. See [`oak_db::fuzz`](../src/fuzz.rs) for the scenario model and query coverage, and [the test entry points](../src/tests/fuzz.rs) for deterministic checks.
 
-## Property and coverage
+## What it checks
 
-The generic runner requires every scenario to finish without panicking or hanging. It does not compare query results with expected values or compare an edited database with a fresh one. Incorrect exports or diagnostics can pass.
+Each scenario must finish without panicking or hanging. The runner does not compare query results with expected values or compare an edited database with a fresh one, so incorrect exports or diagnostics can pass. Focused regression tests remain responsible for semantic assertions.
 
-Recovery logs identify which handlers ran, but not which query was Salsa's repeated key. That key depends on query entry order. Focused regression tests assert particular recovery firings and semantic behavior separately from the mutated scenarios.
+Scenarios cover source cycles, package re-export cycles, and consumer paths into both. Recovery logs identify which handlers ran, but not which query was Salsa's repeated key, which depends on query entry order.
 
-Workspaces can also model packages: a `Workspace`-kind package owns its own root and files, and a `Library`-kind package sits in the library root with a synthetic NAMESPACE but no files. Mutation grows and shrinks their exports and `importFrom` re-exports, so a scenario can chain packages into an acyclic lookup, a mutual re-export cycle that drives `Package::resolve()`'s `cycle_result` handler, or a consumer path through a `library()` attach or a package's own re-exports. Library packages never own files, so a chain can only terminate at a local definition through a `Workspace`-kind package.
+Coverage-guided exploration repeatedly mutates scenarios and observes which code paths each input executes. It keeps inputs that reach previously unexplored code, then mutates those inputs further. The goal is to discover query entry orders, dependency graphs, and edit sequences that fixed tests did not anticipate and that expose cycle panics or hangs. A weekly CI job resumes from the saved corpus to advance this search over time.
 
-## Mutation budgets and replay limits
+## Testing responsibilities
 
-[Generation budgets](../src/fuzz/budgets.rs) keep scenarios small enough for fast checks. [Replay limits](../src/fuzz/limits.rs) independently bound accepted artifacts, including edit replacements. Keep replay limits stable when tuning generation budgets so saved failures remain replayable. Statement and text limits leave room for one insertion to cross a growth threshold.
-
-[The mutator](../src/fuzz/mutate.rs) separates sampling probabilities from choice vocabularies. It can add both workspace and library packages, and add files to loose scripts or any workspace package. [Shared traversal](../src/fuzz/traversal.rs) addresses initial programs and edit replacements for both mutation and validation.
+| Check                   | Purpose                                                                                                           | Runs automatically                                                             | Run locally                                                                                                          |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| Ordinary `oak_db` tests | Assert semantic results and specific recovery behavior. Includes a short fuzz smoke test.                         | Pull requests and pushes to main.                                              | While developing affected behavior.                                                                                  |
+| `just fuzz`             | Run bounded, fixed-seed mutation blocks. Detects panics and hangs reproducibly but does not verify query results. | Pull requests, pushes to main, and manual fuzz workflows.                      | After changing an `oak_db` query, cycle handler, or dependency path.                                                 |
+| `just fuzz-explore`     | Use coverage feedback to discover new execution paths and grow the saved corpus.                                  | Pushes to main, weekly schedules, and manual fuzz workflows. Not pull requests. | After changing the adapter, scenario serialization, or mutator, because pull request CI only type-checks the driver. |
+| Replay and minimization | Reproduce, diagnose, and reduce a discovered failure.                                                             | Never.                                                                         | When deterministic fuzzing or exploration finds a failure.                                                           |
 
 ## Prerequisites
+
+Deterministic checks require `just` and `cargo-nextest`. Coverage-guided exploration also requires:
 
 ``` sh
 rustup toolchain install nightly
 cargo install cargo-fuzz --locked
 ```
 
-The ordinary test suite also needs `just` and `cargo-nextest`. CI targets Linux. The driver can also run locally on macOS.
+CI runs on Linux. The driver also runs locally on macOS.
 
-The driver uses `-s none` to retain coverage instrumentation without AddressSanitizer. Local measurements found much lower throughput with ASan, possibly related to stack switching in `stacker::maybe_grow()`. This choice limits detection of memory errors.
+The driver uses `-s none` to retain coverage instrumentation without AddressSanitizer. ASan produced much lower throughput in local measurements, possibly because `stacker::maybe_grow()` switches stacks. Disabling it limits detection of memory errors.
 
-## Seeds and local exploration
+## Run locally
 
-Run these commands from the repository root.
+Run commands from the repository root:
 
 ``` sh
-just fuzz-corpus
-just fuzz-driver
+just test -p oak_db
+just fuzz
+just fuzz-explore
 ```
 
-`just fuzz-corpus` writes named regressions and generated seed variants as JSON under `crates/oak_db/fuzz/corpus/scenario/`. The Rust fixtures are the source of these inputs. The generated directory is ignored by Git.
+`just fuzz-explore` regenerates the seed corpus before starting libFuzzer. Run `just fuzz-corpus` separately only to inspect the generated seeds or before invoking `cargo fuzz` directly.
 
-`just fuzz-driver` regenerates the seeds and starts coverage-guided search. New inputs accumulate in the same directory. The custom mutator decodes JSON and mutates structured scenarios, with a byte-mutation fallback when decoding or mutation fails or the result exceeds the available buffer.
+Generated and discovered inputs accumulate under `crates/oak_db/fuzz/corpus/scenario/`. Named Rust fixtures are the source of regression seeds, and the generated directory is ignored by Git.
 
 ## Replay
 
-From the repository root, replay a saved scenario with operation tracing.
+`just fuzz` splits deterministic checking into independently runnable blocks. Each block uses one seed for both its starting corpus and mutation sequence. Replay a block with operation and recovery tracing:
 
 ``` sh
-just fuzz-replay path/to/scenario.json
+just fuzz-replay-seed 0
 ```
 
-This uses the repository's stable toolchain and needs neither nightly nor cargo-fuzz. Relative paths are resolved from the repository root.
+`SEED` accepts any decimal `u64`.
 
-To reproduce through the adapter, run this from `crates/oak_db/fuzz`, with the input path relative to that directory.
+Replay a saved scenario:
+
+``` sh
+just fuzz-replay-scenario path/to/scenario.json
+```
+
+Both replay commands use the stable toolchain. Scenario paths are resolved from the repository root.
+
+To reproduce through the libFuzzer adapter, run this from `crates/oak_db/fuzz`, with the input path relative to that directory:
 
 ``` sh
 cargo +nightly fuzz run -s none scenario path/to/input -- -timeout=20
 ```
 
-A `timeout-*` file exceeded the original run's time limit. It may finish on another machine or under another build. Use the same timeout when comparing runs. Read the operation report before using a debugger to investigate the query in progress.
+A `timeout-*` artifact exceeded the original per-input limit but may finish under another build or on another machine. Preserve that limit when comparing runs, and inspect the operation report to identify the query or edit in progress.
 
-## Minimization
+## Minimize
 
-Run these commands from `crates/oak_db/fuzz`.
+Once fuzzing finds a regression, minimize the failing input before diagnosing or promoting it. `tmin` removes input while preserving the failure. `cmin` serves a separate maintenance purpose: it removes corpus entries that add no unique coverage, keeping later exploration fast.
 
-- Reduce one failing input with `cargo +nightly fuzz tmin -s none scenario artifacts/scenario/crash-<hash>`.
-- Reduce the coverage corpus with `cargo +nightly fuzz cmin -s none scenario corpus/scenario -- -timeout=20`. This removes coverage-redundant inputs and writes retained inputs under hash filenames. Regenerate named seeds before the next exploration run.
+Run these commands from `crates/oak_db/fuzz`:
 
-Stopping reduction does not establish minimality. Replay the reduced input in a fresh process and compare the failure and operation in progress with the original. Reduction can move a failure onto a different code path. When investigating a timeout, preserve its per-input time limit during reduction.
+``` sh
+cargo +nightly fuzz tmin -s none scenario artifacts/scenario/crash-<hash>
+cargo +nightly fuzz cmin -s none scenario corpus/scenario -- -timeout=20
+```
 
-In cargo-fuzz 0.13.2, `cmin` can print `Failed to minimize corpus` and exit 0, leaving the original corpus in place. libFuzzer can also continue merging after an individual input fails. CI checks both the log and newly written artifacts before accepting the result. Check them after local minimization too.
+`cmin` replaces retained filenames with hashes, so regenerate named seeds before further exploration.
 
-## CI
+Replay a reduced input in a fresh process and confirm that it still fails for the same reason. Reduction can move a failure to another code path. Preserve the per-input timeout when reducing a hang.
 
-The [fuzz workflow](../../../.github/workflows/test-fuzz.yml) uses these budgets.
+In cargo-fuzz 0.13.2, `cmin` can print `Failed to minimize corpus` and exit successfully, and libFuzzer can continue merging after an input fails. Check both the output and `artifacts/scenario/`; CI checks both before saving a minimized corpus.
 
-| Event           | Ordinary blocks | Stable adapter check | Driver | Search time |
-|-----------------|-----------------|----------------------|--------|-------------|
-| Pull request    | yes             | yes                  | no     | --          |
-| Push to main    | yes             | yes                  | yes    | 300s        |
-| Daily schedule  | no              | no                   | yes    | 1800s       |
-| Manual dispatch | yes             | yes                  | yes    | 300s        |
+## CI and corpus retention
 
-Run `just fuzz-driver` locally when changing the adapter, `Scenario` serialization, or `ScenarioMutator`. PR CI type-checks the adapter without nightly but does not run libFuzzer.
+The [fuzz workflow](../../../.github/workflows/test-fuzz.yml) runs a five-minute exploration after pushes to main and manual dispatches, and a thirty-minute exploration each week. A scenario that runs for twenty seconds is treated as a timeout. The workflow reserves additional time for compilation and corpus minimization.
 
-Scheduled runs skip the ordinary blocks because their fixed seeds repeat the same mutation sequences. Both exploration and minimization allow 20 seconds per input. Minimization has a ten-minute step limit, and the entire driver job has a sixty-minute limit, including setup and compilation. Step timings separate build, search, and minimization costs.
+Each successful exploration restores the previous corpus, adds current seeds, explores, minimizes, and saves the result. A failed exploration or minimization leaves the previous cache intact.
 
-## Corpus cache
-
-Each driver run restores the previous corpus, adds the current seeds, explores, minimizes, and saves. Cache keys are `oak-fuzz-corpus-v2-<run id>-<run attempt>`, restored with the `oak-fuzz-corpus-v2-` prefix.
-
-- Bump the version in both keys and the restore prefix when the seed shape changes enough that the accumulated corpus is worth rebuilding. A saved input that no longer decodes is skipped by the target rather than failing the run, so a bump discards stale exploration instead of repairing compatibility.
-- Reset exploration by bumping the version or deleting the caches. Regression seeds are regenerated on every run, including after cache eviction or `cmin`.
-- A concurrency group permits one writer per ref, so overlapping runs do not independently extend the same corpus and discard each other's discoveries.
-- Runs on other refs can restore the default branch's cache but save in their own cache scope. They do not update the main branch's corpus.
-- A failed exploration or minimization step prevents the save, leaving the previous cache available for the next run.
+Bump the cache version in `.github/workflows/test-fuzz.yml` when the seed shape changes enough to justify discarding accumulated coverage. A saved input that no longer decodes is skipped rather than repaired. Named regression seeds are regenerated on every run.
 
 ## Failure artifacts
 
-Download the artifact archive from the workflow run's summary page.
+Download the artifact archive from the workflow run's summary page:
 
 - `fuzz-driver-artifacts` records failures before minimization.
-- `fuzz-cmin-artifacts` records failures during minimization.
+- `fuzz-cmin-artifacts` records minimization failures.
 
-Depending on how far the run progressed, the archive contains these files. Paths below identify their locations or filenames within the archive.
+Depending on where the run failed, the archive contains:
 
-| File                                      | Contents                                                                                                                |
-|-------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
-| `artifacts/scenario/crash-*`, `timeout-*` | Concrete inputs for replay.                                                                                             |
-| `target/oak_fuzz/*.artifact`              | Rendered scenario and a `current:` line naming the operation in progress.                                               |
-| `provenance.txt`                          | Revision, event, budget, and compiler and cargo-fuzz versions. The exploration seed is appended after a successful run. |
-| `explore.log`                             | Exploration output, including its seed and coverage counters.                                                           |
-| `cmin.log`                                | Minimization output, included in the minimization-failure archive.                                                      |
+| File                                      | Contents                                                                     |
+|-------------------------------------------|------------------------------------------------------------------------------|
+| `artifacts/scenario/crash-*`, `timeout-*` | Concrete inputs for replay.                                                  |
+| `target/oak_fuzz/*.artifact`              | The rendered scenario and operation in progress.                             |
+| `provenance.txt`                          | Revision, event, budget, tool versions, and exploration seed when available. |
+| `explore.log`                             | Exploration seed and coverage counters.                                      |
+| `cmin.log`                                | Minimization output.                                                         |
 
-Start with the recorded revision and replay the concrete input. Use the operation report to locate the query or edit in progress. The report is written before each operation, so it can remain available even when the process terminates without writing a libFuzzer input artifact. An ordinary libFuzzer-handled abort can still produce a concrete input.
+Start from the recorded revision and replay the concrete input. The operation report is written before each operation, so it can survive a termination that produces no libFuzzer input artifact.
 
-## Promoting a failure into a regression
+## Turn a fuzz failure into a regression test
 
-Preserve regressions in the repository so they survive cache resets.
+When fuzzing finds a reproducible failure, preserve it as a deterministic test:
 
-1.  Reduce the saved input and confirm it still fails for the relevant reason.
-2.  Express it as a named scenario in [`fuzz::corpus`](../src/fuzz/corpus.rs), using the `build` helpers. Compare it with the saved input to check that the transcription preserves the behavior.
-3.  Add an ordinary test with the expected result or recovery assertions.
+1. Reduce the saved input and confirm that it still fails for the same reason.
+2.  Express it as a named scenario in [`fuzz::corpus`](../src/fuzz/corpus.rs), using the `build` helpers.
+3.  Add a deterministic test with the expected result or recovery assertions.
 
-The named scenario becomes both a regression fixture and a mutation seed. `just fuzz-corpus` writes it into subsequent exploration runs.
+The named scenario becomes both a regression fixture and a mutation seed. `just fuzz-corpus` includes it in later exploration runs.
