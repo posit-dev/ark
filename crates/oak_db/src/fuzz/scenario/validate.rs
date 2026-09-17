@@ -13,7 +13,7 @@ use crate::fuzz::spec::PackageSpec;
 
 impl Scenario {
     /// Rejects scenarios that would panic in `World` rather than exercise a query.
-    pub fn validate(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
         let file_count = self.initial.files.len();
 
         // Query generation assumes at least one file to target.

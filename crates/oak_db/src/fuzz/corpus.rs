@@ -40,12 +40,12 @@ use crate::fuzz::spec::PackageSpec;
 use crate::fuzz::spec::Reexport;
 use crate::fuzz::spec::WorkspaceSpec;
 
-pub struct Case {
-    pub name: &'static str,
-    pub scenario: Scenario,
+pub(crate) struct Case {
+    pub(crate) name: &'static str,
+    pub(crate) scenario: Scenario,
 }
 
-pub fn corpus() -> Vec<Case> {
+pub(crate) fn corpus() -> Vec<Case> {
     vec![
         Case {
             name: "acyclic_pair_closes_then_reopens",
@@ -122,7 +122,7 @@ pub fn corpus() -> Vec<Case> {
     ]
 }
 
-pub fn case(name: &str) -> Scenario {
+pub(crate) fn case(name: &str) -> Scenario {
     match corpus().into_iter().find(|case| case.name == name) {
         Some(case) => case.scenario,
         None => panic!("no corpus case named {name:?}"),
