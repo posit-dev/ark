@@ -70,8 +70,22 @@ pub(super) fn insert_op(rng: &mut impl Choose, scenario: &mut Scenario) {
 /// may still analyze a pending file. Recomputing from the current history repairs
 /// pairings removed or retargeted by later mutations.
 pub(super) fn pending_replacements(scenario: &Scenario, until: usize) -> Vec<FileId> {
+    pending_with(&scenario.ops[..until], None)
+}
+
+/// Simulates one query retarget so [`settleable_queries()`] can reject changes
+/// that do not reduce the final pending set.
+fn pending_with(ops: &[Op], observer: Option<(usize, FileId)>) -> Vec<FileId> {
     let mut pending: Vec<FileId> = Vec::new();
-    for op in &scenario.ops[..until] {
+    for (index, op) in ops.iter().enumerate() {
+        let substituted = match observer {
+            Some((at, file)) if at == index => Some(file),
+            _ => None,
+        };
+        if let Some(file) = substituted {
+            pending.retain(|candidate| *candidate != file);
+            continue;
+        }
         match op {
             Op::Edit(edit) => {
                 if !pending.contains(&edit.file) {
@@ -80,7 +94,7 @@ pub(super) fn pending_replacements(scenario: &Scenario, until: usize) -> Vec<Fil
             },
             Op::Query(query) => {
                 if let Some(observed) = observed_file(query) {
-                    pending.retain(|file| *file != observed);
+                    pending.retain(|candidate| *candidate != observed);
                 }
             },
         }
@@ -92,22 +106,19 @@ pub(super) fn alter_op(rng: &mut impl Choose, scenario: &mut Scenario) {
     let files = scenario.initial.files.len();
     let shape = Shape::of(&scenario.initial);
 
-    // At `MAX_OPS`, only retargeting an existing query can add a direct observer.
-    // Prefer that repair before falling back to uniform alteration.
+    // At `MAX_OPS`, only retargeting can add a direct observer. Prefer a repair,
+    // while leaving uniform alteration free to remove observations.
     let settleable = if rng.odds(OBSERVE_EDIT_PERCENT) {
         pick(rng, settleable_queries(scenario))
     } else {
         None
     };
     if let Some((index, file)) = settleable {
-        let observing = observing_query(rng, &shape, file);
         let Op::Query(query) = &mut scenario.ops[index] else {
             panic!("settleable operation {index} is not a query");
         };
-        if observing != *query {
-            *query = observing;
-            return;
-        }
+        *query = observing_query(rng, &shape, file);
+        return;
     }
 
     let Some(index) = pick(rng, alterable_ops(scenario)) else {
@@ -125,23 +136,26 @@ pub(super) fn alter_op(rng: &mut impl Choose, scenario: &mut Scenario) {
     }
 }
 
-/// Pairs each query position with replacements pending immediately before it.
-/// Repeating a position for each file weights it by how many pairings it can
-/// repair.
-///
-/// A query that already observes one of those replacements is skipped, since
-/// retargeting it would settle one demand by dropping another.
+/// Returns query/file substitutions that reduce the pending set after the whole
+/// history. Whole-history comparison rejects exchanging observers and queries
+/// before a later replacement of the same file. A final replacement with no
+/// later query cannot be repaired by retargeting.
 pub(super) fn settleable_queries(scenario: &Scenario) -> Vec<(usize, FileId)> {
+    let pending = pending_replacements(scenario, scenario.ops.len());
+    if pending.is_empty() {
+        return Vec::new();
+    }
+
     let mut settleable = Vec::new();
     for (index, op) in scenario.ops.iter().enumerate() {
-        let Op::Query(query) = op else {
-            continue;
-        };
-        let pending = pending_replacements(scenario, index);
-        if observed_file(query).is_some_and(|observed| pending.contains(&observed)) {
+        if !matches!(op, Op::Query(_)) {
             continue;
         }
-        settleable.extend(pending.into_iter().map(|file| (index, file)));
+        for &file in &pending {
+            if pending_with(&scenario.ops, Some((index, file))).len() < pending.len() {
+                settleable.push((index, file));
+            }
+        }
     }
     settleable
 }
