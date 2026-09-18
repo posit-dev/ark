@@ -41,7 +41,10 @@ pub struct EditorContext {
 	pub selection: Selection,
 
 	/// The selections in this text editor.
-	pub selections: Vec<Selection>
+	pub selections: Vec<Selection>,
+
+	/// A stable identifier for the document, e.g. '#console' for the console
+	pub id: Option<String>
 }
 
 /// Document metadata
@@ -432,6 +435,7 @@ pub enum UiBackendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum UiBackendReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
@@ -530,6 +534,7 @@ pub enum UiFrontendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum UiFrontendReply {
 	/// Reply for the new_document method (no result)
 	NewDocumentReply(),

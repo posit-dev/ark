@@ -58,6 +58,7 @@
     }
 
     list(
+        id = context$id,
         path = context$document$path,
         contents = unlist(context$contents),
         selection = convert_selection(context$selections)
