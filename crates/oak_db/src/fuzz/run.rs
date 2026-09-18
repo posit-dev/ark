@@ -153,3 +153,63 @@ impl Report<'_> {
         self.printed_firings.set(fired.len());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::*;
+    use crate::fuzz::corpus;
+
+    /// The artifact must identify the active operation even without unwinding.
+    #[test]
+    fn test_artifact_records_scenario_and_failing_operation() {
+        let scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
+        let artifact = Artifact::open();
+        let operation = scenario.ops[0].render();
+
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let report = Report::new(&scenario, &artifact, false);
+            report.entering("op 0", &operation);
+            panic!("simulated hang point");
+        }));
+        assert!(outcome.is_err());
+
+        let content = std::fs::read_to_string(artifact.path()).unwrap();
+        let expected = format!(
+            "{}\n{}  current: op 0: {operation}\n",
+            scenario.header(),
+            scenario.render()
+        );
+        assert_eq!(content, expected);
+    }
+
+    /// A fuzzing engine detects a crash only if the panic reaches it, so
+    /// `execute()` must not swallow what `check()` deliberately catches.
+    #[test]
+    fn test_execute_lets_a_panic_propagate() {
+        let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
+        scenario.cold_entry = Query::Diagnostics(FileId(9));
+
+        let runner = Runner::open();
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| runner.execute(&scenario)));
+
+        assert!(outcome.is_err());
+    }
+
+    /// `Runner::open()` installs the panic hook itself, so `check()` must recover
+    /// the real panic message without a separately installed hook.
+    #[test]
+    fn test_check_recovers_panic_without_separately_installed_hook() {
+        let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
+        scenario.cold_entry = Query::Diagnostics(FileId(9));
+
+        let runner = Runner::open();
+        let outcome = runner.check(&scenario);
+
+        assert!(outcome.is_err());
+        let message = outcome.unwrap_err();
+        assert!(message.contains("index out of bounds"));
+        assert!(!message.contains("panicked without reaching the panic hook"));
+    }
+}

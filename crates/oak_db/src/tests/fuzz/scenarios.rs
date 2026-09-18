@@ -17,7 +17,7 @@ const NO_PACKAGES: [&str; 0] = [];
 
 #[test]
 fn test_scenario_acyclic_pair_closes_then_reopens() {
-    let scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     let mut world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -40,7 +40,7 @@ fn test_scenario_acyclic_pair_closes_then_reopens() {
 
 #[test]
 fn test_scenario_mutual_pair_opens_then_closes_again() {
-    let scenario = corpus::case("mutual_pair_opens_then_closes_again");
+    let scenario = corpus::scenario("mutual_pair_opens_then_closes_again");
     let mut world = start(&scenario);
 
     assert!(world.source_cycle_reported(FileId(0)));
@@ -61,7 +61,7 @@ fn test_scenario_mutual_pair_opens_then_closes_again() {
 /// cold through a package with an `R/` collation.
 #[test]
 fn test_scenario_package_cold_entry_reaches_cross_file_layers_recovery() {
-    let scenario = corpus::case("package_cold_entry_reaches_cross_file_layers_recovery");
+    let scenario = corpus::scenario("package_cold_entry_reaches_cross_file_layers_recovery");
     let _world = start(&scenario);
 
     let mut fired = recovery::fired();
@@ -82,7 +82,7 @@ fn test_scenario_package_cold_entry_reaches_cross_file_layers_recovery() {
 /// `cross_file_layers()` after the edit consults its handler again.
 #[test]
 fn test_scenario_package_edit_revalidates_cross_file_layers_recovery() {
-    let scenario = corpus::case("package_edit_revalidates_cross_file_layers_recovery");
+    let scenario = corpus::scenario("package_edit_revalidates_cross_file_layers_recovery");
     let mut world = start(&scenario);
 
     // Attribute only the post-edit firings, since the cold entry recovers too.
@@ -108,7 +108,7 @@ fn test_scenario_package_edit_revalidates_cross_file_layers_recovery() {
 /// Verify that a locally shadowed `source()` contributes no source edge.
 #[test]
 fn test_scenario_same_file_shadow_suppresses_the_edge() {
-    let scenario = corpus::case("same_file_shadow_suppresses_the_edge");
+    let scenario = corpus::scenario("same_file_shadow_suppresses_the_edge");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);
@@ -117,7 +117,7 @@ fn test_scenario_same_file_shadow_suppresses_the_edge() {
 /// A nested `source()` forms an edge even when the function is never called.
 #[test]
 fn test_scenario_nested_source_in_function_body_still_forms_an_edge() {
-    let scenario = corpus::case("nested_source_in_function_body");
+    let scenario = corpus::scenario("nested_source_in_function_body");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -126,7 +126,7 @@ fn test_scenario_nested_source_in_function_body_still_forms_an_edge() {
 /// Statement order does not affect edge recognition.
 #[test]
 fn test_scenario_source_after_bindings_still_forms_an_edge() {
-    let scenario = corpus::case("source_after_bindings");
+    let scenario = corpus::scenario("source_after_bindings");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -135,7 +135,7 @@ fn test_scenario_source_after_bindings_still_forms_an_edge() {
 /// A nested `library()` is a dependency, not a load-time attachment.
 #[test]
 fn test_scenario_library_in_function_body_counts_only_as_a_dependency() {
-    let scenario = corpus::case("library_in_function_body");
+    let scenario = corpus::scenario("library_in_function_body");
     let world = start(&scenario);
 
     assert_eq!(world.attached_packages(FileId(0)), NO_PACKAGES);
@@ -145,7 +145,7 @@ fn test_scenario_library_in_function_body_counts_only_as_a_dependency() {
 /// `sourceDir(".")` resolves sibling scripts but excludes the sourcing file.
 #[test]
 fn test_scenario_shallow_source_dir_resolves_sibling_scripts() {
-    let scenario = corpus::case("shallow_source_dir");
+    let scenario = corpus::scenario("shallow_source_dir");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -154,7 +154,7 @@ fn test_scenario_shallow_source_dir_resolves_sibling_scripts() {
 /// `targets::tar_source("R")` resolves package scripts from the package root.
 #[test]
 fn test_scenario_file_or_dir_source_resolves_a_file_target() {
-    let scenario = corpus::case("file_or_dir_source_at_a_file");
+    let scenario = corpus::scenario("file_or_dir_source_at_a_file");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/R/b.R"]);
@@ -163,7 +163,7 @@ fn test_scenario_file_or_dir_source_resolves_a_file_target() {
 /// `sourceDir()` walks one level, so it excludes the nested script.
 #[test]
 fn test_scenario_shallow_source_dir_excludes_nested() {
-    let scenario = corpus::case("shallow_source_dir_excludes_nested");
+    let scenario = corpus::scenario("shallow_source_dir_excludes_nested");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -172,7 +172,7 @@ fn test_scenario_shallow_source_dir_excludes_nested() {
 /// Unlike `sourceDir()`, `tar_source()` includes the nested script.
 #[test]
 fn test_scenario_recursive_source_dir_includes_nested() {
-    let scenario = corpus::case("recursive_source_dir_includes_nested");
+    let scenario = corpus::scenario("recursive_source_dir_includes_nested");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R", "w/sub/c.R"]);
@@ -181,7 +181,7 @@ fn test_scenario_recursive_source_dir_includes_nested() {
 /// `local()` runs eagerly, so its nested `source()` call forms an edge.
 #[test]
 fn test_scenario_source_in_eager_block_forms_an_edge() {
-    let scenario = corpus::case("source_in_eager_block");
+    let scenario = corpus::scenario("source_in_eager_block");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -191,7 +191,7 @@ fn test_scenario_source_in_eager_block_forms_an_edge() {
 /// forms no edge.
 #[test]
 fn test_scenario_quote_suppresses_source_effect() {
-    let scenario = corpus::case("quote_suppresses_source_effect");
+    let scenario = corpus::scenario("quote_suppresses_source_effect");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);
@@ -201,7 +201,7 @@ fn test_scenario_quote_suppresses_source_effect() {
 /// forms an edge.
 #[test]
 fn test_scenario_quote_hole_escapes_source_effect() {
-    let scenario = corpus::case("quote_hole_escapes_source_effect");
+    let scenario = corpus::scenario("quote_hole_escapes_source_effect");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -212,7 +212,7 @@ fn test_scenario_quote_hole_escapes_source_effect() {
 /// comes first.
 #[test]
 fn test_scenario_shadow_after_source_call_keeps_the_edge() {
-    let scenario = corpus::case("shadow_after_source_call");
+    let scenario = corpus::scenario("shadow_after_source_call");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -220,7 +220,7 @@ fn test_scenario_shadow_after_source_call_keeps_the_edge() {
 
 #[test]
 fn test_scenario_recursive_source_dir_resolves_package_scripts() {
-    let scenario = corpus::case("recursive_source_dir_in_package");
+    let scenario = corpus::scenario("recursive_source_dir_in_package");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/R/b.R"]);
@@ -231,7 +231,7 @@ fn test_scenario_recursive_source_dir_resolves_package_scripts() {
 /// Checks the resolved definition and the metadata retained by NAMESPACE parsing.
 #[test]
 fn test_scenario_acyclic_reexport_chain_resolves_to_the_definition() {
-    let scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     let world = start(&scenario);
     let fired = recovery::fired();
 
@@ -251,7 +251,7 @@ fn test_scenario_acyclic_reexport_chain_resolves_to_the_definition() {
 /// paths from resolution tests, so check the package layout directly.
 #[test]
 fn test_scenario_package_description_sits_at_the_package_root() {
-    let scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     let world = start(&scenario);
 
     assert_eq!(
@@ -266,7 +266,7 @@ fn test_scenario_package_description_sits_at_the_package_root() {
 
 #[test]
 fn test_scenario_library_package_description_sits_in_the_library_root() {
-    let scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+    let scenario = corpus::scenario("mutual_reexport_has_no_terminal_definition");
     let world = start(&scenario);
 
     assert_eq!(
@@ -279,7 +279,7 @@ fn test_scenario_library_package_description_sits_in_the_library_root() {
 /// do not identify which package was Salsa's repeated key.
 #[test]
 fn test_scenario_mutual_reexport_has_no_terminal_definition() {
-    let scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+    let scenario = corpus::scenario("mutual_reexport_has_no_terminal_definition");
     let world = start(&scenario);
     let mut fired = recovery::fired();
     fired.sort();
@@ -297,7 +297,7 @@ fn test_scenario_mutual_reexport_has_no_terminal_definition() {
 
 #[test]
 fn test_scenario_reexport_chain_terminates_at_a_local_export() {
-    let scenario = corpus::case("reexport_chain_terminates_at_a_local_export");
+    let scenario = corpus::scenario("reexport_chain_terminates_at_a_local_export");
     let world = start(&scenario);
     let fired = recovery::fired();
 
@@ -311,7 +311,7 @@ fn test_scenario_reexport_chain_terminates_at_a_local_export() {
 /// The attach reaches package resolution through `ImportLayer::Package`.
 #[test]
 fn test_scenario_attached_package_consumer_resolves_a_reexport() {
-    let scenario = corpus::case("attached_package_consumer_resolves_a_reexport");
+    let scenario = corpus::scenario("attached_package_consumer_resolves_a_reexport");
     let world = start(&scenario);
     let fired = recovery::fired();
 
@@ -322,7 +322,7 @@ fn test_scenario_attached_package_consumer_resolves_a_reexport() {
 /// Consumer lookup must reach recovery as well as the direct package entry.
 #[test]
 fn test_scenario_attached_package_consumer_degrades_on_a_reexport_cycle() {
-    let scenario = corpus::case("attached_package_consumer_degrades_on_a_reexport_cycle");
+    let scenario = corpus::scenario("attached_package_consumer_degrades_on_a_reexport_cycle");
     let world = start(&scenario);
     let mut fired = recovery::fired();
     fired.sort();
@@ -340,7 +340,7 @@ fn test_scenario_attached_package_consumer_degrades_on_a_reexport_cycle() {
 /// through an attach.
 #[test]
 fn test_scenario_namespace_import_layer_consumer_resolves_a_reexport() {
-    let scenario = corpus::case("namespace_import_layer_consumer_resolves_a_reexport");
+    let scenario = corpus::scenario("namespace_import_layer_consumer_resolves_a_reexport");
     let world = start(&scenario);
     let fired = recovery::fired();
 
@@ -353,7 +353,7 @@ fn test_scenario_namespace_import_layer_consumer_resolves_a_reexport() {
 /// suppresses the edge in [`test_scenario_same_file_shadow_suppresses_the_edge()`].
 #[test]
 fn test_scenario_package_export_shadows_the_source_effect() {
-    let scenario = corpus::case("package_export_shadows_the_source_effect");
+    let scenario = corpus::scenario("package_export_shadows_the_source_effect");
     let world = start(&scenario);
 
     assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);

@@ -89,7 +89,7 @@ impl Choose for PreferObserver {
 }
 
 fn scenario_with(statements: Vec<Stmt>) -> Scenario {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.initial.files.truncate(1);
     scenario.initial.files[0].program = Program { statements };
     scenario.ops.clear();
@@ -238,7 +238,7 @@ fn complexity(scenario: &Scenario) -> (usize, usize) {
 #[test]
 fn test_source_edge_steps_add_and_remove_an_edge() {
     let mut rng = StdRng::seed_from_u64(0);
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     let edges = slots_where(&scenario, is_source).len();
 
     Step::AddSourceEdge.apply(&mut rng, &mut scenario);
@@ -428,7 +428,7 @@ fn test_redirect_moves_a_lone_self_source() {
 /// must not settle a later edit of that file.
 #[test]
 fn test_pending_replacements_require_a_later_direct_observer() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = vec![
         edit_of(&scenario, FileId(0)),
         Op::Query(Query::Diagnostics(FileId(1))),
@@ -447,7 +447,7 @@ fn test_pending_replacements_require_a_later_direct_observer() {
 /// earlier in the history.
 #[test]
 fn test_inserted_queries_settle_a_pending_replacement() -> anyhow::Result<()> {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = vec![
         edit_of(&scenario, FileId(0)),
         edit_of(&scenario, FileId(1)),
@@ -471,7 +471,7 @@ fn test_inserted_queries_settle_a_pending_replacement() -> anyhow::Result<()> {
 /// A full history can still be repaired when a query follows the pending edit.
 #[test]
 fn test_alteration_settles_a_pending_replacement_at_the_operation_limit() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = (0..MAX_OPS - 2)
         .map(|_| Op::Query(Query::Diagnostics(FileId(1))))
         .collect();
@@ -495,7 +495,7 @@ fn test_alteration_settles_a_pending_replacement_at_the_operation_limit() {
 /// direct observer.
 #[test]
 fn test_alteration_does_not_exchange_one_pending_replacement_for_another() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = vec![
         edit_of(&scenario, FileId(0)),
         edit_of(&scenario, FileId(1)),
@@ -515,7 +515,7 @@ fn test_alteration_does_not_exchange_one_pending_replacement_for_another() {
 /// later direct observer.
 #[test]
 fn test_a_settled_history_offers_no_retargeting_repair() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = vec![
         edit_of(&scenario, FileId(0)),
         edit_of(&scenario, FileId(1)),
@@ -535,7 +535,7 @@ fn test_a_settled_history_offers_no_retargeting_repair() {
 /// so it cannot settle that file.
 #[test]
 fn test_repair_skips_a_position_before_a_later_replacement() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = vec![
         edit_of(&scenario, FileId(0)),
         Op::Query(Query::AllWorkspaceFileDependencies),
@@ -558,7 +558,7 @@ fn test_repair_skips_a_position_before_a_later_replacement() {
 /// No existing query can observe a replacement that occurs after every query.
 #[test]
 fn test_a_full_history_with_a_final_edit_has_no_retargeting_repair() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops = (0..MAX_OPS - 1)
         .map(|_| Op::Query(Query::Diagnostics(FileId(0))))
         .collect();
