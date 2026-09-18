@@ -3,7 +3,6 @@
 use super::file_specs;
 use super::package_spec;
 use super::program;
-use super::scenario;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
@@ -32,7 +31,7 @@ pub(super) fn acyclic_reexport_chain_resolves_to_the_definition() -> Scenario {
             program(vec![function_def("exp_a", vec![])]),
         )]),
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::PackageResolve(
             PackageId(0),
@@ -63,7 +62,7 @@ pub(super) fn mutual_reexport_has_no_terminal_definition() -> Scenario {
             program(vec![binding("val_a")]),
         )]),
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::PackageResolve(
             PackageId(0),
@@ -94,7 +93,7 @@ pub(super) fn reexport_chain_terminates_at_a_local_export() -> Scenario {
             program(vec![function_def("exp_a", vec![])]),
         )]),
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::PackageResolve(
             PackageId(0),
@@ -129,7 +128,7 @@ pub(super) fn attached_package_consumer_resolves_a_reexport() -> Scenario {
             files
         },
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::Resolve(FileId(1), "exp_a".to_string()),
         vec![],
@@ -151,7 +150,7 @@ pub(super) fn attached_package_consumer_degrades_on_a_reexport_cycle() -> Scenar
         ],
         files: file_specs(Owner::Script, vec![("a.R", program(vec![library("lib0")]))]),
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::Resolve(FileId(0), "exp_a".to_string()),
         vec![],
@@ -181,7 +180,7 @@ pub(super) fn namespace_import_layer_consumer_resolves_a_reexport() -> Scenario 
             files
         },
     };
-    scenario(
+    Scenario::cold(
         initial,
         Query::Resolve(FileId(0), "exp_a".to_string()),
         vec![],
@@ -207,5 +206,5 @@ pub(super) fn package_export_shadows_the_source_effect() -> Scenario {
             files
         },
     };
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }

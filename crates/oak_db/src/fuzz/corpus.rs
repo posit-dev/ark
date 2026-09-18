@@ -51,7 +51,7 @@ pub(crate) struct Case {
     pub(crate) scenario: Scenario,
 }
 
-pub(crate) fn corpus() -> Vec<Case> {
+pub(crate) fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "acyclic_pair_closes_then_reopens",
@@ -152,8 +152,8 @@ pub(crate) fn corpus() -> Vec<Case> {
     ]
 }
 
-pub(crate) fn case(name: &str) -> Scenario {
-    match corpus().into_iter().find(|case| case.name == name) {
+pub(crate) fn scenario(name: &str) -> Scenario {
+    match cases().into_iter().find(|case| case.name == name) {
         Some(case) => case.scenario,
         None => panic!("no corpus case named {name:?}"),
     }
@@ -224,16 +224,6 @@ fn file_specs(owner: Owner, files: Vec<(&str, Program)>) -> Vec<FileSpec> {
         .collect()
 }
 
-fn scenario(initial: WorkspaceSpec, cold_entry: Query, ops: Vec<Op>) -> Scenario {
-    Scenario {
-        seed: 0,
-        variant: 0,
-        initial,
-        cold_entry,
-        ops,
-    }
-}
-
 fn replace(file: FileId, program: Program) -> Op {
     Op::Edit(Edit { file, program })
 }
@@ -248,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_corpus_names_are_unique() {
-        let names: Vec<&str> = corpus().iter().map(|entry| entry.name).collect();
+        let names: Vec<&str> = cases().iter().map(|entry| entry.name).collect();
         let mut deduped = names.clone();
         deduped.sort();
         deduped.dedup();
@@ -256,9 +246,9 @@ mod tests {
     }
 
     #[test]
-    fn test_case_resolves_every_corpus_name() {
-        for entry in corpus() {
-            case(entry.name);
+    fn test_scenario_resolves_every_corpus_name() {
+        for entry in cases() {
+            scenario(entry.name);
         }
     }
 }
