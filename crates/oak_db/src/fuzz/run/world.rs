@@ -192,7 +192,7 @@ impl World {
     }
 
     /// Calls `observer` only after the resolution query returns so it cannot warm the database first. [`Observed::reference`] identifies recovery firings from the observer's reference execution. See [`Observe`].
-    pub(super) fn query(&self, query: &Query, observer: &mut dyn Observe) -> Observed {
+    pub(crate) fn query(&self, query: &Query, observer: &mut dyn Observe) -> Observed {
         let db = &self.db;
         match query {
             Query::Diagnostics(id) => {
