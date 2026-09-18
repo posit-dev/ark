@@ -10,3 +10,4 @@
 //! answer. Named fixtures assert the expected values.
 
 mod eligible;
+pub(crate) mod observe;
