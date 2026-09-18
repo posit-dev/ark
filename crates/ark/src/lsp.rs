@@ -68,7 +68,6 @@ macro_rules! _log {
 }
 
 // Gated on `RUST_LOG` because the client channel has no trace level of its own.
-#[expect(unused_macros)]
 macro_rules! log_trace {
     ($($arg:tt)+) => ({
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -80,7 +79,6 @@ macro_rules! log_trace {
 pub(crate) use _log;
 pub(crate) use log_error;
 pub(crate) use log_info;
-#[expect(unused_imports)]
 pub(crate) use log_trace;
 pub(crate) use log_warn;
 pub(crate) use main_loop::publish_diagnostics;
