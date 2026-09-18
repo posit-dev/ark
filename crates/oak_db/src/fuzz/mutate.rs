@@ -119,6 +119,10 @@ enum Step {
     RemovePackage,
 }
 
+// `mutatis` assigns candidate indices in registration order, so reordering this
+// list changes seeded mutation sequences. The order keeps related mutations
+// adjacent rather than encoding priority. Each applicable step is registered
+// once, so all applicable steps have equal weight.
 const STEPS: [Step; 25] = [
     Step::AddSourceEdge,
     Step::RedirectSourceEdge,
