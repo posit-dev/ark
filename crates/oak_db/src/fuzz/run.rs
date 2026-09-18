@@ -49,7 +49,7 @@ impl Runner {
     /// Runs `scenario` and lets a panic propagate, which is how a fuzzing
     /// engine learns of a crash. The artifact is written ahead of each
     /// operation, so an abort still names the operation in flight.
-    pub fn execute(&self, scenario: &Scenario) {
+    pub(crate) fn execute(&self, scenario: &Scenario) {
         run(scenario, &self.artifact, traced())
     }
 
