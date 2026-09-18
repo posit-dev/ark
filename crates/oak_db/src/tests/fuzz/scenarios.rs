@@ -9,6 +9,7 @@ use crate::fuzz::corpus;
 use crate::fuzz::start;
 use crate::fuzz::FileId;
 use crate::fuzz::PackageId;
+use crate::fuzz::Unobserved;
 use crate::recovery;
 use crate::NamespaceVisibility;
 
@@ -24,7 +25,7 @@ fn test_scenario_acyclic_pair_closes_then_reopens() {
     assert_eq!(world.source_targets(FileId(1)), NO_TARGETS);
     assert!(!world.any_source_cycle());
 
-    world.apply(&scenario.ops[0]);
+    world.apply(&scenario.ops[0], &mut Unobserved);
 
     assert!(world.source_cycle_reported(FileId(0)));
     assert!(world.source_cycle_reported(FileId(1)));
@@ -32,7 +33,7 @@ fn test_scenario_acyclic_pair_closes_then_reopens() {
     // the cycle-forming edges from the reporting index.
     assert_eq!(world.source_targets(FileId(0)), NO_TARGETS);
 
-    world.apply(&scenario.ops[1]);
+    world.apply(&scenario.ops[1], &mut Unobserved);
 
     assert!(!world.any_source_cycle());
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
@@ -46,12 +47,12 @@ fn test_scenario_mutual_pair_opens_then_closes_again() {
     assert!(world.source_cycle_reported(FileId(0)));
     assert!(world.source_cycle_reported(FileId(1)));
 
-    world.apply(&scenario.ops[0]);
+    world.apply(&scenario.ops[0], &mut Unobserved);
 
     assert!(!world.any_source_cycle());
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
 
-    world.apply(&scenario.ops[1]);
+    world.apply(&scenario.ops[1], &mut Unobserved);
 
     assert!(world.source_cycle_reported(FileId(0)));
     assert!(world.source_cycle_reported(FileId(1)));
@@ -88,7 +89,7 @@ fn test_scenario_package_edit_revalidates_cross_file_layers_recovery() {
     // Attribute only the post-edit firings, since the cold entry recovers too.
     recovery::reset();
     for op in &scenario.ops {
-        world.apply(op);
+        world.apply(op, &mut Unobserved);
     }
 
     let mut fired = recovery::fired();
@@ -323,7 +324,7 @@ fn test_scenario_rename_moves_the_end_of_a_reexport_chain() {
         NO_TARGETS
     );
 
-    world.apply(&scenario.ops[1]);
+    world.apply(&scenario.ops[1], &mut Unobserved);
 
     assert_eq!(
         world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
@@ -334,7 +335,7 @@ fn test_scenario_rename_moves_the_end_of_a_reexport_chain() {
         ["p/pkgw/R/a.R"]
     );
 
-    world.apply(&scenario.ops[4]);
+    world.apply(&scenario.ops[4], &mut Unobserved);
 
     assert_eq!(
         world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),

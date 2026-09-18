@@ -4,6 +4,8 @@ use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use super::Observe;
+use super::Observed;
 use crate::file_reader::EmptyFileReader;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
@@ -173,9 +175,9 @@ impl World {
         }
     }
 
-    pub(crate) fn apply(&mut self, op: &Op) {
+    pub(crate) fn apply(&mut self, op: &Op, observer: &mut dyn Observe) -> Observed {
         match op {
-            Op::Query(query) => self.query(query),
+            Op::Query(query) => return self.query(query, observer),
             Op::Edit(edit) => {
                 self.spec.file_mut(edit.file).program = edit.program.clone();
                 let text = edit.program.render().text;
@@ -186,9 +188,11 @@ impl World {
                     .to(Some(text));
             },
         }
+        Observed::proceed(None)
     }
 
-    pub(super) fn query(&self, query: &Query) {
+    /// Calls `observer` only after the resolution query returns so it cannot warm the database first. [`Observed::reference`] identifies recovery firings from the observer's reference execution. See [`Observe`].
+    pub(super) fn query(&self, query: &Query, observer: &mut dyn Observe) -> Observed {
         let db = &self.db;
         match query {
             Query::Diagnostics(id) => {
@@ -201,10 +205,12 @@ impl World {
                 let _ = self.file(*id).imports_at(db, self.offset(*id, *site));
             },
             Query::ResolveAt(id, site) => {
-                let _ = self.file(*id).resolve_at(db, self.offset(*id, *site));
+                let definitions = self.file(*id).resolve_at(db, self.offset(*id, *site));
+                return observer.resolved(db, &self.spec, query, &definitions);
             },
             Query::Resolve(id, name) => {
-                let _ = self.file(*id).resolve(db, Name::new(db, name.as_str()));
+                let definitions = self.file(*id).resolve(db, Name::new(db, name.as_str()));
+                return observer.resolved(db, &self.spec, query, &definitions);
             },
             Query::UsedPackages(id) => {
                 let _ = self.file(*id).used_packages(db);
@@ -246,11 +252,13 @@ impl World {
                 let _ = self.file(*id).cross_file_layers(db, *view);
             },
             Query::PackageResolve(id, name, visibility) => {
-                let _ = self
-                    .package(*id)
-                    .resolve(db, Name::new(db, name.as_str()), *visibility);
+                let definitions =
+                    self.package(*id)
+                        .resolve(db, Name::new(db, name.as_str()), *visibility);
+                return observer.resolved(db, &self.spec, query, &definitions);
             },
         }
+        Observed::proceed(None)
     }
 
     fn file(&self, id: FileId) -> File {
