@@ -3,6 +3,8 @@
 use super::file_specs;
 use super::package_spec;
 use super::program;
+use super::query;
+use super::replace;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
@@ -101,6 +103,47 @@ pub(super) fn reexport_chain_terminates_at_a_local_export() -> Scenario {
             NamespaceVisibility::Exported,
         ),
         vec![],
+    )
+}
+
+/// Renaming `pkgw`'s terminal definition transfers resolution between `exp_a` and `exp_b` without changing declarations or re-export edges.
+pub(super) fn rename_moves_the_end_of_a_reexport_chain() -> Scenario {
+    let initial = WorkspaceSpec {
+        installed: vec![],
+        packages: vec![
+            package_spec("lib0", PackageKind::Library, &["exp_a", "exp_b"], &[
+                ("exp_a", "lib1"),
+                ("exp_b", "lib1"),
+            ]),
+            package_spec("lib1", PackageKind::Library, &["exp_a", "exp_b"], &[
+                ("exp_a", "pkgw"),
+                ("exp_b", "pkgw"),
+            ]),
+            package_spec("pkgw", PackageKind::Workspace, &["exp_a", "exp_b"], &[]),
+        ],
+        files: file_specs(Owner::Package(PackageId(2)), vec![(
+            "R/a.R",
+            program(vec![function_def("exp_a", vec![])]),
+        )]),
+    };
+    let ops = vec![
+        // Warm `exp_b` before the edit so its first resolution cannot observe the renamed definition.
+        query(chain_entry("exp_b")),
+        replace(FileId(0), program(vec![function_def("exp_b", vec![])])),
+        query(chain_entry("exp_a")),
+        query(chain_entry("exp_b")),
+        replace(FileId(0), program(vec![function_def("exp_a", vec![])])),
+        query(chain_entry("exp_a")),
+        query(chain_entry("exp_b")),
+    ];
+    Scenario::cold(initial, chain_entry("exp_a"), ops)
+}
+
+fn chain_entry(name: &str) -> Query {
+    Query::PackageResolve(
+        PackageId(0),
+        name.to_string(),
+        NamespaceVisibility::Exported,
     )
 }
 

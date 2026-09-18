@@ -36,6 +36,8 @@ use self::program::nest_statement;
 use self::program::nestable_slots;
 use self::program::redirect_source_edge;
 use self::program::remove_slot;
+use self::program::rename_identifier;
+use self::program::renameable_slots;
 use self::program::reorder_statements;
 use self::program::reorderable_block_slots;
 use self::program::shadow_callee;
@@ -99,6 +101,7 @@ enum Step {
     RemoveStatement,
     ReorderStatements,
     ShadowCallee,
+    RenameIdentifier,
     NestStatement,
     UnnestStatement,
     AddFile,
@@ -116,7 +119,7 @@ enum Step {
     RemovePackage,
 }
 
-const STEPS: [Step; 24] = [
+const STEPS: [Step; 25] = [
     Step::AddSourceEdge,
     Step::RedirectSourceEdge,
     Step::RemoveSourceEdge,
@@ -126,6 +129,7 @@ const STEPS: [Step; 24] = [
     Step::RemoveStatement,
     Step::ReorderStatements,
     Step::ShadowCallee,
+    Step::RenameIdentifier,
     Step::NestStatement,
     Step::UnnestStatement,
     Step::AddFile,
@@ -168,6 +172,7 @@ impl Step {
                 !insertable_block_slots(scenario).is_empty()
             },
             Step::ShadowCallee => !shadowable_slots(scenario).is_empty(),
+            Step::RenameIdentifier => !renameable_slots(scenario).is_empty(),
             Step::RedirectSourceEdge | Step::RemoveSourceEdge | Step::SwapProvider => {
                 !slots_where(scenario, is_source).is_empty()
             },
@@ -209,6 +214,7 @@ impl Step {
             Step::RemoveStatement => remove_slot(rng, scenario, slots_where(scenario, |_| true)),
             Step::ReorderStatements => reorder_statements(rng, scenario),
             Step::ShadowCallee => shadow_callee(rng, scenario),
+            Step::RenameIdentifier => rename_identifier(rng, scenario),
             Step::NestStatement => nest_statement(rng, scenario),
             Step::UnnestStatement => unnest_statement(rng, scenario),
             Step::AddFile => add_file(rng, scenario),

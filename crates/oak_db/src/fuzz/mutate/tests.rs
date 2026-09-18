@@ -1,7 +1,11 @@
 //! Regression checks for mutation coverage, invariants, and shrinking.
 
 use mutatis::Session;
+use oak_semantic::effects::fuzz::EffectRecipe;
 use oak_semantic::effects::fuzz::SourceProvider;
+use oak_semantic::effects::TargetAccess;
+use oak_semantic::fuzz::Expr;
+use oak_semantic::fuzz::Invocation;
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 use rand::rngs::StdRng;
@@ -13,6 +17,8 @@ use super::history::settleable_queries;
 use super::program::is_source;
 use super::program::nest_statement;
 use super::program::redirect_source_edge;
+use super::program::rename_identifier;
+use super::program::renameable_slots;
 use super::program::shadow_callee;
 use super::program::shadowable_slots;
 use super::program::unnest_statement;
@@ -35,6 +41,7 @@ use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
 use crate::fuzz::build::qualified_source;
+use crate::fuzz::build::quoted;
 use crate::fuzz::build::shadow;
 use crate::fuzz::build::source;
 use crate::fuzz::choose::random_query;
@@ -607,4 +614,163 @@ fn test_shadow_is_not_offered_for_an_already_shadowed_call() {
         function_def("fun", vec![source("b.R")]),
     ]);
     assert_eq!(shadowable_slots(&nested).len(), 1);
+}
+
+#[test]
+fn test_rename_is_offered_for_every_seed_scenario() {
+    for scenario in seed_corpus(0) {
+        assert!(Step::RenameIdentifier.applies(&scenario));
+    }
+}
+
+#[test]
+fn test_rename_rewrites_a_definition_or_a_use() {
+    let mut definition = scenario_with(vec![binding("val_0"), Stmt::use_of("val_0")]);
+    rename_identifier(&mut FixedChoice(0), &mut definition);
+    assert_eq!(
+        definition.initial.files[0].program.render().text,
+        Program {
+            statements: vec![binding("exp_0"), Stmt::use_of("val_0")],
+        }
+        .render()
+        .text
+    );
+    assert!(definition.validate().is_ok());
+
+    let mut use_site = scenario_with(vec![binding("val_0"), Stmt::use_of("val_0")]);
+    rename_identifier(&mut FixedChoice(1), &mut use_site);
+    assert_eq!(
+        use_site.initial.files[0].program.render().text,
+        Program {
+            statements: vec![binding("val_0"), Stmt::use_of("exp_1")],
+        }
+        .render()
+        .text
+    );
+}
+
+/// Each [`FixedChoice`] value drives the slot, occurrence, and replacement-name draws.
+#[test]
+fn test_rename_selects_every_kind_of_occurrence() {
+    let cases: Vec<(Vec<Stmt>, usize, Vec<Stmt>)> = vec![
+        (
+            vec![Stmt::bind("val_0", Expr::Ident("val_1".to_string()))],
+            1,
+            vec![Stmt::bind("val_0", Expr::Ident("exp_1".to_string()))],
+        ),
+        (
+            vec![Stmt::Expr(Expr::Call {
+                name: "val_2".to_string(),
+            })],
+            0,
+            vec![Stmt::Expr(Expr::Call {
+                name: "exp_0".to_string(),
+            })],
+        ),
+        // `assign()` names its target in a string literal.
+        (
+            vec![Stmt::effect(
+                EffectRecipe::Assign {
+                    name: "val_0".to_string(),
+                    value: Expr::Num(1),
+                },
+                Invocation::Bare,
+            )],
+            3,
+            vec![Stmt::effect(
+                EffectRecipe::Assign {
+                    name: "val_1".to_string(),
+                    value: Expr::Num(1),
+                },
+                Invocation::Bare,
+            )],
+        ),
+        // `rebind()` carries both a target and a use in its own value.
+        (
+            vec![Stmt::effect(
+                EffectRecipe::Rebind {
+                    name: "val_0".to_string(),
+                    value: Expr::Call {
+                        name: "val_3".to_string(),
+                    },
+                    target: TargetAccess::Write,
+                },
+                Invocation::Bare,
+            )],
+            1,
+            vec![Stmt::effect(
+                EffectRecipe::Rebind {
+                    name: "val_0".to_string(),
+                    value: Expr::Call {
+                        name: "exp_1".to_string(),
+                    },
+                    target: TargetAccess::Write,
+                },
+                Invocation::Bare,
+            )],
+        ),
+        // A nested statement is a separate slot from its enclosing definition.
+        (
+            vec![function_def("val_0", vec![Stmt::use_of("val_1")])],
+            1,
+            vec![function_def("val_0", vec![Stmt::use_of("exp_1")])],
+        ),
+        // A `quote()` body has the only identifier because the effect names a callee.
+        (vec![quoted(vec![Stmt::use_of("val_1")])], 2, vec![quoted(
+            vec![Stmt::use_of("exp_2")],
+        )]),
+        // An `exp_*` name is excluded from its own replacement draw.
+        (vec![binding("exp_0")], 0, vec![binding("exp_1")]),
+    ];
+
+    for (statements, choice, expected) in cases {
+        let mut scenario = scenario_with(statements);
+        rename_identifier(&mut FixedChoice(choice), &mut scenario);
+        assert_eq!(
+            scenario.initial.files[0].program.render().text,
+            Program {
+                statements: expected
+            }
+            .render()
+            .text
+        );
+        assert!(scenario.validate().is_ok());
+    }
+}
+
+#[test]
+fn test_rename_reaches_a_replacement_program() {
+    // A `source()` path is not an identifier, so only the edit is renameable.
+    let mut scenario = scenario_with(vec![source("b.R")]);
+    assert!(!Step::RenameIdentifier.applies(&scenario));
+
+    scenario.ops = vec![Op::Edit(Edit {
+        file: FileId(0),
+        program: Program {
+            statements: vec![binding("val_0")],
+        },
+    })];
+    assert_eq!(renameable_slots(&scenario).len(), 1);
+
+    rename_identifier(&mut FixedChoice(0), &mut scenario);
+
+    let Some(Op::Edit(edit)) = scenario.ops.first() else {
+        panic!("the replacement operation is gone");
+    };
+    assert_eq!(
+        edit.program.render().text,
+        Program {
+            statements: vec![binding("exp_0")],
+        }
+        .render()
+        .text
+    );
+    assert_eq!(
+        scenario.initial.files[0].program.render().text,
+        Program {
+            statements: vec![source("b.R")],
+        }
+        .render()
+        .text
+    );
 }

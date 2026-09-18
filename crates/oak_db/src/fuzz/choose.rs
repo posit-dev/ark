@@ -4,6 +4,7 @@ use rand::rngs::StdRng;
 use rand::RngExt;
 
 use crate::file_imports::CollationView;
+use crate::fuzz::budgets::MAX_FILES;
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Site;
 use crate::fuzz::spec::FileId;
@@ -47,6 +48,14 @@ pub(super) const EXPORT_NAMES: usize = 3;
 
 pub(super) fn export_name(index: usize) -> String {
     format!("exp_{index}")
+}
+
+/// Names that can create or break the link between a file binding and a declared export.
+pub(super) fn name_vocabulary() -> Vec<String> {
+    (0..EXPORT_NAMES)
+        .map(export_name)
+        .chain((0..MAX_FILES).map(binding_name))
+        .collect()
 }
 
 /// Includes declared export names so queries can pass the export gate and
