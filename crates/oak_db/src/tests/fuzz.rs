@@ -39,19 +39,41 @@ const BLOCK_ITERS: usize = 3000;
 /// Cap shrinking because every attempt reruns the full scenario.
 const SHRINK_ITERS: usize = 150;
 
-/// Number of `test_block_*` seeds in the opt-in suite.
-const BLOCKS: u64 = 6;
-
 fn check_block(block: u64, iters: usize) {
     let runner = Runner::open();
+    let corpus = seed_corpus(block);
+
+    require_package_resolve_recovery(&runner, &corpus);
+
     let result = Check::new()
         .iters(iters)
         .shrink_iters(SHRINK_ITERS)
         .seed(block)
-        .run_with(ScenarioMutator, seed_corpus(block), |scenario| {
-            runner.check(scenario)
-        });
+        .run_with(ScenarioMutator, corpus, |scenario| runner.check(scenario));
     report(result, &runner);
+}
+
+/// Verifies that every block's initial corpus reaches `Package::resolve()`
+/// cycle recovery. Fuzz blocks only fail on panics and hangs, and mutations can
+/// create unrelated re-export cycles that would mask a seed corpus that no
+/// longer exercises recovery.
+fn require_package_resolve_recovery(runner: &Runner, corpus: &[Scenario]) {
+    let reached = corpus
+        .iter()
+        .any(|scenario| package_resolve_recovered(runner, scenario));
+
+    assert!(reached);
+}
+
+/// The runner resets the recovery log before each scenario, so the firings it
+/// leaves behind belong to `scenario` alone.
+fn package_resolve_recovered(runner: &Runner, scenario: &Scenario) -> bool {
+    if let Err(failure) = runner.check(scenario) {
+        panic!("{failure}");
+    }
+    recovery::fired()
+        .iter()
+        .any(|entry| entry.starts_with("Package::resolve("))
 }
 
 /// Replay the shrunken failure because the last candidate evaluated during
@@ -313,29 +335,4 @@ fn reaches_itself<'a>(
     visiting.remove(name);
     done.insert(name);
     cyclic
-}
-
-/// Require actual recovery from each block's unmutated corpus. A structural
-/// cycle alone is insufficient, and mutation must not rescue missing seed coverage.
-#[test]
-fn test_every_seed_corpus_reaches_the_package_resolve_handler() {
-    let runner = Runner::open();
-    for block in 0..BLOCKS {
-        let reached = seed_corpus(block)
-            .iter()
-            .any(|scenario| package_resolve_recovered(&runner, scenario));
-
-        assert!(reached, "block {block} never reached `Package::resolve()`");
-    }
-}
-
-/// The runner resets the recovery log before each scenario, so the firings it
-/// leaves behind belong to `scenario` alone.
-fn package_resolve_recovered(runner: &Runner, scenario: &Scenario) -> bool {
-    if let Err(failure) = runner.check(scenario) {
-        panic!("{failure}");
-    }
-    recovery::fired()
-        .iter()
-        .any(|entry| entry.starts_with("Package::resolve("))
 }
