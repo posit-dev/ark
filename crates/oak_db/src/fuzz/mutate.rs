@@ -65,7 +65,7 @@ use crate::fuzz::choose::Shape;
 use crate::fuzz::scenario::Scenario;
 use crate::fuzz::traversal::slots_where;
 
-pub struct ScenarioMutator;
+pub(crate) struct ScenarioMutator;
 
 impl Mutate<Scenario> for ScenarioMutator {
     fn mutate(&mut self, mutations: &mut Candidates<'_>, scenario: &mut Scenario) -> Result<()> {
