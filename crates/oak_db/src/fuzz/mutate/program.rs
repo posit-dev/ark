@@ -23,6 +23,7 @@ use crate::fuzz::build::library;
 use crate::fuzz::build::shadow;
 use crate::fuzz::build::source_with;
 use crate::fuzz::choose::binding_name;
+use crate::fuzz::choose::name_vocabulary;
 use crate::fuzz::choose::Choose;
 use crate::fuzz::generate::UNINSTALLED;
 use crate::fuzz::scenario::Scenario;
@@ -240,6 +241,89 @@ pub(super) fn shadow_callee(rng: &mut impl Choose, scenario: &mut Scenario) {
     };
     // Put the binding in the callee's own block, immediately before the call.
     block.insert(index, shadow(name));
+}
+
+/// Renames one definition or use to a different generated name.
+///
+/// [`crate::fuzz::choose::name_vocabulary()`] includes declared export names so a rename can leave an export or re-export chain unresolved.
+pub(super) fn rename_identifier(rng: &mut impl Choose, scenario: &mut Scenario) {
+    let Some(slot) = pick(rng, renameable_slots(scenario)) else {
+        return;
+    };
+    let Some(stmt) = statement_mut(scenario, &slot) else {
+        panic!("invalid rename slot: {slot:?}");
+    };
+    let mut occurrences = identifiers_mut(stmt);
+    if occurrences.is_empty() {
+        panic!("rename candidate carries no identifier: {slot:?}");
+    }
+    let occurrence = occurrences.swap_remove(rng.index(occurrences.len()));
+
+    let current = occurrence.clone();
+    let others: Vec<String> = name_vocabulary()
+        .into_iter()
+        .filter(|candidate| *candidate != current)
+        .collect();
+    *occurrence = others[rng.index(others.len())].clone();
+}
+
+pub(super) fn renameable_slots(scenario: &Scenario) -> Vec<Slot> {
+    slots_where(scenario, has_identifier)
+}
+
+/// Keeps slot eligibility in lockstep with [`identifiers_mut()`].
+fn has_identifier(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Bind { .. } => true,
+        Stmt::Expr(value) => used_identifier(value).is_some(),
+        Stmt::Effect { recipe, .. } => matches!(
+            recipe,
+            EffectRecipe::Assign { .. } | EffectRecipe::Rebind { .. }
+        ),
+    }
+}
+
+/// Returns the identifiers owned by a statement, excluding nested blocks because [`slots_where()`] addresses them separately.
+///
+/// `source()` paths and `library()` package names identify files and packages rather than bindings.
+fn identifiers_mut(stmt: &mut Stmt) -> Vec<&mut String> {
+    match stmt {
+        Stmt::Bind { name, value } => definition_with_use(name, value),
+        Stmt::Expr(value) => used_identifier_mut(value).into_iter().collect(),
+        Stmt::Effect { recipe, .. } => match recipe {
+            EffectRecipe::Assign { name, value } => definition_with_use(name, value),
+            EffectRecipe::Rebind { name, value, .. } => definition_with_use(name, value),
+            EffectRecipe::Source { .. } |
+            EffectRecipe::Attach { .. } |
+            EffectRecipe::Eval { .. } |
+            EffectRecipe::Quote { .. } |
+            EffectRecipe::QuoteHoles { .. } |
+            EffectRecipe::Substitute { .. } => Vec::new(),
+        },
+    }
+}
+
+fn definition_with_use<'stmt>(
+    name: &'stmt mut String,
+    value: &'stmt mut Expr,
+) -> Vec<&'stmt mut String> {
+    let mut occurrences = vec![name];
+    occurrences.extend(used_identifier_mut(value));
+    occurrences
+}
+
+fn used_identifier(expr: &Expr) -> Option<&String> {
+    match expr {
+        Expr::Ident(name) | Expr::Call { name } => Some(name),
+        Expr::Num(_) | Expr::Null | Expr::Function { .. } | Expr::Hole(_) => None,
+    }
+}
+
+fn used_identifier_mut(expr: &mut Expr) -> Option<&mut String> {
+    match expr {
+        Expr::Ident(name) | Expr::Call { name } => Some(name),
+        Expr::Num(_) | Expr::Null | Expr::Function { .. } | Expr::Hole(_) => None,
+    }
 }
 
 pub(super) fn reorder_statements(rng: &mut impl Choose, scenario: &mut Scenario) {
