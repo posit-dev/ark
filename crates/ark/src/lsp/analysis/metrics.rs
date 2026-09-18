@@ -47,6 +47,13 @@ impl DiagnosticsMetrics {
     /// Logs diagnostic and pool counters at trace level. Worker-thread counters
     /// can change while this runs, so this is a snapshot rather than a settled queue.
     pub(crate) fn log_snapshot(&self, pool: &AnalysisPool) {
+        // Avoid acquiring the `AnalysisPool` metrics lock when trace output is
+        // disabled. `lsp::log_trace!()` also checks before formatting, but
+        // `log_snapshot()` runs for every `DiagnosticsReady` event and refresh batch.
+        if !lsp::trace_enabled!() {
+            return;
+        }
+
         let queue = pool.metrics();
 
         lsp::log_trace!(

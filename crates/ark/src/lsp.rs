@@ -70,10 +70,23 @@ macro_rules! _log {
 // Gated on `RUST_LOG` because the client channel has no trace level of its own.
 macro_rules! log_trace {
     ($($arg:tt)+) => ({
-        if tracing::enabled!(tracing::Level::TRACE) {
+        if $crate::lsp::trace_enabled!() {
             $crate::lsp::_log!(tower_lsp_server::ls_types::MessageType::INFO, $($arg)+)
         }
     })
+}
+
+/// Reports whether a trace event at the invocation site would be recorded, so
+/// callers can avoid constructing trace-only payloads when no layer would
+/// consume them.
+///
+/// This must be a macro because `tracing::enabled!()` registers interest in the
+/// invoking module. A function would apply module-scoped `RUST_LOG` directives
+/// to `lsp` instead of the caller.
+macro_rules! trace_enabled {
+    () => {
+        tracing::enabled!(tracing::Level::TRACE)
+    };
 }
 
 pub(crate) use _log;
@@ -82,3 +95,4 @@ pub(crate) use log_info;
 pub(crate) use log_trace;
 pub(crate) use log_warn;
 pub(crate) use main_loop::publish_diagnostics;
+pub(crate) use trace_enabled;
