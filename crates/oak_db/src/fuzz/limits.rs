@@ -183,7 +183,7 @@ mod tests {
     /// Fixed artifact ceilings must not follow generation budget changes.
     #[test]
     fn test_replay_accepts_programs_above_the_growth_threshold() {
-        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
         let program = Program {
             statements: (0..28)
                 .map(|index| binding(&format!("val_{index}")))
