@@ -47,7 +47,7 @@ impl From<u128> for FileRevision {
 /// successful read that returns the same bytes backdates, so nothing downstream
 /// re-runs, and a deleted or evicted file leaves the live graph and stops being
 /// queried at all.
-pub(crate) fn report_untracked_if_zero(db: &dyn crate::Db, revision: FileRevision) {
+pub(crate) fn report_untracked_if_zero(db: &dyn crate::SourceDb, revision: FileRevision) {
     if revision == FileRevision::zero() {
         db.report_untracked_read();
     }

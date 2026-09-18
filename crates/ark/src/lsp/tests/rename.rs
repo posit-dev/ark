@@ -1,8 +1,8 @@
 use aether_path::FilePath;
-use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Root;
 use oak_db::RootKind;
+use oak_db::SourceDb;
 use salsa::Setter;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::PrepareRenameResponse;
