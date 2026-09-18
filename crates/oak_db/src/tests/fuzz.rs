@@ -27,6 +27,7 @@ use crate::fuzz::seed_corpus;
 use crate::fuzz::Runner;
 use crate::fuzz::Scenario;
 use crate::fuzz::ScenarioMutator;
+use crate::fuzz::Unobserved;
 use crate::fuzz::WorkspaceSpec;
 use crate::fuzz::World;
 use crate::recovery;
@@ -249,7 +250,7 @@ fn cycle_transitions(scenario: &Scenario) -> Transitions {
     let mut cyclic = world.any_source_cycle();
 
     for op in &scenario.ops {
-        world.apply(op);
+        world.apply(op, &mut Unobserved);
         let now = world.any_source_cycle();
         transitions.closed += usize::from(now && !cyclic);
         transitions.reopened += usize::from(cyclic && !now);
