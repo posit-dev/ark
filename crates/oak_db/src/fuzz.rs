@@ -50,7 +50,7 @@ mod generate;
 mod limits;
 mod mutate;
 #[cfg(test)]
-mod oracle;
+pub(crate) mod oracle;
 mod panics;
 mod run;
 mod scenario;
