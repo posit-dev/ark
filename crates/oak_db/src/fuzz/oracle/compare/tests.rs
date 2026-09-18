@@ -8,6 +8,7 @@ use oak_semantic::fuzz::Stmt;
 use super::*;
 use crate::fuzz::build::binding;
 use crate::fuzz::build::source;
+use crate::fuzz::corpus;
 use crate::fuzz::scenario::Edit;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::FileSpec;
@@ -204,6 +205,21 @@ fn test_recovery_in_the_last_operation_is_attributed() {
     assert!(observer.historical_recovered());
     // The comparison before the cycle closed remains valid.
     assert_eq!(observer.counts().compared_total(), 1);
+    assert!(observer.finding().is_none());
+}
+
+#[test]
+fn test_the_rename_fixture_compares_every_checkpoint_without_recovery() {
+    let scenario = corpus::scenario("rename_and_undo_across_files");
+
+    let observer = run(&scenario, Fresh);
+
+    assert_eq!(observer.counts().resolve.reached, 6);
+    assert_eq!(observer.counts().compared_total(), 6);
+    assert_eq!(observer.counts().compared_after_edit, 4);
+    assert_eq!(observer.counts().skipped_historical, 0);
+    assert_eq!(observer.counts().skipped_reference, 0);
+    assert!(!observer.historical_recovered());
     assert!(observer.finding().is_none());
 }
 

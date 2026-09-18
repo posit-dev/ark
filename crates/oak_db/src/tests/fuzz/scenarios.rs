@@ -42,6 +42,31 @@ fn test_scenario_acyclic_pair_closes_then_reopens() {
 }
 
 #[test]
+fn test_scenario_rename_and_undo_across_files() {
+    let scenario = corpus::scenario("rename_and_undo_across_files");
+    let mut world = start(&scenario);
+
+    world.apply(&scenario.ops[0], &mut Unobserved);
+
+    assert_eq!(world.file_resolve(FileId(1), "val_0"), ["w/a.R"]);
+    assert_eq!(world.file_resolve(FileId(1), "val_3"), NO_TARGETS);
+
+    world.apply(&scenario.ops[1], &mut Unobserved);
+    world.apply(&scenario.ops[2], &mut Unobserved);
+    world.apply(&scenario.ops[3], &mut Unobserved);
+
+    assert_eq!(world.file_resolve(FileId(1), "val_0"), NO_TARGETS);
+    assert_eq!(world.file_resolve(FileId(1), "val_3"), ["w/a.R"]);
+
+    world.apply(&scenario.ops[4], &mut Unobserved);
+    world.apply(&scenario.ops[5], &mut Unobserved);
+    world.apply(&scenario.ops[6], &mut Unobserved);
+
+    assert_eq!(world.file_resolve(FileId(1), "val_0"), ["w/a.R"]);
+    assert_eq!(world.file_resolve(FileId(1), "val_3"), NO_TARGETS);
+}
+
+#[test]
 fn test_scenario_mutual_pair_opens_then_closes_again() {
     let scenario = corpus::scenario("mutual_pair_opens_then_closes_again");
     let mut world = start(&scenario);

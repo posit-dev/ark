@@ -40,6 +40,7 @@ use self::source::quote_hole_escapes_source_effect;
 use self::source::quote_suppresses_source_effect;
 use self::source::recursive_source_dir_in_package;
 use self::source::recursive_source_dir_includes_nested;
+use self::source::rename_and_undo_across_files;
 use self::source::same_file_shadow_suppresses_the_edge;
 use self::source::shadow_after_source_call;
 use self::source::shallow_source_dir;
@@ -145,6 +146,10 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "recursive_source_dir_in_package",
             scenario: recursive_source_dir_in_package(),
+        },
+        Case {
+            name: "rename_and_undo_across_files",
+            scenario: rename_and_undo_across_files(),
         },
         Case {
             name: "shallow_source_dir_excludes_nested",
