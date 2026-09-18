@@ -13,6 +13,7 @@ use crate::lsp::config::LspConfig;
 use crate::lsp::config::LspSettings;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::traits::url::UrlExt;
+use crate::panic;
 
 #[derive(Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -26,8 +27,9 @@ use crate::lsp::traits::url::UrlExt;
 /// else. This split mirrors rust-analyzer's `GlobalState` and
 /// `GlobalStateSnapshot`.
 pub(crate) struct WorldState {
-    /// Salsa input tree for Oak queries.
-    pub(crate) db: OakDatabase,
+    /// Oak query inputs. Private to ensure that query reads go through
+    /// [`Self::db()`] and input mutations through [`Self::db_mut()`].
+    db: OakDatabase,
 
     /// Watched documents, keyed on the normalised [`FilePath`] form.
     /// The verbatim editor `Uri` is preserved on each [`OpenFile::wire_uri`]
@@ -90,6 +92,26 @@ impl WorldState {
         state
     }
 
+    /// Creates a test state without resolving `OAK_*` environment variables.
+    /// Tests can set configuration explicitly without inheriting the process environment.
+    #[cfg(test)]
+    pub(crate) fn with_db(db: OakDatabase) -> Self {
+        Self {
+            db,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn db(&self) -> &OakDatabase {
+        panic::assert_in_catch_boundary();
+        &self.db
+    }
+
+    pub(crate) fn db_mut(&mut self) -> &mut OakDatabase {
+        panic::assert_in_catch_boundary();
+        &mut self.db
+    }
+
     /// Resolve [`Self::config`] from environment, pulled client, and
     /// initialization options. Earlier layers override later ones, and missing
     /// values use defaults.
@@ -107,7 +129,7 @@ impl WorldState {
     /// invalidates in-flight background workers (e.g. diagnostics), and
     /// triggers a diagnostic refresh.
     pub(crate) fn bump_revision(&mut self) {
-        self.db.synthetic_write(salsa::Durability::LOW);
+        self.db_mut().synthetic_write(salsa::Durability::LOW);
     }
 
     pub(crate) fn open_file_mut(&mut self, path: &FilePath) -> anyhow::Result<&mut OpenFile> {
@@ -133,7 +155,7 @@ impl WorldState {
     /// characters in a path (`[`, `]`, `|`, `^`) that `Uri` rejects, so
     /// [`aether_path::VirtualUri`]'s stored `Url` can be one `Uri` can't parse.
     pub(crate) fn wire_uri(&self, file: File) -> anyhow::Result<Uri> {
-        let path = file.path(&self.db);
+        let path = file.path(self.db());
 
         if let Some(open_file) = self.open_files.get(path) {
             return Ok(open_file.wire_uri().clone());

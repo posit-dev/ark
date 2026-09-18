@@ -309,7 +309,11 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         .await;
 
     let world = state.world();
-    let foo_file = world.db.package_by_name("foopkg").unwrap().files(&world.db)[0];
+    let foo_file = world
+        .db()
+        .package_by_name("foopkg")
+        .unwrap()
+        .files(world.db())[0];
 
     assert_matches!(
         goto_definition(make_params(&use_uri, 0, 0), world).unwrap(),
@@ -375,7 +379,11 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         .await;
 
     let world = state.world();
-    let bar_file = world.db.package_by_name("barpkg").unwrap().files(&world.db)[0];
+    let bar_file = world
+        .db()
+        .package_by_name("barpkg")
+        .unwrap()
+        .files(world.db())[0];
 
     assert_matches!(
         goto_definition(make_params(&use_uri, 0, 0), world).unwrap(),
@@ -440,7 +448,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         .await;
 
     let world = state.world();
-    let file = world.db.package_by_name("pkg").unwrap().files(&world.db)[0];
+    let file = world.db().package_by_name("pkg").unwrap().files(world.db())[0];
 
     // `pkg::f<@>oo()`, exported `foo` reached through `::`
     assert_matches!(

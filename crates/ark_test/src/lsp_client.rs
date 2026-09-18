@@ -83,7 +83,7 @@ impl LspClient {
             }
 
             match self.recv_any() {
-                LspMessage::Notification { diagnostics } => {
+                LspMessage::Notification { diagnostics, .. } => {
                     if let Some(params) = diagnostics {
                         self.diagnostics.insert(params.uri, params.diagnostics);
                     }
@@ -353,6 +353,58 @@ impl LspClient {
         }
     }
 
+    /// Wait for a `window/logMessage` containing `substring`.
+    ///
+    /// Buffers diagnostics notifications. Error and warning logs not allowed by
+    /// [`allow_log_message()`] panic, as do unexpected requests, responses, and timeouts.
+    #[track_caller]
+    pub fn wait_for_log_message(&mut self, substring: &str, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("No log message containing {substring:?} received within {timeout:?}");
+            }
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .unwrap();
+
+            match self.try_recv_any() {
+                Ok(LspMessage::Notification { diagnostics, log }) => {
+                    if let Some(params) = diagnostics {
+                        self.diagnostics.insert(params.uri, params.diagnostics);
+                    }
+                    if log.is_some_and(|text| text.contains(substring)) {
+                        self.reader
+                            .get_ref()
+                            .set_read_timeout(Some(DEFAULT_TIMEOUT))
+                            .unwrap();
+                        return;
+                    }
+                },
+                Ok(other) => panic!(
+                    "Unexpected message while waiting for log message containing {substring:?}: {other:?}"
+                ),
+                Err(err) => {
+                    let timed_out = err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
+                        matches!(
+                            io_err.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        )
+                    });
+                    if timed_out {
+                        panic!(
+                            "No log message containing {substring:?} received within {timeout:?}"
+                        );
+                    }
+                    panic!("Failed to receive LSP message: {err}");
+                },
+            }
+        }
+    }
+
     fn send_raw(&mut self, message: &Value) {
         let body = serde_json::to_string(message).unwrap();
         write!(
@@ -421,7 +473,7 @@ impl LspClient {
                         "Unexpected LSP server request `{req_method}` while waiting for response to `{method}`"
                     );
                 },
-                LspMessage::Notification { diagnostics } => {
+                LspMessage::Notification { diagnostics, .. } => {
                     if let Some(params) = diagnostics {
                         self.diagnostics.insert(params.uri, params.diagnostics);
                     }
@@ -451,7 +503,7 @@ impl LspClient {
                     self.send_raw(&response);
                     return;
                 },
-                LspMessage::Notification { diagnostics } => {
+                LspMessage::Notification { diagnostics, .. } => {
                     if let Some(params) = diagnostics {
                         self.diagnostics.insert(params.uri, params.diagnostics);
                     }
@@ -491,6 +543,7 @@ enum LspMessage {
     },
     Notification {
         diagnostics: Option<lsp_types::PublishDiagnosticsParams>,
+        log: Option<String>,
     },
 }
 
@@ -498,12 +551,18 @@ impl LspClient {
     /// Read one JSON-RPC message and classify it, checking notifications
     /// for errors along the way.
     fn recv_any(&mut self) -> LspMessage {
-        let message = self.recv_message().expect("Failed to receive LSP message");
+        self.try_recv_any()
+            .unwrap_or_else(|err| panic!("Failed to receive LSP message: {err}"))
+    }
+
+    /// Return read errors so [`wait_for_log_message()`] can distinguish timeouts.
+    fn try_recv_any(&mut self) -> anyhow::Result<LspMessage> {
+        let message = self.recv_message()?;
         let has_id = message.contains_key("id");
         let has_method = message.contains_key("method");
         let has_result = message.contains_key("result") || message.contains_key("error");
 
-        match (has_id, has_method, has_result) {
+        let message = match (has_id, has_method, has_result) {
             (true, false, true) => LspMessage::Response {
                 id: message["id"].as_i64().unwrap(),
                 result: message.get("result").cloned(),
@@ -517,19 +576,21 @@ impl LspClient {
             },
 
             (false, true, false) => {
-                let diagnostics = self.check_server_notification(&message);
-                LspMessage::Notification { diagnostics }
+                let (diagnostics, log) = self.check_server_notification(&message);
+                LspMessage::Notification { diagnostics, log }
             },
 
             _ => panic!("Unrecognised LSP message shape: {message:?}"),
-        }
+        };
+
+        Ok(message)
     }
 
-    /// Check a server notification, returning parsed diagnostics if applicable.
+    /// Parse recognized server notifications into diagnostics or log text.
     fn check_server_notification(
         &mut self,
         message: &serde_json::Map<String, Value>,
-    ) -> Option<lsp_types::PublishDiagnosticsParams> {
+    ) -> (Option<lsp_types::PublishDiagnosticsParams>, Option<String>) {
         let method = message["method"].as_str().unwrap_or("unknown");
         match method {
             "window/logMessage" => {
@@ -537,11 +598,11 @@ impl LspClient {
                 // failures so they don't go unnoticed.
                 // MessageType: 1 = Error, 2 = Warning, 3 = Info, 4 = Log
                 let msg_type = message["params"]["type"].as_u64().unwrap_or(0);
+                let text = message["params"]["message"]
+                    .as_str()
+                    .unwrap_or("(no message)");
                 if msg_type <= 2 {
                     let level = if msg_type == 1 { "error" } else { "warning" };
-                    let text = message["params"]["message"]
-                        .as_str()
-                        .unwrap_or("(no message)");
                     if !self
                         .allowed_log_messages
                         .iter()
@@ -550,20 +611,20 @@ impl LspClient {
                         panic!("LSP server {level}: {text}");
                     }
                 }
-                None
+                (None, Some(text.to_string()))
             },
             "window/showMessage" => {
                 let text = message["params"]["message"]
                     .as_str()
                     .unwrap_or("(no message)");
                 self.show_messages.push(text.to_string());
-                None
+                (None, None)
             },
             "textDocument/publishDiagnostics" => {
                 let params: lsp_types::PublishDiagnosticsParams =
                     serde_json::from_value(message["params"].clone())
                         .expect("Failed to parse publishDiagnostics params");
-                Some(params)
+                (Some(params), None)
             },
             _ => panic!("Unexpected LSP notification `{method}`: {message:?}"),
         }

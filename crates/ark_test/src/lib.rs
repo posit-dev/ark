@@ -9,6 +9,7 @@ pub mod comm;
 pub mod dap_assert;
 pub mod dap_client;
 pub mod dummy_frontend;
+pub mod log_capture;
 pub mod lsp_client;
 pub mod tracing;
 
@@ -20,5 +21,6 @@ pub use comm::*;
 pub use dap_assert::*;
 pub use dap_client::*;
 pub use dummy_frontend::*;
+pub use log_capture::*;
 pub use lsp_client::*;
 pub use tracing::*;

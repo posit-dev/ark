@@ -1,0 +1,3 @@
+disallowed-methods = [
+  { path = "std::panic::catch_unwind", reason = "use `crate::panic::catch_unwind()` and friends, which declare the boundary the panic hook checks before aborting" },
+]

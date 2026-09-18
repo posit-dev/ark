@@ -7,9 +7,12 @@
 
 use std::time::Duration;
 
+use actix_web::dev::ServiceRequest;
+use actix_web::dev::ServiceResponse;
 use actix_web::get;
 use actix_web::http::header::ContentType;
 use actix_web::http::uri::PathAndQuery;
+use actix_web::middleware::Next;
 use actix_web::web;
 use actix_web::App;
 use actix_web::HttpRequest;
@@ -28,6 +31,8 @@ use stdext::spawn;
 use stdext::unwrap;
 use url::Url;
 
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task;
 
 // Embed `resources/help/` which is where replacement resources can be found.
@@ -67,6 +72,7 @@ pub fn start(target_port: u16) -> anyhow::Result<(u16, ProxyHandle)> {
         let server = HttpServer::new(move || {
             App::new()
                 .app_data(web::Data::new(AppState { target_port }))
+                .wrap(actix_web::middleware::from_fn(catch_panics))
                 .service(preview_rd)
                 .service(preview_img)
                 .default_service(web::to(proxy_request))
@@ -96,29 +102,41 @@ pub fn start(target_port: u16) -> anyhow::Result<(u16, ProxyHandle)> {
             .build()?;
 
         // Execute the task within the runtime.
-        rt.block_on(async {
-            let server = server.run();
-            let handle = server.handle();
+        let outcome = panic::catch_unwind(Recovery::Always, || {
+            rt.block_on(async {
+                let server = server.run();
+                let handle = server.handle();
 
-            // Dropping the help comm must tear down the whole proxy and its
-            // runtime, not just stop the server. The trigger is `ProxyHandle`
-            // (this oneshot's sender) dropping with `RHelp`, which resolves
-            // `shutdown_rx`. The explicit `stop()` is required because dropping
-            // the `ServerHandle` can't stop the server (the `Server` future
-            // owns its own handle). `stop()` lets the `server.await` call
-            // return, allowing the task and runtime to exit.
-            tokio::spawn(async move {
-                // We never send on the sender, so this only resolves (to `Err`)
-                // when `ProxyHandle` drops. Either way it means "shut down".
-                shutdown_rx.await.ok();
-                handle.stop(false).await;
-            });
+                // Dropping the help comm must tear down the whole proxy and its
+                // runtime, not just stop the server. The trigger is `ProxyHandle`
+                // (this oneshot's sender) dropping with `RHelp`, which resolves
+                // `shutdown_rx`. The explicit `stop()` is required because dropping
+                // the `ServerHandle` can't stop the server (the `Server` future
+                // owns its own handle). `stop()` lets the `server.await` call
+                // return, allowing the task and runtime to exit.
+                tokio::spawn(async move {
+                    let shutdown = async {
+                        // We never send on the sender, so this only resolves (to `Err`)
+                        // when `ProxyHandle` drops. Either way it means "shut down".
+                        shutdown_rx.await.ok();
+                        handle.stop(false).await;
+                    };
 
-            match server.await {
-                Ok(value) => log::info!("Help proxy server exited with value: {value:?}"),
-                Err(error) => log::error!("Help proxy server exited unexpectedly: {error}"),
-            }
+                    if let Err(msg) = panic::catch_unwind_async(Recovery::Always, shutdown).await {
+                        log::error!("Panic in help proxy shutdown task: {msg}");
+                    }
+                });
+
+                match server.await {
+                    Ok(value) => log::info!("Help proxy server exited with value: {value:?}"),
+                    Err(error) => log::error!("Help proxy server exited unexpectedly: {error}"),
+                }
+            })
         });
+
+        if let Err(msg) = outcome {
+            log::error!("Panic in help proxy runtime: {msg}");
+        }
 
         Ok(())
     });
@@ -131,6 +149,23 @@ pub fn start(target_port: u16) -> anyhow::Result<(u16, ProxyHandle)> {
         Err(err) => Err(anyhow::anyhow!(
             "Help proxy server timed out while waiting for a port: {err:?}"
         )),
+    }
+}
+
+// Recover each handler panic as HTTP 500 so it cannot abort the R session through
+// the process panic hook.
+async fn catch_panics<B>(
+    req: ServiceRequest,
+    next: Next<B>,
+) -> Result<ServiceResponse<B>, actix_web::Error> {
+    match panic::catch_unwind_async(Recovery::Always, next.call(req)).await {
+        Ok(result) => result,
+        Err(msg) => {
+            log::error!("Panic in help proxy handler: {msg}");
+            Err(actix_web::error::ErrorInternalServerError(
+                "Internal error in help proxy",
+            ))
+        },
     }
 }
 
