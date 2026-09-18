@@ -1,6 +1,3 @@
-use std::fs;
-
-use aether_path::FilePath;
 use salsa::Setter;
 
 use crate::all_package_dependencies;
@@ -102,21 +99,17 @@ fn test_collects_internal_namespace_access() {
 
 #[test]
 fn test_collects_imports_and_depends_from_workspace_package() {
-    let dir = tempfile::tempdir().unwrap();
-    let description = dir.path().join("DESCRIPTION");
-    fs::write(
-        &description,
-        "Package: mypkg\nVersion: 1.0.0\nImports: rlang\nDepends: cli\n",
-    )
-    .unwrap();
-
-    let mut db = TestDb::new();
+    let description = file_path("proj/DESCRIPTION");
+    let mut db = TestDb::with_files([(
+        description.as_path().unwrap().to_path_buf(),
+        "Package: mypkg\nVersion: 1.0.0\nImports: rlang\nDepends: cli\n".to_string(),
+    )]);
     register_library(&mut db, &["rlang", "cli", "unused"]);
 
     let root = workspace_root(&db, "proj");
     let pkg = Package::new(
         &db,
-        FilePath::from_path_buf(description).unwrap(),
+        description,
         "mypkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),
@@ -212,21 +205,16 @@ fn test_default_search_path_packages_are_always_available_to_workspace_scripts()
 
 #[test]
 fn test_default_search_path_packages_are_always_available_to_workspace_packages() {
-    let mut db = TestDb::new();
+    let description = file_path("proj/DESCRIPTION");
+    let mut db = TestDb::with_files([(
+        description.as_path().unwrap().to_path_buf(),
+        "Package: mypkg\nVersion: 1.0.0\nImports: rlang\n".to_string(),
+    )]);
     register_library(&mut db, &["rlang", "base", "stats"]);
-
-    // Build a workspace package that only imports rlang
-    let dir = tempfile::tempdir().unwrap();
-    let description = dir.path().join("DESCRIPTION");
-    fs::write(
-        &description,
-        "Package: mypkg\nVersion: 1.0.0\nImports: rlang\n",
-    )
-    .unwrap();
 
     let pkg = Package::new(
         &db,
-        FilePath::from_path_buf(description).unwrap(),
+        description,
         "mypkg".to_string(),
         FileRevision::zero(),
         FileRevision::zero(),

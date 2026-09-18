@@ -2578,6 +2578,7 @@ dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "annotate-snippets",
+ "anyhow",
  "biome_line_index",
  "biome_rowan",
  "camino",

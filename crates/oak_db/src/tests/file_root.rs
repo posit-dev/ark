@@ -1,5 +1,6 @@
 use salsa::Setter;
 
+use crate::file_reader::EmptyFileReader;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
@@ -11,7 +12,7 @@ use crate::Package;
 
 #[test]
 fn test_root_returns_none_for_orphan_file_outside_workspace() {
-    let db = OakDatabase::new();
+    let db = OakDatabase::with_file_reader(EmptyFileReader);
     let file = File::new(&db, file_path("orphan.R"), FileRevision::zero(), None, None);
 
     assert_eq!(file.root(&db), None);
@@ -19,7 +20,7 @@ fn test_root_returns_none_for_orphan_file_outside_workspace() {
 
 #[test]
 fn test_root_finds_containing_workspace_for_orphan_file() {
-    let mut db = OakDatabase::new();
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
     let workspace = workspace_root(&db, "proj");
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -35,7 +36,7 @@ fn test_root_finds_containing_workspace_for_orphan_file() {
 
 #[test]
 fn test_root_returns_longest_prefix_for_orphan_file() {
-    let mut db = OakDatabase::new();
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
     let outer = workspace_root(&db, "proj");
     let inner = workspace_root(&db, "proj/inner");
     db.workspace_roots()
@@ -63,7 +64,7 @@ fn test_root_returns_longest_prefix_for_orphan_file() {
 
 #[test]
 fn test_root_dispatches_through_library_package_when_set() {
-    let mut db = OakDatabase::new();
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
     let pkg_root = library_root(&db, "libs/mypkg");
     let pkg = Package::new(
         &db,
@@ -97,7 +98,7 @@ fn test_root_dispatches_through_workspace_package_when_set() {
     // Same dispatch as the library case, but the owning root is a
     // `Workspace` kind. The URL-prefix fallback is *not* consulted here
     // because `package` is set.
-    let mut db = OakDatabase::new();
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
     let pkg_root = workspace_root(&db, "proj");
     let pkg = Package::new(
         &db,

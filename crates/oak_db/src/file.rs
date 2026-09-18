@@ -1,5 +1,3 @@
-use std::fs;
-
 use aether_path::FilePath;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
@@ -99,7 +97,7 @@ impl File {
             return String::new();
         };
 
-        match fs::read_to_string(path.as_path().as_std_path()) {
+        match db.read_to_string(path.as_path()) {
             Ok(text) => text,
             Err(err) => {
                 // A file we were asked to analyze but can't read (permissions,
