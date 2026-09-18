@@ -16,6 +16,7 @@ use self::packages::mutual_reexport_has_no_terminal_definition;
 use self::packages::namespace_import_layer_consumer_resolves_a_reexport;
 use self::packages::package_export_shadows_the_source_effect;
 use self::packages::reexport_chain_terminates_at_a_local_export;
+use self::packages::rename_moves_the_end_of_a_reexport_chain;
 use self::source::acyclic_pair_closes_then_reopens;
 use self::source::file_or_dir_source_at_a_file;
 use self::source::library_in_function_body;
@@ -132,6 +133,10 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "reexport_chain_terminates_at_a_local_export",
             scenario: reexport_chain_terminates_at_a_local_export(),
+        },
+        Case {
+            name: "rename_moves_the_end_of_a_reexport_chain",
+            scenario: rename_moves_the_end_of_a_reexport_chain(),
         },
         Case {
             name: "attached_package_consumer_resolves_a_reexport",

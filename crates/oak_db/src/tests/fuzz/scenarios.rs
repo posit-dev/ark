@@ -308,6 +308,45 @@ fn test_scenario_reexport_chain_terminates_at_a_local_export() {
     assert!(fired.is_empty());
 }
 
+/// Resolving both names before and after each edit verifies that changing `pkgw`'s terminal definition invalidates cached re-export results.
+#[test]
+fn test_scenario_rename_moves_the_end_of_a_reexport_chain() {
+    let scenario = corpus::scenario("rename_moves_the_end_of_a_reexport_chain");
+    let mut world = start(&scenario);
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        ["p/pkgw/R/a.R"]
+    );
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_b", NamespaceVisibility::Exported),
+        NO_TARGETS
+    );
+
+    world.apply(&scenario.ops[1]);
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        NO_TARGETS
+    );
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_b", NamespaceVisibility::Exported),
+        ["p/pkgw/R/a.R"]
+    );
+
+    world.apply(&scenario.ops[4]);
+
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_a", NamespaceVisibility::Exported),
+        ["p/pkgw/R/a.R"]
+    );
+    assert_eq!(
+        world.package_resolve(PackageId(0), "exp_b", NamespaceVisibility::Exported),
+        NO_TARGETS
+    );
+    assert!(recovery::fired().is_empty());
+}
+
 /// The attach reaches package resolution through `ImportLayer::Package`.
 #[test]
 fn test_scenario_attached_package_consumer_resolves_a_reexport() {
