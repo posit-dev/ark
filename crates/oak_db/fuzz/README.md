@@ -2,6 +2,8 @@
 
 The fuzz suite exercises Salsa queries across generated workspaces and edit histories. See [`oak_db::fuzz`](../src/fuzz.rs) for the scenario model and query coverage, and [the test entry points](../src/tests/fuzz.rs) for deterministic checks.
 
+This crate is a nested workspace, so nothing outside `cargo +nightly fuzz` builds it. [`fuzz_targets/scenario.rs`](fuzz_targets/scenario.rs) therefore holds only the `libfuzzer-sys` macro shells and delegates to [`oak_db::fuzz::driver`](../src/fuzz/driver.rs), where the byte-buffer decisions are covered by tests and clippy.
+
 ## What it checks
 
 Each scenario must finish without panicking or hanging. The runner does not compare query results with expected values or compare an edited database with a fresh one, so incorrect exports or diagnostics can pass. Focused regression tests remain responsible for semantic assertions.
@@ -16,7 +18,7 @@ Coverage-guided exploration repeatedly mutates scenarios and observes which code
 |-------------------------|-------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | Ordinary `oak_db` tests | Assert semantic results and specific recovery behavior. Includes a short fuzz smoke test.                         | Pull requests and pushes to main.                                              | While developing affected behavior.                                                                                  |
 | `just fuzz`             | Run bounded, fixed-seed mutation blocks. Detects panics and hangs reproducibly but does not verify query results. | Pull requests, pushes to main, and manual fuzz workflows.                      | After changing an `oak_db` query, cycle handler, or dependency path.                                                 |
-| `just fuzz-explore`     | Use coverage feedback to discover new execution paths and grow the saved corpus.                                  | Pushes to main, weekly schedules, and manual fuzz workflows. Not pull requests. | After changing the adapter, scenario serialization, or mutator, because pull request CI only type-checks the driver. |
+| `just fuzz-explore`     | Use coverage feedback to discover new execution paths and grow the saved corpus.                                  | Pushes to main, weekly schedules, and manual fuzz workflows. Not pull requests. | After changing scenario serialization or the mutator: pull request CI type-checks the driver but never runs it.     |
 | Replay and minimization | Reproduce, diagnose, and reduce a discovered failure.                                                             | Never.                                                                         | When deterministic fuzzing or exploration finds a failure.                                                           |
 
 ## Prerequisites
