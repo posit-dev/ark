@@ -67,19 +67,6 @@ fn run<R: Reference>(scenario: &Scenario, reference: R) -> Compare<'_, R> {
     observer
 }
 
-/// Simulates a stale reference by returning no definitions.
-struct EmptyReference;
-
-impl Reference for EmptyReference {
-    fn observe(
-        &mut self,
-        _spec: &WorkspaceSpec,
-        _query: &Query,
-    ) -> (Observation, Option<Range<usize>>) {
-        (Observation { resolved: vec![] }, None)
-    }
-}
-
 /// Simulates recovery on its first execution without depending on Salsa cache state.
 #[derive(Default)]
 struct RecoveringReference {

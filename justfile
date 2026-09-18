@@ -31,6 +31,10 @@ fuzz-replay-seed SEED:
 fuzz-replay-scenario PATH:
   OAK_FUZZ_SCENARIO={{quote(absolute_path(PATH))}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_scenario)'
 
+# `PATH` is relative to the repository root, while the test runs in `crates/oak_db`.
+fuzz-replay-semantic PATH:
+  OAK_FUZZ_SCENARIO={{quote(absolute_path(PATH))}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_semantic_scenario)'
+
 # Write the deterministic seed corpus to disk for the cargo-fuzz driver
 fuzz-corpus:
   OAK_FUZZ_CORPUS=fuzz/corpus/scenario cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_write_seed_corpus)'

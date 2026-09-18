@@ -78,7 +78,7 @@ impl Variant {
 }
 
 /// A disagreement between the two executions at one checkpoint.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Mismatch {
     pub(crate) checkpoint: Checkpoint,
     pub(crate) query: Query,
@@ -130,6 +130,19 @@ impl Reference for Fresh {
             None => panic!("harness bug: reference did not observe {}", query.render()),
         };
         (observation, (start < end).then_some(start..end))
+    }
+}
+
+/// Simulates a stale reference by returning no definitions, so a comparison reaches a mismatch without a fault in either database.
+pub(crate) struct EmptyReference;
+
+impl Reference for EmptyReference {
+    fn observe(
+        &mut self,
+        _spec: &WorkspaceSpec,
+        _query: &Query,
+    ) -> (Observation, Option<Range<usize>>) {
+        (Observation { resolved: vec![] }, None)
     }
 }
 
