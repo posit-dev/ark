@@ -11,6 +11,7 @@
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
 
+mod oracle;
 mod scenarios;
 
 use std::collections::HashMap;
