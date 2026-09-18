@@ -35,6 +35,13 @@ fuzz-replay-scenario PATH:
 fuzz-replay-semantic PATH:
   OAK_FUZZ_SCENARIO={{quote(absolute_path(PATH))}} OAK_FUZZ_TRACE=1 cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_replay_semantic_scenario)'
 
+# `PATH` is relative to the repository root, while the test runs in
+# `crates/oak_db`. Tracing is off because shrinking can compare hundreds of
+# candidates. The final reduced scenario is reported. Reduce a saved semantic
+# mismatch
+fuzz-reduce-semantic PATH:
+  OAK_FUZZ_SCENARIO={{quote(absolute_path(PATH))}} cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_reduce_semantic_scenario)'
+
 # Write the deterministic seed corpus to disk for the cargo-fuzz driver
 fuzz-corpus:
   OAK_FUZZ_CORPUS=fuzz/corpus/scenario cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_write_seed_corpus)'
