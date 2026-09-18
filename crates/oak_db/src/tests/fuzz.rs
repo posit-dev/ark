@@ -411,6 +411,14 @@ fn test_replay_semantic_scenario() {
     campaign::replay(&saved_scenario("just fuzz-replay-semantic"), Fresh);
 }
 
+/// Reduces a saved scenario that mismatches against a fresh database and
+/// reports the reduced mismatch.
+#[test]
+#[ignore = "opt-in: just fuzz-reduce-semantic <path>"]
+fn test_reduce_semantic_scenario() {
+    campaign::reduce_and_report(saved_scenario("just fuzz-reduce-semantic"), 0, 1000);
+}
+
 fn saved_scenario(recipe: &str) -> Scenario {
     let path = match std::env::var("OAK_FUZZ_SCENARIO") {
         Ok(path) => path,
