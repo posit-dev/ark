@@ -22,28 +22,58 @@ use crate::recovery;
 use crate::Db;
 use crate::Definition;
 
-/// Resolution checkpoints reached by a campaign run. Comparisons and skips are disjoint, and together account for every reached resolution checkpoint.
+/// Resolution checkpoint outcomes from a campaign run. Comparisons and skips are disjoint and account for every reached checkpoint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
-    pub(crate) resolve: usize,
-    pub(crate) resolve_at: usize,
-    pub(crate) package_resolve: usize,
-    pub(crate) compared: usize,
+    pub(crate) resolve: Variant,
+    pub(crate) resolve_at: Variant,
+    pub(crate) package_resolve: Variant,
     /// Comparisons after an edit, where incremental evaluation can differ from a fresh database.
     pub(crate) compared_after_edit: usize,
     pub(crate) skipped_historical: usize,
     pub(crate) skipped_reference: usize,
 }
 
+/// Separates never-reached query variants from variants reached but always skipped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Variant {
+    pub(crate) reached: usize,
+    pub(crate) compared: usize,
+}
+
 impl Counts {
-    fn reached(&mut self, query: &Query) {
+    pub(crate) fn reached_total(&self) -> usize {
+        self.resolve.reached + self.resolve_at.reached + self.package_resolve.reached
+    }
+
+    pub(crate) fn compared_total(&self) -> usize {
+        self.resolve.compared + self.resolve_at.compared + self.package_resolve.compared
+    }
+
+    pub(crate) fn add(&mut self, other: &Counts) {
+        self.resolve.add(&other.resolve);
+        self.resolve_at.add(&other.resolve_at);
+        self.package_resolve.add(&other.package_resolve);
+        self.compared_after_edit += other.compared_after_edit;
+        self.skipped_historical += other.skipped_historical;
+        self.skipped_reference += other.skipped_reference;
+    }
+
+    fn variant(&mut self, query: &Query) -> Option<&mut Variant> {
         match query {
-            Query::Resolve(..) => self.resolve += 1,
-            Query::ResolveAt(..) => self.resolve_at += 1,
-            Query::PackageResolve(..) => self.package_resolve += 1,
+            Query::Resolve(..) => Some(&mut self.resolve),
+            Query::ResolveAt(..) => Some(&mut self.resolve_at),
+            Query::PackageResolve(..) => Some(&mut self.package_resolve),
             // Only resolution variants call `Observe::resolved()`.
-            _ => {},
+            _ => None,
         }
+    }
+}
+
+impl Variant {
+    fn add(&mut self, other: &Variant) {
+        self.reached += other.reached;
+        self.compared += other.compared;
     }
 }
 
@@ -54,6 +84,18 @@ pub(crate) struct Mismatch {
     pub(crate) query: Query,
     pub(crate) historical: Observation,
     pub(crate) reference: Observation,
+}
+
+impl Mismatch {
+    pub(crate) fn render(&self) -> String {
+        format!(
+            "{} at {}\n  historical: {:?}\n  reference:  {:?}",
+            self.query.render(),
+            self.checkpoint.render(),
+            self.historical.resolved,
+            self.reference.resolved,
+        )
+    }
 }
 
 /// Produces a comparison's reference answer. Test implementations model stale results and reference recovery without depending on Salsa cache timing.
@@ -185,7 +227,9 @@ impl<R: Reference> Observe for Compare<'_, R> {
         query: &Query,
         definitions: &[Definition<'_>],
     ) -> Observed {
-        self.counts.reached(query);
+        if let Some(variant) = self.counts.variant(query) {
+            variant.reached += 1;
+        }
 
         // Capture the historical result before reference work can affect recovery state.
         let historical = observe(db, definitions);
@@ -208,7 +252,9 @@ impl<R: Reference> Observe for Compare<'_, R> {
             return Observed::proceed(Some(interval));
         }
 
-        self.counts.compared += 1;
+        if let Some(variant) = self.counts.variant(query) {
+            variant.compared += 1;
+        }
         if self.edited {
             self.counts.compared_after_edit += 1;
         }

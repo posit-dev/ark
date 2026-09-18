@@ -115,8 +115,8 @@ fn test_compares_a_resolution_cold_entry() {
 
     let observer = run(&scenario, Fresh);
 
-    assert_eq!(observer.counts().resolve, 1);
-    assert_eq!(observer.counts().compared, 1);
+    assert_eq!(observer.counts().resolve.reached, 1);
+    assert_eq!(observer.counts().compared_total(), 1);
     assert_eq!(observer.counts().skipped_historical, 0);
     assert_eq!(observer.counts().skipped_reference, 0);
     assert!(observer.finding().is_none());
@@ -131,8 +131,8 @@ fn test_compares_empty_results() {
 
     let observer = run(&scenario, Fresh);
 
-    assert_eq!(observer.counts().resolve, 2);
-    assert_eq!(observer.counts().compared, 2);
+    assert_eq!(observer.counts().resolve.reached, 2);
+    assert_eq!(observer.counts().compared_total(), 2);
     assert!(observer.finding().is_none());
 }
 
@@ -146,7 +146,7 @@ fn test_counts_a_comparison_after_an_edit() {
 
     let observer = run(&scenario, Fresh);
 
-    assert_eq!(observer.counts().compared, 2);
+    assert_eq!(observer.counts().compared_total(), 2);
     assert_eq!(observer.counts().compared_after_edit, 1);
 }
 
@@ -159,8 +159,8 @@ fn test_recovery_in_another_query_skips_a_later_comparison() {
     let observer = run(&scenario, Fresh);
 
     assert!(observer.historical_recovered());
-    assert_eq!(observer.counts().resolve, 1);
-    assert_eq!(observer.counts().compared, 0);
+    assert_eq!(observer.counts().resolve.reached, 1);
+    assert_eq!(observer.counts().compared_total(), 0);
     assert_eq!(observer.counts().skipped_historical, 1);
 }
 
@@ -171,8 +171,8 @@ fn test_recovery_during_the_query_skips_its_own_comparison() {
     let observer = run(&scenario, Fresh);
 
     assert!(observer.historical_recovered());
-    assert_eq!(observer.counts().resolve, 1);
-    assert_eq!(observer.counts().compared, 0);
+    assert_eq!(observer.counts().resolve.reached, 1);
+    assert_eq!(observer.counts().compared_total(), 0);
     assert_eq!(observer.counts().skipped_historical, 1);
 }
 
@@ -184,8 +184,8 @@ fn test_reference_recovery_skips_every_later_comparison() {
 
     let observer = run(&scenario, RecoveringReference::default());
 
-    assert_eq!(observer.counts().resolve, 2);
-    assert_eq!(observer.counts().compared, 0);
+    assert_eq!(observer.counts().resolve.reached, 2);
+    assert_eq!(observer.counts().compared_total(), 0);
     assert_eq!(observer.counts().skipped_reference, 2);
     assert_eq!(observer.reference.executions, 1);
 }
@@ -203,7 +203,7 @@ fn test_recovery_in_the_last_operation_is_attributed() {
 
     assert!(observer.historical_recovered());
     // The comparison before the cycle closed remains valid.
-    assert_eq!(observer.counts().compared, 1);
+    assert_eq!(observer.counts().compared_total(), 1);
     assert!(observer.finding().is_none());
 }
 
@@ -223,7 +223,7 @@ fn test_reference_firings_are_not_charged_to_history() {
     assert!(!recovery::fired().is_empty());
     assert!(!observer.historical_recovered());
     assert_eq!(observer.counts().skipped_reference, 1);
-    assert_eq!(observer.counts().compared, 0);
+    assert_eq!(observer.counts().compared_total(), 0);
 
     // Historical recovery must register after existing reference entries.
     let ops = vec![
@@ -260,6 +260,6 @@ fn test_a_mismatch_stops_the_scenario() {
     assert!(finding.reference.resolved.is_empty());
 
     // The count confirms the cycle-closing edit did not run.
-    assert_eq!(observer.counts().resolve, 1);
+    assert_eq!(observer.counts().resolve.reached, 1);
     assert!(!observer.historical_recovered());
 }
