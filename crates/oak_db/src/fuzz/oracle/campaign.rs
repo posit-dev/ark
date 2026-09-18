@@ -8,6 +8,7 @@
 //! mutations reach comparisons.
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -61,7 +62,7 @@ impl Summary {
     }
 }
 
-fn render_counts(counts: &Counts) -> String {
+pub(crate) fn render_counts(counts: &Counts) -> String {
     format!(
         "reached {} (resolve {}/{}, resolve_at {}/{}, package_resolve {}/{}), \
          compared {} (after edit {}), skipped {} historical + {} reference",
@@ -112,6 +113,91 @@ pub(crate) fn run(seed: u64, mutations: usize) -> Summary {
 
     summary.elapsed = started.elapsed();
     summary
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SweepSummary {
+    files: usize,
+    checked: usize,
+    rejected: usize,
+    counts: Counts,
+}
+
+impl SweepSummary {
+    pub(crate) fn render(&self) -> String {
+        format!(
+            "sweep: {} files, {} checked, {} rejected\n{}",
+            self.files,
+            self.checked,
+            self.rejected,
+            render_counts(&self.counts),
+        )
+    }
+}
+
+/// Compares corpus scenarios against [`Fresh`] in sorted path order.
+///
+/// libFuzzer saves extensionless hash-named inputs. Decode and validation
+/// failures are rejected just as in `execute_json()`, while read errors and
+/// valid scenarios with mismatches or panics fail the sweep.
+pub(crate) fn sweep(dir: &Path) -> SweepSummary {
+    let runner = Runner::open();
+    let paths = scenario_paths(dir);
+    let mut summary = SweepSummary {
+        files: paths.len(),
+        ..SweepSummary::default()
+    };
+
+    for path in paths {
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("cannot read {}: {err}", path.display()),
+        };
+        let scenario = match Scenario::from_json(&bytes) {
+            Ok(scenario) => scenario,
+            Err(err) => {
+                summary.rejected += 1;
+                eprintln!("rejected {}: {err:?}", path.display());
+                continue;
+            },
+        };
+        let outcome = compare(&runner, &scenario, Fresh);
+        summary.counts.add(&report(&runner, &scenario, outcome));
+        summary.checked += 1;
+    }
+
+    if summary.checked == 0 {
+        panic!(
+            "no valid scenarios in {}\n{}",
+            dir.display(),
+            summary.render()
+        );
+    }
+    summary
+}
+
+fn scenario_paths(dir: &Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => panic!("cannot read {}: {err}", dir.display()),
+    };
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => panic!("cannot read an entry in {}: {err}", dir.display()),
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(err) => panic!("cannot inspect {}: {err}", entry.path().display()),
+        };
+        if file_type.is_file() {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    paths
 }
 
 /// Replays a saved scenario against `reference`, failing on a mismatch or
@@ -216,6 +302,57 @@ mod tests {
         assert!(summary.seeds.compared_total() > 0);
         assert!(summary.descendants.compared_total() > 0);
         assert!(summary.descendants.compared_after_edit > 0);
+    }
+
+    #[test]
+    fn test_sweep_aggregates_counts_across_saved_scenarios() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let scenario = corpus::scenario("rename_and_undo_across_files");
+        for name in ["rename.json", "90dab84cdfffdbfc9fcf0a6165df0324b85094f6"] {
+            std::fs::write(dir.path().join(name), scenario.to_json()?)?;
+        }
+        std::fs::write(dir.path().join("README.md"), "not a scenario")?;
+        let mut invalid = scenario.clone();
+        invalid.initial.files.clear();
+        std::fs::write(dir.path().join("invalid"), invalid.to_json()?)?;
+        std::fs::create_dir(dir.path().join("nested.json"))?;
+
+        let summary = sweep(dir.path());
+
+        assert_eq!(summary.files, 4);
+        assert_eq!(summary.checked, 2);
+        assert_eq!(summary.rejected, 2);
+        assert_eq!(summary.counts.resolve.reached, 12);
+        assert_eq!(summary.counts.resolve.compared, 12);
+        assert_eq!(summary.counts.compared_after_edit, 8);
+        assert_eq!(summary.counts.resolve_at.reached, 0);
+        assert_eq!(summary.counts.package_resolve.reached, 0);
+        assert_eq!(summary.counts.skipped_historical, 0);
+        assert_eq!(summary.counts.skipped_reference, 0);
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "no valid scenarios")]
+    fn test_sweep_rejects_an_empty_directory() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("cannot create a temp dir: {err}"),
+        };
+        sweep(dir.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "no valid scenarios")]
+    fn test_sweep_rejects_a_wholly_invalid_corpus() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("cannot create a temp dir: {err}"),
+        };
+        if let Err(err) = std::fs::write(dir.path().join("invalid"), "not a scenario") {
+            panic!("cannot write input: {err}");
+        }
+        sweep(dir.path());
     }
 
     /// `EmptyReference` supplies a mismatch because fresh databases are expected to agree. This verifies that JSON preserves every comparison input and produces a deterministic finding, not that a real scenario mismatches.

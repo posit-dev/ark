@@ -41,6 +41,72 @@ jobs:
         run: |
           cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_block_/)'
 
+      # This job only reads the corpus maintained by `driver`. Cache misses are
+      # normal before the first scheduled run or after eviction, so the sweep
+      # skips an empty restore instead of failing.
+      - name: Restore Corpus (read-only)
+        id: restore-corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: crates/oak_db/fuzz/corpus/scenario
+          key: oak-fuzz-corpus-pr-${{ github.run_id }}
+          restore-keys: oak-fuzz-corpus-
+
+      # Replay the driver's accumulated histories on every pull request. This
+      # uses the normal test build, not an instrumented `cargo-fuzz` driver.
+      # A separate timeout bounds the restored corpus as it grows.
+      - name: Run Semantic Sweep
+        id: sweep
+        timeout-minutes: 5
+        env:
+          OAK_FUZZ_CORPUS: "fuzz/corpus/scenario"
+          CORPUS_CACHE_KEY: ${{ steps.restore-corpus.outputs.cache-matched-key }}
+        run: |
+          set -o pipefail
+          echo "restored cache key: ${CORPUS_CACHE_KEY:-none}" | tee "$RUNNER_TEMP/sweep.log"
+          entries=0
+          if [ -n "$CORPUS_CACHE_KEY" ] && [ -d crates/oak_db/fuzz/corpus/scenario ]; then
+            entries=$(python3 -c 'import os; print(sum(entry.is_file(follow_symlinks=False) for entry in os.scandir("crates/oak_db/fuzz/corpus/scenario")))')
+          fi
+          echo "OAK_FUZZ_PR_CORPUS_ENTRIES=$entries" >> "$GITHUB_ENV"
+          if [ "$entries" -eq 0 ]; then
+            echo "::warning::accumulated corpus unavailable (cache missing or empty); skipping semantic sweep"
+            echo "accumulated corpus unavailable; sweep skipped" | tee -a "$RUNNER_TEMP/sweep.log"
+            exit 0
+          fi
+          cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_sweep_semantic_corpus)' \
+            2>&1 | tee -a "$RUNNER_TEMP/sweep.log"
+
+      - name: Upload Semantic Sweep Artifacts
+        if: failure() && steps.sweep.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pr-sweep-artifacts
+          path: |
+            target/oak_fuzz/
+            ${{ runner.temp }}/sweep.log
+          if-no-files-found: ignore
+
+      - name: Summarize Semantic Sweep
+        if: always()
+        env:
+          CORPUS_CACHE_KEY: ${{ steps.restore-corpus.outputs.cache-matched-key }}
+          SWEEP_OUTCOME: ${{ steps.sweep.outcome }}
+        run: |
+          {
+            echo "### Semantic sweep (replayed from the cached corpus)"
+            echo
+            echo "restored cache key: ${CORPUS_CACHE_KEY:-none}"
+            echo "restored corpus files: ${OAK_FUZZ_PR_CORPUS_ENTRIES:-0}"
+            echo "step outcome: ${SWEEP_OUTCOME:-not run}"
+            echo
+            echo '```text'
+            if ! grep -E '^(sweep:|reached |accumulated corpus unavailable;)' "$RUNNER_TEMP/sweep.log" 2>/dev/null; then
+              echo "Sweep did not complete; see the step log and failure artifacts."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # Asserts the driver still builds on stable, so type-checking it needs no
       # nightly toolchain. This is the only driver signal a pull request gets,
       # because the `driver` job below is skipped there.
@@ -104,14 +170,13 @@ jobs:
           } | tee "$RUNNER_TEMP/provenance.txt"
 
       # Each attempt needs a new immutable cache key. Restore the newest corpus
-      # in the same format version, shared by scheduled and main-push runs.
-      # Bump both keys and the restore prefix to reset accumulated exploration.
+      # shared by scheduled and main-push runs.
       - name: Restore Corpus
         uses: actions/cache/restore@v4
         with:
           path: crates/oak_db/fuzz/corpus/scenario
-          key: oak-fuzz-corpus-v2-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: oak-fuzz-corpus-v2-
+          key: oak-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: oak-fuzz-corpus-
 
       # Regenerate historical seeds on every run because `cmin` can discard
       # their coverage-redundant inputs and replaces filenames with hashes.
@@ -159,6 +224,29 @@ jobs:
             ${{ runner.temp }}/explore.log
           if-no-files-found: ignore
 
+      # `cmin` preserves coverage-distinct inputs only. Sweep before
+      # minimization so coverage-redundant histories can still reveal semantic
+      # mismatches.
+      - name: Run Semantic Sweep
+        id: sweep
+        env:
+          OAK_FUZZ_CORPUS: "fuzz/corpus/scenario"
+        run: |
+          set -o pipefail
+          cargo nextest run --no-capture -p oak_db --run-ignored only -E 'test(=tests::fuzz::test_sweep_semantic_corpus)' \
+            2>&1 | tee "$RUNNER_TEMP/sweep.log"
+
+      - name: Upload Semantic Sweep Artifacts
+        if: failure() && steps.sweep.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-sweep-artifacts
+          path: |
+            target/oak_fuzz/
+            ${{ runner.temp }}/provenance.txt
+            ${{ runner.temp }}/sweep.log
+          if-no-files-found: ignore
+
       # Remove coverage-redundant inputs before caching. cargo-fuzz 0.13.2 can
       # report a failed merge and exit 0, and libFuzzer can continue merging
       # after an input fails, so check both the log and artifacts. This step
@@ -201,7 +289,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: crates/oak_db/fuzz/corpus/scenario
-          key: oak-fuzz-corpus-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          key: oak-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Keep corpus counts and final coverage visible without opening the logs.
       - name: Summarize Campaign
@@ -217,7 +305,12 @@ jobs:
             echo "| after minimization | $(ls -A crates/oak_db/fuzz/corpus/scenario 2>/dev/null | wc -l) |"
             echo
             echo '```text'
-            cat "$RUNNER_TEMP/provenance.txt" 2>/dev/null
-            grep -E "DONE|Done .* runs" "$RUNNER_TEMP/explore.log" 2>/dev/null | tail -2
+            cat "$RUNNER_TEMP/provenance.txt" 2>/dev/null || true
+            grep -E "DONE|Done .* runs" "$RUNNER_TEMP/explore.log" 2>/dev/null | tail -2 || true
+            echo
+            echo "semantic sweep:"
+            if ! grep -E "^(sweep:|reached )" "$RUNNER_TEMP/sweep.log" 2>/dev/null; then
+              echo "Sweep did not complete; see the step log and failure artifacts."
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
