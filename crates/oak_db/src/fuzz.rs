@@ -91,6 +91,8 @@ pub(crate) use mutate::ScenarioMutator;
 pub(crate) use run::start;
 pub use run::Runner;
 #[cfg(test)]
+pub(crate) use run::Unobserved;
+#[cfg(test)]
 pub(crate) use run::World;
 #[cfg(test)]
 pub(crate) use scenario::Scenario;
