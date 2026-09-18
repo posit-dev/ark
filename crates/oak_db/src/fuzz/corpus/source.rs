@@ -38,6 +38,25 @@ pub(super) fn acyclic_pair_closes_then_reopens() -> Scenario {
     Scenario::cold(initial, Query::Diagnostics(FileId(0)), ops)
 }
 
+/// Exercises invalidation of cached positive and negative resolution results after renaming a sourced definition and restoring it.
+/// Both names are resolved before the first edit, while `b.R` remains unchanged.
+pub(super) fn rename_and_undo_across_files() -> Scenario {
+    let initial = scripts(vec![
+        ("a.R", program(vec![binding("val_0")])),
+        ("b.R", program(vec![source("a.R")])),
+    ]);
+    let ops = vec![
+        query(Query::Resolve(FileId(1), "val_3".to_string())),
+        replace(FileId(0), program(vec![binding("val_3")])),
+        query(Query::Resolve(FileId(1), "val_0".to_string())),
+        query(Query::Resolve(FileId(1), "val_3".to_string())),
+        replace(FileId(0), program(vec![binding("val_0")])),
+        query(Query::Resolve(FileId(1), "val_0".to_string())),
+        query(Query::Resolve(FileId(1), "val_3".to_string())),
+    ];
+    Scenario::cold(initial, Query::Resolve(FileId(1), "val_0".to_string()), ops)
+}
+
 pub(super) fn mutual_pair_opens_then_closes_again() -> Scenario {
     let initial = scripts(vec![
         ("a.R", program(vec![source("b.R"), binding("val_a")])),
