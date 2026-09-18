@@ -70,6 +70,8 @@ mod driver;
 mod generate;
 mod limits;
 mod mutate;
+#[cfg(test)]
+mod oracle;
 mod panics;
 mod run;
 mod scenario;
