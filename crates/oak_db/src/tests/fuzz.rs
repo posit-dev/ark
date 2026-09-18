@@ -419,6 +419,19 @@ fn test_reduce_semantic_scenario() {
     campaign::reduce_and_report(saved_scenario("just fuzz-reduce-semantic"), 0, 1000);
 }
 
+/// Sweeps the coverage-guided corpus before minimization can discard
+/// coverage-redundant histories with semantic mismatches.
+#[test]
+#[ignore = "opt-in: just fuzz-sweep-semantic <dir>"]
+fn test_sweep_semantic_corpus() {
+    let dir = match std::env::var("OAK_FUZZ_CORPUS") {
+        Ok(dir) => dir,
+        Err(_) => panic!("set OAK_FUZZ_CORPUS, or run `just fuzz-sweep-semantic <dir>`"),
+    };
+    let summary = campaign::sweep(std::path::Path::new(&dir));
+    eprintln!("{}", summary.render());
+}
+
 fn saved_scenario(recipe: &str) -> Scenario {
     let path = match std::env::var("OAK_FUZZ_SCENARIO") {
         Ok(path) => path,
