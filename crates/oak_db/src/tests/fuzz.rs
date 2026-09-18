@@ -23,6 +23,8 @@ use mutatis::check::CheckResult;
 use mutatis::Session;
 
 use crate::fuzz::corpus;
+use crate::fuzz::oracle::campaign;
+use crate::fuzz::oracle::compare::Fresh;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::FileId;
 use crate::fuzz::Runner;
@@ -399,20 +401,29 @@ fn test_replay_block() {
 #[test]
 #[ignore = "opt-in: just fuzz-replay-scenario <path>"]
 fn test_replay_scenario() {
+    Runner::open().replay(&saved_scenario("just fuzz-replay-scenario"));
+}
+
+/// Replays a saved scenario while comparing resolution against a fresh database. A mismatch is a finding rather than an execution panic, so `test_replay_scenario()` cannot report it. The entry point selects the mode, not the scenario.
+#[test]
+#[ignore = "opt-in: just fuzz-replay-semantic <path>"]
+fn test_replay_semantic_scenario() {
+    campaign::replay(&saved_scenario("just fuzz-replay-semantic"), Fresh);
+}
+
+fn saved_scenario(recipe: &str) -> Scenario {
     let path = match std::env::var("OAK_FUZZ_SCENARIO") {
         Ok(path) => path,
-        Err(_) => panic!("set OAK_FUZZ_SCENARIO, or run `just fuzz-replay-scenario <path>`"),
+        Err(_) => panic!("set OAK_FUZZ_SCENARIO, or run `{recipe} <path>`"),
     };
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => panic!("cannot read {path}: {err}"),
     };
-    let scenario = match Scenario::from_json(&bytes) {
+    match Scenario::from_json(&bytes) {
         Ok(scenario) => scenario,
         Err(err) => panic!("{path} is not a scenario: {err:?}"),
-    };
-
-    Runner::open().replay(&scenario);
+    }
 }
 
 /// Seed `cargo fuzz` with scenarios that already satisfy the JSON format.
