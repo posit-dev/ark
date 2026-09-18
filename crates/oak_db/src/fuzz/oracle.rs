@@ -9,5 +9,6 @@
 //! This comparison is not a proof because both databases can agree on a wrong
 //! answer. Named fixtures assert the expected values.
 
+pub(crate) mod compare;
 mod eligible;
 pub(crate) mod observe;

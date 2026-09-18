@@ -33,6 +33,9 @@ use crate::Definition;
 ///
 /// Implementations may run a reference query that appends to the process-global recovery log in [`crate::recovery`]. Return that interval so [`Report`] labels its firings without resetting evidence needed by either execution.
 pub(crate) trait Observe {
+    /// Announces each checkpoint before it runs. Edits never call [`Observe::resolved()`], so observers identify post-edit resolution checkpoints here.
+    fn entering(&mut self, _checkpoint: Checkpoint) {}
+
     fn resolved(
         &mut self,
         db: &dyn Db,
@@ -40,6 +43,26 @@ pub(crate) trait Observe {
         query: &Query,
         definitions: &[Definition<'_>],
     ) -> Observed;
+
+    /// Announces completion after exhausting operations or stopping at a finding. Recovery after the last observed query reaches the observer only here.
+    fn finished(&mut self) {}
+}
+
+/// Scenario position used in artifacts and mismatch reports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Checkpoint {
+    #[default]
+    ColdEntry,
+    Op(usize),
+}
+
+impl Checkpoint {
+    pub(crate) fn render(&self) -> String {
+        match self {
+            Checkpoint::ColdEntry => "cold entry".to_string(),
+            Checkpoint::Op(index) => format!("op {index}"),
+        }
+    }
 }
 
 /// Observer output for one scheduled query.
@@ -150,8 +173,18 @@ fn run(scenario: &Scenario, artifact: &Artifact, trace: bool, observer: &mut dyn
     recovery::reset();
     let report = Report::new(scenario, artifact, trace);
 
+    execute(scenario, &report, observer);
+    observer.finished();
+}
+
+/// Returns before [`Observe::finished()`] so completion handling runs for every exit.
+fn execute(scenario: &Scenario, report: &Report<'_>, observer: &mut dyn Observe) {
     let mut world = World::materialize(&scenario.initial);
-    report.entering("cold entry", &scenario.cold_entry.render());
+    report.entering(
+        &Checkpoint::ColdEntry.render(),
+        &scenario.cold_entry.render(),
+    );
+    observer.entering(Checkpoint::ColdEntry);
     // Report the checkpoint's reference firings before stopping so they remain in the trace.
     let observed = world.query(&scenario.cold_entry, observer);
     report.firings(observed.reference);
@@ -160,7 +193,9 @@ fn run(scenario: &Scenario, artifact: &Artifact, trace: bool, observer: &mut dyn
     }
 
     for (index, op) in scenario.ops.iter().enumerate() {
-        report.entering(&format!("op {index}"), &op.render());
+        let checkpoint = Checkpoint::Op(index);
+        report.entering(&checkpoint.render(), &op.render());
+        observer.entering(checkpoint);
         let observed = world.apply(op, observer);
         report.firings(observed.reference);
         if observed.flow.is_break() {
@@ -226,14 +261,20 @@ impl Report<'_> {
         }
         let fired = recovery::fired();
         for (index, entry) in fired.iter().enumerate().skip(self.printed_firings.get()) {
-            match &reference {
-                Some(interval) if interval.contains(&index) => {
-                    eprintln!("      recovered (reference): {entry}")
-                },
-                _ => eprintln!("      recovered: {entry}"),
-            }
+            eprintln!(
+                "      recovered{}: {entry}",
+                firing_origin(&reference, index)
+            );
         }
         self.printed_firings.set(fired.len());
+    }
+}
+
+/// Leaves historical firings unlabelled to preserve unobserved trace output.
+fn firing_origin(reference: &Option<Range<usize>>, index: usize) -> &'static str {
+    match reference {
+        Some(interval) if interval.contains(&index) => " (reference)",
+        _ => "",
     }
 }
 
@@ -294,5 +335,16 @@ mod tests {
         let message = outcome.unwrap_err();
         assert!(message.contains("index out of bounds"));
         assert!(!message.contains("panicked without reaching the panic hook"));
+    }
+
+    #[test]
+    fn test_only_reference_firings_carry_a_label() {
+        let reference = Some(2..4);
+
+        assert_eq!(firing_origin(&reference, 1), "");
+        assert_eq!(firing_origin(&reference, 2), " (reference)");
+        assert_eq!(firing_origin(&reference, 3), " (reference)");
+        assert_eq!(firing_origin(&reference, 4), "");
+        assert_eq!(firing_origin(&None, 2), "");
     }
 }
