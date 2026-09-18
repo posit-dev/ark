@@ -10,6 +10,7 @@ use crate::fuzz::budgets::MAX_REEXPORTS;
 use crate::fuzz::build::binding;
 use crate::fuzz::choose::binding_name;
 use crate::fuzz::choose::export_name;
+use crate::fuzz::choose::name_vocabulary;
 use crate::fuzz::choose::random_query;
 use crate::fuzz::choose::Choose;
 use crate::fuzz::choose::Shape;
@@ -106,14 +107,8 @@ fn rebase_file(file: &mut FileId, removed: usize, count: usize) {
 
 // == Packages ==
 
-/// Combines `choose::export_name()`'s `exp_*` vocabulary with `val_*` binding
-/// names, so a mutated export can either match another package's reexport or
-/// a name a file actually binds.
 fn export_vocabulary() -> Vec<String> {
-    (0..EXPORT_NAMES)
-        .map(export_name)
-        .chain((0..MAX_FILES).map(binding_name))
-        .collect()
+    name_vocabulary()
 }
 
 pub(super) fn add_export(rng: &mut impl Choose, scenario: &mut Scenario) {

@@ -23,7 +23,9 @@
 //!
 //! Mutation reaches every `EffectRecipe` variant, both invocation forms, and
 //! all three `SourceProvider` variants, including an effect escaped through a
-//! `bquote()` hole. It also reaches `Package::resolve()` both directly through
+//! `bquote()` hole. Renaming changes one definition or use at a time, including
+//! names declared by `NAMESPACE`, so an export or re-export chain can become
+//! unresolved. It also reaches `Package::resolve()` both directly through
 //! `Query::PackageResolve` and indirectly through a consumer's `library()`
 //! attach or a package's own `importFrom`, across acyclic chains, mutual
 //! re-export cycles, and effect-name shadowing through `package_binding()`.
