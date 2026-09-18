@@ -107,6 +107,13 @@ impl DiagnosticsState {
     }
 }
 
+/// Enable testthat-specific diagnostics when any path component is `testthat`.
+/// This path heuristic also classifies files in the testthat repository itself.
+pub(crate) fn is_testthat_path(path: &FilePath) -> bool {
+    path.as_path()
+        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"))
+}
+
 fn refresh_diagnostics(
     path: FilePath,
     file: OpenFile,
@@ -116,13 +123,7 @@ fn refresh_diagnostics(
     let version = file.version();
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri.as_str()).entered();
 
-    // Special case testthat-specific behaviour. This is a simple stopgap
-    // approach that has some false positives (e.g. when we work on testthat
-    // itself the flag will always be true), but that shouldn't have much
-    // practical impact.
-    let testthat = path
-        .as_path()
-        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"));
+    let testthat = is_testthat_path(&path);
 
     let now = std::time::Instant::now();
     lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());

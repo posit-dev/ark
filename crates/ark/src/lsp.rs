@@ -23,6 +23,8 @@ pub mod folding_range;
 pub mod goto_definition;
 pub mod handler;
 pub mod handlers;
+#[cfg(any(test, feature = "testing"))]
+pub mod harness;
 pub mod help;
 pub mod help_topic;
 pub mod hover;
