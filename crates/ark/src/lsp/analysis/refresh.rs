@@ -41,7 +41,6 @@ pub(crate) struct DiagnosticsState {
     generation: u64,
     /// Generation of the newest result published per file.
     published: HashMap<FilePath, u64>,
-    pending_in_batch: u64,
 }
 
 impl DiagnosticsState {
@@ -65,7 +64,6 @@ impl DiagnosticsState {
         lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
 
         let tasks = files.len() as u64;
-        self.pending_in_batch = tasks;
 
         for (path, open_file) in files {
             let path = path.clone();
@@ -92,10 +90,6 @@ impl DiagnosticsState {
     /// we spawn one task per file per batch, and keyed replacement on the
     /// pool keeps at most one queued entry per file.
     pub(crate) fn accept(&mut self, path: &FilePath, generation: u64) -> bool {
-        if generation == self.generation {
-            self.pending_in_batch = self.pending_in_batch.saturating_sub(1);
-        }
-
         if let Some(published) = self.published.get(path) {
             if *published > generation {
                 return false;
@@ -110,17 +104,6 @@ impl DiagnosticsState {
     /// main loop to log alongside a dropped stale result.
     pub(crate) fn published_generation(&self, path: &FilePath) -> Option<u64> {
         self.published.get(path).copied()
-    }
-
-    /// Returns the newest refresh generation so instrumentation logs once per batch.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Returns outstanding tasks from the newest refresh batch. Zero means all
-    /// tasks from the latest refresh have reported.
-    pub(crate) fn pending_in_batch(&self) -> u64 {
-        self.pending_in_batch
     }
 }
 

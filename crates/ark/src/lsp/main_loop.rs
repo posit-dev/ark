@@ -46,7 +46,6 @@ use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
 use crate::lsp::analysis::catch_cancellation;
-use crate::lsp::analysis::log_settled;
 use crate::lsp::analysis::AnalysisPool;
 use crate::lsp::analysis::DiagnosticsMetrics;
 use crate::lsp::analysis::DiagnosticsReady;
@@ -774,7 +773,7 @@ impl GlobalState {
                 );
 
                 if self.lsp_state.diagnostics.accept(&publication.path, generation) {
-                    self.lsp_state.diagnostics_metrics.record_published();
+                    self.lsp_state.diagnostics_metrics.record_accepted();
                     lsp::publish_diagnostics(publication);
                 } else {
                     self.lsp_state.diagnostics_metrics.record_stale();
@@ -785,11 +784,9 @@ impl GlobalState {
                     );
                 }
 
-                log_settled(
-                    &mut self.lsp_state.diagnostics_metrics,
-                    &self.lsp_state.diagnostics,
-                    &self.lsp_state.analysis_pool,
-                );
+                self.lsp_state
+                    .diagnostics_metrics
+                    .log_snapshot(&self.lsp_state.analysis_pool);
             },
 
             #[cfg(feature = "testing")]
@@ -812,13 +809,11 @@ impl GlobalState {
             );
             self.lsp_state.diagnostics_metrics.record_batch(tasks);
 
-            // Empty batches don't emit any `DiagnosticsReady` event, so sample
-            // them here. Nonempty batches are sampled when their final result arrives.
-            log_settled(
-                &mut self.lsp_state.diagnostics_metrics,
-                &self.lsp_state.diagnostics,
-                &self.lsp_state.analysis_pool,
-            );
+            // Empty batches emit no `DiagnosticsReady`, so log their initial
+            // snapshot here.
+            self.lsp_state
+                .diagnostics_metrics
+                .log_snapshot(&self.lsp_state.analysis_pool);
 
             self.schedule_sources();
         }
