@@ -11,6 +11,8 @@
 mod world;
 
 use std::cell::Cell;
+use std::ops::ControlFlow;
+use std::ops::Range;
 use std::path::Path;
 
 pub(crate) use self::world::World;
@@ -18,12 +20,66 @@ use crate::fuzz::artifact::Artifact;
 use crate::fuzz::panics::catch_quietly;
 use crate::fuzz::panics::install;
 use crate::fuzz::panics::Guard;
-#[cfg(test)]
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Scenario;
 #[cfg(test)]
 use crate::fuzz::spec::FileId;
+use crate::fuzz::spec::WorkspaceSpec;
 use crate::recovery;
+use crate::Db;
+use crate::Definition;
+
+/// Observes definitions after their scheduled resolution query runs on the historical database.
+///
+/// Implementations may run a reference query that appends to the process-global recovery log in [`crate::recovery`]. Return that interval so [`Report`] labels its firings without resetting evidence needed by either execution.
+pub(crate) trait Observe {
+    fn resolved(
+        &mut self,
+        db: &dyn Db,
+        spec: &WorkspaceSpec,
+        query: &Query,
+        definitions: &[Definition<'_>],
+    ) -> Observed;
+}
+
+/// Observer output for one scheduled query.
+pub(crate) struct Observed {
+    /// Interval of recovery-log entries appended by the observer's reference execution.
+    pub(crate) reference: Option<Range<usize>>,
+    /// `Break` ends the scenario after a valid finding. Continuing could obscure its trace with a later panic or recovery.
+    pub(crate) flow: ControlFlow<()>,
+}
+
+impl Observed {
+    pub(crate) fn proceed(reference: Option<Range<usize>>) -> Observed {
+        Observed {
+            reference,
+            flow: ControlFlow::Continue(()),
+        }
+    }
+
+    pub(crate) fn stop(reference: Option<Range<usize>>) -> Observed {
+        Observed {
+            reference,
+            flow: ControlFlow::Break(()),
+        }
+    }
+}
+
+/// Disables resolution observation for the unrestricted fuzz campaign.
+pub(crate) struct Unobserved;
+
+impl Observe for Unobserved {
+    fn resolved(
+        &mut self,
+        _db: &dyn Db,
+        _spec: &WorkspaceSpec,
+        _query: &Query,
+        _definitions: &[Definition<'_>],
+    ) -> Observed {
+        Observed::proceed(None)
+    }
+}
 
 /// Owns the failure artifact and the panic hook, so no caller can run a
 /// scenario without the context a failure needs.
@@ -43,19 +99,29 @@ impl Runner {
 
     /// Runs `scenario`, returning a panic's message and location on failure.
     pub(crate) fn check(&self, scenario: &Scenario) -> std::result::Result<(), String> {
-        run_scenario(scenario, &self.artifact)
+        run_scenario(scenario, &self.artifact, &mut Unobserved)
+    }
+
+    /// Like [`Runner::check()`], while passing each scheduled resolution result to `observer`. On panic, `observer` retains results recorded before unwinding.
+    #[cfg(test)]
+    pub(crate) fn check_observed(
+        &self,
+        scenario: &Scenario,
+        observer: &mut dyn Observe,
+    ) -> std::result::Result<(), String> {
+        run_scenario(scenario, &self.artifact, observer)
     }
 
     /// Runs `scenario` and lets a panic propagate, which is how a fuzzing
     /// engine learns of a crash. The artifact is written ahead of each
     /// operation, so an abort still names the operation in flight.
     pub(crate) fn execute(&self, scenario: &Scenario) {
-        run(scenario, &self.artifact, traced())
+        run(scenario, &self.artifact, traced(), &mut Unobserved)
     }
 
     /// Re-runs `scenario` with operation tracing, letting a panic propagate.
     pub(crate) fn replay(&self, scenario: &Scenario) {
-        run(scenario, &self.artifact, true)
+        run(scenario, &self.artifact, true, &mut Unobserved)
     }
 
     /// Path of the artifact naming the scenario and operation in flight.
@@ -71,24 +137,35 @@ impl Runner {
 
 /// Preserve the original panic details in case the shrunken failure does not
 /// reproduce.
-fn run_scenario(scenario: &Scenario, artifact: &Artifact) -> std::result::Result<(), String> {
-    catch_quietly(|| run(scenario, artifact, traced()))
+fn run_scenario(
+    scenario: &Scenario,
+    artifact: &Artifact,
+    observer: &mut dyn Observe,
+) -> std::result::Result<(), String> {
+    catch_quietly(|| run(scenario, artifact, traced(), observer))
         .map_err(|panic| format!("{}\n{panic}", scenario.header()))
 }
 
-fn run(scenario: &Scenario, artifact: &Artifact, trace: bool) {
+fn run(scenario: &Scenario, artifact: &Artifact, trace: bool, observer: &mut dyn Observe) {
     recovery::reset();
     let report = Report::new(scenario, artifact, trace);
 
     let mut world = World::materialize(&scenario.initial);
     report.entering("cold entry", &scenario.cold_entry.render());
-    world.query(&scenario.cold_entry);
-    report.firings();
+    // Report the checkpoint's reference firings before stopping so they remain in the trace.
+    let observed = world.query(&scenario.cold_entry, observer);
+    report.firings(observed.reference);
+    if observed.flow.is_break() {
+        return;
+    }
 
     for (index, op) in scenario.ops.iter().enumerate() {
         report.entering(&format!("op {index}"), &op.render());
-        world.apply(op);
-        report.firings();
+        let observed = world.apply(op, observer);
+        report.firings(observed.reference);
+        if observed.flow.is_break() {
+            return;
+        }
     }
 }
 
@@ -103,7 +180,7 @@ pub(crate) fn start(scenario: &Scenario) -> World {
     eprintln!("{}", scenario.header());
     eprint!("{}", scenario.render());
     let world = World::materialize(&scenario.initial);
-    world.query(&scenario.cold_entry);
+    world.query(&scenario.cold_entry, &mut Unobserved);
     world
 }
 
@@ -142,13 +219,19 @@ impl Report<'_> {
         self.artifact.entering(&current);
     }
 
-    fn firings(&self) {
+    /// Label only recovery firings from the observer's reference execution. This preserves unobserved trace output while advancing the cursor past all firings.
+    fn firings(&self, reference: Option<Range<usize>>) {
         if !self.trace {
             return;
         }
         let fired = recovery::fired();
-        for entry in &fired[self.printed_firings.get()..] {
-            eprintln!("      recovered: {entry}");
+        for (index, entry) in fired.iter().enumerate().skip(self.printed_firings.get()) {
+            match &reference {
+                Some(interval) if interval.contains(&index) => {
+                    eprintln!("      recovered (reference): {entry}")
+                },
+                _ => eprintln!("      recovered: {entry}"),
+            }
         }
         self.printed_firings.set(fired.len());
     }
