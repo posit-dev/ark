@@ -9,7 +9,6 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-mutatis = "0.5.3"
 oak_db = { path = "..", features = ["fuzz"] }
 
 [[bin]]

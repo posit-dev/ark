@@ -7,10 +7,10 @@
 //! See `crates/oak_db/fuzz/README.md` for commands, CI budgets, corpus
 //! maintenance, and failure replay. This module describes query coverage.
 //!
-//! `seed_corpus()` supplies fixed starting scenarios, and [`ScenarioMutator`]
+//! `seed_corpus()` supplies fixed starting scenarios, and `ScenarioMutator`
 //! mutates them. The test suite replays shrunken failures so the trace, panic
 //! location, and artifact describe the same scenario. Save it as an explicit
-//! [`Scenario`] test.
+//! `Scenario` test.
 //!
 //! # Coverage
 //!
@@ -43,6 +43,7 @@ mod build;
 mod choose;
 #[cfg(test)]
 pub(crate) mod corpus;
+mod driver;
 mod generate;
 mod limits;
 mod mutate;
@@ -53,9 +54,12 @@ mod spec;
 mod targets;
 mod traversal;
 
+pub use driver::execute_json;
+pub use driver::mutate_json;
 #[cfg(test)]
 pub(crate) use generate::seed_corpus;
-pub use mutate::ScenarioMutator;
+#[cfg(test)]
+pub(crate) use mutate::ScenarioMutator;
 // Keep direct `World` access for regression assertions. External callers run
 // whole scenarios so extra queries cannot warm the database before the cold entry.
 #[cfg(test)]
@@ -63,7 +67,8 @@ pub(crate) use run::start;
 pub use run::Runner;
 #[cfg(test)]
 pub(crate) use run::World;
-pub use scenario::Scenario;
+#[cfg(test)]
+pub(crate) use scenario::Scenario;
 #[cfg(test)]
 pub(crate) use spec::FileId;
 #[cfg(test)]

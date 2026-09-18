@@ -764,7 +764,6 @@ name = "oak_db-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "mutatis",
  "oak_db",
 ]
 

@@ -10,9 +10,9 @@ mod file_reader;
 mod file_resolve;
 mod file_revision;
 mod file_source_site;
-// Non-test fuzz builds use only `Runner`, `Scenario`, and `ScenarioMutator`,
-// while unit tests exercise the rest of the model. Test builds omit this
-// allowance, so they still report items unused by either path.
+// Non-test fuzz builds use only `Runner::open()`, `execute_json()`, and
+// `mutate_json()`, while unit tests exercise the rest of the model. Test builds
+// omit this allowance, so they still report items unused by either path.
 #[cfg(feature = "fuzz")]
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod fuzz;
