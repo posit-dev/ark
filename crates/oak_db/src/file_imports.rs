@@ -16,6 +16,8 @@ use crate::load_context::load_context;
 use crate::load_context::LoadContext;
 use crate::load_context::LoadKind;
 use crate::load_context::SearchPathTail;
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::Db;
 use crate::File;
 use crate::Package;
@@ -419,9 +421,11 @@ impl File {
     ///
     /// Empty for a file with an explicit load order.
     ///
-    /// `cycle_result` is defensive. Resolving a source site reads the target's
-    /// `exports`, meaning that a source cycle is always also a `semantic_index`
-    /// cycle which has its own recovery.
+    /// Defensive fallback. A `sourced_by()` edge is created only after the
+    /// resolver reads `exports(target)`, so a `source()` cycle re-enters
+    /// `exports()` or `semantic_index()` before `inherited_layers()`. The
+    /// `NoopImportsResolver` rebuild removes the source sites that could
+    /// otherwise re-enter this query.
     #[salsa::tracked(returns(ref), cycle_result =
     inherited_layers_cycle_result)]
     pub(crate) fn inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> {
@@ -512,15 +516,19 @@ fn cross_file_layers_cycle_result(
     file: File,
     view: CollationView,
 ) -> CrossFileLayers {
+    record(db, Recovery::CrossFileLayers(file, view));
     lower_load_context(db, load_context(db, file, view), PredecessorAttaches::Skip)
 }
 
+/// Return no inherited layers when this query is Salsa's repeated key in a
+/// `source()` cycle.
 fn inherited_layers_cycle_result(
-    _db: &dyn Db,
+    db: &dyn Db,
     _id: salsa::Id,
-    _file: File,
-    _view: CollationView,
+    file: File,
+    view: CollationView,
 ) -> Vec<InheritedLayers> {
+    record(db, Recovery::InheritedLayers(file, view));
     Vec::new()
 }
 
