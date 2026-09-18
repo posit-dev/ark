@@ -164,7 +164,7 @@ fn test_write_seed_corpus() {
     let dir = std::path::Path::new(&dir);
     std::fs::create_dir_all(dir).unwrap();
 
-    for case in corpus::corpus() {
+    for case in corpus::cases() {
         write_scenario_json(dir, case.name, &case.scenario);
     }
     for scenario in seed_corpus(0) {

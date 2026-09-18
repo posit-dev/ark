@@ -83,6 +83,18 @@ pub(crate) enum Site {
 }
 
 impl Scenario {
+    /// Builds a named corpus case. `seed` and `variant` only identify the
+    /// scenarios `seed_corpus()` generates, so a fixed case leaves them at 0.
+    pub(super) fn cold(initial: WorkspaceSpec, cold_entry: Query, ops: Vec<Op>) -> Scenario {
+        Scenario {
+            seed: 0,
+            variant: 0,
+            initial,
+            cold_entry,
+            ops,
+        }
+    }
+
     pub(super) fn header(&self) -> String {
         format!("seed {} variant {}", self.seed, self.variant)
     }

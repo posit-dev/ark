@@ -15,7 +15,7 @@ use crate::fuzz::build::binding;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::source;
 use crate::fuzz::corpus;
-use crate::fuzz::corpus::corpus;
+use crate::fuzz::corpus::cases;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::Owner;
@@ -27,7 +27,7 @@ use crate::NamespaceVisibility;
 
 #[test]
 fn test_corpus_scenarios_round_trip() {
-    for case in corpus() {
+    for case in cases() {
         let json = case.scenario.to_json().unwrap();
         let restored = Scenario::from_json(json.as_bytes()).unwrap();
         assert_eq!(restored.to_json().unwrap(), json);
@@ -67,7 +67,7 @@ fn test_mutated_scenarios_round_trip() {
 
 #[test]
 fn test_nested_hole_round_trips() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.initial.files[0].program = Program {
         statements: vec![Stmt::effect(
             EffectRecipe::QuoteHoles {
@@ -93,7 +93,7 @@ fn test_malformed_input_is_an_error() {
 
 #[test]
 fn test_out_of_range_cold_entry_is_rejected() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.cold_entry = Query::Diagnostics(FileId(2));
 
     let error = scenario.validate().unwrap_err();
@@ -105,7 +105,7 @@ fn test_out_of_range_cold_entry_is_rejected() {
 
 #[test]
 fn test_oversized_workspace_is_rejected() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     let file = scenario.initial.files[1].clone();
     while scenario.initial.files.len() <= 5 {
         scenario.initial.files.push(file.clone());
@@ -132,7 +132,7 @@ fn test_oversized_edit_replacement_is_rejected() {
             .collect(),
     };
 
-    let mut nested = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut nested = corpus::scenario("acyclic_pair_closes_then_reopens");
     nested.ops.push(Op::Edit(Edit {
         file: FileId(0),
         program: Program {
@@ -145,7 +145,7 @@ fn test_oversized_edit_replacement_is_rejected() {
         "op 2 nests 4 levels but replay accepts at most 3"
     );
 
-    let mut widened = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut widened = corpus::scenario("acyclic_pair_closes_then_reopens");
     widened.ops.push(Op::Edit(Edit {
         file: FileId(0),
         program: wide,
@@ -180,7 +180,7 @@ fn test_empty_workspace_is_rejected() {
 
 #[test]
 fn test_out_of_range_op_file_is_rejected() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.ops.push(Op::Query(Query::Imports(FileId(9))));
 
     let error = scenario.validate().unwrap_err();
@@ -192,7 +192,7 @@ fn test_out_of_range_op_file_is_rejected() {
 
 #[test]
 fn test_package_owned_file_with_out_of_range_package_is_rejected() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.initial.files[0].owner = Owner::Package(PackageId(0));
 
     let error = scenario.validate().unwrap_err();
@@ -204,7 +204,7 @@ fn test_package_owned_file_with_out_of_range_package_is_rejected() {
 
 #[test]
 fn test_unresolved_source_path_stays_valid() {
-    let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+    let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
     scenario.initial.files[0].program = Program {
         statements: vec![source("missing.R")],
     };
@@ -214,7 +214,7 @@ fn test_unresolved_source_path_stays_valid() {
 
 #[test]
 fn test_corpus_and_seed_corpus_validate() {
-    for case in corpus() {
+    for case in cases() {
         assert!(case.scenario.validate().is_ok());
     }
     for scenario in seed_corpus(0) {
@@ -224,7 +224,7 @@ fn test_corpus_and_seed_corpus_validate() {
 
 #[test]
 fn test_out_of_range_package_id_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.cold_entry = Query::PackageResolve(
         PackageId(5),
         "exp_a".to_string(),
@@ -240,7 +240,7 @@ fn test_out_of_range_package_id_is_rejected() {
 
 #[test]
 fn test_file_owned_by_library_package_is_rejected() {
-    let mut scenario = corpus::case("mutual_reexport_has_no_terminal_definition");
+    let mut scenario = corpus::scenario("mutual_reexport_has_no_terminal_definition");
     scenario.initial.files[0].owner = Owner::Package(PackageId(0));
 
     let error = scenario.validate().unwrap_err();
@@ -252,7 +252,7 @@ fn test_file_owned_by_library_package_is_rejected() {
 
 #[test]
 fn test_duplicate_package_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     let mut duplicate = scenario.initial.packages[1].clone();
     duplicate.name = scenario.initial.packages[0].name.clone();
     scenario.initial.packages.push(duplicate);
@@ -266,7 +266,7 @@ fn test_duplicate_package_name_is_rejected() {
 
 #[test]
 fn test_base_named_package_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].name = "base".to_string();
 
     let error = scenario.validate().unwrap_err();
@@ -275,7 +275,7 @@ fn test_base_named_package_is_rejected() {
 
 #[test]
 fn test_over_max_packages_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     let extra = scenario.initial.packages[1].clone();
     for index in 0..3 {
         let mut package = extra.clone();
@@ -292,7 +292,7 @@ fn test_over_max_packages_is_rejected() {
 
 #[test]
 fn test_over_max_exports_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[1].exports = vec![
         "exp_a".to_string(),
         "exp_b".to_string(),
@@ -309,7 +309,7 @@ fn test_over_max_exports_is_rejected() {
 
 #[test]
 fn test_over_max_reexports_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].reexports = vec![
         Reexport {
             name: "exp_a".to_string(),
@@ -338,7 +338,7 @@ fn test_over_max_reexports_is_rejected() {
 
 #[test]
 fn test_oversized_package_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].name = "a".repeat(40);
 
     let error = scenario.validate().unwrap_err();
@@ -350,7 +350,7 @@ fn test_oversized_package_name_is_rejected() {
 
 #[test]
 fn test_oversized_export_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[1].exports.push("b".repeat(40));
 
     let error = scenario.validate().unwrap_err();
@@ -362,7 +362,7 @@ fn test_oversized_export_name_is_rejected() {
 
 #[test]
 fn test_oversized_reexport_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].reexports[0].name = "c".repeat(40);
 
     let error = scenario.validate().unwrap_err();
@@ -374,7 +374,7 @@ fn test_oversized_reexport_name_is_rejected() {
 
 #[test]
 fn test_oversized_reexport_source_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].reexports[0].from = "d".repeat(40);
 
     let error = scenario.validate().unwrap_err();
@@ -386,7 +386,7 @@ fn test_oversized_reexport_source_is_rejected() {
 
 #[test]
 fn test_oversized_package_resolve_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.cold_entry =
         Query::PackageResolve(PackageId(0), "e".repeat(40), NamespaceVisibility::Exported);
 
@@ -399,7 +399,7 @@ fn test_oversized_package_resolve_name_is_rejected() {
 
 #[test]
 fn test_non_identifier_export_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[1]
         .exports
         .push("1bad".to_string());
@@ -416,7 +416,7 @@ fn test_non_identifier_export_name_is_rejected() {
 /// cannot parse and panics on an input the driver can reach.
 #[test]
 fn test_reserved_word_export_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[1].exports[0] = "if".to_string();
 
     let error = scenario.validate().unwrap_err();
@@ -427,7 +427,7 @@ fn test_reserved_word_export_is_rejected() {
 
 #[test]
 fn test_reserved_word_reexport_source_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].reexports[0].from = "function".to_string();
 
     let error = scenario.validate().unwrap_err();
@@ -440,7 +440,7 @@ fn test_reserved_word_reexport_source_is_rejected() {
 /// carries no name at all.
 #[test]
 fn test_literal_export_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[1].exports[0] = "TRUE".to_string();
 
     let error = scenario.validate().unwrap_err();
@@ -452,7 +452,7 @@ fn test_literal_export_name_is_rejected() {
 
 #[test]
 fn test_literal_reexport_source_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     scenario.initial.packages[0].reexports[0].from = "NULL".to_string();
 
     let error = scenario.validate().unwrap_err();
@@ -466,7 +466,7 @@ fn test_literal_reexport_source_is_rejected() {
 /// would describe an edge the database does not have.
 #[test]
 fn test_duplicate_reexport_name_is_rejected() {
-    let mut scenario = corpus::case("acyclic_reexport_chain_resolves_to_the_definition");
+    let mut scenario = corpus::scenario("acyclic_reexport_chain_resolves_to_the_definition");
     let duplicate = Reexport {
         name: scenario.initial.packages[0].reexports[0].name.clone(),
         from: "pkgz".to_string(),

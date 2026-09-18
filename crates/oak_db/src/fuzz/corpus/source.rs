@@ -8,7 +8,6 @@ use super::package;
 use super::program;
 use super::query;
 use super::replace;
-use super::scenario;
 use super::scripts;
 use super::scripts_with;
 use crate::file_imports::CollationView;
@@ -36,7 +35,7 @@ pub(super) fn acyclic_pair_closes_then_reopens() -> Scenario {
         replace(FileId(1), program(vec![source("a.R"), binding("val_b")])),
         replace(FileId(1), program(vec![binding("val_b")])),
     ];
-    scenario(initial, Query::Diagnostics(FileId(0)), ops)
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), ops)
 }
 
 pub(super) fn mutual_pair_opens_then_closes_again() -> Scenario {
@@ -48,7 +47,7 @@ pub(super) fn mutual_pair_opens_then_closes_again() -> Scenario {
         replace(FileId(1), program(vec![binding("val_b")])),
         replace(FileId(1), program(vec![source("a.R"), binding("val_b")])),
     ];
-    scenario(initial, Query::Diagnostics(FileId(1)), ops)
+    Scenario::cold(initial, Query::Diagnostics(FileId(1)), ops)
 }
 
 pub(super) fn package_cold_entry_reaches_cross_file_layers_recovery() -> Scenario {
@@ -56,7 +55,7 @@ pub(super) fn package_cold_entry_reaches_cross_file_layers_recovery() -> Scenari
         ("R/a.R", program(vec![library("pkga"), source("R/b.R")])),
         ("R/b.R", program(vec![library("pkga")])),
     ]);
-    scenario(
+    Scenario::cold(
         initial,
         Query::CrossFileLayers(FileId(1), CollationView::Eager),
         vec![],
@@ -74,7 +73,7 @@ pub(super) fn package_edit_revalidates_cross_file_layers_recovery() -> Scenario 
         replace(FileId(0), program(vec![source("R/b.R")])),
         query(Query::CrossFileLayers(FileId(1), CollationView::Eager)),
     ];
-    scenario(initial, Query::Imports(FileId(1)), ops)
+    Scenario::cold(initial, Query::Imports(FileId(1)), ops)
 }
 
 pub(super) fn same_file_shadow_suppresses_the_edge() -> Scenario {
@@ -85,7 +84,7 @@ pub(super) fn same_file_shadow_suppresses_the_edge() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 pub(super) fn nested_source_in_function_body() -> Scenario {
@@ -99,7 +98,7 @@ pub(super) fn nested_source_in_function_body() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 pub(super) fn source_after_bindings() -> Scenario {
@@ -107,7 +106,7 @@ pub(super) fn source_after_bindings() -> Scenario {
         ("a.R", program(vec![binding("val_a"), source("b.R")])),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 pub(super) fn library_in_function_body() -> Scenario {
@@ -122,7 +121,7 @@ pub(super) fn library_in_function_body() -> Scenario {
             ]),
         )]),
     };
-    scenario(initial, Query::AttachedPackages(FileId(0)), vec![])
+    Scenario::cold(initial, Query::AttachedPackages(FileId(0)), vec![])
 }
 
 pub(super) fn shallow_source_dir() -> Scenario {
@@ -137,7 +136,7 @@ pub(super) fn shallow_source_dir() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// Qualify `tar_source()` so it resolves without attaching `targets`.
@@ -153,7 +152,7 @@ pub(super) fn recursive_source_dir_in_package() -> Scenario {
         ),
         ("R/b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// `sourceDir()` walks one level, so it excludes the nested file.
@@ -170,7 +169,7 @@ pub(super) fn shallow_source_dir_excludes_nested() -> Scenario {
         ("b.R", program(vec![binding("val_b")])),
         ("sub/c.R", program(vec![binding("val_nested")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// Unlike `sourceDir()`, `tar_source()` walks recursively and includes the
@@ -188,7 +187,7 @@ pub(super) fn recursive_source_dir_includes_nested() -> Scenario {
         ("b.R", program(vec![binding("val_b")])),
         ("sub/c.R", program(vec![binding("val_nested")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// `local()` runs eagerly, so its `source()` call forms an edge while the file
@@ -201,7 +200,7 @@ pub(super) fn source_in_eager_block() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// `quote()` does not evaluate its argument, so the nested `source()` call
@@ -214,7 +213,7 @@ pub(super) fn quote_suppresses_source_effect() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// A `bquote()` hole evaluates its contents, so the nested `source()` call
@@ -227,7 +226,7 @@ pub(super) fn quote_hole_escapes_source_effect() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// A later binding cannot suppress an earlier call, unlike
@@ -240,7 +239,7 @@ pub(super) fn shadow_after_source_call() -> Scenario {
         ),
         ("b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
 /// `tar_source()` takes a file or a directory, and `scan_source()` tries
@@ -257,5 +256,5 @@ pub(super) fn file_or_dir_source_at_a_file() -> Scenario {
         ),
         ("R/b.R", program(vec![binding("val_b")])),
     ]);
-    scenario(initial, Query::Diagnostics(FileId(0)), vec![])
+    Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }

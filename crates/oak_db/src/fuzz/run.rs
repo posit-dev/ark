@@ -164,7 +164,7 @@ mod tests {
     /// The artifact must identify the active operation even without unwinding.
     #[test]
     fn test_artifact_records_scenario_and_failing_operation() {
-        let scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
         let artifact = Artifact::open();
         let operation = scenario.ops[0].render();
 
@@ -188,7 +188,7 @@ mod tests {
     /// `execute()` must not swallow what `check()` deliberately catches.
     #[test]
     fn test_execute_lets_a_panic_propagate() {
-        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
         scenario.cold_entry = Query::Diagnostics(FileId(9));
 
         let runner = Runner::open();
@@ -201,7 +201,7 @@ mod tests {
     /// the real panic message without a separately installed hook.
     #[test]
     fn test_check_recovers_panic_without_separately_installed_hook() {
-        let mut scenario = corpus::case("acyclic_pair_closes_then_reopens");
+        let mut scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
         scenario.cold_entry = Query::Diagnostics(FileId(9));
 
         let runner = Runner::open();
