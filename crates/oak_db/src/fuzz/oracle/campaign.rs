@@ -19,6 +19,7 @@ use crate::fuzz::oracle::compare::Counts;
 use crate::fuzz::oracle::compare::Fresh;
 use crate::fuzz::oracle::compare::Mismatch;
 use crate::fuzz::oracle::compare::Reference;
+use crate::fuzz::oracle::reduce;
 use crate::fuzz::scenario::Scenario;
 use crate::fuzz::seed_corpus;
 use crate::fuzz::Runner;
@@ -113,15 +114,38 @@ pub(crate) fn run(seed: u64, mutations: usize) -> Summary {
     summary
 }
 
-/// Replays a saved scenario against `reference`, failing on a mismatch or panic. Accepting a reference lets tests replay an injected mismatch.
+/// Replays a saved scenario against `reference`, failing on a mismatch or
+/// panic. Accepting a reference lets tests replay an injected mismatch. Prints
+/// the comparison counts on a clean result, since "no mismatch" can mean
+/// agreement or a recovery skip on every comparison.
 pub(crate) fn replay<R: Reference>(scenario: &Scenario, reference: R) {
     let runner = Runner::open();
     let outcome = compare(&runner, scenario, reference);
-    report(&runner, scenario, outcome);
+    let counts = report(&runner, scenario, outcome);
+    eprintln!("{}", render_counts(&counts));
+}
+
+/// Reduces a saved scenario that already mismatches under `Fresh`, then reports
+/// the reduced mismatch and writes replayable JSON.
+pub(crate) fn reduce_and_report(scenario: Scenario, seed: u64, shrink_iters: usize) {
+    let runner = Runner::open();
+    let reduction = reduce::reduce(&runner, scenario, seed, shrink_iters);
+    if !reduction.shrink_panics.is_empty() {
+        eprintln!(
+            "reduction rejected {} shrink-time panic(s) rather than let them replace the mismatch:\n{}",
+            reduction.shrink_panics.len(),
+            reduction.shrink_panics.join("\n")
+        );
+    }
+    report(
+        &runner,
+        &reduction.scenario,
+        Outcome::Mismatch(reduction.finding),
+    );
 }
 
 /// Return a mismatch before a later panic because the mismatch stops the comparison.
-fn compare<R: Reference>(runner: &Runner, scenario: &Scenario, reference: R) -> Outcome {
+pub(super) fn compare<R: Reference>(runner: &Runner, scenario: &Scenario, reference: R) -> Outcome {
     let mut observer = Compare::new(scenario, reference);
     let outcome = runner.check_observed(scenario, &mut observer);
 
