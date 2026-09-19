@@ -26,6 +26,7 @@ use oak_db::OakDatabase;
 use oak_scan::DbScan;
 pub use session::LspSession;
 
+use crate::console::console_scopes;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
 
@@ -82,4 +83,11 @@ impl LspHarness {
         let file = self.state.open_file(path)?.file();
         Ok(file.source_text(self.state.db()).as_str())
     }
+}
+
+/// Initialize R and return the `ReadConsole` scopes needed to resolve base
+/// symbols in diagnostics benchmarks.
+pub fn r_session_scopes() -> Vec<Vec<String>> {
+    harp::fixtures::r_test_init();
+    console_scopes()
 }

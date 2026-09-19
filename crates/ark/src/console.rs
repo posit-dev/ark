@@ -128,6 +128,8 @@ use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
 pub(crate) use console_integration::FrontendCallOutcome;
 pub(crate) use console_repl::console_inputs;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use console_repl::console_scopes;
 pub(crate) use console_repl::r_busy;
 pub(crate) use console_repl::r_interrupt_events;
 pub(crate) use console_repl::r_read_console;

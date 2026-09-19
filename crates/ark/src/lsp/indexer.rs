@@ -171,6 +171,27 @@ pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEnt
     }
 }
 
+/// Cache names of functions and variables in indexable workspace files.
+/// Salsa invalidates this query when workspace membership, a file path, or a
+/// [`file_index()`] changes, avoiding a workspace-wide traversal for every
+/// diagnostics pass.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_symbol_names(db: &dyn ArkDb) -> rustc_hash::FxHashSet<String> {
+    let mut names = rustc_hash::FxHashSet::default();
+
+    map(db, |_file, _symbol, entry| match &entry.data {
+        IndexEntryData::Function { name, arguments: _ } => {
+            names.insert(name.clone());
+        },
+        IndexEntryData::Variable { name } => {
+            names.insert(name.clone());
+        },
+        _ => {},
+    });
+
+    names
+}
+
 /// Call [`file_index()`] for every workspace file. This ensures workspace
 /// symbols are loaded before the user needs to read them (e.g. by looking up a
 /// workspace symbol without any file opened).
