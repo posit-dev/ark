@@ -1,3 +1,4 @@
+mod burst;
 mod db;
 mod diagnostics;
 mod find_references;
