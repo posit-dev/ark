@@ -191,16 +191,9 @@ pub(crate) fn generate_diagnostics(
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
 
-    // Add the current workspace symbols.
-    indexer::map(db, |_file, _symbol, entry| match &entry.data {
-        indexer::IndexEntryData::Function { name, arguments: _ } => {
-            context.workspace_symbols.insert(name.to_string());
-        },
-        indexer::IndexEntryData::Variable { name } => {
-            context.workspace_symbols.insert(name.to_string());
-        },
-        _ => {},
-    });
+    context
+        .workspace_symbols
+        .extend(indexer::workspace_symbol_names(db).iter().cloned());
 
     // If this is a package, add imported symbols to workspace
     if let Some(package) = file.package(db) {
