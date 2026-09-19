@@ -30,6 +30,9 @@
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
 //! one-line-per-case output from `just bench`.
 //!
+//! `OAK_MAX_ANALYSIS_THREADS` pins the analysis pool's worker count for the
+//! end-to-end cases. The `ctl.*` cases run on the bench thread and ignore it.
+//!
 //! Diagnostics resolve base symbols through the `ReadConsole` scopes. The
 //! benchmark starts one R session to obtain those scopes, while package
 //! resolution remains pinned to the fixture library.

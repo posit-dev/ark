@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use aether_path::FilePath;
+use stdext::parse_positive_count;
 use stdext::spawn;
 
 use super::catch_cancellation;
@@ -25,6 +26,9 @@ use crate::panic::Recovery;
 /// few enough that they don't crowd out the main loop or the R session we share
 /// a process with.
 const MAX_ANALYSIS_THREADS: usize = 4;
+
+/// Overrides the default worker count when set to a positive integer.
+pub(crate) const MAX_ANALYSIS_THREADS_ENV_VAR: &str = "OAK_MAX_ANALYSIS_THREADS";
 
 /// A fixed set of OS threads running analysis tasks over a db snapshot.
 ///
@@ -154,9 +158,13 @@ impl AnalysisPool {
     }
 }
 
-/// Analysis tasks are CPU-bound, so don't run more of them than the machine can
-/// actually run at once.
+/// Cap the default worker count at available parallelism because analysis tasks
+/// are CPU-bound. [`MAX_ANALYSIS_THREADS_ENV_VAR`] overrides this cap.
 fn analysis_threads() -> usize {
+    if let Some(threads) = env_analysis_threads() {
+        return threads;
+    }
+
     match std::thread::available_parallelism() {
         Ok(parallelism) => parallelism.get().min(MAX_ANALYSIS_THREADS),
         Err(err) => {
@@ -164,6 +172,16 @@ fn analysis_threads() -> usize {
             1
         },
     }
+}
+
+fn env_analysis_threads() -> Option<usize> {
+    let value = std::env::var(MAX_ANALYSIS_THREADS_ENV_VAR).ok()?;
+
+    let threads = parse_positive_count(&value);
+    if threads.is_none() {
+        log::warn!("Ignoring {MAX_ANALYSIS_THREADS_ENV_VAR}={value}, not a positive integer");
+    }
+    threads
 }
 
 /// Closing the queue is all a worker needs to exit, so shutdown doesn't join

@@ -26,6 +26,7 @@ pub use crate::cell::DebugRefCell;
 pub use crate::env::env_flag;
 pub use crate::env::env_flag_opt;
 pub use crate::env::is_ci;
+pub use crate::env::parse_positive_count;
 pub use crate::join::Joined;
 pub use crate::ok::Ok;
 pub use crate::panic::panic_message;

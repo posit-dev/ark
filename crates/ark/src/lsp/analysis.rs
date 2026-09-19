@@ -23,6 +23,8 @@ pub(crate) use metrics::DiagnosticsMetrics;
 pub(crate) use pool::AnalysisPool;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use pool::PoolMetrics;
+#[cfg(test)]
+pub(crate) use pool::MAX_ANALYSIS_THREADS_ENV_VAR;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use refresh::is_testthat_path;
 pub(crate) use refresh::DiagnosticsReady;

@@ -4,12 +4,17 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
+use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::harness::editor::notifications::initialize_with;
 use crate::lsp::main_loop::Event;
@@ -67,4 +72,25 @@ pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
             },
         }),
     ))
+}
+
+/// Create a `textDocument/definition` request and return its response receiver
+/// so tests can assert the handler reply.
+pub(crate) fn goto_definition(
+    path: &Path,
+    position: Position,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: Uri::from_file_path(path).unwrap(),
+            },
+            position,
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let event = Event::Lsp(LspMessage::Request(LspRequest::GotoDefinition(params), tx));
+    (event, rx)
 }
