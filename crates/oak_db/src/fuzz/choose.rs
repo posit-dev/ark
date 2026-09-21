@@ -95,11 +95,11 @@ impl Shape {
 
 /// Give every entry query a fresh database because Salsa's repeated key depends
 /// on entry order.
-pub(super) fn cold_entries(rng: &mut impl Choose, shape: &Shape) -> Vec<Query> {
+pub(super) fn cold_entries(rng: &mut impl Choose, shape: &Shape, observed: FileId) -> Vec<Query> {
     vec![
         cycle_entry(rng, shape),
         aggregate_entry(rng),
-        production_entry(rng, shape),
+        observing_query(rng, shape, observed),
         random_query(rng, shape),
     ]
 }
