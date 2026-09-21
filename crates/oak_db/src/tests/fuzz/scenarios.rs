@@ -274,6 +274,59 @@ fn test_scenario_testthat_helper_edit_changes_the_test_view() {
     assert_eq!(world.file_resolve(FileId(2), "pkg_fn"), ["p/mypkg/R/a.R"]);
 }
 
+#[test]
+fn test_scenario_shiny_entry_sees_global_and_r_files() {
+    let scenario = corpus::scenario("shiny_entry_sees_global_and_r_files");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(0), "global_fn"), ["w/global.R"]);
+    assert_eq!(world.file_resolve(FileId(0), "r_fn"), ["w/R/a.R"]);
+}
+
+#[test]
+fn test_scenario_shiny_marker_removed_stops_autoload() {
+    let scenario = corpus::scenario("shiny_marker_removed_stops_autoload");
+    let mut world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(0), "r_fn"), ["w/R/a.R"]);
+    assert_eq!(world.file_resolve(FileId(2), "global_fn"), ["w/global.R"]);
+
+    world.apply(&scenario.ops[0]);
+
+    assert_eq!(world.file_resolve(FileId(0), "r_fn"), NO_DEFINITIONS);
+    assert_eq!(world.file_resolve(FileId(0), "global_fn"), NO_DEFINITIONS);
+    // Resolving `R/a.R` verifies that changing `app.R` invalidates its
+    // sibling's autoload context.
+    assert_eq!(world.file_resolve(FileId(2), "global_fn"), NO_DEFINITIONS);
+}
+
+/// `_disable_autoload.R` is presence-driven. It unclassifies `R/` siblings
+/// without affecting `app.R` or its `global.R` support.
+#[test]
+fn test_scenario_shiny_disabled_autoload_drops_the_r_sibling() {
+    let scenario = corpus::scenario("shiny_disabled_autoload_drops_the_r_sibling");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(0), "global_fn"), ["w/global.R"]);
+    assert_eq!(world.file_resolve(FileId(0), "r_fn"), NO_DEFINITIONS);
+
+    // Resolving `R/a.R` verifies that disabling autoload also removes its
+    // `global.R` support.
+    assert_eq!(world.file_resolve(FileId(3), "global_fn"), NO_DEFINITIONS);
+}
+
+/// `R/app.R` must join the outer app because a self-rooted entry would look
+/// for the nonexistent `R/global.R`.
+#[test]
+fn test_scenario_shiny_nested_app_file_joins_the_enclosing_app() {
+    let scenario = corpus::scenario("shiny_nested_app_file_joins_the_enclosing_app");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(2), "global_fn"), ["w/global.R"]);
+
+    assert_eq!(world.file_resolve(FileId(0), "nested_fn"), ["w/R/app.R"]);
+}
+
 // == Package re-export cycles ==
 
 /// Checks the resolved definition and the metadata retained by NAMESPACE parsing.

@@ -37,11 +37,15 @@
 //! Package-owned `R/*.R` files form the loadable collation, while its remaining
 //! files are standalone scripts. A motif-position layout rotation ensures every
 //! seed corpus contains a `tests/testthat/` workspace whose test files testthat
-//! loads after the package collation.
+//! loads after the package collation, and a Shiny app whose `app.R` marker
+//! toggle moves its `R/` siblings between autoload members and plain scripts.
+//! An independent rotation covers Shiny-specific detection: disabled `R/`
+//! autoload, paired `ui.R` and `server.R` entries, package `inst/app/`, and a
+//! nested `R/app.R`.
 //!
 //! Library packages are metadata-only. Library-owned sources, `import()` bulk
-//! imports, shiny layouts, `Collate:` ordering, `R/` files excluded from it,
-//! file renaming, and metadata or revision edits are excluded.
+//! imports, `Collate:` ordering, `R/` files excluded from it, file renaming,
+//! and metadata or revision edits are excluded.
 //!
 //! Only `Query` variants are cold entries. Layout queries such as
 //! `collation_siblings()`, `source_dir_scripts()`, and `shiny_autoload()` accept
