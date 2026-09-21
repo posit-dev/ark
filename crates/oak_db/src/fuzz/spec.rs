@@ -4,6 +4,9 @@ use std::fmt::Write;
 
 use oak_semantic::fuzz::Program;
 
+use crate::classify_in_package;
+use crate::PackagePlacement;
+
 pub(super) const SCRIPT_ROOT: &str = "w";
 
 pub(super) const LIBRARY_ROOT: &str = "libs";
@@ -94,6 +97,13 @@ pub(crate) struct WorkspaceSpec {
     pub(crate) packages: Vec<PackageSpec>,
     /// Indexed by [`FileId`]. Order is script order or package collation order.
     pub(crate) files: Vec<FileSpec>,
+}
+
+/// Uses `classify_in_package()` so the fuzz model assigns package files to the
+/// same collation as the scanner.
+pub(super) fn is_collation_member(relative: &str) -> bool {
+    let root = std::path::Path::new(PACKAGE_ROOT);
+    classify_in_package(root, &root.join(relative)) == PackagePlacement::File
 }
 
 /// Restricts the name's spelling, but does not exclude R keywords or literals.

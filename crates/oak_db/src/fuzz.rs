@@ -34,10 +34,22 @@
 //! `seed_corpus()` assigns package layers by motif position so unrelated changes
 //! to random draws cannot remove that coverage.
 //!
+//! Package-owned `R/*.R` files form the loadable collation, while its remaining
+//! files are standalone scripts. A motif-position layout rotation ensures every
+//! seed corpus contains a `tests/testthat/` workspace whose test files testthat
+//! loads after the package collation.
+//!
 //! Library packages are metadata-only. Library-owned sources, `import()` bulk
-//! imports, testthat and shiny layouts, file renaming, and metadata or revision
-//! edits are excluded. Queries outside `Query` are covered only as
-//! dependencies, not as entry points.
+//! imports, shiny layouts, `Collate:` ordering, `R/` files excluded from it,
+//! file renaming, and metadata or revision edits are excluded.
+//!
+//! Only `Query` variants are cold entries. Layout queries such as
+//! `collation_siblings()`, `source_dir_scripts()`, and `shiny_autoload()` accept
+//! `&dyn SourceDb`, so they cannot call a recursive semantic query or become a
+//! Salsa repeated key. Add one as an entry only if it declares or reaches a
+//! `cycle_result` handler.
+//!
+//! [`classify_in_package()`]: crate::classify_in_package
 
 mod artifact;
 mod budgets;
