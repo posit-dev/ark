@@ -327,6 +327,32 @@ fn test_scenario_shiny_nested_app_file_joins_the_enclosing_app() {
     assert_eq!(world.file_resolve(FileId(0), "nested_fn"), ["w/R/app.R"]);
 }
 
+#[test]
+fn test_scenario_testthat_setup_outranks_helper() {
+    let scenario = corpus::scenario("testthat_setup_outranks_helper");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(3), "shared_fn"), [
+        "p/mypkg/tests/testthat/setup-c.R"
+    ]);
+}
+
+#[test]
+fn test_scenario_testthat_teardown_is_excluded_from_support() {
+    let scenario = corpus::scenario("testthat_teardown_is_excluded_from_support");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(2), "teardown_fn"), NO_DEFINITIONS);
+}
+
+#[test]
+fn test_scenario_testthat_nested_file_is_not_a_testthat_file() {
+    let scenario = corpus::scenario("testthat_nested_file_is_not_a_testthat_file");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(2), "nested_fn"), NO_DEFINITIONS);
+}
+
 // == Package re-export cycles ==
 
 /// Checks the resolved definition and the metadata retained by NAMESPACE parsing.
