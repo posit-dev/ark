@@ -23,7 +23,9 @@ use self::packages::reexport_layer;
 use self::packages::PackageLayer;
 use self::packages::WORKSPACE_PACKAGE;
 use crate::fuzz::budgets::MAX_FILES;
+use crate::fuzz::budgets::MAX_OPS;
 use crate::fuzz::build::binding;
+use crate::fuzz::build::call;
 use crate::fuzz::build::function_def;
 use crate::fuzz::build::library;
 use crate::fuzz::build::qualified_source;
@@ -49,6 +51,13 @@ const ATTACHABLE: [&str; 3] = ["pkga", "pkgb", "pkgc"];
 
 const OBSERVE_EDIT_ODDS: f64 = 0.7;
 
+/// A `history()` round's worst case: `query`, `touch`, `query`, `edit`, `query`.
+const MAX_ROUND_OPS: usize = 5;
+
+/// The marker toggle and its observing query, appended unconditionally after
+/// `history()`'s rounds for a Shiny draft.
+const SHINY_MARKER_OPS: usize = 2;
+
 /// Keep the smallest source-graph motifs flat, then add nested paths for
 /// directory-walk coverage.
 const NESTED_FROM: usize = 3;
@@ -67,7 +76,13 @@ pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
 
     for (index, motif) in MOTIFS.into_iter().enumerate() {
         let layer = package_layer(seed, index);
-        let mut draft = Draft::new(motif, layer, file_layout(seed, index), &mut rng);
+        let mut draft = Draft::new(
+            motif,
+            layer,
+            file_layout(seed, index, layer),
+            shiny_shape(seed, index),
+            &mut rng,
+        );
         let initial = draft.spec();
         let ops = draft.history(&mut rng);
 
@@ -123,28 +138,76 @@ const MOTIFS: [Motif; 7] = [
     Motif::Tail,
 ];
 
-/// Rotates testthat layouts by motif position so every seed corpus covers one
-/// without tying it to a particular source graph.
+/// Rotates convention-driven layouts by motif position so every seed corpus
+/// covers each one without tying it to a particular source graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FileLayout {
     /// Loose scripts, or package collation with nested scripts under `inst/`.
     Plain,
     /// Package collation followed by `tests/testthat/` helpers and tests.
     Testthat,
+    /// A loose-script Shiny app with `app.R`, `global.R`, and `R/` autoload members.
+    /// Its entry classification depends on `app.R`'s content.
+    Shiny,
 }
 
-/// One motif in three carries the testthat layout. A higher share would spend
-/// most of the corpus on package-owned drafts, since testthat needs a package.
-const TESTTHAT_PERIOD: usize = 3;
+/// One motif in three uses each convention-driven layout. A higher share would
+/// overrepresent drafts that require a package or `Owner::Script`.
+const FILE_LAYOUT_PERIOD: usize = 3;
 
 /// A testthat draft needs a collation member, helper, and test.
 const TESTTHAT_FILES: usize = 3;
 
-fn file_layout(seed: u64, motif: usize) -> FileLayout {
-    let offset = (seed % TESTTHAT_PERIOD as u64) as usize;
-    match (motif + offset) % TESTTHAT_PERIOD {
+/// Every Shiny shape requires an entry file, `global.R`, and an `R/` member.
+/// `UiServerPair` requires two entry files.
+const SHINY_FILES: usize = 4;
+
+/// `Local` needs a package collation member for its export. Shiny's loose
+/// `app.R`, `global.R`, and `R/` scripts cannot provide one, so use `Plain`.
+fn file_layout(seed: u64, motif: usize, layer: PackageLayer) -> FileLayout {
+    let offset = (seed % FILE_LAYOUT_PERIOD as u64) as usize;
+    let layout = match (motif + offset) % FILE_LAYOUT_PERIOD {
         0 => FileLayout::Testthat,
+        1 => FileLayout::Shiny,
         _ => FileLayout::Plain,
+    };
+    match (layout, layer) {
+        (FileLayout::Shiny, PackageLayer::Local) => FileLayout::Plain,
+        (layout, _) => layout,
+    }
+}
+
+/// Rotated independently of [`file_layout()`] so each seed corpus covers
+/// Shiny detection paths beyond a conventional `app.R` layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShinyShape {
+    /// The only shape whose entry marker `history()` toggles.
+    AppEntry,
+    /// `_disable_autoload.R` unclassifies every `R/` sibling by its presence,
+    /// so an edit cannot toggle this behavior within one history.
+    DisabledAutoload,
+
+    UiServerPair,
+    /// Package-owned `inst/app/` files bypass collation, so Shiny is considered
+    /// after package classification returns `None`.
+    PackageInstApp,
+    /// `in_r_directory()` keeps nested `R/app.R` in the outer app despite its
+    /// own marker.
+    NestedAppFile,
+}
+
+const SHINY_SHAPE_PERIOD: usize = 5;
+
+/// Multiply `motif` by three so `PackageInstApp` does not always coincide with
+/// `PackageLayer::Local`, whose downgrade would otherwise make it unreachable.
+fn shiny_shape(seed: u64, motif: usize) -> ShinyShape {
+    let offset = (seed % SHINY_SHAPE_PERIOD as u64) as usize;
+    match (3 * motif + offset) % SHINY_SHAPE_PERIOD {
+        0 => ShinyShape::AppEntry,
+        1 => ShinyShape::DisabledAutoload,
+        2 => ShinyShape::UiServerPair,
+        3 => ShinyShape::PackageInstApp,
+        _ => ShinyShape::NestedAppFile,
     }
 }
 
@@ -174,6 +237,9 @@ struct Draft {
     installed: Vec<String>,
     packages: Vec<PackageSpec>,
     owner: Owner,
+    layout: FileLayout,
+    /// Meaningful only when `layout` is `FileLayout::Shiny`.
+    shape: ShinyShape,
     files: Vec<FileDraft>,
     /// Enters the re-export chain this draft built, `None` without one.
     package_entry: Option<Query>,
@@ -198,19 +264,38 @@ struct FileParts {
     deferred: Option<String>,
     /// Supplies the local definition at the end of a re-export chain.
     local_export: Option<String>,
+    /// Stores the entry marker so shadow reselection can rebuild the `FileDraft`
+    /// through `to_draft()` without dropping it.
+    shiny_entry_marker: Option<&'static str>,
 }
 
 impl Draft {
-    fn new(motif: Motif, layer: PackageLayer, layout: FileLayout, rng: &mut StdRng) -> Self {
+    fn new(
+        motif: Motif,
+        layer: PackageLayer,
+        layout: FileLayout,
+        shape: ShinyShape,
+        rng: &mut StdRng,
+    ) -> Self {
         let drawn = rng.random_range(motif.min_files()..=MAX_FILES);
         let count = match layout {
             FileLayout::Testthat => drawn.max(TESTTHAT_FILES),
+            FileLayout::Shiny => drawn.max(SHINY_FILES),
             FileLayout::Plain => drawn,
         };
         let edges = motif.edges(count);
 
-        // `Local` and testthat layouts require a workspace package.
-        let owner = if layer == PackageLayer::Local ||
+        // Only `PackageInstApp` needs package ownership. `file_layout()`
+        // excludes the incompatible `Local` layer from all Shiny shapes.
+        let owner = if layout == FileLayout::Shiny {
+            match shape {
+                ShinyShape::PackageInstApp => Owner::Package(PackageId(0)),
+                ShinyShape::AppEntry |
+                ShinyShape::DisabledAutoload |
+                ShinyShape::UiServerPair |
+                ShinyShape::NestedAppFile => Owner::Script,
+            }
+        } else if layer == PackageLayer::Local ||
             layout == FileLayout::Testthat ||
             rng.random_bool(0.5)
         {
@@ -232,7 +317,7 @@ impl Draft {
         }
 
         let mut parts: Vec<FileParts> = (0..count)
-            .map(|index| FileParts::new(layout_path(layout, owner, index)))
+            .map(|index| FileParts::new(layout_path(layout, owner, shape, index)))
             .collect();
 
         for (sourcing, target) in edges {
@@ -266,6 +351,28 @@ impl Draft {
             }
         }
 
+        // `Expr::Call` is absent from `callees()`, so shadow selection cannot
+        // suppress an entry marker.
+        if layout == FileLayout::Shiny {
+            match shape {
+                ShinyShape::UiServerPair => {
+                    parts[0].shiny_entry_marker = Some("shinyUI");
+                    parts[1].shiny_entry_marker = Some("shinyServer");
+                },
+                // Both markers make `R/app.R` a genuine second-root candidate.
+                // Entry detection must defer to the enclosing-app check.
+                ShinyShape::NestedAppFile => {
+                    parts[0].shiny_entry_marker = Some("shinyApp");
+                    parts[2].shiny_entry_marker = Some("shinyApp");
+                },
+                ShinyShape::AppEntry |
+                ShinyShape::DisabledAutoload |
+                ShinyShape::PackageInstApp => {
+                    parts[0].shiny_entry_marker = Some("shinyApp");
+                },
+            }
+        }
+
         let paths: Vec<String> = parts.iter().map(|part| part.path.clone()).collect();
         let mut files: Vec<FileDraft> = parts
             .iter()
@@ -286,6 +393,8 @@ impl Draft {
             installed,
             packages,
             owner,
+            layout,
+            shape,
             files,
         }
     }
@@ -312,7 +421,19 @@ impl Draft {
         // draw from, so one shape serves the whole history.
         let shape = Shape::of(&self.spec());
 
+        // Reserve `SHINY_MARKER_OPS` for `AppEntry` so its history stays within
+        // `MAX_OPS`, enforced when `Scenario::from_json()` replays artifacts.
+        // Other Shiny shapes use classifications an edit cannot toggle.
+        let reserved = if self.layout == FileLayout::Shiny && self.shape == ShinyShape::AppEntry {
+            SHINY_MARKER_OPS
+        } else {
+            0
+        };
         for _ in 0..rng.random_range(1..=3) {
+            if ops.len() + MAX_ROUND_OPS + reserved > MAX_OPS {
+                break;
+            }
+
             // Preserve unrelated entry points instead of making every query follow an edit.
             ops.push(Op::Query(random_query(rng, &shape)));
             if rng.random_bool(0.3) {
@@ -325,6 +446,15 @@ impl Draft {
             let edited = edit.file();
             ops.push(edit);
             ops.push(self.query_after_edit(rng, &shape, edited));
+        }
+
+        // Toggle the only loader classification that is not path-derived,
+        // rather than relying on random edge edits.
+        if self.layout == FileLayout::Shiny && self.shape == ShinyShape::AppEntry {
+            let toggle = self.toggle_shiny_marker();
+            let toggled = toggle.file();
+            ops.push(toggle);
+            ops.push(self.query_after_edit(rng, &shape, toggled));
         }
 
         ops
@@ -363,6 +493,22 @@ impl Draft {
             },
         }
         self.edit(sourcing)
+    }
+
+    /// Toggles Shiny loading for `app.R` and its `R/` siblings.
+    fn toggle_shiny_marker(&mut self) -> Op {
+        let file = FileId(0);
+        let statements = &mut self.files[file.0].program.statements;
+        let existing = statements
+            .iter()
+            .position(|stmt| matches!(stmt, Stmt::Expr(Expr::Call { name }) if name == "shinyApp"));
+        match existing {
+            Some(position) => {
+                statements.remove(position);
+            },
+            None => statements.push(call("shinyApp")),
+        }
+        self.edit(file)
     }
 
     /// Changes a binding without changing source edges or attached packages.
@@ -415,6 +561,7 @@ impl FileParts {
             shadow: None,
             deferred: None,
             local_export: None,
+            shiny_entry_marker: None,
         }
     }
 
@@ -442,6 +589,9 @@ impl FileParts {
         if let Some(name) = &self.deferred {
             statements.push(function_def("read", vec![Stmt::use_of(name)]));
         }
+        if let Some(marker) = self.shiny_entry_marker {
+            statements.push(call(marker));
+        }
 
         FileDraft {
             path: self.path.clone(),
@@ -453,7 +603,7 @@ impl FileParts {
 /// A testthat draft keeps its first file in `R/` for package collation, then
 /// alternates helpers and tests. testthat loads all helpers before each test,
 /// exercising the support prefix that `CollationView` narrows.
-fn layout_path(layout: FileLayout, owner: Owner, index: usize) -> String {
+fn layout_path(layout: FileLayout, owner: Owner, shape: ShinyShape, index: usize) -> String {
     let name = (b'a' + index as u8) as char;
     match (layout, index) {
         (FileLayout::Plain, _) | (FileLayout::Testthat, 0) => file_path(owner, index),
@@ -461,6 +611,30 @@ fn layout_path(layout: FileLayout, owner: Owner, index: usize) -> String {
             format!("tests/testthat/helper-{name}.R")
         },
         (FileLayout::Testthat, _) => format!("tests/testthat/test-{name}.R"),
+        (FileLayout::Shiny, _) => shiny_path(shape, index),
+    }
+}
+
+/// `PackageInstApp` is package-owned but its `inst/app/` files are script-placed,
+/// allowing `load_context()` to reach Shiny after package classification.
+/// Every other shape uses `Owner::Script`, so `owner` is unnecessary.
+fn shiny_path(shape: ShinyShape, index: usize) -> String {
+    let name = (b'a' + index as u8) as char;
+    let prefix = match shape {
+        ShinyShape::PackageInstApp => "inst/app/",
+        ShinyShape::AppEntry |
+        ShinyShape::DisabledAutoload |
+        ShinyShape::UiServerPair |
+        ShinyShape::NestedAppFile => "",
+    };
+    match (shape, index) {
+        (ShinyShape::UiServerPair, 0) => format!("{prefix}ui.R"),
+        (ShinyShape::UiServerPair, 1) => format!("{prefix}server.R"),
+        (_, 0) => format!("{prefix}app.R"),
+        (_, 1) => format!("{prefix}global.R"),
+        (ShinyShape::DisabledAutoload, 2) => format!("{prefix}R/_disable_autoload.R"),
+        (ShinyShape::NestedAppFile, 2) => format!("{prefix}R/app.R"),
+        _ => format!("{prefix}R/{name}.R"),
     }
 }
 
@@ -528,6 +702,23 @@ mod tests {
                 start += 4 + usize::from(package_layer(seed, index) != PackageLayer::Bare);
             }
             assert_eq!(start, corpus.len());
+        }
+    }
+
+    /// Generated scenarios bypass `Runner::check()` validation. Scan beyond
+    /// the six canonical seeds because they do not cover every history length
+    /// that could exceed `MAX_OPS` and fail artifact replay.
+    #[test]
+    fn test_seed_corpus_scenarios_stay_within_acceptance_limits() {
+        for seed in 0..500 {
+            for scenario in seed_corpus(seed) {
+                if let Err(err) = scenario.validate() {
+                    panic!(
+                        "seed {seed} variant {} failed validation: {err}",
+                        scenario.variant
+                    );
+                }
+            }
         }
     }
 }

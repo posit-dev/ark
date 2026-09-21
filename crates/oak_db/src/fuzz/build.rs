@@ -16,6 +16,15 @@ pub(super) fn function_def(name: &str, body: Vec<Stmt>) -> Stmt {
     Stmt::bind(name, Expr::function(body))
 }
 
+/// Builds a marker call without an effect. `is_shiny_entry_file()` recognizes
+/// its name in the source, so `app.R` can be classified without modeling
+/// `shiny::shinyApp()`.
+pub(super) fn call(name: &str) -> Stmt {
+    Stmt::Expr(Expr::Call {
+        name: name.to_string(),
+    })
+}
+
 /// Binds a callee's name to a function, suppressing its effect for later bare
 /// calls to it.
 pub(super) fn shadow(name: &str) -> Stmt {
