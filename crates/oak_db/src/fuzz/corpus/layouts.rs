@@ -131,3 +131,14 @@ pub(super) fn testthat_nested_file_is_not_a_testthat_file() -> Scenario {
     ]);
     Scenario::cold(initial, Query::Diagnostics(FileId(2)), vec![])
 }
+
+/// A direct `R/` child omitted from `Collate:` becomes a standalone script,
+/// even though its package owns it.
+pub(super) fn package_r_file_excluded_from_collate_is_a_script() -> Scenario {
+    let mut initial = package("mypkg", &["base"], vec![
+        ("R/a.R", program(vec![function_def("kept_fn", vec![])])),
+        ("R/b.R", program(vec![function_def("excluded_fn", vec![])])),
+    ]);
+    initial.packages[0].collate = Some(vec!["a.R".to_string()]);
+    Scenario::cold(initial, Query::Diagnostics(FileId(1)), vec![])
+}

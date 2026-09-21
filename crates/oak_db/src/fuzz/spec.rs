@@ -64,6 +64,10 @@ pub(crate) struct PackageSpec {
     pub(crate) exports: Vec<String>,
     /// Rendered as `importFrom()` directives.
     pub(crate) reexports: Vec<Reexport>,
+    /// The workspace `DESCRIPTION` `Collate:` order. `None` collates every
+    /// direct `R/` child; omitted entries become standalone scripts.
+    #[serde(default)]
+    pub(crate) collate: Option<Vec<String>>,
 }
 
 impl PackageSpec {
@@ -85,6 +89,19 @@ impl PackageSpec {
         }
         for reexport in &self.reexports {
             let _ = writeln!(out, "importFrom({}, {})", reexport.from, reexport.name);
+        }
+        out
+    }
+
+    /// `Version:` is required for `Description::parse()`, even without
+    /// `Collate:`.
+    pub(super) fn description_text(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "Package: {}", self.name);
+        let _ = writeln!(out, "Version: 1.0.0");
+        if let Some(collate) = &self.collate {
+            let quoted: Vec<String> = collate.iter().map(|name| format!("'{name}'")).collect();
+            let _ = writeln!(out, "Collate: {}", quoted.join(" "));
         }
         out
     }
