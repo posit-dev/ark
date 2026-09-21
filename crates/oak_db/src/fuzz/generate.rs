@@ -71,9 +71,12 @@ pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
         let initial = draft.spec();
         let ops = draft.history(&mut rng);
 
+        // File 0 participates in every non-isolated motif; additional files
+        // can be disconnected. Demand its index before any history edits.
+        let mut entries = cold_entries(&mut rng, &Shape::of(&initial), FileId(0));
+
         // Pair the chain with a matching entry so package recovery coverage
         // does not depend on random query selection.
-        let mut entries = cold_entries(&mut rng, &Shape::of(&initial));
         entries.extend(draft.package_entry.clone());
 
         for cold_entry in entries {
@@ -442,4 +445,35 @@ fn pick_option<'items, T>(rng: &mut StdRng, items: &'items [T]) -> Option<&'item
         return None;
     }
     Some(&items[rng.random_range(0..items.len())])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fuzz::choose::observed_file;
+
+    #[test]
+    fn test_seed_corpus_observes_source_motifs() {
+        for motif in MOTIFS {
+            for files in motif.min_files()..=MAX_FILES {
+                let edges = motif.edges(files);
+                if !matches!(motif, Motif::Isolated) {
+                    assert!(edges.iter().any(|&(from, _)| from == 0));
+                }
+            }
+        }
+
+        for seed in 0..6 {
+            let corpus = seed_corpus(seed);
+            let mut start = 0;
+            for index in 0..MOTIFS.len() {
+                assert_eq!(
+                    observed_file(&corpus[start + 2].cold_entry),
+                    Some(FileId(0))
+                );
+                start += 4 + usize::from(package_layer(seed, index) != PackageLayer::Bare);
+            }
+            assert_eq!(start, corpus.len());
+        }
+    }
 }
