@@ -56,9 +56,10 @@ jobs:
               if: matrix.arch == 'x64'
               run: |
                 # Install x86 homebrew
-                # Pinned to the last commit before Homebrew/install dropped Intel/Rosetta
-                # support (Homebrew 7.0), which broke this Apple-Silicon-runner cross-compile step.
-                arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/7a133dcc74051ee4efc79467ed215dfedf45aea2/install.sh)"
+                # Pinned to a known-good Homebrew version instead of tracking latest, since
+                # Homebrew 7.0 dropped support for installing under Rosetta/x86_64 on Apple
+                # Silicon, which is what this Apple-Silicon-runner cross-compile step relies on.
+                curl -fsSL https://github.com/Homebrew/brew/tarball/6.0.22 | tar xz --strip-components 1 -C /usr/local
 
                 # Install x86 Rust target
                 rustup target add x86_64-apple-darwin
