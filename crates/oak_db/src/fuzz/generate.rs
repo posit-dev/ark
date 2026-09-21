@@ -81,6 +81,7 @@ pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
             layer,
             file_layout(seed, index, layer),
             shiny_shape(seed, index),
+            testthat_shape(seed, index),
             &mut rng,
         );
         let initial = draft.spec();
@@ -155,8 +156,9 @@ enum FileLayout {
 /// overrepresent drafts that require a package or `Owner::Script`.
 const FILE_LAYOUT_PERIOD: usize = 3;
 
-/// A testthat draft needs a collation member, helper, and test.
-const TESTTHAT_FILES: usize = 3;
+/// Four files allow the collation member, a test, and the `helper*.R` and
+/// `setup*.R` pair required to exercise support ordering.
+const TESTTHAT_FILES: usize = 4;
 
 /// Every Shiny shape requires an entry file, `global.R`, and an `R/` member.
 /// `UiServerPair` requires two entry files.
@@ -174,6 +176,32 @@ fn file_layout(seed: u64, motif: usize, layer: PackageLayer) -> FileLayout {
     match (layout, layer) {
         (FileLayout::Shiny, PackageLayer::Local) => FileLayout::Plain,
         (layout, _) => layout,
+    }
+}
+
+/// Rotated independently of [`file_layout()`] to cover testthat support-file
+/// ordering and exclusions beyond the regular helper and test alternation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestthatShape {
+    HelperOnly,
+    /// Basename sorting followed by LIFO lookup makes `setup*.R` shadow
+    /// `helper*.R` when both define the same name.
+    SetupInterleaved,
+    /// `teardown*.R` runs after tests, so it is excluded from test support.
+    TeardownExcluded,
+    /// Only direct `tests/testthat/` children are testthat files.
+    NestedNonTestthatFile,
+}
+
+const TESTTHAT_SHAPE_PERIOD: usize = 4;
+
+fn testthat_shape(seed: u64, motif: usize) -> TestthatShape {
+    let offset = (seed % TESTTHAT_SHAPE_PERIOD as u64) as usize;
+    match (motif + offset) % TESTTHAT_SHAPE_PERIOD {
+        0 => TestthatShape::HelperOnly,
+        1 => TestthatShape::SetupInterleaved,
+        2 => TestthatShape::TeardownExcluded,
+        _ => TestthatShape::NestedNonTestthatFile,
     }
 }
 
@@ -275,6 +303,7 @@ impl Draft {
         layer: PackageLayer,
         layout: FileLayout,
         shape: ShinyShape,
+        testthat: TestthatShape,
         rng: &mut StdRng,
     ) -> Self {
         let drawn = rng.random_range(motif.min_files()..=MAX_FILES);
@@ -317,7 +346,7 @@ impl Draft {
         }
 
         let mut parts: Vec<FileParts> = (0..count)
-            .map(|index| FileParts::new(layout_path(layout, owner, shape, index)))
+            .map(|index| FileParts::new(layout_path(layout, owner, shape, testthat, index)))
             .collect();
 
         for (sourcing, target) in edges {
@@ -603,15 +632,32 @@ impl FileParts {
 /// A testthat draft keeps its first file in `R/` for package collation, then
 /// alternates helpers and tests. testthat loads all helpers before each test,
 /// exercising the support prefix that `CollationView` narrows.
-fn layout_path(layout: FileLayout, owner: Owner, shape: ShinyShape, index: usize) -> String {
-    let name = (b'a' + index as u8) as char;
+fn layout_path(
+    layout: FileLayout,
+    owner: Owner,
+    shape: ShinyShape,
+    testthat: TestthatShape,
+    index: usize,
+) -> String {
     match (layout, index) {
         (FileLayout::Plain, _) | (FileLayout::Testthat, 0) => file_path(owner, index),
-        (FileLayout::Testthat, _) if index % 2 == 1 => {
-            format!("tests/testthat/helper-{name}.R")
-        },
-        (FileLayout::Testthat, _) => format!("tests/testthat/test-{name}.R"),
+        (FileLayout::Testthat, _) => testthat_path(testthat, index),
         (FileLayout::Shiny, _) => shiny_path(shape, index),
+    }
+}
+
+/// Reserve each shape's distinguishing file and a non-support test file, then
+/// use the regular alternation for later files to preserve variation.
+fn testthat_path(shape: TestthatShape, index: usize) -> String {
+    let name = (b'a' + index as u8) as char;
+    match (shape, index) {
+        (TestthatShape::SetupInterleaved, 1) => format!("tests/testthat/helper-{name}.R"),
+        (TestthatShape::SetupInterleaved, 2) => format!("tests/testthat/setup-{name}.R"),
+        (TestthatShape::SetupInterleaved, 3) => format!("tests/testthat/test-{name}.R"),
+        (TestthatShape::TeardownExcluded, 1) => format!("tests/testthat/teardown-{name}.R"),
+        (TestthatShape::NestedNonTestthatFile, 1) => format!("tests/testthat/sub/{name}.R"),
+        (_, index) if index % 2 == 1 => format!("tests/testthat/helper-{name}.R"),
+        _ => format!("tests/testthat/test-{name}.R"),
     }
 }
 
