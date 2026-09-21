@@ -5,8 +5,8 @@
 //! adapter. Run `just fuzz-explore` locally to exercise the libFuzzer integration.
 //!
 //! `just fuzz` runs every block. `just fuzz-replay-seed SEED` reproduces one
-//! with operation tracing, which changes timing. The seed controls both the
-//! starting corpus and the mutation session.
+//! with operation tracing, which changes timing. The seed generates the starting
+//! corpus, and [`walk_seed()`] derives a seed for each mutation session.
 //!
 //! Before each operation, the harness writes the scenario to a per-process
 //! artifact under `target/oak_fuzz/`. Inspect it after a hang or abort.
@@ -39,18 +39,41 @@ const BLOCK_ITERS: usize = 3000;
 /// Cap shrinking because every attempt reruns the full scenario.
 const SHRINK_ITERS: usize = 150;
 
+/// Run each block as several walks from its unmutated generated corpus.
+///
+/// `Check` mutates its corpus in place. `remove_file()` removes a program and
+/// its source edges, while `add_file()` adds one binding, so a long walk drifts
+/// toward small workspaces without cycles. Restarting each walk continues to
+/// exercise the generated cyclic source motifs.
+const WALKS: usize = 6;
+
 fn check_block(block: u64, iters: usize) {
     let runner = Runner::open();
-    let corpus = seed_corpus(block);
 
-    require_package_resolve_recovery(&runner, &corpus);
+    require_package_resolve_recovery(&runner, &seed_corpus(block));
 
-    let result = Check::new()
-        .iters(iters)
-        .shrink_iters(SHRINK_ITERS)
-        .seed(block)
-        .run_with(ScenarioMutator, corpus, |scenario| runner.check(scenario));
-    report(result, &runner);
+    for (walk, iters) in walk_iters(iters).enumerate() {
+        let result = Check::new()
+            .iters(iters)
+            .shrink_iters(SHRINK_ITERS)
+            .seed(walk_seed(block, walk))
+            .run_with(ScenarioMutator, seed_corpus(block), |scenario| {
+                runner.check(scenario)
+            });
+        report(result, &runner);
+    }
+}
+
+/// Splits a block's budget across [`WALKS`] runs, allocating the remainder to
+/// earlier walks.
+fn walk_iters(iters: usize) -> impl Iterator<Item = usize> {
+    (0..WALKS).map(move |walk| iters / WALKS + usize::from(walk < iters % WALKS))
+}
+
+/// Derives each walk's mutation seed. Every walk starts from
+/// `seed_corpus(block)`, not another walk's mutated corpus.
+fn walk_seed(block: u64, walk: usize) -> u64 {
+    block * WALKS as u64 + walk as u64
 }
 
 /// Verifies that every block's initial corpus reaches `Package::resolve()`
