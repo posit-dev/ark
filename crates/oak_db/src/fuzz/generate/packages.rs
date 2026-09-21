@@ -21,7 +21,8 @@ pub(super) const WORKSPACE_PACKAGE: &str = "mypkg";
 const REEXPORT_LIBS: [&str; 2] = ["lib0", "lib1"];
 
 /// Whether a draft models re-export packages, and how its chain ends. Assigned
-/// by motif position rather than drawn, so every seed corpus contains each one.
+/// by motif position with a seed-dependent rotation, so every seed corpus
+/// contains each layer without fixing its source-graph pairing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PackageLayer {
     /// No re-export layer. Any workspace package has an empty namespace.
@@ -37,12 +38,17 @@ pub(super) enum PackageLayer {
     Local,
 }
 
-pub(super) const PACKAGE_LAYERS: [PackageLayer; 4] = [
+const PACKAGE_LAYERS: [PackageLayer; 4] = [
     PackageLayer::Bare,
     PackageLayer::Chain,
     PackageLayer::Cycle,
     PackageLayer::Local,
 ];
+
+pub(super) fn package_layer(seed: u64, motif: usize) -> PackageLayer {
+    let offset = (seed % PACKAGE_LAYERS.len() as u64) as usize;
+    PACKAGE_LAYERS[(motif % PACKAGE_LAYERS.len() + offset) % PACKAGE_LAYERS.len()]
+}
 
 /// The chain always starts at `lib0`, which sits after the workspace package
 /// when the draft has one.
@@ -123,4 +129,31 @@ pub(super) fn reexport_layer(
     };
 
     (workspace_package, vec![lib0, lib1])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fuzz::generate::MOTIFS;
+
+    #[test]
+    fn test_package_layer_rotation() {
+        for motif in 0..MOTIFS.len() {
+            let actual: Vec<_> = (0..4).map(|seed| package_layer(seed, motif)).collect();
+            let expected: Vec<_> = (0..4)
+                .map(|offset| PACKAGE_LAYERS[(motif + offset) % 4])
+                .collect();
+            assert_eq!(actual, expected);
+        }
+
+        for seed in [0, 1, 2, 3, 4, u64::MAX] {
+            let actual: Vec<_> = (0..MOTIFS.len())
+                .map(|motif| package_layer(seed, motif))
+                .collect();
+            for layer in PACKAGE_LAYERS {
+                assert!(actual.contains(&layer));
+            }
+            assert_eq!(package_layer(seed, 0), PACKAGE_LAYERS[(seed % 4) as usize]);
+        }
+    }
 }
