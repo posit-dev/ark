@@ -11,6 +11,10 @@ mod source;
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 
+use self::layouts::shiny_disabled_autoload_drops_the_r_sibling;
+use self::layouts::shiny_entry_sees_global_and_r_files;
+use self::layouts::shiny_marker_removed_stops_autoload;
+use self::layouts::shiny_nested_app_file_joins_the_enclosing_app;
 use self::layouts::testthat_helper_edit_changes_the_test_view;
 use self::layouts::testthat_test_sees_helpers_and_package;
 use self::packages::acyclic_reexport_chain_resolves_to_the_definition;
@@ -69,6 +73,22 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "testthat_helper_edit_changes_the_test_view",
             scenario: testthat_helper_edit_changes_the_test_view(),
+        },
+        Case {
+            name: "shiny_entry_sees_global_and_r_files",
+            scenario: shiny_entry_sees_global_and_r_files(),
+        },
+        Case {
+            name: "shiny_marker_removed_stops_autoload",
+            scenario: shiny_marker_removed_stops_autoload(),
+        },
+        Case {
+            name: "shiny_disabled_autoload_drops_the_r_sibling",
+            scenario: shiny_disabled_autoload_drops_the_r_sibling(),
+        },
+        Case {
+            name: "shiny_nested_app_file_joins_the_enclosing_app",
+            scenario: shiny_nested_app_file_joins_the_enclosing_app(),
         },
         Case {
             name: "mutual_pair_opens_then_closes_again",

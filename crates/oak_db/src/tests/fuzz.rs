@@ -118,6 +118,150 @@ fn testthat_loads_a_test_file(scenario: &Scenario) -> bool {
             .any(|layer| layer.contains("/tests/testthat/helper-"))
 }
 
+/// `loader_name()` observes loader coverage even when source cycles prevent
+/// definition resolution. Each block needs only one rotating Shiny entry.
+#[test]
+fn test_every_block_seed_corpus_reaches_the_shiny_loader() {
+    for block in 0..6 {
+        let corpus = seed_corpus(block);
+        assert!(corpus.iter().any(some_file_reaches_the_shiny_loader));
+    }
+}
+
+fn some_file_reaches_the_shiny_loader(scenario: &Scenario) -> bool {
+    let Some(entry) = scenario
+        .initial
+        .files
+        .iter()
+        .position(|file| is_shiny_entry_basename(&file.path))
+    else {
+        return false;
+    };
+
+    let world = World::materialize(&scenario.initial);
+    loader_is_shiny(&world, FileId(entry))
+}
+
+fn is_shiny_entry_basename(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(name, "app.R" | "ui.R" | "server.R")
+}
+
+/// Scan beyond the six canonical seeds because independent shape rotation
+/// does not guarantee each shape appears in every block.
+#[test]
+fn test_disabled_autoload_shape_drops_its_r_siblings() {
+    let found = (0u64..50)
+        .flat_map(seed_corpus)
+        .any(|scenario| disables_autoload_for_an_r_sibling(&scenario));
+    assert!(found, "no seed in 0..50 produced a DisabledAutoload shape");
+}
+
+/// `_disable_autoload.R` is presence-driven, leaving `app.R` classified while
+/// unclassifying its `R/` siblings.
+fn disables_autoload_for_an_r_sibling(scenario: &Scenario) -> bool {
+    let has_disable_file = scenario
+        .initial
+        .files
+        .iter()
+        .any(|file| file.path.ends_with("_disable_autoload.R"));
+    let Some(sibling) = scenario.initial.files.iter().position(|file| {
+        file.path.starts_with("R/") && !file.path.ends_with("_disable_autoload.R")
+    }) else {
+        return false;
+    };
+    if !has_disable_file {
+        return false;
+    }
+
+    let world = World::materialize(&scenario.initial);
+    world.loader_name(FileId(sibling)).is_none()
+}
+
+#[test]
+fn test_ui_server_pair_shape_gives_both_files_the_shiny_loader() {
+    let found = (0u64..50)
+        .flat_map(seed_corpus)
+        .any(|scenario| ui_and_server_both_reach_shiny(&scenario));
+    assert!(found, "no seed in 0..50 produced a UiServerPair shape");
+}
+
+fn ui_and_server_both_reach_shiny(scenario: &Scenario) -> bool {
+    let Some(ui) = scenario
+        .initial
+        .files
+        .iter()
+        .position(|file| file.path == "ui.R")
+    else {
+        return false;
+    };
+    let Some(server) = scenario
+        .initial
+        .files
+        .iter()
+        .position(|file| file.path == "server.R")
+    else {
+        return false;
+    };
+
+    let world = World::materialize(&scenario.initial);
+    loader_is_shiny(&world, FileId(ui)) && loader_is_shiny(&world, FileId(server))
+}
+
+/// Query loader classification directly because random `library(shiny)` and
+/// `source()` edges can make [`World::import_layers()`] look equivalent.
+fn loader_is_shiny(world: &World, file: FileId) -> bool {
+    world.loader_name(file) == Some("This Shiny app")
+}
+
+#[test]
+fn test_package_inst_app_shape_reaches_the_shiny_loader() {
+    let found = (0u64..50)
+        .flat_map(seed_corpus)
+        .any(|scenario| package_owned_app_reaches_shiny(&scenario));
+    assert!(found, "no seed in 0..50 produced a PackageInstApp shape");
+}
+
+/// `inst/app/` files bypass package collation, so package classification
+/// returns `None` and lets Shiny claim the entry.
+fn package_owned_app_reaches_shiny(scenario: &Scenario) -> bool {
+    let Some(entry) = scenario
+        .initial
+        .files
+        .iter()
+        .position(|file| file.path == "inst/app/app.R")
+    else {
+        return false;
+    };
+
+    let world = World::materialize(&scenario.initial);
+    loader_is_shiny(&world, FileId(entry))
+}
+
+#[test]
+fn test_nested_app_file_shape_appears() {
+    let found = (0u64..50)
+        .flat_map(seed_corpus)
+        .any(|scenario| has_nested_app_file(&scenario));
+    assert!(found, "no seed in 0..50 produced a NestedAppFile shape");
+}
+
+/// `loader_name()` cannot distinguish joining the outer app from incorrectly
+/// rooting a new one because both report the same loader. The deterministic
+/// scenario verifies the resolution result.
+fn has_nested_app_file(scenario: &Scenario) -> bool {
+    scenario
+        .initial
+        .files
+        .iter()
+        .any(|file| file.path == "app.R") &&
+        scenario
+            .initial
+            .files
+            .iter()
+            .any(|file| file.path == "R/app.R")
+}
+
 /// The runner resets the recovery log before each scenario, so the firings it
 /// leaves behind belong to `scenario` alone.
 fn package_resolve_recovered(runner: &Runner, scenario: &Scenario) -> bool {

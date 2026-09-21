@@ -311,6 +311,14 @@ impl World {
             .collect()
     }
 
+    /// Returns the load-context loader for `id`, or `None` for standalone files.
+    /// Unlike [`Self::import_layers()`], this excludes random `library()` attaches
+    /// and `source()` edges.
+    #[cfg(test)]
+    pub(crate) fn loader_name(&self, id: FileId) -> Option<&'static str> {
+        crate::load_context::loader(&self.db, self.file(id)).map(|info| info.name)
+    }
+
     /// Root-relative `source()` targets. An empty result means no edge was recognized.
     #[cfg(test)]
     pub(crate) fn source_targets(&self, id: FileId) -> Vec<String> {
