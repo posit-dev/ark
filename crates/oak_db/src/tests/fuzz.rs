@@ -23,6 +23,7 @@ use mutatis::Session;
 
 use crate::fuzz::corpus;
 use crate::fuzz::seed_corpus;
+use crate::fuzz::FileId;
 use crate::fuzz::Runner;
 use crate::fuzz::Scenario;
 use crate::fuzz::ScenarioMutator;
@@ -86,6 +87,35 @@ fn require_package_resolve_recovery(runner: &Runner, corpus: &[Scenario]) {
         .any(|scenario| package_resolve_recovered(runner, scenario));
 
     assert!(reached);
+}
+
+/// Ensures every seed block reaches testthat's loader. The load context verifies
+/// generated paths and package ownership, and remains observable through source
+/// cycles that can prevent definition resolution.
+#[test]
+fn test_every_block_seed_corpus_reaches_the_testthat_loader() {
+    for block in 0..6 {
+        let corpus = seed_corpus(block);
+        assert!(corpus.iter().any(testthat_loads_a_test_file));
+    }
+}
+
+fn testthat_loads_a_test_file(scenario: &Scenario) -> bool {
+    let Some(test) = scenario
+        .initial
+        .files
+        .iter()
+        .position(|file| file.path.starts_with("tests/testthat/test-"))
+    else {
+        return false;
+    };
+
+    let world = World::materialize(&scenario.initial);
+    let layers = world.import_layers(FileId(test));
+    layers.iter().any(|layer| layer == "Package(testthat)") &&
+        layers
+            .iter()
+            .any(|layer| layer.contains("/tests/testthat/helper-"))
 }
 
 /// The runner resets the recovery log before each scenario, so the firings it

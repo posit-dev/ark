@@ -139,18 +139,21 @@ pub(super) fn shallow_source_dir() -> Scenario {
     Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }
 
-/// Qualify `tar_source()` so it resolves without attaching `targets`.
+/// Sources `inst/` package scripts, which package loading leaves standalone.
+/// `data-raw/prep.R` remains unsourced to test its standalone view, and the
+/// `tar_source()` call is qualified so it resolves without attaching `targets`.
 pub(super) fn recursive_source_dir_in_package() -> Scenario {
     let initial = package("mypkg", &["base", "targets"], vec![
         (
             "R/a.R",
-            program(vec![source_with(
-                "R",
-                SourceProvider::FileOrDir,
-                Invocation::Qualified,
-            )]),
+            program(vec![
+                source_with("inst", SourceProvider::FileOrDir, Invocation::Qualified),
+                binding("val_a"),
+            ]),
         ),
         ("R/b.R", program(vec![binding("val_b")])),
+        ("inst/sub/c.R", program(vec![binding("val_c")])),
+        ("data-raw/prep.R", program(vec![binding("val_prep")])),
     ]);
     Scenario::cold(initial, Query::Diagnostics(FileId(0)), vec![])
 }

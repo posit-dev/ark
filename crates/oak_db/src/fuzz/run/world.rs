@@ -1,9 +1,12 @@
 //! Materializes a scenario database and executes its queries and edits.
 
+use std::path::Path;
+
 use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::classify_in_package;
 use crate::file_reader::EmptyFileReader;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
@@ -28,6 +31,7 @@ use crate::Name;
 use crate::NamespaceVisibility;
 use crate::OakDatabase;
 use crate::Package;
+use crate::PackagePlacement;
 use crate::Root;
 use crate::RootKind;
 
@@ -147,14 +151,30 @@ impl World {
                 continue;
             }
             let package = packages[index];
-            let package_files: Vec<File> = spec
-                .ids()
-                .filter(
-                    |&id| matches!(spec.file(id).owner, Owner::Package(owner) if owner.0 == index),
-                )
-                .map(|id| files[id.0])
-                .collect();
-            package.set_files(&mut db).to(package_files);
+            let owned = spec.ids().filter(
+                |&id| matches!(spec.file(id).owner, Owner::Package(owner) if owner.0 == index),
+            );
+
+            // Match scanner placement: direct `R/` children are package files,
+            // and other package files are standalone scripts.
+            let mut collation: Vec<File> = Vec::new();
+            let mut scripts: Vec<File> = Vec::new();
+            for id in owned {
+                let absolute = spec.absolute_path(id);
+                match classify_in_package(
+                    Path::new(&package_spec.directory()),
+                    Path::new(&absolute),
+                ) {
+                    PackagePlacement::File => collation.push(files[id.0]),
+                    PackagePlacement::Script => scripts.push(files[id.0]),
+                    // `validate()` rejects nested `R/` files before materialization.
+                    PackagePlacement::Skip => {
+                        panic!("harness bug: {absolute} is nested below `R/` and cannot be loaded")
+                    },
+                }
+            }
+            package.set_files(&mut db).to(collation);
+            package.set_scripts(&mut db).to(scripts);
             roots.push(Root::new(
                 &db,
                 file_path(&package_spec.directory()),
@@ -269,6 +289,26 @@ impl World {
             Site::Eof => rendered.text.len(),
         };
         TextSize::from(position as u32)
+    }
+
+    /// The lookup layers a file's loader supplies, in priority order, rendered
+    /// as `File(basename)` or `Package(name)`. This shows which loader claimed
+    /// the file even when a source cycle degrades what it resolves.
+    #[cfg(test)]
+    pub(crate) fn import_layers(&self, id: FileId) -> Vec<String> {
+        use crate::ImportLayer;
+
+        self.file(id)
+            .imports(&self.db)
+            .iter()
+            .map(|layer| match layer {
+                ImportLayer::From(package) => format!("From({})", package.name(&self.db)),
+                ImportLayer::Package(package) => format!("Package({})", package.name(&self.db)),
+                ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
+                    format!("File({})", path_name(file.path(&self.db)))
+                },
+            })
+            .collect()
     }
 
     /// Root-relative `source()` targets. An empty result means no edge was recognized.

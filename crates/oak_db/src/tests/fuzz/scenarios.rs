@@ -15,6 +15,8 @@ use crate::NamespaceVisibility;
 const NO_TARGETS: [&str; 0] = [];
 const NO_PACKAGES: [&str; 0] = [];
 
+const NO_DEFINITIONS: [&str; 0] = [];
+
 #[test]
 fn test_scenario_acyclic_pair_closes_then_reopens() {
     let scenario = corpus::scenario("acyclic_pair_closes_then_reopens");
@@ -218,12 +220,58 @@ fn test_scenario_shadow_after_source_call_keeps_the_edge() {
     assert_eq!(world.source_targets(FileId(0)), ["w/b.R"]);
 }
 
+/// Package collation loads direct `R/` children, while `inst/` and `data-raw/`
+/// scripts remain standalone unless a source call reaches them.
 #[test]
 fn test_scenario_recursive_source_dir_resolves_package_scripts() {
     let scenario = corpus::scenario("recursive_source_dir_in_package");
     let world = start(&scenario);
 
-    assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/R/b.R"]);
+    assert_eq!(world.source_targets(FileId(0)), ["p/mypkg/inst/sub/c.R"]);
+
+    assert_eq!(world.file_resolve(FileId(1), "val_a"), ["p/mypkg/R/a.R"]);
+
+    assert_eq!(world.file_resolve(FileId(3), "val_a"), NO_DEFINITIONS);
+    assert_eq!(world.file_resolve(FileId(3), "val_b"), NO_DEFINITIONS);
+
+    assert_eq!(world.file_resolve(FileId(2), "val_a"), ["p/mypkg/R/a.R"]);
+}
+
+// == Project layouts ==
+
+/// testthat supplies a test file's standalone view: all `helper*.R` files,
+/// then the package collation.
+#[test]
+fn test_scenario_testthat_test_sees_helpers_and_package() {
+    let scenario = corpus::scenario("testthat_test_sees_helpers_and_package");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(2), "helper_fn"), [
+        "p/mypkg/tests/testthat/helper-b.R"
+    ]);
+    assert_eq!(world.file_resolve(FileId(2), "pkg_fn"), ["p/mypkg/R/a.R"]);
+
+    assert_eq!(world.file_resolve(FileId(1), "val_c"), NO_DEFINITIONS);
+}
+
+/// Helper edits reach test files through testthat's support collation, not the
+/// package namespace.
+#[test]
+fn test_scenario_testthat_helper_edit_changes_the_test_view() {
+    let scenario = corpus::scenario("testthat_helper_edit_changes_the_test_view");
+    let mut world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(2), "helper_fn"), [
+        "p/mypkg/tests/testthat/helper-b.R"
+    ]);
+
+    world.apply(&scenario.ops[0]);
+
+    assert_eq!(world.file_resolve(FileId(2), "helper_fn"), NO_DEFINITIONS);
+    assert_eq!(world.file_resolve(FileId(2), "helper_val"), [
+        "p/mypkg/tests/testthat/helper-b.R"
+    ]);
+    assert_eq!(world.file_resolve(FileId(2), "pkg_fn"), ["p/mypkg/R/a.R"]);
 }
 
 // == Package re-export cycles ==

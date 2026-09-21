@@ -1,15 +1,19 @@
 //! Validates scenario references, ownership, and namespace directives.
 
+use std::path::Path;
+
 use anyhow::anyhow;
 use oak_package_metadata::namespace::Namespace;
 
 use super::Op;
 use super::Scenario;
+use crate::classify_in_package;
 use crate::fuzz::spec::FileId;
 use crate::fuzz::spec::Owner;
 use crate::fuzz::spec::PackageId;
 use crate::fuzz::spec::PackageKind;
 use crate::fuzz::spec::PackageSpec;
+use crate::PackagePlacement;
 
 impl Scenario {
     /// Rejects scenarios that would panic in `World` rather than exercise a query.
@@ -51,6 +55,17 @@ impl Scenario {
                     "file {} is owned by library package {}",
                     file.path,
                     package.name
+                ));
+            }
+            // Reject nested `R/` files because the scanner skips them and
+            // `World::materialize()` cannot represent them.
+            let absolute = format!("{}/{}", package.directory(), file.path);
+            if classify_in_package(Path::new(&package.directory()), Path::new(&absolute)) ==
+                PackagePlacement::Skip
+            {
+                return Err(anyhow!(
+                    "file {} is nested below `R/`, which the scanner does not load",
+                    file.path
                 ));
             }
         }

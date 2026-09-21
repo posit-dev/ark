@@ -318,10 +318,11 @@ fn package_layout() -> WorkspaceSpec {
             exports: Vec::new(),
             reexports: Vec::new(),
         }],
+
         files: vec![
             file_spec(Owner::Package(PackageId(0)), "R/a.R"),
             file_spec(Owner::Package(PackageId(0)), "R/b.R"),
-            file_spec(Owner::Package(PackageId(0)), "R/sub/c.R"),
+            file_spec(Owner::Package(PackageId(0)), "inst/sub/c.R"),
         ],
     }
 }
@@ -356,10 +357,10 @@ fn test_source_candidates_separate_roots_and_kinds() {
     let package = SourceCandidates::for_owner(&spec, Owner::Package(PackageId(0)));
     assert!(package.accepts(SourceProvider::File, "R/a.R"));
     assert!(package.accepts(SourceProvider::Dir, "R"));
-    assert!(package.accepts(SourceProvider::Dir, "R/sub"));
+    assert!(package.accepts(SourceProvider::Dir, "inst/sub"));
     assert!(!package.accepts(SourceProvider::File, "a.R"));
-    assert!(package.accepts(SourceProvider::FileOrDir, "R/sub/c.R"));
-    assert!(package.accepts(SourceProvider::FileOrDir, "R/sub"));
+    assert!(package.accepts(SourceProvider::FileOrDir, "inst/sub/c.R"));
+    assert!(package.accepts(SourceProvider::FileOrDir, "inst/sub"));
 }
 
 /// Checks drawn paths with the production resolver rather than trusting the

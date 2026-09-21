@@ -67,7 +67,7 @@ pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
 
     for (index, motif) in MOTIFS.into_iter().enumerate() {
         let layer = package_layer(seed, index);
-        let mut draft = Draft::new(motif, layer, &mut rng);
+        let mut draft = Draft::new(motif, layer, file_layout(seed, index), &mut rng);
         let initial = draft.spec();
         let ops = draft.history(&mut rng);
 
@@ -123,6 +123,31 @@ const MOTIFS: [Motif; 7] = [
     Motif::Tail,
 ];
 
+/// Rotates testthat layouts by motif position so every seed corpus covers one
+/// without tying it to a particular source graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileLayout {
+    /// Loose scripts, or package collation with nested scripts under `inst/`.
+    Plain,
+    /// Package collation followed by `tests/testthat/` helpers and tests.
+    Testthat,
+}
+
+/// One motif in three carries the testthat layout. A higher share would spend
+/// most of the corpus on package-owned drafts, since testthat needs a package.
+const TESTTHAT_PERIOD: usize = 3;
+
+/// A testthat draft needs a collation member, helper, and test.
+const TESTTHAT_FILES: usize = 3;
+
+fn file_layout(seed: u64, motif: usize) -> FileLayout {
+    let offset = (seed % TESTTHAT_PERIOD as u64) as usize;
+    match (motif + offset) % TESTTHAT_PERIOD {
+        0 => FileLayout::Testthat,
+        _ => FileLayout::Plain,
+    }
+}
+
 impl Motif {
     fn min_files(self) -> usize {
         match self {
@@ -176,12 +201,19 @@ struct FileParts {
 }
 
 impl Draft {
-    fn new(motif: Motif, layer: PackageLayer, rng: &mut StdRng) -> Self {
-        let count = rng.random_range(motif.min_files()..=MAX_FILES);
+    fn new(motif: Motif, layer: PackageLayer, layout: FileLayout, rng: &mut StdRng) -> Self {
+        let drawn = rng.random_range(motif.min_files()..=MAX_FILES);
+        let count = match layout {
+            FileLayout::Testthat => drawn.max(TESTTHAT_FILES),
+            FileLayout::Plain => drawn,
+        };
         let edges = motif.edges(count);
 
-        // `Local` terminates at the workspace package, so it needs one.
-        let owner = if layer == PackageLayer::Local || rng.random_bool(0.5) {
+        // `Local` and testthat layouts require a workspace package.
+        let owner = if layer == PackageLayer::Local ||
+            layout == FileLayout::Testthat ||
+            rng.random_bool(0.5)
+        {
             Owner::Package(PackageId(0))
         } else {
             Owner::Script
@@ -189,6 +221,10 @@ impl Draft {
 
         let mut installed = vec!["base".to_string()];
         installed.extend(EFFECT_PACKAGES.iter().map(|name| name.to_string()));
+        // Lowering adds testthat's implicit attach only when it is installed.
+        if layout == FileLayout::Testthat {
+            installed.push("testthat".to_string());
+        }
         for name in ATTACHABLE {
             if rng.random_bool(0.6) {
                 installed.push(name.to_string());
@@ -196,7 +232,7 @@ impl Draft {
         }
 
         let mut parts: Vec<FileParts> = (0..count)
-            .map(|index| FileParts::new(file_path(owner, index)))
+            .map(|index| FileParts::new(layout_path(layout, owner, index)))
             .collect();
 
         for (sourcing, target) in edges {
@@ -414,18 +450,36 @@ impl FileParts {
     }
 }
 
+/// A testthat draft keeps its first file in `R/` for package collation, then
+/// alternates helpers and tests. testthat loads all helpers before each test,
+/// exercising the support prefix that `CollationView` narrows.
+fn layout_path(layout: FileLayout, owner: Owner, index: usize) -> String {
+    let name = (b'a' + index as u8) as char;
+    match (layout, index) {
+        (FileLayout::Plain, _) | (FileLayout::Testthat, 0) => file_path(owner, index),
+        (FileLayout::Testthat, _) if index % 2 == 1 => {
+            format!("tests/testthat/helper-{name}.R")
+        },
+        (FileLayout::Testthat, _) => format!("tests/testthat/test-{name}.R"),
+    }
+}
+
 /// Places later files in a subdirectory so shallow and recursive walks differ.
-/// Deriving the path from `index` lets `add_file()` probe for an unused path.
+/// Deriving paths from `index` lets `add_file()` probe for an unused path.
+///
+/// Nested package files use `inst/`, because R loads only direct `R/` children.
+/// [`classify_in_package()`] skips nested `R/` files, while directory walks can
+/// still reach `inst/` scripts.
+///
+/// [`classify_in_package()`]: crate::classify_in_package
 pub(super) fn file_path(owner: Owner, index: usize) -> String {
     let name = (b'a' + index as u8) as char;
-    let dir = match owner {
-        Owner::Script => String::new(),
-        Owner::Package(_) => "R/".to_string(),
-    };
-    if index >= NESTED_FROM {
-        return format!("{dir}{NESTED_DIR}/{name}.R");
+    match owner {
+        Owner::Script if index >= NESTED_FROM => format!("{NESTED_DIR}/{name}.R"),
+        Owner::Script => format!("{name}.R"),
+        Owner::Package(_) if index >= NESTED_FROM => format!("inst/{NESTED_DIR}/{name}.R"),
+        Owner::Package(_) => format!("R/{name}.R"),
     }
-    format!("{dir}{name}.R")
 }
 
 fn attachable(rng: &mut StdRng, installed: &[String]) -> String {
