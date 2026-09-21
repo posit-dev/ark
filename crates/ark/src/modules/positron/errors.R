@@ -129,6 +129,17 @@ globalInterruptHandler <- function(cnd) {
     format_traceback(traceback)
 }
 
+# Sources `file` with ark's global condition handlers re-registered.
+# Intended to be called from a `top_level_exec()` context (which clears the
+# handler stack), so that `globalCallingHandlers()` succeeds. This restores
+# message/error/warning rendering to match interactive behavior during
+# `.Rprofile` sourcing without putting calling-handlers on the stack that
+# would block user `globalCallingHandlers()` calls.
+.ps.errors.source_with_handlers <- function(file) {
+    initialize_errors()
+    sys.source(file, envir = globalenv())
+}
+
 # If a sink is active (either on output or on messages) messages
 # are always streamed to `stderr`. This follows rlang behaviour
 # and ensures messages can be sinked from stderr consistently.
@@ -278,10 +289,21 @@ initialize_errors <- function() {
     # Unregister all handlers and hold onto them
     handlers <- globalCallingHandlers(NULL)
 
+    existing_ps_handler <- vapply(
+        handlers,
+        function(h) {
+            isTRUE(all.equal(h, .ps.errors.globalErrorHandler)) ||
+                isTRUE(all.equal(h, .ps.errors.globalWarningHandler)) ||
+                isTRUE(all.equal(h, .ps.errors.globalMessageHandler)) ||
+                isTRUE(all.equal(h, globalInterruptHandler))
+        },
+        logical(1)
+    )
+
     # Inject our global error handler at the end.
     # This allows other existing error handlers to run ahead of us.
     handlers <- c(
-        handlers,
+        handlers[!existing_ps_handler],
         list(
             error = .ps.errors.globalErrorHandler,
             warning = .ps.errors.globalWarningHandler,
