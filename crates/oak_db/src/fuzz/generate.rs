@@ -18,9 +18,9 @@ use rand::SeedableRng;
 
 use self::packages::empty_package;
 use self::packages::package_entry;
+use self::packages::package_layer;
 use self::packages::reexport_layer;
 use self::packages::PackageLayer;
-use self::packages::PACKAGE_LAYERS;
 use self::packages::WORKSPACE_PACKAGE;
 use crate::fuzz::budgets::MAX_FILES;
 use crate::fuzz::build::binding;
@@ -66,7 +66,7 @@ pub(crate) fn seed_corpus(seed: u64) -> Vec<Scenario> {
     let mut scenarios = Vec::new();
 
     for (index, motif) in MOTIFS.into_iter().enumerate() {
-        let layer = PACKAGE_LAYERS[index % PACKAGE_LAYERS.len()];
+        let layer = package_layer(seed, index);
         let mut draft = Draft::new(motif, layer, &mut rng);
         let initial = draft.spec();
         let ops = draft.history(&mut rng);
