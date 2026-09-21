@@ -1,14 +1,18 @@
 //! Named scenarios with a concrete workspace and edit history.
 //!
 //! This module registers cases and provides their shared constructors. Source
-//! and attachment cases live in `source`; re-export cases live in `packages`.
+//! and attachment cases live in `source`, re-export cases in `packages`, and
+//! convention-driven project layouts in `layouts`.
 
+mod layouts;
 mod packages;
 mod source;
 
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 
+use self::layouts::testthat_helper_edit_changes_the_test_view;
+use self::layouts::testthat_test_sees_helpers_and_package;
 use self::packages::acyclic_reexport_chain_resolves_to_the_definition;
 use self::packages::attached_package_consumer_degrades_on_a_reexport_cycle;
 use self::packages::attached_package_consumer_resolves_a_reexport;
@@ -57,6 +61,14 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "acyclic_pair_closes_then_reopens",
             scenario: acyclic_pair_closes_then_reopens(),
+        },
+        Case {
+            name: "testthat_test_sees_helpers_and_package",
+            scenario: testthat_test_sees_helpers_and_package(),
+        },
+        Case {
+            name: "testthat_helper_edit_changes_the_test_view",
+            scenario: testthat_helper_edit_changes_the_test_view(),
         },
         Case {
             name: "mutual_pair_opens_then_closes_again",

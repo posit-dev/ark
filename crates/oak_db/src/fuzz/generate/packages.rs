@@ -6,6 +6,7 @@ use rand::RngExt;
 use super::FileParts;
 use crate::fuzz::choose::export_name;
 use crate::fuzz::scenario::Query;
+use crate::fuzz::spec::is_collation_member;
 use crate::fuzz::spec::Owner;
 use crate::fuzz::spec::PackageId;
 use crate::fuzz::spec::PackageKind;
@@ -120,7 +121,20 @@ pub(super) fn reexport_layer(
                 name: name.clone(),
                 from: WORKSPACE_PACKAGE.to_string(),
             });
-            let index = rng.random_range(0..parts.len());
+            // `Package::resolve()` searches `package.files()`, so the local
+            // export must be defined in the collation rather than a script.
+            let members: Vec<usize> = parts
+                .iter()
+                .enumerate()
+                .filter(|(_, part)| is_collation_member(&part.path))
+                .map(|(index, _)| index)
+                .collect();
+            let index = match members.as_slice() {
+                [] => panic!(
+                    "harness bug: a `Local` draft has no collation member to define its export"
+                ),
+                members => members[rng.random_range(0..members.len())],
+            };
             parts[index].local_export = Some(name.clone());
             let mut package = empty_package(WORKSPACE_PACKAGE);
             package.exports.push(name);
@@ -133,8 +147,52 @@ pub(super) fn reexport_layer(
 
 #[cfg(test)]
 mod tests {
+    use oak_semantic::fuzz::Stmt;
+
     use super::*;
+    use crate::fuzz::generate::seed_corpus;
     use crate::fuzz::generate::MOTIFS;
+    use crate::fuzz::spec::is_collation_member;
+
+    /// Ensures each `Local` re-export terminates in `package.files()`, where
+    /// `Package::resolve()` searches. Source cycles can prevent resolution even
+    /// when the export is correctly placed, so this inspects its defining file.
+    #[test]
+    fn test_local_export_is_defined_in_the_collation() {
+        for seed in 0..6u64 {
+            for scenario in seed_corpus(seed) {
+                let workspace = scenario
+                    .initial
+                    .packages
+                    .iter()
+                    .find(|package| package.kind == PackageKind::Workspace);
+                let Some(workspace) = workspace else {
+                    continue;
+                };
+
+                for export in &workspace.exports {
+                    let defining: Vec<&str> = scenario
+                        .initial
+                        .files
+                        .iter()
+                        .filter(|file| defines(&file.program.statements, export))
+                        .map(|file| file.path.as_str())
+                        .collect();
+
+                    assert!(!defining.is_empty());
+                    for path in defining {
+                        assert!(is_collation_member(path));
+                    }
+                }
+            }
+        }
+    }
+
+    fn defines(statements: &[Stmt], name: &str) -> bool {
+        statements
+            .iter()
+            .any(|stmt| matches!(stmt, Stmt::Bind { name: bound, .. } if bound == name))
+    }
 
     #[test]
     fn test_package_layer_rotation() {
