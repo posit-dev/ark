@@ -56,7 +56,9 @@ jobs:
               if: matrix.arch == 'x64'
               run: |
                 # Install x86 homebrew
-                arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                # Pinned to the last commit before Homebrew/install dropped Intel/Rosetta
+                # support (Homebrew 7.0), which broke this Apple-Silicon-runner cross-compile step.
+                arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/7a133dcc74051ee4efc79467ed215dfedf45aea2/install.sh)"
 
                 # Install x86 Rust target
                 rustup target add x86_64-apple-darwin
