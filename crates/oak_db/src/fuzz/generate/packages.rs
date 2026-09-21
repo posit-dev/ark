@@ -74,6 +74,7 @@ pub(super) fn empty_package(name: &str) -> PackageSpec {
         kind: PackageKind::Workspace,
         exports: Vec::new(),
         reexports: Vec::new(),
+        collate: None,
     }
 }
 
@@ -97,12 +98,14 @@ pub(super) fn reexport_layer(
             name: name.clone(),
             from: REEXPORT_LIBS[1].to_string(),
         }],
+        collate: None,
     };
     let mut lib1 = PackageSpec {
         name: REEXPORT_LIBS[1].to_string(),
         kind: PackageKind::Library,
         exports: vec![name.clone()],
         reexports: Vec::new(),
+        collate: None,
     };
 
     let workspace_package = match layer {

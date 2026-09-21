@@ -317,6 +317,7 @@ fn package_layout() -> WorkspaceSpec {
             kind: PackageKind::Workspace,
             exports: Vec::new(),
             reexports: Vec::new(),
+            collate: None,
         }],
 
         files: vec![

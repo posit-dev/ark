@@ -11,6 +11,7 @@ mod source;
 use oak_semantic::fuzz::Program;
 use oak_semantic::fuzz::Stmt;
 
+use self::layouts::package_r_file_excluded_from_collate_is_a_script;
 use self::layouts::shiny_disabled_autoload_drops_the_r_sibling;
 use self::layouts::shiny_entry_sees_global_and_r_files;
 use self::layouts::shiny_marker_removed_stops_autoload;
@@ -104,6 +105,10 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "testthat_nested_file_is_not_a_testthat_file",
             scenario: testthat_nested_file_is_not_a_testthat_file(),
+        },
+        Case {
+            name: "package_r_file_excluded_from_collate_is_a_script",
+            scenario: package_r_file_excluded_from_collate_is_a_script(),
         },
         Case {
             name: "mutual_pair_opens_then_closes_again",
@@ -262,6 +267,7 @@ fn package_spec(
                 from: from.to_string(),
             })
             .collect(),
+        collate: None,
     }
 }
 

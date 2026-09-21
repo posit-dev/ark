@@ -44,9 +44,13 @@
 //! nested `R/app.R`. A third rotation covers testthat support ordering and
 //! exclusions: `setup*.R`, `teardown*.R`, and nested files.
 //!
+//! Workspace `DESCRIPTION` metadata is served through a map-backed `FileReader`.
+//! A named fixture covers a direct `R/` child that `Collate:` excludes from the
+//! package namespace, leaving it a standalone script; the generator does not
+//! yet draw this layout.
+//!
 //! Library packages are metadata-only. Library-owned sources, `import()` bulk
-//! imports, `Collate:` ordering, `R/` files excluded from it, file renaming,
-//! and metadata or revision edits are excluded.
+//! imports, file renaming, and metadata or revision edits are excluded.
 //!
 //! Only `Query` variants are cold entries. Layout queries such as
 //! `collation_siblings()`, `source_dir_scripts()`, and `shiny_autoload()` accept
