@@ -118,6 +118,47 @@ fn testthat_loads_a_test_file(scenario: &Scenario) -> bool {
             .any(|layer| layer.contains("/tests/testthat/helper-"))
 }
 
+/// Scan beyond the six canonical blocks because independent rotation does not
+/// guarantee this shape appears in each block.
+#[test]
+fn test_setup_interleaved_shape_appears() {
+    let found = (0u64..50).flat_map(seed_corpus).any(|scenario| {
+        scenario
+            .initial
+            .files
+            .iter()
+            .any(|file| file.path.contains("/setup-"))
+    });
+    assert!(found, "no seed in 0..50 produced a SetupInterleaved shape");
+}
+
+#[test]
+fn test_teardown_excluded_shape_appears() {
+    let found = (0u64..50).flat_map(seed_corpus).any(|scenario| {
+        scenario
+            .initial
+            .files
+            .iter()
+            .any(|file| file.path.contains("/teardown-"))
+    });
+    assert!(found, "no seed in 0..50 produced a TeardownExcluded shape");
+}
+
+#[test]
+fn test_nested_non_testthat_file_shape_appears() {
+    let found = (0u64..50).flat_map(seed_corpus).any(|scenario| {
+        scenario
+            .initial
+            .files
+            .iter()
+            .any(|file| file.path.contains("tests/testthat/sub/"))
+    });
+    assert!(
+        found,
+        "no seed in 0..50 produced a NestedNonTestthatFile shape"
+    );
+}
+
 /// `loader_name()` observes loader coverage even when source cycles prevent
 /// definition resolution. Each block needs only one rotating Shiny entry.
 #[test]

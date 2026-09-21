@@ -86,3 +86,48 @@ pub(super) fn shiny_nested_app_file_joins_the_enclosing_app() -> Scenario {
     ]);
     Scenario::cold(initial, Query::Diagnostics(FileId(2)), vec![])
 }
+
+/// Support files are LIFO after basename sorting, so `setup*.R` shadows
+/// `helper*.R` because `setup` sorts after `helper`.
+pub(super) fn testthat_setup_outranks_helper() -> Scenario {
+    let initial = package("mypkg", &["base", "testthat"], vec![
+        ("R/a.R", program(vec![function_def("pkg_fn", vec![])])),
+        (
+            "tests/testthat/helper-b.R",
+            program(vec![function_def("shared_fn", vec![])]),
+        ),
+        (
+            "tests/testthat/setup-c.R",
+            program(vec![function_def("shared_fn", vec![])]),
+        ),
+        ("tests/testthat/test-d.R", program(vec![binding("val_d")])),
+    ]);
+    Scenario::cold(initial, Query::Diagnostics(FileId(3)), vec![])
+}
+
+/// `teardown*.R` runs after tests, so it is excluded from their support files.
+pub(super) fn testthat_teardown_is_excluded_from_support() -> Scenario {
+    let initial = package("mypkg", &["base", "testthat"], vec![
+        ("R/a.R", program(vec![function_def("pkg_fn", vec![])])),
+        (
+            "tests/testthat/teardown-b.R",
+            program(vec![function_def("teardown_fn", vec![])]),
+        ),
+        ("tests/testthat/test-c.R", program(vec![binding("val_c")])),
+    ]);
+    Scenario::cold(initial, Query::Diagnostics(FileId(2)), vec![])
+}
+
+/// Only direct `tests/testthat/` children are testthat files. A nested helper
+/// never enters the support set.
+pub(super) fn testthat_nested_file_is_not_a_testthat_file() -> Scenario {
+    let initial = package("mypkg", &["base", "testthat"], vec![
+        ("R/a.R", program(vec![function_def("pkg_fn", vec![])])),
+        (
+            "tests/testthat/sub/helper-b.R",
+            program(vec![function_def("nested_fn", vec![])]),
+        ),
+        ("tests/testthat/test-c.R", program(vec![binding("val_c")])),
+    ]);
+    Scenario::cold(initial, Query::Diagnostics(FileId(2)), vec![])
+}

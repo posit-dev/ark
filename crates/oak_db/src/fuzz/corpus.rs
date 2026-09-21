@@ -16,6 +16,9 @@ use self::layouts::shiny_entry_sees_global_and_r_files;
 use self::layouts::shiny_marker_removed_stops_autoload;
 use self::layouts::shiny_nested_app_file_joins_the_enclosing_app;
 use self::layouts::testthat_helper_edit_changes_the_test_view;
+use self::layouts::testthat_nested_file_is_not_a_testthat_file;
+use self::layouts::testthat_setup_outranks_helper;
+use self::layouts::testthat_teardown_is_excluded_from_support;
 use self::layouts::testthat_test_sees_helpers_and_package;
 use self::packages::acyclic_reexport_chain_resolves_to_the_definition;
 use self::packages::attached_package_consumer_degrades_on_a_reexport_cycle;
@@ -89,6 +92,18 @@ pub(crate) fn cases() -> Vec<Case> {
         Case {
             name: "shiny_nested_app_file_joins_the_enclosing_app",
             scenario: shiny_nested_app_file_joins_the_enclosing_app(),
+        },
+        Case {
+            name: "testthat_setup_outranks_helper",
+            scenario: testthat_setup_outranks_helper(),
+        },
+        Case {
+            name: "testthat_teardown_is_excluded_from_support",
+            scenario: testthat_teardown_is_excluded_from_support(),
+        },
+        Case {
+            name: "testthat_nested_file_is_not_a_testthat_file",
+            scenario: testthat_nested_file_is_not_a_testthat_file(),
         },
         Case {
             name: "mutual_pair_opens_then_closes_again",

@@ -41,7 +41,8 @@
 //! toggle moves its `R/` siblings between autoload members and plain scripts.
 //! An independent rotation covers Shiny-specific detection: disabled `R/`
 //! autoload, paired `ui.R` and `server.R` entries, package `inst/app/`, and a
-//! nested `R/app.R`.
+//! nested `R/app.R`. A third rotation covers testthat support ordering and
+//! exclusions: `setup*.R`, `teardown*.R`, and nested files.
 //!
 //! Library packages are metadata-only. Library-owned sources, `import()` bulk
 //! imports, `Collate:` ordering, `R/` files excluded from it, file renaming,
