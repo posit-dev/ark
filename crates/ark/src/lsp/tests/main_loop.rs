@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_path::AbsPathBuf;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
@@ -83,6 +84,37 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     assert_eq!(packages[0].files(db).len(), 1);
 }
 
+/// Starting a session runs the production `initialize`, so it must keep the
+/// workspace the harness prepared, index it, and hand back an idle loop. A
+/// benchmark that measured an edit against an unsettled session would race
+/// startup diagnostics.
+#[tokio::test]
+async fn test_start_indexes_the_prepared_workspace_and_settles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .write(&pkg);
+    write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
+
+    let folder = AbsPathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+    let mut harness = LspHarness::new(OakDatabase::new());
+    harness.set_workspace_folders(vec![folder.clone()]);
+
+    let session = harness.start(&[]).await;
+
+    assert!(session.is_settled());
+    assert_eq!(session.world().workspace.folders, vec![folder]);
+
+    let db = &session.world().db;
+    let roots = db.workspace_roots().roots(db).clone();
+    assert_eq!(roots.len(), 1);
+    let packages = roots[0].packages(db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(db), "pkg");
+}
+
 /// Db-holding work (diagnostics, index warmup) and unbounded I/O (package source
 /// fetches) run on separate executors, so saturating the source pool can't stall a
 /// main-loop write: the analysis pool stays free to drain the queued diagnostics
@@ -119,7 +151,7 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut session = LspHarness::with_default_source_fetching(db)
-        .start(&[], Some(handler))
+        .start_with_sources(&[], handler)
         .await;
 
     // A workspace package using all five library packages via `::`, so the scan hands
@@ -179,7 +211,7 @@ async fn test_settle_reports_a_panicking_source_worker() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut session = LspHarness::with_default_source_fetching(db)
-        .start(&[], Some(handler))
+        .start_with_sources(&[], handler)
         .await;
 
     let workspace = tempfile::tempdir().unwrap();

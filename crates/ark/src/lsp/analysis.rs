@@ -21,8 +21,8 @@ mod warmup;
 
 pub(crate) use metrics::DiagnosticsMetrics;
 pub(crate) use pool::AnalysisPool;
-#[cfg(test)]
-pub(crate) use pool::PoolMetrics;
+#[cfg(any(test, feature = "testing"))]
+pub use pool::PoolMetrics;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use refresh::is_testthat_path;
 pub(crate) use refresh::DiagnosticsReady;

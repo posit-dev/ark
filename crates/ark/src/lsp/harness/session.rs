@@ -11,12 +11,19 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use aether_path::FilePath;
 use serde_json::Value;
+use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::Uri;
 
+use super::client::TestClient;
+use super::events;
 use super::LspHarness;
 use crate::lsp::analysis::PoolMetrics;
+#[cfg(test)]
 use crate::lsp::analysis::WorldStateSnapshot;
+use crate::lsp::backend::LspResponse;
+use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::register_auxiliary_tx;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::AuxiliaryState;
@@ -25,17 +32,37 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
+#[cfg(test)]
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
-use crate::lsp::tests::utils::client::TestClient;
-use crate::lsp::tests::utils::events;
+#[cfg(test)]
+use crate::lsp::state::WorldState;
+use crate::lsp::traits::url::UrlExt;
 
 impl LspHarness {
-    /// The simulated editor serves `settings` for `workspace/configuration`, and
-    /// `None` disables source fetching. Consuming the harness prevents buffers
-    /// from being prepared outside the main loop after the session starts.
-    pub(crate) async fn start(
+    /// Start the main loop against a simulated editor that serves `settings`
+    /// for `workspace/configuration`. Source fetching stays disabled.
+    ///
+    /// The returned session has completed the startup handshake and settled
+    /// the work it scheduled, so a measured section begins from an idle loop
+    /// rather than racing startup diagnostics. Consuming the harness prevents
+    /// buffers from being prepared outside the main loop after the session
+    /// starts.
+    pub async fn start(self, settings: &[(&str, Value)]) -> LspSession {
+        self.start_with(settings, None).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_with_sources(
+        self,
+        settings: &[(&str, Value)],
+        source_handler: Arc<dyn SourceHandler>,
+    ) -> LspSession {
+        self.start_with(settings, Some(source_handler)).await
+    }
+
+    async fn start_with(
         self,
         settings: &[(&str, Value)],
         source_handler: Option<Arc<dyn SourceHandler>>,
@@ -47,16 +74,27 @@ impl LspHarness {
         let (auxiliary_tx, auxiliary_rx) = tokio::sync::mpsc::unbounded_channel();
         register_auxiliary_tx(auxiliary_tx);
 
-        let mut source_scheduler = SourceScheduler::new(source_handler);
-        source_scheduler.config_arrived();
+        // Read the folders before `self.state` moves into the loop, so the
+        // `initialize` request re-declares the workspace the caller prepared
+        // rather than clearing it.
+        let folders: Vec<Uri> = self
+            .state
+            .workspace
+            .folders
+            .iter()
+            .map(|folder| folder.to_url().to_uri().unwrap())
+            .collect();
 
         let state = GlobalState::from_parts(
             client.client(),
             self.state,
-            LspState::new(tokio::sync::mpsc::unbounded_channel().0, source_scheduler),
+            LspState::new(
+                tokio::sync::mpsc::unbounded_channel().0,
+                SourceScheduler::new(source_handler),
+            ),
         );
 
-        LspSession {
+        let mut session = LspSession {
             auxiliary: AuxiliaryState::new(client.client()),
             state,
             client,
@@ -64,13 +102,16 @@ impl LspHarness {
             raw_publications: Vec::new(),
             delivered: 0,
             background_panics: 0,
-        }
+        };
+
+        session.handshake(folders).await;
+        session
     }
 }
 
-/// Keeps each selected result owned while [`LspSession::settle()`] borrows
-/// several fields. [`Event`] already dominates the enum's size, so boxing would
-/// add an allocation to every loop iteration.
+/// Keeps each selected result owned while [`LspSession::pump_once()`] borrows
+/// several fields. Keep [`Event`] inline because boxing it would add an
+/// allocation to every main-loop event.
 #[expect(clippy::large_enum_variant)]
 enum Wakeup {
     Event(Event),
@@ -79,7 +120,7 @@ enum Wakeup {
 }
 
 /// A production main loop connected to a simulated editor.
-pub(crate) struct LspSession {
+pub struct LspSession {
     state: GlobalState,
     client: TestClient,
 
@@ -98,11 +139,51 @@ pub(crate) struct LspSession {
 }
 
 impl LspSession {
-    /// Handle one event without settling follow-up work, for tests that gate a
-    /// subsystem.
-    pub(crate) async fn handle_once(&mut self, event: Event) {
+    /// Run the production startup handshake, then settle the work it
+    /// schedules.
+    ///
+    /// `initialize` negotiates capabilities and dispatches a workspace scan
+    /// over `folders`, and `initialized` registers capabilities, pulls the
+    /// settings, and releases the source scheduler's startup gate. Settling
+    /// here means a measured section starts from an idle loop instead of
+    /// racing the diagnostics that applying configuration schedules.
+    async fn handshake(&mut self, folders: Vec<Uri>) {
+        let (event, mut response_rx) = events::initialize(folders);
         self.state.handle_event_once(event).await;
         self.collect_auxiliary();
+
+        // Read the answer rather than dropping the receiver, so a rejected
+        // `initialize` fails here instead of leaving the session running
+        // against a half-configured loop.
+        match response_rx.recv().await {
+            Some(RequestResponse::Result(Ok(LspResponse::Initialize(_)))) => {},
+            Some(RequestResponse::Result(Err(err))) => {
+                panic!("The main loop rejected `initialize`: {err:?}")
+            },
+            _ => panic!("The main loop did not answer `initialize`"),
+        }
+
+        self.state.handle_event_once(events::initialized()).await;
+        self.collect_auxiliary();
+
+        self.settle().await;
+    }
+
+    /// Queue `didOpen` for the main loop to pick up, the way an editor does.
+    /// Unlike [`LspHarness::prepare_document()`], which only registers the
+    /// buffer, this runs the open handler and the diagnostics it schedules.
+    pub fn send_did_open(&self, path: &Path, contents: &str) {
+        self.enqueue(events::did_open(path, contents));
+    }
+
+    /// Queue a whole-document `didChange` at `version`, which must exceed the
+    /// version the document was opened at.
+    ///
+    /// Queueing rather than handling inline keeps main-loop dispatch inside a
+    /// measured section, and lets a caller stack several changes to exercise
+    /// keyed replacement.
+    pub fn send_did_change(&self, path: &Path, contents: &str, version: i32) {
+        self.enqueue(events::did_change(path, contents, version));
     }
 
     /// Queue an event without handling it, to model a busy main loop.
@@ -110,56 +191,90 @@ impl LspSession {
         self.state.events_tx().send(event).unwrap();
     }
 
-    pub(crate) async fn pump_scans_to_quiescence(&mut self) {
-        self.state.pump_scans_to_quiescence().await;
-        self.collect_auxiliary();
-    }
+    /// Pump the main loop until it accepts diagnostics for `path` at
+    /// `version`, and hand them back.
+    ///
+    /// This covers the full round trip through the event loop, the diagnostics
+    /// scheduler, the analysis pool, and generation filtering, while leaving
+    /// out the serialization and socket work that
+    /// [`Self::wait_for_diagnostics()`] adds. Publications already recorded
+    /// when the wait starts don't count, so an earlier round trip over the
+    /// same document can't satisfy it.
+    ///
+    /// A settled loop has no work left that could produce the publication, so
+    /// reaching that state without it is a failure rather than a longer wait.
+    pub async fn wait_for_accepted_diagnostics(
+        &mut self,
+        path: &Path,
+        version: i32,
+    ) -> Vec<Diagnostic> {
+        let Some(path) = FilePath::from_path_buf(path.to_path_buf()) else {
+            panic!("Not an absolute UTF-8 path: {}", path.display());
+        };
+        let first = self.raw_publications.len();
 
-    /// Deliver `didOpen`, unlike [`LspHarness::prepare_document`], which only
-    /// registers the buffer.
-    pub(crate) async fn open_document(&mut self, path: &Path, contents: &str) {
-        self.handle_once(events::did_open(path, contents)).await;
-    }
+        loop {
+            let accepted = self.raw_publications[first..].iter().find(|publication| {
+                publication.path == path && publication.version == Some(version)
+            });
+            if let Some(accepted) = accepted {
+                return accepted.diagnostics.clone();
+            }
 
-    /// Deliver a whole-document `didChange` at `version`, which must exceed the
-    /// version the document was opened at.
-    pub(crate) async fn change_document(&mut self, path: &Path, contents: &str, version: i32) {
-        self.handle_once(events::did_change(path, contents, version))
-            .await;
+            if self.state.is_settled() {
+                panic!(
+                    "The main loop settled without accepting diagnostics for {path:?} at \
+                     version {version}"
+                );
+            }
+
+            self.pump_once().await;
+        }
     }
 
     /// Process queued events until no scheduler or analysis work remains.
     ///
-    /// The idle signal wakes this loop when a worker records its terminal
-    /// outcome after sending its result. A retained permit covers a transition
-    /// that races the settled check. Panics and unbalanced pool counters still
-    /// fail settlement rather than masquerading as successful completion.
-    pub(crate) async fn settle(&mut self) {
+    /// Panics and unbalanced pool counters fail settlement.
+    pub async fn settle(&mut self) {
         while !self.state.is_settled() {
-            // Limit the select's borrows so handling can reborrow `self`.
-            let wakeup = {
-                let idle = self.state.analysis_idle_signal();
-                tokio::select! {
-                    event = self.state.next_event() => Wakeup::Event(event),
-                    Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
-                    _ = idle.notified() => Wakeup::Idle,
-                }
-            };
+            self.pump_once().await;
+        }
+        self.check_background_failures();
+    }
 
-            match wakeup {
-                Wakeup::Event(event) => {
-                    self.state.handle_event_once(event).await;
-                    self.collect_auxiliary();
-                },
-                Wakeup::Auxiliary(event) => self.record_auxiliary(event),
-                Wakeup::Idle => {},
+    /// Report whether the loop has no scheduler, analysis, or queued work
+    /// left, so a caller can assert an idle starting point before measuring.
+    pub fn is_settled(&self) -> bool {
+        self.state.is_settled()
+    }
+
+    /// Wait for the next main-loop or auxiliary wakeup and handle it.
+    ///
+    /// The idle signal wakes this when a worker records its terminal outcome
+    /// after sending its result. A retained permit covers a transition that
+    /// races the caller's settled check.
+    async fn pump_once(&mut self) {
+        // Limit the select's borrows so handling can reborrow `self`.
+        let wakeup = {
+            let idle = self.state.analysis_idle_signal();
+            tokio::select! {
+                event = self.state.next_event() => Wakeup::Event(event),
+                Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
+                _ = idle.notified() => Wakeup::Idle,
             }
+        };
 
-            // A panicking worker can leave its scheduler pending, preventing a
-            // final settled check. Inspect failures after every wakeup.
-            self.check_background_failures();
+        match wakeup {
+            Wakeup::Event(event) => {
+                self.state.handle_event_once(event).await;
+                self.collect_auxiliary();
+            },
+            Wakeup::Auxiliary(event) => self.record_auxiliary(event),
+            Wakeup::Idle => {},
         }
 
+        // A panicking worker can leave its scheduler pending, preventing a
+        // final settled check. Inspect failures after every wakeup.
         self.check_background_failures();
     }
 
@@ -167,8 +282,9 @@ impl LspSession {
     ///
     /// Unchanged diagnostics are suppressed by production deduplication, so a
     /// notification count cannot signal completion. Use
-    /// [`Self::raw_publications`] to inspect main-loop output instead.
-    pub(crate) async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
+    /// [`Self::wait_for_accepted_diagnostics()`] to observe main-loop output
+    /// instead.
+    pub async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
         self.settle().await;
         self.deliver_auxiliary().await;
 
@@ -189,30 +305,12 @@ impl LspSession {
             })
     }
 
-    pub(crate) fn raw_publications(&self) -> &[DiagnosticsPublication] {
-        &self.raw_publications
-    }
-
-    pub(crate) fn client_notifications(&self) -> Vec<(String, Value)> {
+    pub fn client_notifications(&self) -> Vec<(String, Value)> {
         self.client.notifications()
     }
 
-    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
-        self.state.events_tx()
-    }
-
-    pub(crate) fn analysis_metrics(&self) -> PoolMetrics {
+    pub fn analysis_metrics(&self) -> PoolMetrics {
         self.state.lsp_state().analysis_pool.metrics()
-    }
-
-    pub(crate) fn spawn_analysis_probe(
-        &self,
-        run: impl FnOnce(WorldStateSnapshot) + Send + 'static,
-    ) {
-        self.state
-            .lsp_state()
-            .analysis_pool
-            .spawn_probe(self.state.world().snapshot(), run);
     }
 
     fn collect_auxiliary(&mut self) {
@@ -266,6 +364,58 @@ impl LspSession {
 }
 
 #[cfg(test)]
+impl LspSession {
+    /// Handle one event without settling its follow-up work.
+    pub(crate) async fn handle_once(&mut self, event: Event) {
+        self.state.handle_event_once(event).await;
+        self.collect_auxiliary();
+    }
+
+    pub(crate) async fn pump_scans_to_quiescence(&mut self) {
+        self.state.pump_scans_to_quiescence().await;
+        self.collect_auxiliary();
+    }
+
+    /// Handle `didOpen` inline, so the caller observes the state the open
+    /// handler leaves behind before any follow-up work runs.
+    pub(crate) async fn open_document(&mut self, path: &Path, contents: &str) {
+        self.handle_once(events::did_open(path, contents)).await;
+    }
+
+    /// Handle a whole-document `didChange` at `version` inline, as
+    /// [`Self::open_document()`] does for `didOpen`.
+    pub(crate) async fn change_document(&mut self, path: &Path, contents: &str, version: i32) {
+        self.handle_once(events::did_change(path, contents, version))
+            .await;
+    }
+
+    pub(crate) fn world(&self) -> &WorldState {
+        self.state.world()
+    }
+
+    pub(crate) fn raw_publications(&self) -> &[DiagnosticsPublication] {
+        &self.raw_publications
+    }
+
+    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
+        self.state.events_tx()
+    }
+
+    /// Run `task` on the analysis pool without going through a scheduler. Tests
+    /// use this to create worker states that normal requests cannot hold, such
+    /// as sending an [`Event`] and then blocking before the task returns.
+    pub(crate) fn spawn_analysis_task(
+        &self,
+        task: impl FnOnce(WorldStateSnapshot) + Send + 'static,
+    ) {
+        self.state
+            .lsp_state()
+            .analysis_pool
+            .spawn_test_task(self.state.world().snapshot(), task);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::mpsc::Receiver;
     use std::sync::mpsc::Sender;
@@ -274,11 +424,13 @@ mod tests {
 
     use aether_path::FilePath;
     use oak_db::OakDatabase;
+    use serde_json::Value;
     use tower_lsp_server::ls_types::Diagnostic;
     use tower_lsp_server::ls_types::Uri;
 
     use super::LspSession;
     use crate::lsp::analysis::DiagnosticsReady;
+    use crate::lsp::config::R_DIAGNOSTICS_ENABLED_SETTING;
     use crate::lsp::harness::LspHarness;
     use crate::lsp::main_loop::DiagnosticsPublication;
     use crate::lsp::main_loop::Event;
@@ -289,7 +441,7 @@ mod tests {
     const TIMEOUT: Duration = Duration::from_secs(10);
 
     async fn session() -> LspSession {
-        LspHarness::new(OakDatabase::new()).start(&[], None).await
+        LspHarness::new(OakDatabase::new()).start(&[]).await
     }
 
     fn publication(message: &str) -> DiagnosticsPublication {
@@ -323,13 +475,13 @@ mod tests {
 
     /// Send a result before the task records its terminal outcome, then return
     /// the gate that controls that outcome.
-    fn gated_probe(session: &LspSession) -> (Receiver<()>, Sender<()>) {
+    fn spawn_gated_analysis_task(session: &LspSession) -> (Receiver<()>, Sender<()>) {
         let events_tx = session.events_tx();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
 
-        session.spawn_analysis_probe(move |_snapshot| {
-            events_tx.send(ready(1, "from the probe")).unwrap();
+        session.spawn_analysis_task(move |_snapshot| {
+            events_tx.send(ready(1, "from the task")).unwrap();
             entered_tx.send(()).unwrap();
             release_rx.recv().unwrap();
         });
@@ -354,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_settle_returns_when_work_finished_before_the_wait() {
         let mut session = session().await;
-        let (_entered, release) = gated_probe(&session);
+        let (_entered, release) = spawn_gated_analysis_task(&session);
 
         release.send(()).unwrap();
         await_recorded_terminal(&session).await;
@@ -369,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn test_settle_wakes_when_work_finishes_after_the_wait() {
         let mut session = session().await;
-        let (_entered, release) = gated_probe(&session);
+        let (_entered, release) = spawn_gated_analysis_task(&session);
 
         let mut settling = Box::pin(session.settle());
         assert!(futures::poll!(&mut settling).is_pending());
@@ -429,5 +581,75 @@ mod tests {
         assert_eq!(session.client_notifications().len(), 3);
         assert_eq!(delivered, Some(vec![]));
         assert_eq!(session.raw_publications().len(), 3);
+    }
+
+    /// Settings handed to [`LspHarness::start()`] are useless unless the
+    /// session also runs the production pull, which needs the capabilities
+    /// from the `initialize` request and the `initialized` handler.
+    #[tokio::test]
+    async fn test_start_pulls_the_supplied_settings() {
+        let session = LspHarness::new(OakDatabase::new())
+            .start(&[(R_DIAGNOSTICS_ENABLED_SETTING, Value::Bool(false))])
+            .await;
+
+        assert!(session
+            .client
+            .answered_requests()
+            .contains(&String::from("workspace/configuration")));
+        assert!(!session.world().config.diagnostics.enable);
+    }
+
+    /// The queued notifications and the wait cover one complete round trip
+    /// through the event loop, diagnostics scheduler, and analysis pool.
+    #[tokio::test]
+    async fn test_wait_returns_the_publication_for_a_queued_change() {
+        let workspace = tempfile::tempdir().unwrap();
+        let script = workspace.path().join("script.R");
+        let mut session = session().await;
+
+        session.send_did_open(&script, "x <- 1\n");
+        let opened =
+            tokio::time::timeout(TIMEOUT, session.wait_for_accepted_diagnostics(&script, 0))
+                .await
+                .unwrap();
+        assert_eq!(opened, vec![]);
+
+        session.send_did_change(&script, "y <- 2\n", 1);
+        let changed =
+            tokio::time::timeout(TIMEOUT, session.wait_for_accepted_diagnostics(&script, 1))
+                .await
+                .unwrap();
+
+        assert_eq!(changed, vec![]);
+        assert_eq!(session.raw_publications().len(), 2);
+    }
+
+    /// Stacking changes without settling exposes intermediate versions to keyed
+    /// replacement, so only the final version is guaranteed to publish.
+    #[tokio::test]
+    async fn test_wait_settles_a_burst_on_its_final_version() {
+        let workspace = tempfile::tempdir().unwrap();
+        let script = workspace.path().join("script.R");
+        let mut session = session().await;
+
+        session.send_did_open(&script, "x <- 1\n");
+
+        for version in 1..=5 {
+            session.send_did_change(&script, &format!("x <- {version}\n"), version);
+        }
+
+        let diagnostics =
+            tokio::time::timeout(TIMEOUT, session.wait_for_accepted_diagnostics(&script, 5))
+                .await
+                .unwrap();
+
+        assert_eq!(diagnostics, vec![]);
+
+        // Acceptance is monotonic in generation, so draining what the burst
+        // left behind cannot publish an older version over the one waited on.
+        tokio::time::timeout(TIMEOUT, session.settle())
+            .await
+            .unwrap();
+        assert_eq!(session.raw_publications().last().unwrap().version, Some(5));
     }
 }
