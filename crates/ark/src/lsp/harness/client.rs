@@ -1,3 +1,5 @@
+//! A simulated editor peer for the production `Client` path.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -19,19 +21,22 @@ use tower_lsp_server::LspService;
 /// `Client` to its init closure; we capture it and drop the service. The
 /// client's sends go nowhere, which is fine since the event paths under test
 /// never use it. Use [`TestClient`] when a handler needs an answer.
+#[cfg(test)]
 pub(crate) fn test_client() -> Client {
     let (_service, _socket, client) = service();
     client
 }
 
-/// A live [`Client`] paired with a peer that answers the requests the server
-/// sends it, so tests can drive the real `workspace/configuration` path.
+/// A live [`Client`] paired with a simulated editor that drains every outbound
+/// message. It records notifications and answers requests so server handlers
+/// waiting on the client can finish.
 ///
-/// The peer answers each requested configuration item from `settings`, keyed by
-/// section. A section it doesn't hold answers `null`, which selects that
-/// setting's default. Tests change a value with [`Self::set_setting()`] and then
-/// drive a `didChangeConfiguration` notification, the way an editor does.
-pub(crate) struct TestClient {
+/// The peer returns configured values for `workspace/configuration` and
+/// acknowledges `client/registerCapability`, whose result is empty. Any other
+/// request fails the harness so newly required editor behavior is not ignored.
+/// Tests can update a value with [`Self::set_setting()`] before driving a
+/// `didChangeConfiguration` notification.
+pub struct TestClient {
     client: Client,
     settings: Arc<Mutex<HashMap<String, Value>>>,
     requests: Arc<Mutex<Vec<String>>>,
@@ -44,7 +49,7 @@ pub(crate) struct TestClient {
 impl TestClient {
     /// Build a client whose peer answers `settings`, given as `(section, value)`
     /// pairs.
-    pub(crate) async fn new(settings: &[(&str, Value)]) -> Self {
+    pub async fn new(settings: &[(&str, Value)]) -> Self {
         let (mut service, socket, client) = service();
 
         // `Client` suppresses outbound requests until the service has answered
@@ -89,13 +94,13 @@ impl TestClient {
     }
 
     /// The client to hand to `GlobalState`. Every clone talks to the same peer.
-    pub(crate) fn client(&self) -> Client {
+    pub fn client(&self) -> Client {
         self.client.clone()
     }
 
     /// Change what the peer answers for `section`, as a user changing a setting
     /// does. Takes effect on the next `workspace/configuration` request.
-    pub(crate) fn set_setting(&self, section: &str, value: Value) {
+    pub fn set_setting(&self, section: &str, value: Value) {
         self.settings
             .lock()
             .unwrap()
@@ -103,12 +108,12 @@ impl TestClient {
     }
 
     /// Methods of the requests the peer has answered, in order.
-    pub(crate) fn answered_requests(&self) -> Vec<String> {
+    pub fn answered_requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
     }
 
     /// Methods and params of the notifications the server has sent, in order.
-    pub(crate) fn notifications(&self) -> Vec<(String, Value)> {
+    pub fn notifications(&self) -> Vec<(String, Value)> {
         self.notifications.lock().unwrap().clone()
     }
 }
@@ -141,7 +146,8 @@ async fn answer_requests(
             "workspace/configuration" => {
                 configuration_result(params.as_ref(), &settings.lock().unwrap())
             },
-            _ => Value::Null,
+            "client/registerCapability" => Value::Null,
+            method => panic!("Unexpected client request: {method}"),
         };
 
         if outgoing

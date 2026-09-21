@@ -314,9 +314,9 @@ impl SourceScheduler {
         }
     }
 
-    /// Whether any source request is in flight. Allows tests to deterministically "wait"
-    /// for pending source requests to finish.
-    #[cfg(test)]
+    /// Source requests are tracked outside the analysis pool counters, so
+    /// settlement must check them separately.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn has_pending(&self) -> bool {
         self.state
             .values()

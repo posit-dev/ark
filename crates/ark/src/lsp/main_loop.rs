@@ -513,10 +513,10 @@ impl GlobalState {
         }
     }
 
-    /// Pull the next event off the channel. Only the test pump uses this; the
-    /// running loop selects on the channel directly so it can also watch for
-    /// shutdown.
-    #[cfg(test)]
+    /// Pull the next event off the channel. Only the harness pump uses this;
+    /// the running loop selects on the channel directly so it can also watch
+    /// for shutdown.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
     }
@@ -931,9 +931,44 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     }
 }
 
-/// Test-only methods for driving the main loop without R or a live LSP
-/// connection. Kept here, next to the loop they exercise, so the pump uses the
-/// real `handle_event()` and the private channels rather than a reconstruction.
+/// Harness access to the main loop without R or a live LSP connection.
+///
+/// These methods require private channels and dispatch through the real
+/// `handle_event()`. [`crate::lsp::harness::LspSession`] exposes them to
+/// benchmarks through the `testing` feature.
+#[cfg(any(test, feature = "testing"))]
+impl GlobalState {
+    /// Run one `event` through `handle_event()` without pumping follow-up work.
+    /// This allows callers to inspect or gate a subsystem before it settles.
+    pub(crate) async fn handle_event_once(&mut self, event: Event) {
+        self.handle_event(event).await.unwrap();
+    }
+
+    pub(crate) fn lsp_state(&self) -> &LspState {
+        &self.lsp_state
+    }
+
+    /// Report whether no scheduler, analysis, or main-loop work is pending.
+    /// This is only a predicate, so callers must still check background failures
+    /// and pair it with the retained idle signal to avoid a check-to-wait race.
+    pub(crate) fn is_settled(&self) -> bool {
+        if self.lsp_state.oak_scheduler.has_pending_scans() ||
+            self.lsp_state.source_scheduler.has_pending()
+        {
+            return false;
+        }
+
+        let queue = self.lsp_state.analysis_pool.metrics();
+        queue.waiting() == 0 && queue.running() == 0 && self.events_rx.is_empty()
+    }
+
+    /// Return an owned idle signal for `select!` with [`Self::next_event()`],
+    /// which requires `&mut self`.
+    pub(crate) fn analysis_idle_signal(&self) -> Arc<tokio::sync::Notify> {
+        self.lsp_state.analysis_pool.idle_signal()
+    }
+}
+
 #[cfg(test)]
 impl GlobalState {
     /// Run `event` through the real `handle_event`, then pump any pending
@@ -948,13 +983,6 @@ impl GlobalState {
             let event = self.next_event().await;
             self.handle_event(event).await.unwrap();
         }
-    }
-
-    /// Run a single `event` through the real `handle_event`, without pumping
-    /// followups. Tests that gate a subsystem need this because
-    /// `handle_event_to_quiescence` would wait for the gated work to finish.
-    pub(crate) async fn handle_event_once(&mut self, event: Event) {
-        self.handle_event(event).await.unwrap();
     }
 
     /// Pump events until no oak scan is pending, ignoring pending source
@@ -989,30 +1017,6 @@ impl GlobalState {
 
     pub(crate) fn world(&self) -> &WorldState {
         &self.world
-    }
-
-    pub(crate) fn lsp_state(&self) -> &LspState {
-        &self.lsp_state
-    }
-
-    /// Report whether no scheduler, analysis, or main-loop work is pending.
-    /// This is only a predicate, so callers must still check background failures
-    /// and pair it with the retained idle signal to avoid a check-to-wait race.
-    pub(crate) fn is_settled(&self) -> bool {
-        if self.lsp_state.oak_scheduler.has_pending_scans() ||
-            self.lsp_state.source_scheduler.has_pending()
-        {
-            return false;
-        }
-
-        let queue = self.lsp_state.analysis_pool.metrics();
-        queue.waiting() == 0 && queue.running() == 0 && self.events_rx.is_empty()
-    }
-
-    /// Return an owned idle signal for `select!` with [`Self::next_event`],
-    /// which requires `&mut self`.
-    pub(crate) fn analysis_idle_signal(&self) -> Arc<tokio::sync::Notify> {
-        self.lsp_state.analysis_pool.idle_signal()
     }
 }
 
@@ -1417,8 +1421,8 @@ mod tests {
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::harness::client::TestClient;
     use crate::lsp::state::WorldState;
-    use crate::lsp::tests::utils::client::TestClient;
     use crate::lsp::traits::url::UrlExt;
 
     #[tokio::test]

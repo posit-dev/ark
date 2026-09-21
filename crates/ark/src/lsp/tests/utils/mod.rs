@@ -1,4 +1,3 @@
-pub(crate) mod client;
 mod description_writer;
 pub(crate) mod events;
 mod namespace_writer;
@@ -6,22 +5,22 @@ mod namespace_writer;
 use std::path::Path;
 use std::sync::Arc;
 
-pub(super) use client::test_client;
-pub(super) use client::TestClient;
 pub(super) use description_writer::DescriptionWriter;
 pub(super) use events::did_change_configuration;
 pub(super) use events::did_change_workspace_folders;
-pub(super) use events::did_open;
 pub(super) use events::initialize;
 pub(super) use events::initialize_with_options;
 pub(super) use events::initialize_without_configuration;
-pub(super) use events::initialized;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_db::OakDatabase;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+pub(super) use crate::lsp::harness::client::test_client;
+pub(super) use crate::lsp::harness::client::TestClient;
+pub(super) use crate::lsp::harness::events::did_open;
+pub(super) use crate::lsp::harness::events::initialized;
 use crate::lsp::harness::prepare_document_at;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
