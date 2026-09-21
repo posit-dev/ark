@@ -353,6 +353,18 @@ fn test_scenario_testthat_nested_file_is_not_a_testthat_file() {
     assert_eq!(world.file_resolve(FileId(2), "nested_fn"), NO_DEFINITIONS);
 }
 
+#[test]
+fn test_scenario_package_r_file_excluded_from_collate_is_a_script() {
+    let scenario = corpus::scenario("package_r_file_excluded_from_collate_is_a_script");
+    let world = start(&scenario);
+
+    assert_eq!(world.file_resolve(FileId(1), "kept_fn"), NO_DEFINITIONS);
+    assert_eq!(
+        world.package_collation(PackageId(0)),
+        Some(vec!["a.R".to_string()])
+    );
+}
+
 // == Package re-export cycles ==
 
 /// Checks the resolved definition and the metadata retained by NAMESPACE parsing.

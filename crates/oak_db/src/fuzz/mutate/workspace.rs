@@ -260,6 +260,7 @@ pub(super) fn add_package(rng: &mut impl Choose, scenario: &mut Scenario) {
         },
         exports: Vec::new(),
         reexports: Vec::new(),
+        collate: None,
     });
 }
 

@@ -3,11 +3,13 @@
 use std::path::Path;
 
 use biome_rowan::TextSize;
+use camino::Utf8PathBuf;
 use oak_package_metadata::namespace::Namespace;
+use rustc_hash::FxHashMap;
 use salsa::Setter;
 
 use crate::classify_in_package;
-use crate::file_reader::EmptyFileReader;
+use crate::file_reader::MapFileReader;
 use crate::fuzz::scenario::Op;
 use crate::fuzz::scenario::Query;
 use crate::fuzz::scenario::Site;
@@ -34,6 +36,7 @@ use crate::Package;
 use crate::PackagePlacement;
 use crate::Root;
 use crate::RootKind;
+use crate::SourceDb;
 
 pub(crate) struct World {
     db: OakDatabase,
@@ -48,7 +51,19 @@ pub(crate) struct World {
 impl World {
     /// Do not evaluate semantic queries here. `cold_entry` must be Salsa's first query.
     pub(crate) fn materialize(spec: &WorkspaceSpec) -> Self {
-        let mut db = OakDatabase::with_file_reader(EmptyFileReader);
+        // `DESCRIPTION` lacks NAMESPACE's override path, so serve it through
+        // the reader to run `Package` metadata queries through the production parser.
+        let description_texts: FxHashMap<Utf8PathBuf, String> = spec
+            .packages
+            .iter()
+            .filter(|package_spec| package_spec.kind == PackageKind::Workspace)
+            .filter_map(|package_spec| {
+                let path = file_path(&format!("{}/DESCRIPTION", package_spec.directory()));
+                let path = path.as_path()?.to_path_buf();
+                Some((path, package_spec.description_text()))
+            })
+            .collect();
+        let mut db = OakDatabase::with_file_reader(MapFileReader::new(description_texts));
 
         let installed: Vec<Package> = spec
             .installed
@@ -157,7 +172,7 @@ impl World {
 
             // Match scanner placement: direct `R/` children are package files,
             // and other package files are standalone scripts.
-            let mut collation: Vec<File> = Vec::new();
+            let mut candidates: Vec<File> = Vec::new();
             let mut scripts: Vec<File> = Vec::new();
             for id in owned {
                 let absolute = spec.absolute_path(id);
@@ -165,7 +180,7 @@ impl World {
                     Path::new(&package_spec.directory()),
                     Path::new(&absolute),
                 ) {
-                    PackagePlacement::File => collation.push(files[id.0]),
+                    PackagePlacement::File => candidates.push(files[id.0]),
                     PackagePlacement::Script => scripts.push(files[id.0]),
                     // `validate()` rejects nested `R/` files before materialization.
                     PackagePlacement::Skip => {
@@ -173,6 +188,11 @@ impl World {
                     },
                 }
             }
+            // Partition direct `R/` children through `package.collation()` so
+            // `DESCRIPTION` parsing, not a second copy of `PackageSpec::collate`,
+            // determines which omitted files become scripts.
+            let (collation, leftover) = split_by_collate(&db, candidates, package);
+            scripts.extend(leftover);
             package.set_files(&mut db).to(collation);
             package.set_scripts(&mut db).to(scripts);
             roots.push(Root::new(
@@ -370,6 +390,13 @@ impl World {
         self.package(id).namespace(&self.db).exports.to_vec()
     }
 
+    /// Preserves the distinction between an absent `Collate:` field and an
+    /// explicitly empty one.
+    #[cfg(test)]
+    pub(crate) fn package_collation(&self, id: PackageId) -> Option<Vec<String>> {
+        self.package(id).collation(&self.db).clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn package_imported_from(&self, id: PackageId) -> Vec<(String, String)> {
         let mut entries: Vec<(String, String)> = self
@@ -404,4 +431,43 @@ impl World {
             .map(|definition| path_name(definition.file(&self.db).path(&self.db)))
             .collect()
     }
+}
+
+/// Orders direct `R/` children by parsed `Collate:` entries and returns
+/// omitted files as standalone scripts. An absent `Collate:` keeps every
+/// candidate loadable in draw order.
+///
+/// Read `package.collation()` to exercise `DESCRIPTION` parsing through
+/// `MapFileReader`, rather than duplicating `PackageSpec::collate`.
+/// `leftover` preserves input order so identical seeds materialize identically.
+fn split_by_collate(
+    db: &dyn SourceDb,
+    candidates: Vec<File>,
+    package: Package,
+) -> (Vec<File>, Vec<File>) {
+    let Some(order) = package.collation(db).clone() else {
+        return (candidates, Vec::new());
+    };
+
+    let basename = |file: File| file.path(db).file_name().map(|name| name.to_string());
+
+    let loadable = order
+        .iter()
+        .filter_map(|name| {
+            candidates
+                .iter()
+                .copied()
+                .find(|file| basename(*file).as_deref() == Some(name.as_str()))
+        })
+        .collect();
+    let leftover = candidates
+        .into_iter()
+        .filter(|file| {
+            !order
+                .iter()
+                .any(|name| basename(*file).as_deref() == Some(name.as_str()))
+        })
+        .collect();
+
+    (loadable, leftover)
 }
