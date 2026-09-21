@@ -50,7 +50,7 @@ Generated and discovered inputs accumulate under `crates/oak_db/fuzz/corpus/scen
 
 ## Replay
 
-`just fuzz` splits deterministic checking into independently runnable blocks. Each block uses one seed for both its starting corpus and mutation sequence. Replay a block with operation and recovery tracing:
+`just fuzz` splits deterministic checking into independently runnable blocks. A block seed generates its initial corpus and derives a distinct seed for each mutation walk. Each walk restarts from the initial corpus because mutations accumulate in place and file removals otherwise drive scenarios toward small workspaces without cycles. Replay a block with operation and recovery tracing:
 
 ``` sh
 just fuzz-replay-seed 0
