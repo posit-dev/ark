@@ -47,9 +47,6 @@ use super::utils::did_close;
 use super::utils::did_open;
 use super::utils::goto_definition;
 use super::utils::range;
-use super::utils::source_scheduler_for_test;
-use super::utils::test_client;
-use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use crate::lsp::analysis::MAX_ANALYSIS_THREADS_ENV_VAR;
@@ -58,11 +55,10 @@ use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
-use crate::lsp::main_loop::init_aux_for_test;
-use crate::lsp::main_loop::AuxiliaryEvent;
+use crate::lsp::harness::LspHarness;
+use crate::lsp::harness::LspSession;
+use crate::lsp::main_loop::DiagnosticsPublication;
 use crate::lsp::main_loop::Event;
-use crate::lsp::main_loop::GlobalState;
-use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 
 const REPORT_ENV_VAR: &str = "ARK_BURST_REPORT";
@@ -73,7 +69,7 @@ const VDOCS_ENV_VAR: &str = "ARK_BURST_VDOCS";
 /// lines across 15 code lines.
 const PADDING_ENV_VAR: &str = "ARK_BURST_PADDING";
 
-/// Abort a stalled replay. [`GlobalState::is_settled()`] is counter-based,
+/// Abort a stalled replay. [`LspSession::is_settled()`] is counter-based,
 /// not time-based.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -99,7 +95,7 @@ const WINDOW: usize = 4;
 async fn test_burst_replay_publishes_final_diagnostics() {
     let config = BurstConfig::from_env();
     let fixture = Fixture::new();
-    let mut replay = Replay::start(&fixture, &config);
+    let mut replay = Replay::start(&fixture, &config).await;
 
     let started = Instant::now();
     let cpu_started = process_cpu_time();
@@ -111,7 +107,7 @@ async fn test_burst_replay_publishes_final_diagnostics() {
     {
         panic!(
             "The burst never settled: {metrics:?}",
-            metrics = replay.state.lsp_state().diagnostics_metrics
+            metrics = replay.session.lsp_state().diagnostics_metrics
         );
     }
 
@@ -272,11 +268,10 @@ impl Fixture {
 }
 
 struct Replay {
-    state: GlobalState,
-    aux_rx: UnboundedReceiver<AuxiliaryEvent>,
+    session: LspSession,
 
     probes: VecDeque<Probe>,
-    publications: Vec<Publication>,
+    published_at: Vec<Instant>,
     latencies: Vec<Latency>,
     peak_holds: usize,
 
@@ -292,13 +287,6 @@ struct Probe {
     definition: Range,
 }
 
-struct Publication {
-    uri: Uri,
-    diagnostics: Vec<Diagnostic>,
-    version: Option<i32>,
-    at: Instant,
-}
-
 /// Probe wait and handling durations. Enqueuing the full burst first makes
 /// queued time an upper bound.
 struct Latency {
@@ -307,26 +295,18 @@ struct Latency {
 }
 
 impl Replay {
-    fn start(fixture: &Fixture, config: &BurstConfig) -> Self {
-        let aux_rx = init_aux_for_test();
-
+    async fn start(fixture: &Fixture, config: &BurstConfig) -> Self {
         let mut db = OakDatabase::new();
         db.set_library_paths(&[fixture.library.path().to_path_buf()]);
 
-        let state = GlobalState::from_parts(
-            test_client(),
-            world_with_source_fetching(db),
-            LspState::new(
-                tokio::sync::mpsc::unbounded_channel().0,
-                source_scheduler_for_test(fixture.handler.clone()),
-            ),
-        );
+        let session = LspHarness::with_default_source_fetching(db)
+            .start_with_sources(&[], fixture.handler.clone())
+            .await;
 
         Self {
-            state,
-            aux_rx,
+            session,
             probes: VecDeque::new(),
-            publications: Vec::new(),
+            published_at: Vec::new(),
             latencies: Vec::new(),
             peak_holds: 0,
             last_mutation: None,
@@ -337,7 +317,7 @@ impl Replay {
     /// Queue the full burst before processing events so notifications accumulate
     /// behind the main loop.
     fn enqueue_burst(&mut self, fixture: &Fixture, config: &BurstConfig) {
-        let events_tx = self.state.events_tx();
+        let events_tx = self.session.events_tx();
         let recurring = fixture.recurring();
 
         events_tx
@@ -398,11 +378,8 @@ impl Replay {
         });
     }
 
-    /// Continue through replacement batches until [`GlobalState::is_settled()`]
-    /// reports no queued or active diagnostics work.
     async fn pump_to_settled(&mut self) {
-        while !self.state.is_settled() {
-            let event = self.state.take_event(|_event| true).await;
+        while let Some(event) = self.session.next_event().await {
             self.handle(event).await;
         }
     }
@@ -412,7 +389,7 @@ impl Replay {
         let last_mutation = self.is_last_mutation(&event);
 
         let dequeued = Instant::now();
-        self.state.handle_event_once(event).await;
+        self.session.handle_once(event).await;
         let handled = dequeued.elapsed();
 
         if probe {
@@ -422,10 +399,14 @@ impl Replay {
             self.last_mutation = Some(Instant::now());
         }
 
-        self.collect_publications();
+        // `handle_once()` records publications before returning, so their
+        // latency ends when event handling completes.
+        let published = self.session.raw_publications().len();
+        self.published_at.resize(published, Instant::now());
+
         self.peak_holds = self
             .peak_holds
-            .max(self.state.world().db.outstanding_holds());
+            .max(self.session.world().db.outstanding_holds());
     }
 
     fn is_last_mutation(&self, event: &Event) -> bool {
@@ -460,22 +441,8 @@ impl Replay {
         });
     }
 
-    fn collect_publications(&mut self) {
-        while let Ok(event) = self.aux_rx.try_recv() {
-            let AuxiliaryEvent::PublishDiagnostics(publication) = event else {
-                continue;
-            };
-            self.publications.push(Publication {
-                uri: publication.uri,
-                diagnostics: publication.diagnostics,
-                version: publication.version,
-                at: Instant::now(),
-            });
-        }
-    }
-
     fn assert_final_state(&self, fixture: &Fixture, config: &BurstConfig) {
-        let last = self.last_publication(&uri(&fixture.recurring()));
+        let (last, _at) = self.last_publication(&uri(&fixture.recurring()));
         assert_eq!(key_fields(&last.diagnostics), final_diagnostics(config));
         assert_eq!(last.version, Some(self.final_version));
 
@@ -483,13 +450,13 @@ impl Replay {
         // diagnostics after `didClose`.
         for index in 0..config.vdocs {
             let temporary = uri(&fixture.temporary(index));
-            assert!(self.publications.iter().any(|publication| {
+            assert!(self.session.raw_publications().iter().any(|publication| {
                 publication.uri == temporary && publication.diagnostics.is_empty()
             }));
         }
 
         let mut open: Vec<&str> = self
-            .state
+            .session
             .world()
             .open_files
             .values()
@@ -506,11 +473,11 @@ impl Replay {
         assert!(self.probes.is_empty());
         assert_eq!(self.latencies.len(), config.vdocs);
 
-        let diagnostics = self.state.lsp_state().diagnostics_metrics;
+        let diagnostics = self.session.lsp_state().diagnostics_metrics;
         assert!(diagnostics.batches >= config.vdocs as u64);
         assert!(diagnostics.results_accepted > 0);
 
-        let queue = self.state.lsp_state().analysis_pool.metrics();
+        let queue = self.session.analysis_metrics();
         assert_eq!(queue.waiting(), 0);
         assert_eq!(queue.running(), 0);
         assert!(queue.completed > 0);
@@ -518,15 +485,17 @@ impl Replay {
     }
 
     #[track_caller]
-    fn last_publication(&self, uri: &Uri) -> &Publication {
+    fn last_publication(&self, uri: &Uri) -> (&DiagnosticsPublication, Instant) {
         let last = self
-            .publications
+            .session
+            .raw_publications()
             .iter()
+            .zip(&self.published_at)
             .rev()
-            .find(|publication| publication.uri == *uri);
+            .find(|(publication, _at)| publication.uri == *uri);
 
         match last {
-            Some(publication) => publication,
+            Some((publication, at)) => (publication, *at),
             None => panic!("Nothing was published for {}", uri.as_str()),
         }
     }
@@ -569,7 +538,7 @@ impl Replay {
         );
         eprintln!("goto-definition {}", self.format_latencies());
 
-        let diagnostics = self.state.lsp_state().diagnostics_metrics;
+        let diagnostics = self.session.lsp_state().diagnostics_metrics;
         eprintln!(
             "diagnostics: {batches} batches, {tasks} tasks, {accepted} accepted, {stale} stale",
             batches = diagnostics.batches,
@@ -578,7 +547,7 @@ impl Replay {
             stale = diagnostics.results_stale,
         );
 
-        let queue = self.state.lsp_state().analysis_pool.metrics();
+        let queue = self.session.analysis_metrics();
         eprintln!(
             "queue: {queued} queued, {replaced} replaced, {started} started, {completed} completed, \
              {cancelled_queued} dropped before start, {cancelled_running} cancelled mid-pass, peak depth {peak}",
@@ -595,7 +564,8 @@ impl Replay {
 
     fn final_publication_delay(&self, recurring: &Uri) -> Option<Duration> {
         let mutation = self.last_mutation?;
-        Some(self.last_publication(recurring).at - mutation)
+        let (_publication, at) = self.last_publication(recurring);
+        Some(at - mutation)
     }
 
     fn format_latencies(&self) -> String {

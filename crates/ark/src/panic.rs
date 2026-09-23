@@ -114,10 +114,10 @@ fn in_catch_boundary() -> bool {
 /// Assert that Salsa database access runs inside a declared `catch_unwind()` boundary.
 /// Salsa queries can panic on cycles.
 ///
-/// Tests invoke LSP handlers without their normal boundaries, so `cfg!(test)` exempts
-/// them.
+/// Tests and the LSP test harness invoke handlers without their normal boundaries, so
+/// `cfg!(any(test, feature = "testing"))` exempts them.
 pub(crate) fn assert_in_catch_boundary() {
-    debug_assert!(cfg!(test) || in_catch_boundary());
+    debug_assert!(cfg!(any(test, feature = "testing")) || in_catch_boundary());
 }
 
 /// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
