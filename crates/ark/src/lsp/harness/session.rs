@@ -109,7 +109,7 @@ impl LspHarness {
     }
 }
 
-/// Keeps each selected result owned while [`LspSession::pump_once()`] borrows
+/// Keeps each selected result owned while [`LspSession::next_event()`] borrows
 /// several fields. Keep [`Event`] inline because boxing it would add an
 /// allocation to every main-loop event.
 #[expect(clippy::large_enum_variant)]
@@ -149,8 +149,7 @@ impl LspSession {
     /// racing the diagnostics that applying configuration schedules.
     async fn handshake(&mut self, folders: Vec<Uri>) {
         let (event, mut response_rx) = events::initialize(folders);
-        self.state.handle_event_once(event).await;
-        self.collect_auxiliary();
+        self.handle_once(event).await;
 
         // Read the answer rather than dropping the receiver, so a rejected
         // `initialize` fails here instead of leaving the session running
@@ -163,10 +162,16 @@ impl LspSession {
             _ => panic!("The main loop did not answer `initialize`"),
         }
 
-        self.state.handle_event_once(events::initialized()).await;
-        self.collect_auxiliary();
+        self.handle_once(events::initialized()).await;
 
         self.settle().await;
+    }
+
+    /// The main loop only publishes diagnostics while handling an event, so
+    /// collecting auxiliary events here records every publication.
+    pub(crate) async fn handle_once(&mut self, event: Event) {
+        self.state.handle_event_once(event).await;
+        self.collect_auxiliary();
     }
 
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
@@ -221,14 +226,13 @@ impl LspSession {
                 return accepted.diagnostics.clone();
             }
 
-            if self.state.is_settled() {
+            let Some(event) = self.next_event().await else {
                 panic!(
                     "The main loop settled without accepting diagnostics for {path:?} at \
                      version {version}"
                 );
-            }
-
-            self.pump_once().await;
+            };
+            self.handle_once(event).await;
         }
     }
 
@@ -237,10 +241,9 @@ impl LspSession {
     /// Settlement also fails on panics, unbalanced pool counters, or requests
     /// unsupported by the simulated editor.
     pub async fn settle(&mut self) {
-        while !self.state.is_settled() {
-            self.pump_once().await;
+        while let Some(event) = self.next_event().await {
+            self.handle_once(event).await;
         }
-        self.check_background_failures();
     }
 
     /// Report whether the loop has no scheduler, analysis, or queued work
@@ -249,34 +252,38 @@ impl LspSession {
         self.state.is_settled()
     }
 
-    /// Wait for the next main-loop or auxiliary wakeup and handle it.
+    /// Return the next unhandled main-loop event, or `None` once the loop
+    /// settles. Record auxiliary events and idle wakeups before returning.
     ///
-    /// The idle signal wakes this when a worker records its terminal outcome
-    /// after sending its result. A retained permit covers a transition that
-    /// races the caller's settled check.
-    async fn pump_once(&mut self) {
-        // Limit the select's borrows so handling can reborrow `self`.
-        let wakeup = {
-            let idle = self.state.analysis_idle_signal();
-            tokio::select! {
-                event = self.state.next_event() => Wakeup::Event(event),
-                Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
-                _ = idle.notified() => Wakeup::Idle,
+    /// The idle signal covers the interval after a worker sends its result but
+    /// before it records its terminal outcome. Its retained permit prevents a
+    /// missed wakeup when that interval races the settled check.
+    pub(crate) async fn next_event(&mut self) -> Option<Event> {
+        loop {
+            // A panicking worker can leave its scheduler pending, so the loop
+            // would never settle. Inspect failures after every wakeup.
+            self.check_background_failures();
+
+            if self.state.is_settled() {
+                return None;
             }
-        };
 
-        match wakeup {
-            Wakeup::Event(event) => {
-                self.state.handle_event_once(event).await;
-                self.collect_auxiliary();
-            },
-            Wakeup::Auxiliary(event) => self.record_auxiliary(event),
-            Wakeup::Idle => {},
+            // Limit the select's borrows so recording can reborrow `self`.
+            let wakeup = {
+                let idle = self.state.analysis_idle_signal();
+                tokio::select! {
+                    event = self.state.next_event() => Wakeup::Event(event),
+                    Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
+                    _ = idle.notified() => Wakeup::Idle,
+                }
+            };
+
+            match wakeup {
+                Wakeup::Event(event) => return Some(event),
+                Wakeup::Auxiliary(event) => self.record_auxiliary(event),
+                Wakeup::Idle => {},
+            }
         }
-
-        // A panicking worker can leave its scheduler pending, preventing a
-        // final settled check. Inspect failures after every wakeup.
-        self.check_background_failures();
     }
 
     /// Settle and return diagnostics received by the client for `uri`.
@@ -373,12 +380,6 @@ impl LspSession {
 
 #[cfg(test)]
 impl LspSession {
-    /// Handle one event without settling its follow-up work.
-    pub(crate) async fn handle_once(&mut self, event: Event) {
-        self.state.handle_event_once(event).await;
-        self.collect_auxiliary();
-    }
-
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         self.state.pump_scans_to_quiescence().await;
         self.collect_auxiliary();
