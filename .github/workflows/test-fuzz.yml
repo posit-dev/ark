@@ -134,7 +134,8 @@ jobs:
     # builds an instrumented release tree. `Check Fuzz Driver` above covers
     # compile drift there instead. Run `just fuzz-explore` by hand when changing
     # the adapter, serialization, or mutation.
-    if: github.event_name != 'pull_request'
+    # Temporary: exercise the campaign on this PR; remove the branch exception before merging.
+    if: github.event_name != 'pull_request' || github.head_ref == 'oak-query/fuzz'
     # One corpus writer per ref. Overlapping runs would each restore the same
     # corpus, diverge, and save in turn, so the later save would drop the
     # earlier run's discoveries. Cancelling instead of queueing would discard
