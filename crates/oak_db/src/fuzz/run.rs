@@ -235,8 +235,9 @@ impl Report<'_> {
         trace: bool,
     ) -> Report<'scenario> {
         if trace {
-            eprintln!("{}", scenario.header());
+            eprintln!("scenario: {}", scenario.header());
             eprint!("{}", scenario.render());
+            eprintln!("trace:");
         }
         artifact.reset(format!("{}\n{}", scenario.header(), scenario.render()));
         Report {
