@@ -36,10 +36,19 @@ jobs:
           tool: cargo-nextest
 
       - name: Run Fuzz Suite
+        id: fuzz-suite
         env:
           NEXTEST_PROFILE: "ci"
         run: |
           cargo nextest run --no-fail-fast -p oak_db --run-ignored only -E 'test(/^tests::fuzz::test_block_/)'
+
+      - name: Upload Fuzz Suite Artifacts
+        if: failure() && steps.fuzz-suite.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-suite-artifacts
+          path: target/oak_fuzz/
+          if-no-files-found: ignore
 
       # This job only reads the corpus maintained by `driver`. Cache misses are
       # normal before the first scheduled run or after eviction, so the sweep
