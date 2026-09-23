@@ -1,4 +1,7 @@
+use std::io;
+
 use aether_path::FilePath;
+use camino::Utf8Path;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
@@ -12,8 +15,8 @@ use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete-input surface of the salsa database. Each impl
-/// ([`crate::OakDatabase`], the test db) supplies the three singleton input
-/// handles.
+/// ([`crate::OakDatabase`], the test db) supplies singleton input handles
+/// and file reads.
 ///
 /// Kept separate from [`Db`] (the query trait) so input accessors and derived
 /// queries live on different traits. Mirrors rust-analyzer's `SourceDatabase`
@@ -33,6 +36,11 @@ pub trait DbInputs: salsa::Database {
     /// Files and packages from roots that have been removed. Holding
     /// pen for entity reuse on re-add (see [`StaleRoot`]).
     fn stale_root(&self) -> StaleRoot;
+
+    /// Read through the database's file reader. Note that this method is not
+    /// tracked and callers _must_ depend on the corresponding revision input
+    /// for the file before reading.
+    fn read_to_string(&self, path: &Utf8Path) -> io::Result<String>;
 }
 
 /// Salsa database trait used throughout `oak_db`. Tracked queries take `&dyn
