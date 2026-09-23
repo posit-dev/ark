@@ -32,14 +32,17 @@ pub(crate) fn test_client() -> Client {
 /// waiting on the client can finish.
 ///
 /// The peer returns configured values for `workspace/configuration` and
-/// acknowledges `client/registerCapability`, whose result is empty. Any other
-/// request fails the harness so newly required editor behavior is not ignored.
+/// acknowledges `client/registerCapability` with an empty result. It rejects
+/// and records any other request so the harness can fail on the caller's
+/// thread. Panicking in the peer would only kill its task, surfacing indirectly
+/// as a missing response.
+///
 /// Tests can update a value with [`Self::set_setting()`] before driving a
 /// `didChangeConfiguration` notification.
 pub struct TestClient {
     client: Client,
     settings: Arc<Mutex<HashMap<String, Value>>>,
-    requests: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<Result<String, String>>>>,
     notifications: Arc<Mutex<Vec<(String, Value)>>>,
 
     /// Aborts the peer on drop.
@@ -107,8 +110,9 @@ impl TestClient {
             .insert(section.to_string(), value);
     }
 
-    /// Methods of the requests the peer has answered, in order.
-    pub fn answered_requests(&self) -> Vec<String> {
+    /// Request methods in arrival order. Supported methods are `Ok`, and
+    /// unsupported methods are `Err`.
+    pub fn answered_requests(&self) -> Vec<Result<String, String>> {
         self.requests.lock().unwrap().clone()
     }
 
@@ -122,7 +126,7 @@ impl TestClient {
 async fn answer_requests(
     socket: ClientSocket,
     settings: Arc<Mutex<HashMap<String, Value>>>,
-    requests: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<Result<String, String>>>>,
     notifications: Arc<Mutex<Vec<(String, Value)>>>,
 ) {
     let (mut incoming, mut outgoing) = socket.split();
@@ -140,21 +144,26 @@ async fn answer_requests(
             continue;
         };
 
-        requests.lock().unwrap().push(method.to_string());
-
-        let result = match method.as_ref() {
-            "workspace/configuration" => {
-                configuration_result(params.as_ref(), &settings.lock().unwrap())
-            },
-            "client/registerCapability" => Value::Null,
-            method => panic!("Unexpected client request: {method}"),
+        let (response, outcome) = match method.as_ref() {
+            "workspace/configuration" => (
+                jsonrpc::Response::from_ok(
+                    id,
+                    configuration_result(params.as_ref(), &settings.lock().unwrap()),
+                ),
+                Ok(method.to_string()),
+            ),
+            "client/registerCapability" => (
+                jsonrpc::Response::from_ok(id, Value::Null),
+                Ok(method.to_string()),
+            ),
+            method => (
+                jsonrpc::Response::from_error(id, jsonrpc::Error::method_not_found()),
+                Err(method.to_string()),
+            ),
         };
+        requests.lock().unwrap().push(outcome);
 
-        if outgoing
-            .send(jsonrpc::Response::from_ok(id, result))
-            .await
-            .is_err()
-        {
+        if outgoing.send(response).await.is_err() {
             break;
         }
     }

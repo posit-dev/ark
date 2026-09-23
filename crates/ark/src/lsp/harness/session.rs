@@ -234,7 +234,8 @@ impl LspSession {
 
     /// Process queued events until no scheduler or analysis work remains.
     ///
-    /// Panics and unbalanced pool counters fail settlement.
+    /// Settlement also fails on panics, unbalanced pool counters, or requests
+    /// unsupported by the simulated editor.
     pub async fn settle(&mut self) {
         while !self.state.is_settled() {
             self.pump_once().await;
@@ -353,6 +354,16 @@ impl LspSession {
                 reports = self.background_panics,
                 panicked = metrics.panicked,
             );
+        }
+
+        let unexpected: Vec<_> = self
+            .client
+            .answered_requests()
+            .into_iter()
+            .filter_map(|request| request.err())
+            .collect();
+        if !unexpected.is_empty() {
+            panic!("The server sent requests the simulated editor does not handle: {unexpected:?}");
         }
 
         // Negative derived counters would make inconsistent bookkeeping appear
@@ -583,6 +594,20 @@ mod tests {
         assert_eq!(session.raw_publications().len(), 3);
     }
 
+    /// Rejecting an unsupported request lets the server handler finish before
+    /// settlement reports the request on the test thread.
+    #[tokio::test]
+    #[should_panic(expected = "does not handle: [\"workspace/workspaceFolders\"]")]
+    async fn test_settle_reports_an_unexpected_client_request() {
+        let mut session = session().await;
+
+        assert!(session.client.client().workspace_folders().await.is_err());
+
+        tokio::time::timeout(TIMEOUT, session.settle())
+            .await
+            .unwrap();
+    }
+
     /// Settings handed to [`LspHarness::start()`] are useless unless the
     /// session also runs the production pull, which needs the capabilities
     /// from the `initialize` request and the `initialized` handler.
@@ -595,7 +620,7 @@ mod tests {
         assert!(session
             .client
             .answered_requests()
-            .contains(&String::from("workspace/configuration")));
+            .contains(&Ok(String::from("workspace/configuration"))));
         assert!(!session.world().config.diagnostics.enable);
     }
 
