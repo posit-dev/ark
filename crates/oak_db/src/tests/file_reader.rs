@@ -29,7 +29,7 @@ fn fixture_readers_ignore_existing_host_files() -> anyhow::Result<()> {
     assert_query_contents(&mut OakDatabase::new(), dir, true)?;
     assert_query_contents(&mut TestDb::new(), dir, false)?;
 
-    // The empty reader must also survive cloning into a background snapshot.
+    // The fuzz reader must also survive cloning into a background snapshot.
     let db = OakDatabase::with_file_reader(EmptyFileReader);
     let mut snapshot = db.snapshot();
     drop(db);
@@ -39,7 +39,7 @@ fn fixture_readers_ignore_existing_host_files() -> anyhow::Result<()> {
 
 #[test]
 fn queries_read_in_memory_files() -> anyhow::Result<()> {
-    let dir = crate::tests::test_db::file_path("pkg");
+    let dir = crate::test_path::file_path("pkg");
     let dir = dir
         .as_path()
         .ok_or_else(|| anyhow::anyhow!("Expected filesystem path"))?;

@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use aether_path::FilePath;
-use camino::Utf8Component;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_package_metadata::namespace::Namespace;
@@ -18,6 +17,7 @@ use rustc_hash::FxHashMap;
 use salsa::plumbing::AsId;
 use salsa::Setter;
 
+use crate::test_path::file_path;
 use crate::Db;
 use crate::DbInputs;
 use crate::File;
@@ -156,29 +156,6 @@ impl SourceDb for TestDb {
     }
 }
 
-pub(super) fn file_path(name: &str) -> FilePath {
-    let root = if cfg!(windows) { "C:/" } else { "/" };
-    let path = Utf8Path::new(root).join(name.trim_start_matches('/'));
-    match FilePath::from_path_buf(path.into_std_path_buf()) {
-        Some(path) => path,
-        None => panic!("Invalid fixture path: {name}"),
-    }
-}
-
-/// Render fixture names without a platform-specific root or URL escaping.
-pub(crate) fn path_name(path: &FilePath) -> String {
-    let Some(path) = path.as_path() else {
-        panic!("Expected a filesystem fixture path: {path}");
-    };
-    path.components()
-        .filter_map(|component| match component {
-            Utf8Component::Normal(name) => Some(name),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 /// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each
 /// call allocates a new salsa entity; tests that need to assert on
 /// root identity should retain the returned value.
@@ -230,16 +207,3 @@ pub(super) fn make_package(
 
 #[salsa::db]
 impl Db for TestDb {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fixture_names_are_path_data() {
-        for name in ["ws/a #?%.R", "abs/b.R"] {
-            assert_eq!(path_name(&file_path(name)), name);
-            assert_eq!(file_path(&format!("/{name}")), file_path(name));
-        }
-    }
-}
