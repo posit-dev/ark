@@ -23,7 +23,9 @@ use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use super::source_handler::gate;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
+use super::utils::did_change;
 use super::utils::did_change_workspace_folders;
+use super::utils::did_open;
 use super::utils::test_client;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
@@ -182,10 +184,12 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
 
     // Goes through, no holds outstanding. Ends the tick by queueing a diagnostics
     // pass, which needs an analysis thread to run on.
-    session.open_document(&script, "x <- 1\n").await;
+    session.handle_once(did_open(&script, "x <- 1\n")).await;
 
     // The write that has to drain that pinned hold.
-    session.change_document(&script, "x <- 2\n", 1).await;
+    session
+        .handle_once(did_change(&script, "x <- 2\n", 1))
+        .await;
 
     // Let the still-gated workers finish so the test process can exit cleanly.
     drop(releases);

@@ -317,7 +317,7 @@ impl LspState {
 /// - Log messages.
 /// - Diagnostics publication.
 /// - Background task panic reports.
-pub(crate) struct AuxiliaryState {
+struct AuxiliaryState {
     client: Client,
     /// Last non-empty diagnostics published per file. A refresh re-runs every
     /// open file, but most runs produce the same result, so we skip the publish
@@ -1159,7 +1159,7 @@ fn send_response(
 impl AuxiliaryState {
     /// Create the event handler without binding it to a receiver. Tests can
     /// then drive production publication and deduplication one event at a time.
-    pub(crate) fn new(client: Client) -> Self {
+    fn new(client: Client) -> Self {
         Self {
             client,
             published_diagnostics: HashMap::new(),
@@ -1222,7 +1222,7 @@ impl AuxiliaryState {
     /// published only when it clears diagnostics the client is currently
     /// showing, and the map stays bounded by the files on screen with
     /// diagnostics.
-    pub(crate) async fn publish_diagnostics(&mut self, publication: DiagnosticsPublication) {
+    async fn publish_diagnostics(&mut self, publication: DiagnosticsPublication) {
         let DiagnosticsPublication {
             path,
             uri,
@@ -1384,7 +1384,7 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct DiagnosticsPublication {
     /// Identity for the dedup cache. Two spellings of the same document
     /// have the same identity.

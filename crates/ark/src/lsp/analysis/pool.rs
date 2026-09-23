@@ -146,16 +146,6 @@ impl AnalysisPool {
         self.shared.lock().is_idle()
     }
 
-    /// Wait for an idle transition, then recheck the queue state.
-    ///
-    /// [`Notify::notify_one()`] retains one permit across the race between
-    /// checking the queue and waiting. The permit does not guarantee that the
-    /// pool is still idle, so callers must recheck the queue after waking.
-    #[cfg(test)]
-    pub(crate) async fn idle(&self) {
-        self.shared.idle.notified().await
-    }
-
     #[cfg(test)]
     pub(crate) fn spawn_test_task(
         &self,
@@ -167,6 +157,10 @@ impl AnalysisPool {
 
     /// Return an owned signal so callers can wait while mutably borrowing the
     /// state that owns this pool.
+    ///
+    /// [`Notify::notify_one()`] retains one permit across the race between
+    /// checking the queue and waiting. The permit does not guarantee that the
+    /// pool is still idle, so callers must recheck the queue after waking.
     #[cfg(test)]
     pub(crate) fn idle_signal(&self) -> Arc<Notify> {
         Arc::clone(&self.shared.idle)
@@ -641,7 +635,7 @@ mod tests {
 
     /// Report pool counters if the expected idle notification is lost.
     async fn await_idle(pool: &AnalysisPool) {
-        if tokio::time::timeout(Duration::from_secs(10), pool.idle())
+        if tokio::time::timeout(Duration::from_secs(10), pool.idle_signal().notified())
             .await
             .is_err()
         {
@@ -729,7 +723,7 @@ mod tests {
         // The completed task cannot retain an idle permit while the gated task
         // is still running.
         assert!(
-            tokio::time::timeout(Duration::from_millis(250), pool.idle())
+            tokio::time::timeout(Duration::from_millis(250), pool.idle_signal().notified())
                 .await
                 .is_err()
         );

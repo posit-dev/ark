@@ -16,7 +16,9 @@ fn test_diagnostics_published_through_refresh_snapshot() {
     // the task's thread boundary.
     let diagnostics = r_task(|| {
         let mut harness = LspHarness::new(OakDatabase::new());
-        harness.prepare_document_at(url.as_str(), "foo", None);
+        harness
+            .prepare_document(&path, String::from("foo"))
+            .unwrap();
 
         let snapshot = harness.snapshot();
         harness.diagnose(&path, snapshot).unwrap()
