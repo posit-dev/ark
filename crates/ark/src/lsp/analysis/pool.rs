@@ -51,6 +51,7 @@ impl AnalysisPool {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue {
                 entries: VecDeque::new(),
+                active: 0,
                 closed: false,
                 metrics: PoolMetrics::default(),
             }),
@@ -138,6 +139,11 @@ impl AnalysisPool {
 
     pub(crate) fn metrics(&self) -> PoolMetrics {
         self.shared.lock().metrics
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.shared.lock().is_idle()
     }
 
     /// Wait for an idle transition, then recheck the queue state.
@@ -244,8 +250,16 @@ impl PoolMetrics {
 
 struct Queue {
     entries: VecDeque<Entry>,
+    /// Entries owned by workers, including cancelled snapshots being discarded.
+    active: usize,
     closed: bool,
     metrics: PoolMetrics,
+}
+
+impl Queue {
+    fn is_idle(&self) -> bool {
+        self.entries.is_empty() && self.active == 0
+    }
 }
 
 struct Entry {
@@ -269,6 +283,7 @@ impl Shared {
         let mut queue = self.lock();
         loop {
             if let Some(entry) = queue.entries.pop_front() {
+                queue.active += 1;
                 return Some(entry);
             }
             if queue.closed {
@@ -298,43 +313,51 @@ fn run_entry(entry: Entry, shared: &Shared, service_context: &LspServiceContext)
     // query, so go straight to dropping the snapshot. This is what lets a
     // backlog drain in one pass while a writer waits.
     if snapshot.is_cancelled() {
-        record_metrics(shared, |metrics| metrics.cancelled_queued += 1);
+        finish_entry(shared, |metrics| metrics.cancelled_queued += 1);
         return;
     }
 
-    record_metrics(shared, |metrics| metrics.started += 1);
+    record_started(shared);
 
     match panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot))) {
         Ok(Some(())) => {
-            record_metrics(shared, |metrics| metrics.completed += 1);
+            finish_entry(shared, |metrics| metrics.completed += 1);
         },
         Ok(None) => {
-            record_metrics(shared, |metrics| metrics.cancelled_running += 1);
+            finish_entry(shared, |metrics| metrics.cancelled_running += 1);
         },
         Err(message) => {
-            record_metrics(shared, |metrics| metrics.panicked += 1);
+            finish_entry(shared, |metrics| metrics.panicked += 1);
             lsp::log_error!("An analysis task panicked: {message}");
             service_context.report_background_panic();
         },
     }
 }
 
-/// Update and snapshot the counters under one lock so the trace is internally
-/// consistent. If the snapshot is idle, wake a waiter, which must recheck the
-/// queue in case another task was queued concurrently.
-///
-/// All terminal outcomes call this function, including cancellations and
-/// panics that produce no main-loop event. In contrast,
-/// [`DiagnosticsMetrics::log_snapshot()`](super::metrics::DiagnosticsMetrics::log_snapshot)
-/// reads counters written by separate threads.
-fn record_metrics(shared: &Shared, increment: impl FnOnce(&mut PoolMetrics)) {
+fn record_started(shared: &Shared) {
     let metrics = {
         let mut queue = shared.lock();
-        increment(&mut queue.metrics);
+        queue.metrics.started += 1;
         queue.metrics
     };
+    lsp::log_trace!("Analysis queue: {metrics:?}");
+}
 
-    if metrics.waiting() == 0 && metrics.running() == 0 {
+/// Record a task's terminal outcome and release the worker's ownership of it.
+/// Cancellation and panic use the same path, so a task that emits no main-loop
+/// event can still wake the harness when the pool becomes idle.
+fn finish_entry(shared: &Shared, record_outcome: impl FnOnce(&mut PoolMetrics)) {
+    let (metrics, idle) = {
+        let mut queue = shared.lock();
+
+        assert!(queue.active > 0);
+        queue.active -= 1;
+        record_outcome(&mut queue.metrics);
+
+        (queue.metrics, queue.is_idle())
+    };
+
+    if idle {
         shared.idle.notify_one();
     }
 
