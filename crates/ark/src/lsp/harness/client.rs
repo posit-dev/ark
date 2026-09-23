@@ -21,7 +21,6 @@ use tower_lsp_server::LspService;
 /// `Client` to its init closure; we capture it and drop the service. The
 /// client's sends go nowhere, which is fine since the event paths under test
 /// never use it. Use [`TestClient`] when a handler needs an answer.
-#[cfg(test)]
 pub(crate) fn test_client() -> Client {
     let (_service, _socket, client) = service();
     client
@@ -39,7 +38,7 @@ pub(crate) fn test_client() -> Client {
 ///
 /// Tests can update a value with [`Self::set_setting()`] before driving a
 /// `didChangeConfiguration` notification.
-pub struct TestClient {
+pub(crate) struct TestClient {
     client: Client,
     settings: Arc<Mutex<HashMap<String, Value>>>,
     requests: Arc<Mutex<Vec<Result<String, String>>>>,
@@ -52,7 +51,7 @@ pub struct TestClient {
 impl TestClient {
     /// Build a client whose peer answers `settings`, given as `(section, value)`
     /// pairs.
-    pub async fn new(settings: &[(&str, Value)]) -> Self {
+    pub(crate) async fn new(settings: &[(&str, Value)]) -> Self {
         let (mut service, socket, client) = service();
 
         // `Client` suppresses outbound requests until the service has answered
@@ -97,13 +96,13 @@ impl TestClient {
     }
 
     /// The client to hand to `GlobalState`. Every clone talks to the same peer.
-    pub fn client(&self) -> Client {
+    pub(crate) fn client(&self) -> Client {
         self.client.clone()
     }
 
     /// Change what the peer answers for `section`, as a user changing a setting
     /// does. Takes effect on the next `workspace/configuration` request.
-    pub fn set_setting(&self, section: &str, value: Value) {
+    pub(crate) fn set_setting(&self, section: &str, value: Value) {
         self.settings
             .lock()
             .unwrap()
@@ -112,12 +111,12 @@ impl TestClient {
 
     /// Request methods in arrival order. Supported methods are `Ok`, and
     /// unsupported methods are `Err`.
-    pub fn answered_requests(&self) -> Vec<Result<String, String>> {
+    pub(crate) fn answered_requests(&self) -> Vec<Result<String, String>> {
         self.requests.lock().unwrap().clone()
     }
 
     /// Methods and params of the notifications the server has sent, in order.
-    pub fn notifications(&self) -> Vec<(String, Value)> {
+    pub(crate) fn notifications(&self) -> Vec<(String, Value)> {
         self.notifications.lock().unwrap().clone()
     }
 
@@ -128,7 +127,7 @@ impl TestClient {
     /// A failed round-trip means the peer is gone and [`Self::notifications()`]
     /// may be incomplete, so this panics rather than letting a caller assert
     /// on partial state.
-    pub async fn flush(&self) {
+    pub(crate) async fn flush(&self) {
         if let Err(err) = self.client.configuration(vec![]).await {
             panic!("The simulated editor did not answer a flush request: {err:?}");
         }
