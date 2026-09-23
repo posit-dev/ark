@@ -288,10 +288,7 @@ impl LspSession {
     pub async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
         self.settle().await;
         self.deliver_auxiliary().await;
-
-        // The socket is FIFO, so a round-trip flushes the notifications the
-        // peer has not read yet.
-        let _ = self.client.client().configuration(vec![]).await;
+        self.client.flush().await;
 
         self.client
             .notifications()

@@ -1451,10 +1451,7 @@ mod tests {
         second_session.report_background_panic();
         send_auxiliary(AuxiliaryEvent::Shutdown);
         auxiliary_loop.await.unwrap();
-
-        // The socket is FIFO, so a round-trip flushes the notifications the peer
-        // has not read yet.
-        let _ = client.client().configuration(vec![]).await;
+        client.flush().await;
 
         let notifications = client.notifications();
         assert_eq!(notifications.len(), 2);
@@ -1500,10 +1497,7 @@ mod tests {
                 .publish_diagnostics(publication(diagnostics))
                 .await;
         }
-
-        // The socket is FIFO, so a round-trip flushes the notifications the peer
-        // has not read yet.
-        let _ = client.client().configuration(vec![]).await;
+        client.flush().await;
 
         let notifications = client.notifications();
         let methods: Vec<&str> = notifications

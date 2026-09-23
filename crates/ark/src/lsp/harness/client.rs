@@ -120,6 +120,19 @@ impl TestClient {
     pub fn notifications(&self) -> Vec<(String, Value)> {
         self.notifications.lock().unwrap().clone()
     }
+
+    /// Wait until the peer has read every message sent so far. The socket is
+    /// FIFO, so the answer to a round-trip request arrives only after the
+    /// earlier notifications have been recorded.
+    ///
+    /// A failed round-trip means the peer is gone and [`Self::notifications()`]
+    /// may be incomplete, so this panics rather than letting a caller assert
+    /// on partial state.
+    pub async fn flush(&self) {
+        if let Err(err) = self.client.configuration(vec![]).await {
+            panic!("The simulated editor did not answer a flush request: {err:?}");
+        }
+    }
 }
 
 /// Answer every request the server sends until it drops its [`Client`].
