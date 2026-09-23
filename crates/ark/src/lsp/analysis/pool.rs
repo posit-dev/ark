@@ -444,6 +444,46 @@ mod tests {
         assert_eq!(counts.panicked, 1);
     }
 
+    /// Panics when dropped, so a task panicking with it as payload makes
+    /// `run_entry()` panic again when it drops the payload after its own
+    /// `catch_unwind()` returns.
+    struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("Test panic while dropping a task's panic payload");
+        }
+    }
+
+    /// Install the production hook so a panic that escapes the worker's
+    /// boundary aborts the test process. Two workers, so the one left after
+    /// the other exits must still run tasks.
+    #[test]
+    fn test_pool_survives_panic_outside_a_task() {
+        crate::panic::install();
+
+        let state = WorldState::default();
+        let context = Arc::new(LspServiceContext::new());
+        let pool = AnalysisPool::with_threads(2, Arc::clone(&context));
+        pool.spawn(state.snapshot(), |_snapshot| {
+            std::panic::panic_any(PanicOnDrop)
+        });
+
+        // Each worker holds a clone of `context` and drops it when its thread
+        // returns through the boundary. An escaped panic aborts before that.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while Arc::strong_count(&context) > 2 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
+        pool.spawn(state.snapshot(), move |_snapshot| ran_tx.send(()).unwrap());
+        ran_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+    }
+
     /// Cancellation after a task starts increments `cancelled_running`, rather
     /// than `cancelled_queued`.
     #[test]
@@ -597,46 +637,6 @@ mod tests {
         assert_eq!(pool.metrics().running(), 1);
 
         release_tx.send(()).unwrap();
-    }
-
-    /// Panics when dropped, so a task panicking with it as payload makes
-    /// `run_entry()` panic again when it drops the payload after its own
-    /// `catch_unwind()` returns.
-    struct PanicOnDrop;
-
-    impl Drop for PanicOnDrop {
-        fn drop(&mut self) {
-            panic!("Test panic while dropping a task's panic payload");
-        }
-    }
-
-    /// Install the production hook so a panic that escapes the worker's
-    /// boundary aborts the test process. Two workers, so the one left after
-    /// the other exits must still run tasks.
-    #[test]
-    fn test_pool_survives_panic_outside_a_task() {
-        crate::panic::install();
-
-        let state = WorldState::default();
-        let context = Arc::new(LspServiceContext::new());
-        let pool = AnalysisPool::with_threads(2, Arc::clone(&context));
-        pool.spawn(state.snapshot(), |_snapshot| {
-            std::panic::panic_any(PanicOnDrop)
-        });
-
-        // Each worker holds a clone of `context` and drops it when its thread
-        // returns through the boundary. An escaped panic aborts before that.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while Arc::strong_count(&context) > 2 {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
-        pool.spawn(state.snapshot(), move |_snapshot| ran_tx.send(()).unwrap());
-        ran_rx
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap();
     }
 
     /// Report pool counters if the expected idle notification is lost.
