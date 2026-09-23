@@ -107,7 +107,7 @@ async fn test_start_indexes_the_prepared_workspace_and_settles() {
     assert!(session.is_settled());
     assert_eq!(session.world().workspace.folders, vec![folder]);
 
-    let db = &session.world().db;
+    let db = session.world().db();
     let roots = db.workspace_roots().roots(db).clone();
     assert_eq!(roots.len(), 1);
     let packages = roots[0].packages(db);

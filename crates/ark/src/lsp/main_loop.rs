@@ -958,8 +958,7 @@ impl GlobalState {
             return false;
         }
 
-        let queue = self.lsp_state.analysis_pool.metrics();
-        queue.waiting() == 0 && queue.running() == 0 && self.events_rx.is_empty()
+        self.lsp_state.analysis_pool.is_idle() && self.events_rx.is_empty()
     }
 
     /// Return an owned idle signal for `select!` with [`Self::next_event()`],
