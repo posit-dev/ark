@@ -38,7 +38,8 @@ use crate::recovery;
 /// Limit the default suite to a quick regression check.
 const SMOKE_ITERS: usize = 50;
 
-/// Keep each parallel block below CI's 60-second timeout.
+/// Fixed mutation budget per block; `.config/nextest.toml` gives CI blocks a
+/// separate timeout.
 const BLOCK_ITERS: usize = 3000;
 
 /// Cap shrinking because every attempt reruns the full scenario.

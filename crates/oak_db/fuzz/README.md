@@ -95,6 +95,8 @@ In cargo-fuzz 0.13.2, `cmin` can print `Failed to minimize corpus` and exit succ
 
 The [fuzz workflow](../../../.github/workflows/test-fuzz.yml) runs a five-minute exploration after pushes to main and manual dispatches, and a thirty-minute exploration on Mondays and Thursdays at 05:23 UTC. The three- and four-day gaps leave margin before the cache's seven-day inactivity expiry, though cache retention is not guaranteed. A scenario that runs for twenty seconds is treated as a timeout. The workflow reserves additional time for compilation and corpus minimization.
 
+The fixed-seed mutation blocks have a separate three-minute timeout per block in the nextest CI profile. Each block runs thousands of scenarios, so this bounds the whole batch rather than an individual scenario. Other tests retain the default sixty-second CI timeout.
+
 Each successful exploration restores the previous corpus, adds current seeds, explores, minimizes, and saves the result. A failed exploration or minimization leaves the previous cache intact.
 
 Bump the cache version in `.github/workflows/test-fuzz.yml` when the seed shape changes enough to justify discarding accumulated coverage. A saved input that no longer decodes is skipped rather than repaired. Named regression seeds are regenerated on every run.
@@ -103,6 +105,7 @@ Bump the cache version in `.github/workflows/test-fuzz.yml` when the seed shape 
 
 Download the artifact archive from the workflow run's summary page:
 
+- `fuzz-suite-artifacts` records fixed-seed mutation failures, including the operation in progress when a block times out.
 - `fuzz-driver-artifacts` records failures before minimization.
 - `fuzz-cmin-artifacts` records minimization failures.
 
