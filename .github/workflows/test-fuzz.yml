@@ -18,7 +18,7 @@ jobs:
     # one exactly. Only the `driver` job below benefits from the schedule.
     if: github.event_name != 'schedule'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Report Rust Toolchain
         run: rustup show
@@ -44,7 +44,7 @@ jobs:
 
       - name: Upload Fuzz Suite Artifacts
         if: failure() && steps.fuzz-suite.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-suite-artifacts
           path: target/oak_fuzz/
@@ -55,7 +55,7 @@ jobs:
       # skips an empty restore instead of failing.
       - name: Restore Corpus (read-only)
         id: restore-corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: crates/oak_db/fuzz/corpus/scenario
           key: oak-fuzz-corpus-pr-${{ github.run_id }}
@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload Semantic Sweep Artifacts
         if: failure() && steps.sweep.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-pr-sweep-artifacts
           path: |
@@ -143,7 +143,7 @@ jobs:
       group: oak-fuzz-corpus-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Nightly Toolchain
         run: rustup toolchain install nightly --profile minimal
@@ -181,7 +181,7 @@ jobs:
       # Each attempt needs a new immutable cache key. Restore the newest corpus
       # shared by scheduled and main-push runs.
       - name: Restore Corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: crates/oak_db/fuzz/corpus/scenario
           key: oak-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
@@ -223,7 +223,7 @@ jobs:
       # Preserve exploration failures before any corpus maintenance runs.
       - name: Upload Crash Artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-driver-artifacts
           path: |
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload Semantic Sweep Artifacts
         if: failure() && steps.sweep.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-sweep-artifacts
           path: |
@@ -282,7 +282,7 @@ jobs:
 
       - name: Upload Minimization Artifacts
         if: failure() && steps.cmin.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fuzz-cmin-artifacts
           path: |
@@ -295,7 +295,7 @@ jobs:
 
       # Publish only after exploration and minimization both pass.
       - name: Save Corpus
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: crates/oak_db/fuzz/corpus/scenario
           key: oak-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
