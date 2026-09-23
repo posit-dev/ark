@@ -9,8 +9,8 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use oak_db::Db;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use serde_json::json;
 use serde_json::Value;

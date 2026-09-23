@@ -3,7 +3,7 @@ use compact_str::CompactString;
 /// Interned identifier.
 ///
 /// Lets tracked queries cache symbols or packages by name cheaply.
-/// Used by [`crate::Db::package_by_name`] and by [`crate::File::resolve`] so
+/// Used by [`crate::SourceDb::package_by_name`] and by [`crate::File::resolve`] so
 /// repeated calls for the same name hit the salsa cache.
 ///
 /// The text is stored as `CompactString` so short identifiers stay inline

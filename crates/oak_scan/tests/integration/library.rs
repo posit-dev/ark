@@ -4,12 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
-use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
+use oak_db::SourceDb;
 use oak_package_metadata::namespace::Import;
 use oak_scan::DbScan;
 use oak_scan::RootExt;
