@@ -65,6 +65,11 @@ pub(crate) struct CrossFileLayers {
     pub enclosing: Vec<ImportLayer>,
     pub attaches: Vec<ImportLayer>,
     pub tail: SearchPathTail,
+    /// True only when the cycle handler recovers [`File::cross_file_layers()`].
+    /// [`File::diagnostics()`] reports `SourceCycle` when true. Files that
+    /// inherit recovered layers are downstream from the cycle, so they keep this
+    /// false.
+    pub recovered_source_cycle: bool,
 }
 
 impl CrossFileLayers {
@@ -336,6 +341,7 @@ impl File {
             enclosing,
             attaches,
             tail: SearchPathTail::Default,
+            recovered_source_cycle: false,
         })
     }
 
@@ -468,9 +474,18 @@ impl File {
     /// this once per annotated call, and each rebuild walks every collation
     /// predecessor's `attached_packages`, so recomputing it per call would be
     /// O(predecessors) each time.
-    #[salsa::tracked(returns(ref))]
+    ///
+    /// Resolving a collation predecessor's `source()` call can re-enter a cold
+    /// `(self, Eager)` query. Which query becomes Salsa's repeated key depends
+    /// on the entry point, so recovery is required here as well as in
+    /// `semantic_index()`.
+    #[salsa::tracked(returns(ref), cycle_result = cross_file_layers_cycle_result)]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
-        lower_load_context(db, load_context(db, self, view))
+        lower_load_context(
+            db,
+            load_context(db, self, view),
+            PredecessorAttaches::Include,
+        )
     }
 
     /// The collation members of `self`'s own `R/` directory, in load order.
@@ -486,6 +501,18 @@ impl File {
         };
         files_in_directory(db, dir)
     }
+}
+
+/// Omits predecessor attaches when `cross_file_layers()` is Salsa's repeated key.
+/// This is its only re-entrant dependency. Collation visibility, NAMESPACE imports,
+/// and the search-path tail remain available.
+fn cross_file_layers_cycle_result(
+    db: &dyn Db,
+    _id: salsa::Id,
+    file: File,
+    view: CollationView,
+) -> CrossFileLayers {
+    lower_load_context(db, load_context(db, file, view), PredecessorAttaches::Skip)
 }
 
 fn inherited_layers_cycle_result(
@@ -577,6 +604,7 @@ fn build_inherited_layers(
             enclosing,
             attaches,
             tail: own_cross.tail,
+            recovered_source_cycle: false,
         },
     }
 }
@@ -637,10 +665,19 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
     loaded
 }
 
+pub(crate) enum PredecessorAttaches {
+    Include,
+    Skip,
+}
+
 /// Lowers a context while preserving resolver precedence. Visible definitions
 /// and NAMESPACE imports rank above the file's attaches, and loader-provided
 /// search-path layers rank below them.
-pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFileLayers {
+pub(crate) fn lower_load_context(
+    db: &dyn Db,
+    context: LoadContext,
+    predecessors: PredecessorAttaches,
+) -> CrossFileLayers {
     let LoadContext {
         kind,
         visible_files,
@@ -662,7 +699,11 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
     // `Deferred` includes successor attaches that run later and should outrank this
     // file's own. Ranking them below loses only names shadowed by a package a
     // successor reattaches.
-    let mut attaches = predecessor_attach_layers(db, &visible_files);
+    let recovered_source_cycle = matches!(&predecessors, PredecessorAttaches::Skip);
+    let mut attaches = match predecessors {
+        PredecessorAttaches::Include => predecessor_attach_layers(db, &visible_files),
+        PredecessorAttaches::Skip => Vec::new(),
+    };
     attaches.extend(
         implicit_attaches
             .iter()
@@ -673,6 +714,7 @@ pub(crate) fn lower_load_context(db: &dyn Db, context: LoadContext) -> CrossFile
         enclosing,
         attaches,
         tail: kind.search_path_tail(),
+        recovered_source_cycle,
     }
 }
 
