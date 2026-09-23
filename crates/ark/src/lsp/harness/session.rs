@@ -25,7 +25,6 @@ use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::register_auxiliary_tx;
 use crate::lsp::main_loop::AuxiliaryEvent;
-use crate::lsp::main_loop::AuxiliaryState;
 use crate::lsp::main_loop::DiagnosticsPublication;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -91,12 +90,10 @@ impl LspHarness {
         );
 
         let mut session = LspSession {
-            auxiliary: AuxiliaryState::new(client.client()),
             state,
             client,
             auxiliary_rx,
             raw_publications: Vec::new(),
-            delivered: 0,
             background_panics: 0,
         };
 
@@ -120,16 +117,10 @@ pub(crate) struct LspSession {
     state: GlobalState,
     client: TestClient,
 
-    auxiliary: AuxiliaryState,
     auxiliary_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
 
     /// Main-loop publications before unchanged diagnostics are suppressed.
     raw_publications: Vec<DiagnosticsPublication>,
-
-    /// Number of raw publications already passed to the auxiliary handler.
-    /// Replaying one after a later change can re-notify the client or restore
-    /// diagnostics that a later publication cleared.
-    delivered: usize,
 
     background_panics: usize,
 }
@@ -196,11 +187,11 @@ impl LspSession {
     /// `version`, and hand them back.
     ///
     /// This covers the full round trip through the event loop, the diagnostics
-    /// scheduler, the analysis pool, and generation filtering, while leaving
-    /// out the serialization and socket work that
-    /// [`Self::wait_for_diagnostics()`] adds. Publications already recorded
-    /// when the wait starts don't count, so an earlier round trip over the
-    /// same document can't satisfy it.
+    /// scheduler, the analysis pool, and generation filtering. It stops before
+    /// the auxiliary loop, so it leaves out deduplication and the client
+    /// notification. Publications already recorded when the wait starts don't
+    /// count, so an earlier round trip over the same document can't satisfy
+    /// it.
     ///
     /// A settled loop has no work left that could produce the publication, so
     /// reaching that state without it is a failure rather than a longer wait.
@@ -282,34 +273,6 @@ impl LspSession {
         }
     }
 
-    /// Settle and return diagnostics received by the client for `uri`.
-    ///
-    /// Unchanged diagnostics are suppressed by production deduplication, so a
-    /// notification count cannot signal completion. Use
-    /// [`Self::wait_for_accepted_diagnostics()`] to observe main-loop output
-    /// instead.
-    pub(crate) async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
-        self.settle().await;
-        self.deliver_auxiliary().await;
-        self.client.flush().await;
-
-        self.client
-            .notifications()
-            .into_iter()
-            .rfind(|(method, params)| {
-                method == "textDocument/publishDiagnostics" &&
-                    params["uri"].as_str() == Some(uri.as_str())
-            })
-            .map(|(_method, params)| match &params["diagnostics"] {
-                Value::Array(diagnostics) => diagnostics.clone(),
-                _ => Vec::new(),
-            })
-    }
-
-    pub(crate) fn client_notifications(&self) -> Vec<(String, Value)> {
-        self.client.notifications()
-    }
-
     pub(crate) fn analysis_metrics(&self) -> PoolMetrics {
         self.state.lsp_state().analysis_pool.metrics()
     }
@@ -330,16 +293,6 @@ impl LspSession {
             AuxiliaryEvent::Shutdown => {},
             #[cfg(feature = "testing")]
             AuxiliaryEvent::TestPanic => {},
-        }
-    }
-
-    async fn deliver_auxiliary(&mut self) {
-        self.collect_auxiliary();
-
-        while self.delivered < self.raw_publications.len() {
-            let publication = self.raw_publications[self.delivered].clone();
-            self.auxiliary.publish_diagnostics(publication).await;
-            self.delivered += 1;
         }
     }
 
@@ -380,19 +333,6 @@ impl LspSession {
         self.collect_auxiliary();
     }
 
-    /// Handle `didOpen` inline, so the caller observes the state the open
-    /// handler leaves behind before any follow-up work runs.
-    pub(crate) async fn open_document(&mut self, path: &Path, contents: &str) {
-        self.handle_once(events::did_open(path, contents)).await;
-    }
-
-    /// Handle a whole-document `didChange` at `version` inline, as
-    /// [`Self::open_document()`] does for `didOpen`.
-    pub(crate) async fn change_document(&mut self, path: &Path, contents: &str, version: i32) {
-        self.handle_once(events::did_change(path, contents, version))
-            .await;
-    }
-
     pub(crate) fn world(&self) -> &WorldState {
         self.state.world()
     }
@@ -430,7 +370,6 @@ mod tests {
     use oak_db::OakDatabase;
     use serde_json::Value;
     use tower_lsp_server::ls_types::Diagnostic;
-    use tower_lsp_server::ls_types::Uri;
 
     use super::LspSession;
     use crate::lsp::analysis::DiagnosticsReady;
@@ -459,15 +398,6 @@ mod tests {
             }],
             version: None,
         }
-    }
-
-    fn cleared(generation: u64) -> Event {
-        let mut publication = publication("");
-        publication.diagnostics.clear();
-        Event::DiagnosticsReady(DiagnosticsReady {
-            generation,
-            publication,
-        })
     }
 
     fn ready(generation: u64, message: &str) -> Event {
@@ -532,59 +462,6 @@ mod tests {
 
         release.send(()).unwrap();
         tokio::time::timeout(TIMEOUT, settling).await.unwrap();
-    }
-
-    /// Identical diagnostics produce two raw publications but one client
-    /// notification after deduplication. Completion tests must therefore inspect
-    /// [`LspSession::raw_publications`], not notification counts.
-    #[tokio::test]
-    async fn test_raw_publications_outnumber_client_notifications() {
-        let mut session = session().await;
-
-        session.enqueue(ready(1, "same every pass"));
-        session.enqueue(ready(2, "same every pass"));
-
-        let uri: Uri = "file:///probe.R".parse().unwrap();
-        let delivered = tokio::time::timeout(TIMEOUT, session.wait_for_diagnostics(&uri))
-            .await
-            .unwrap();
-
-        assert_eq!(session.raw_publications().len(), 2);
-        assert_eq!(delivered.map(|diagnostics| diagnostics.len()), Some(1));
-
-        let published: Vec<String> = session
-            .client_notifications()
-            .into_iter()
-            .map(|(method, _params)| method)
-            .collect();
-        assert_eq!(published, vec![String::from(
-            "textDocument/publishDiagnostics"
-        )]);
-    }
-
-    /// Replaying previously delivered diagnostics can restore a set that a
-    /// later publication cleared, so repeated waits must deliver nothing new.
-    #[tokio::test]
-    async fn test_repeated_waits_deliver_nothing_new() {
-        let mut session = session().await;
-        let uri: Uri = "file:///probe.R".parse().unwrap();
-
-        session.enqueue(ready(1, "first"));
-        session.enqueue(ready(2, "second"));
-        session.enqueue(cleared(3));
-
-        tokio::time::timeout(TIMEOUT, session.wait_for_diagnostics(&uri))
-            .await
-            .unwrap();
-        assert_eq!(session.client_notifications().len(), 3);
-
-        let delivered = tokio::time::timeout(TIMEOUT, session.wait_for_diagnostics(&uri))
-            .await
-            .unwrap();
-
-        assert_eq!(session.client_notifications().len(), 3);
-        assert_eq!(delivered, Some(vec![]));
-        assert_eq!(session.raw_publications().len(), 3);
     }
 
     /// Rejecting an unsupported request lets the server handler finish before

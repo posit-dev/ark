@@ -17,14 +17,12 @@ use aether_path::FilePath;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types::Diagnostic;
-use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::analysis::is_testthat_path;
 use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
-use crate::lsp::traits::url::UriExt;
 
 /// Owns the analysis inputs a diagnostics pass reads, with no executor
 /// attached.
@@ -74,12 +72,6 @@ impl LspHarness {
         Ok(())
     }
 
-    /// Register an editor buffer from the wire URI so tests exercise `Uri` to
-    /// `Url` normalization.
-    pub fn prepare_document_at(&mut self, wire: &str, contents: &str, version: Option<i32>) -> Uri {
-        prepare_document_at(&mut self.state, wire, contents, version)
-    }
-
     pub fn close_document(&mut self, path: &FilePath) {
         self.state.open_files.remove(path);
         self.state.db_mut().close_editor(path);
@@ -109,21 +101,4 @@ impl LspHarness {
             open_file.wire_uri(),
         ))
     }
-}
-
-/// Register an editor buffer in both `state.open_files` and `state.db` so
-/// handler tests see the same document through either lookup.
-pub(crate) fn prepare_document_at(
-    state: &mut WorldState,
-    wire: &str,
-    contents: &str,
-    version: Option<i32>,
-) -> Uri {
-    let uri: Uri = wire.parse().unwrap();
-    let url = uri.to_url().unwrap();
-    let file = state
-        .db_mut()
-        .upsert_editor(FilePath::from_url(&url), contents.to_string());
-    state.insert_open_file(uri.clone(), FilePath::from_url(&url), file, version);
-    uri
 }
