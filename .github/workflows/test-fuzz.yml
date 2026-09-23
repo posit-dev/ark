@@ -6,8 +6,8 @@ on:
   workflow_call:
   workflow_dispatch:
   schedule:
-    # Thursdays at 05:00 UTC.
-    - cron: "0 5 * * 4"
+    # Mondays and Thursdays at 05:23 UTC, leaving margin before cache expiry.
+    - cron: "23 5 * * 1,4"
 
 jobs:
   fuzz:

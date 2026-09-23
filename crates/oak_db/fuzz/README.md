@@ -10,7 +10,7 @@ Each scenario must finish without panicking or hanging. The runner does not comp
 
 Scenarios cover source cycles, package re-export cycles, and consumer paths into both. Recovery logs identify which handlers ran, but not which query was Salsa's repeated key, which depends on query entry order.
 
-Coverage-guided exploration repeatedly mutates scenarios and observes which code paths each input executes. It keeps inputs that reach previously unexplored code, then mutates those inputs further. The goal is to discover query entry orders, dependency graphs, and edit sequences that fixed tests did not anticipate and that expose cycle panics or hangs. A weekly CI job resumes from the saved corpus to advance this search over time.
+Coverage-guided exploration repeatedly mutates scenarios and observes which code paths each input executes. It keeps inputs that reach previously unexplored code, then mutates those inputs further. The goal is to discover query entry orders, dependency graphs, and edit sequences that fixed tests did not anticipate and that expose cycle panics or hangs. A twice-weekly CI job resumes from the saved corpus to advance this search over time.
 
 ## Testing responsibilities
 
@@ -18,7 +18,7 @@ Coverage-guided exploration repeatedly mutates scenarios and observes which code
 |-------------------------|-------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | Ordinary `oak_db` tests | Assert semantic results and specific recovery behavior. Includes a short fuzz smoke test.                         | Pull requests and pushes to main.                                              | While developing affected behavior.                                                                                  |
 | `just fuzz`             | Run bounded, fixed-seed mutation blocks. Detects panics and hangs reproducibly but does not verify query results. | Pull requests, pushes to main, and manual fuzz workflows.                      | After changing an `oak_db` query, cycle handler, or dependency path.                                                 |
-| `just fuzz-explore`     | Use coverage feedback to discover new execution paths and grow the saved corpus.                                  | Pushes to main, weekly schedules, and manual fuzz workflows. Not pull requests. | After changing scenario serialization or the mutator: pull request CI type-checks the driver but never runs it.     |
+| `just fuzz-explore`     | Use coverage feedback to discover new execution paths and grow the saved corpus.                                  | Pushes to main, Monday/Thursday schedules, and manual fuzz workflows. Not pull requests. | After changing scenario serialization or the mutator: pull request CI type-checks the driver but never runs it.     |
 | Replay and minimization | Reproduce, diagnose, and reduce a discovered failure.                                                             | Never.                                                                         | When deterministic fuzzing or exploration finds a failure.                                                           |
 
 ## Prerequisites
@@ -93,7 +93,7 @@ In cargo-fuzz 0.13.2, `cmin` can print `Failed to minimize corpus` and exit succ
 
 ## CI and corpus retention
 
-The [fuzz workflow](../../../.github/workflows/test-fuzz.yml) runs a five-minute exploration after pushes to main and manual dispatches, and a thirty-minute exploration each week. A scenario that runs for twenty seconds is treated as a timeout. The workflow reserves additional time for compilation and corpus minimization.
+The [fuzz workflow](../../../.github/workflows/test-fuzz.yml) runs a five-minute exploration after pushes to main and manual dispatches, and a thirty-minute exploration on Mondays and Thursdays at 05:23 UTC. The three- and four-day gaps leave margin before the cache's seven-day inactivity expiry, though cache retention is not guaranteed. A scenario that runs for twenty seconds is treated as a timeout. The workflow reserves additional time for compilation and corpus minimization.
 
 Each successful exploration restores the previous corpus, adds current seeds, explores, minimizes, and saves the result. A failed exploration or minimization leaves the previous cache intact.
 
