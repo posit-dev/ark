@@ -20,7 +20,6 @@ use super::client::TestClient;
 use super::events;
 use super::LspHarness;
 use crate::lsp::analysis::PoolMetrics;
-#[cfg(test)]
 use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
@@ -32,11 +31,9 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
-#[cfg(test)]
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
-#[cfg(test)]
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UrlExt;
 
@@ -49,11 +46,10 @@ impl LspHarness {
     /// rather than racing startup diagnostics. Consuming the harness prevents
     /// buffers from being prepared outside the main loop after the session
     /// starts.
-    pub async fn start(self, settings: &[(&str, Value)]) -> LspSession {
+    pub(crate) async fn start(self, settings: &[(&str, Value)]) -> LspSession {
         self.start_with(settings, None).await
     }
 
-    #[cfg(test)]
     pub(crate) async fn start_with_sources(
         self,
         settings: &[(&str, Value)],
@@ -120,7 +116,7 @@ enum Wakeup {
 }
 
 /// A production main loop connected to a simulated editor.
-pub struct LspSession {
+pub(crate) struct LspSession {
     state: GlobalState,
     client: TestClient,
 
@@ -177,7 +173,7 @@ impl LspSession {
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
     /// Unlike [`LspHarness::prepare_document()`], which only registers the
     /// buffer, this runs the open handler and the diagnostics it schedules.
-    pub fn send_did_open(&self, path: &Path, contents: &str) {
+    pub(crate) fn send_did_open(&self, path: &Path, contents: &str) {
         self.enqueue(events::did_open(path, contents));
     }
 
@@ -187,7 +183,7 @@ impl LspSession {
     /// Queueing rather than handling inline keeps main-loop dispatch inside a
     /// measured section, and lets a caller stack several changes to exercise
     /// keyed replacement.
-    pub fn send_did_change(&self, path: &Path, contents: &str, version: i32) {
+    pub(crate) fn send_did_change(&self, path: &Path, contents: &str, version: i32) {
         self.enqueue(events::did_change(path, contents, version));
     }
 
@@ -208,7 +204,7 @@ impl LspSession {
     ///
     /// A settled loop has no work left that could produce the publication, so
     /// reaching that state without it is a failure rather than a longer wait.
-    pub async fn wait_for_accepted_diagnostics(
+    pub(crate) async fn wait_for_accepted_diagnostics(
         &mut self,
         path: &Path,
         version: i32,
@@ -240,7 +236,7 @@ impl LspSession {
     ///
     /// Settlement also fails on panics, unbalanced pool counters, or requests
     /// unsupported by the simulated editor.
-    pub async fn settle(&mut self) {
+    pub(crate) async fn settle(&mut self) {
         while let Some(event) = self.next_event().await {
             self.handle_once(event).await;
         }
@@ -248,7 +244,7 @@ impl LspSession {
 
     /// Report whether the loop has no scheduler, analysis, or queued work
     /// left, so a caller can assert an idle starting point before measuring.
-    pub fn is_settled(&self) -> bool {
+    pub(crate) fn is_settled(&self) -> bool {
         self.state.is_settled()
     }
 
@@ -292,7 +288,7 @@ impl LspSession {
     /// notification count cannot signal completion. Use
     /// [`Self::wait_for_accepted_diagnostics()`] to observe main-loop output
     /// instead.
-    pub async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
+    pub(crate) async fn wait_for_diagnostics(&mut self, uri: &Uri) -> Option<Vec<Value>> {
         self.settle().await;
         self.deliver_auxiliary().await;
         self.client.flush().await;
@@ -310,11 +306,11 @@ impl LspSession {
             })
     }
 
-    pub fn client_notifications(&self) -> Vec<(String, Value)> {
+    pub(crate) fn client_notifications(&self) -> Vec<(String, Value)> {
         self.client.notifications()
     }
 
-    pub fn analysis_metrics(&self) -> PoolMetrics {
+    pub(crate) fn analysis_metrics(&self) -> PoolMetrics {
         self.state.lsp_state().analysis_pool.metrics()
     }
 
@@ -378,7 +374,6 @@ impl LspSession {
     }
 }
 
-#[cfg(test)]
 impl LspSession {
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         self.state.pump_scans_to_quiescence().await;

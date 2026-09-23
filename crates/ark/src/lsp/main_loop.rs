@@ -513,10 +513,10 @@ impl GlobalState {
         }
     }
 
-    /// Pull the next event off the channel. Only the harness pump uses this;
-    /// the running loop selects on the channel directly so it can also watch
-    /// for shutdown.
-    #[cfg(any(test, feature = "testing"))]
+    /// Pull the next event off the channel. Only test pumps use this; the
+    /// running loop selects on the channel directly so it can also watch for
+    /// shutdown.
+    #[cfg(test)]
     pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
     }
@@ -931,12 +931,12 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     }
 }
 
-/// Harness access to the main loop without R or a live LSP connection.
+/// Test access to the main loop without R or a live LSP connection.
 ///
 /// These methods require private channels and dispatch through the real
-/// `handle_event()`. [`crate::lsp::harness::LspSession`] exposes them to
-/// benchmarks through the `testing` feature.
-#[cfg(any(test, feature = "testing"))]
+/// `handle_event()`. [`crate::lsp::harness::session::LspSession`] builds on
+/// them.
+#[cfg(test)]
 impl GlobalState {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
@@ -966,10 +966,7 @@ impl GlobalState {
     pub(crate) fn analysis_idle_signal(&self) -> Arc<tokio::sync::Notify> {
         self.lsp_state.analysis_pool.idle_signal()
     }
-}
 
-#[cfg(test)]
-impl GlobalState {
     /// Run `event` through the real `handle_event`, then pump any pending
     /// events until we reach quiescence. This includes:
     /// - Pending oak scans

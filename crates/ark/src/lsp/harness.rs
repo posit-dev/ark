@@ -2,23 +2,24 @@
 //!
 //! [`LspHarness`] prepares analysis state without starting background work. Use
 //! [`LspHarness::snapshot()`] and [`LspHarness::diagnose()`] for an isolated
-//! diagnostics pass, or consume it with [`LspHarness::start()`] to exercise the
-//! production handlers and schedulers through [`LspSession`].
+//! diagnostics pass. Tests can instead consume it with `LspHarness::start()` to
+//! exercise the production handlers and schedulers through `LspSession`.
 
-pub mod client;
+#[cfg(test)]
+pub(crate) mod client;
+#[cfg(test)]
 pub(crate) mod events;
-pub mod session;
+#[cfg(test)]
+pub(crate) mod session;
 
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
-pub use session::LspSession;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::analysis::is_testthat_path;
-pub use crate::lsp::analysis::PoolMetrics;
 use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::state::Workspace;
