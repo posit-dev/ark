@@ -316,7 +316,7 @@ impl SourceScheduler {
 
     /// Source requests are tracked outside the analysis pool counters, so
     /// settlement must check them separately.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn has_pending(&self) -> bool {
         self.state
             .values()

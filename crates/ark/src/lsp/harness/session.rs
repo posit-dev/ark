@@ -1,4 +1,4 @@
-//! Event-driven LSP harness support.
+//! End-to-end measurement through the production main loop.
 //!
 //! [`LspSession`] consumes an [`LspHarness`] and drives production event handling
 //! against a simulated editor without rebuilding its database. Editor operations
@@ -6,7 +6,11 @@
 //! production client path.
 //!
 //! Only one session may exist per process because the auxiliary sender is
-//! process-global.
+//! process-global. Starting a new session retires the previous one's auxiliary
+//! receiver, so sessions must run one after another.
+
+#[cfg(test)]
+mod test_access;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,11 +21,10 @@ use serde_json::Value;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::Uri;
 
-use super::client::TestClient;
-use super::events;
+use super::editor::client::TestClient;
+use super::editor::notifications;
 use super::LspHarness;
 use crate::lsp::analysis::PoolMetrics;
-use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::register_auxiliary_tx;
@@ -31,10 +34,8 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
-use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
-use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UrlExt;
 
 impl LspHarness {
@@ -46,16 +47,8 @@ impl LspHarness {
     /// rather than racing startup diagnostics. Consuming the harness prevents
     /// buffers from being prepared outside the main loop after the session
     /// starts.
-    pub(crate) async fn start(self, settings: &[(&str, Value)]) -> LspSession {
+    pub async fn start(self, settings: &[(&str, Value)]) -> LspSession {
         self.start_with(settings, None).await
-    }
-
-    pub(crate) async fn start_with_sources(
-        self,
-        settings: &[(&str, Value)],
-        source_handler: Arc<dyn SourceHandler>,
-    ) -> LspSession {
-        self.start_with(settings, Some(source_handler)).await
     }
 
     async fn start_with(
@@ -119,7 +112,7 @@ enum Wakeup {
 }
 
 /// A production main loop connected to a simulated editor.
-pub(crate) struct LspSession {
+pub struct LspSession {
     state: GlobalState,
     client: TestClient,
 
@@ -141,7 +134,7 @@ impl LspSession {
     /// here means a measured section starts from an idle loop instead of
     /// racing the diagnostics that applying configuration schedules.
     async fn handshake(&mut self, folders: Vec<Uri>) {
-        let (event, mut response_rx) = events::initialize(folders);
+        let (event, mut response_rx) = notifications::initialize(folders);
         self.handle_once(event).await;
 
         // Read the answer rather than dropping the receiver, so a rejected
@@ -155,7 +148,7 @@ impl LspSession {
             _ => panic!("The main loop did not answer `initialize`"),
         }
 
-        self.handle_once(events::initialized()).await;
+        self.handle_once(notifications::initialized()).await;
 
         self.settle().await;
     }
@@ -170,8 +163,8 @@ impl LspSession {
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
     /// Unlike [`LspHarness::prepare_document()`], which only registers the
     /// buffer, this runs the open handler and the diagnostics it schedules.
-    pub(crate) fn send_did_open(&self, path: &Path, contents: &str) {
-        self.enqueue(events::did_open(path, contents));
+    pub fn send_did_open(&self, path: &Path, contents: &str) {
+        self.enqueue(notifications::did_open(path, contents));
     }
 
     /// Queue a whole-document `didChange` at `version`, which must exceed the
@@ -180,8 +173,8 @@ impl LspSession {
     /// Queueing rather than handling inline keeps main-loop dispatch inside a
     /// measured section, and lets a caller stack several changes to exercise
     /// keyed replacement.
-    pub(crate) fn send_did_change(&self, path: &Path, contents: &str, version: i32) {
-        self.enqueue(events::did_change(path, contents, version));
+    pub fn send_did_change(&self, path: &Path, contents: &str, version: i32) {
+        self.enqueue(notifications::did_change(path, contents, version));
     }
 
     /// Queue an event without handling it, to model a busy main loop.
@@ -201,7 +194,7 @@ impl LspSession {
     ///
     /// A settled loop has no work left that could produce the publication, so
     /// reaching that state without it is a failure rather than a longer wait.
-    pub(crate) async fn wait_for_accepted_diagnostics(
+    pub async fn wait_for_accepted_diagnostics(
         &mut self,
         path: &Path,
         version: i32,
@@ -233,7 +226,7 @@ impl LspSession {
     ///
     /// Settlement also fails on panics, unbalanced pool counters, or requests
     /// unsupported by the simulated editor.
-    pub(crate) async fn settle(&mut self) {
+    pub async fn settle(&mut self) {
         while let Some(event) = self.next_event().await {
             self.handle_once(event).await;
         }
@@ -241,7 +234,7 @@ impl LspSession {
 
     /// Report whether the loop has no scheduler, analysis, or queued work
     /// left, so a caller can assert an idle starting point before measuring.
-    pub(crate) fn is_settled(&self) -> bool {
+    pub fn is_settled(&self) -> bool {
         self.state.is_settled()
     }
 
@@ -327,41 +320,8 @@ impl LspSession {
     }
 }
 
-impl LspSession {
-    pub(crate) async fn pump_scans_to_quiescence(&mut self) {
-        self.state.pump_scans_to_quiescence().await;
-        self.collect_auxiliary();
-    }
-
-    pub(crate) fn world(&self) -> &WorldState {
-        self.state.world()
-    }
-
-    pub(crate) fn raw_publications(&self) -> &[DiagnosticsPublication] {
-        &self.raw_publications
-    }
-
-    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
-        self.state.events_tx()
-    }
-
-    /// Run `task` on the analysis pool without going through a scheduler. Tests
-    /// use this to create worker states that normal requests cannot hold, such
-    /// as sending an [`Event`] and then blocking before the task returns.
-    pub(crate) fn spawn_analysis_task(
-        &self,
-        task: impl FnOnce(WorldStateSnapshot) + Send + 'static,
-    ) {
-        self.state
-            .lsp_state()
-            .analysis_pool
-            .spawn_test_task(self.state.world().snapshot(), task);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::Receiver;
     use std::sync::mpsc::Sender;
     use std::time::Duration;
 
@@ -406,21 +366,20 @@ mod tests {
         })
     }
 
-    /// Send a result before the task records its terminal outcome, then return
-    /// the gate that controls that outcome.
-    fn spawn_gated_analysis_task(session: &LspSession) -> (Receiver<()>, Sender<()>) {
+    /// Keep the pool busy after its only event is sent, until released.
+    fn hold_pool(session: &LspSession) -> Sender<()> {
         let events_tx = session.events_tx();
-        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (blocked_tx, blocked_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
 
         session.spawn_analysis_task(move |_snapshot| {
             events_tx.send(ready(1, "from the task")).unwrap();
-            entered_tx.send(()).unwrap();
+            blocked_tx.send(()).unwrap();
             release_rx.recv().unwrap();
         });
 
-        entered_rx.recv_timeout(TIMEOUT).unwrap();
-        (entered_rx, release_tx)
+        blocked_rx.recv_timeout(TIMEOUT).unwrap();
+        release_tx
     }
 
     /// The task's event is handled while the task is still running, so no
@@ -429,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn test_settle_wakes_when_work_finishes_after_the_wait() {
         let mut session = session().await;
-        let (_entered, release) = spawn_gated_analysis_task(&session);
+        let release = hold_pool(&session);
 
         let mut settling = Box::pin(session.settle());
         assert!(futures::poll!(&mut settling).is_pending());

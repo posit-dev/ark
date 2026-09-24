@@ -1,26 +1,31 @@
 //! Shared analysis setup for LSP tests and diagnostics benchmarks.
 //!
-//! [`LspHarness`] prepares analysis state without starting background work. Use
-//! [`LspHarness::snapshot()`] and [`LspHarness::diagnose()`] for an isolated
-//! diagnostics pass. Tests can instead consume it with `LspHarness::start()` to
-//! exercise the production handlers and schedulers through `LspSession`.
+//! [`LspHarness`] prepares analysis state without starting background work.
+//! The prepared state can then be measured in one of two ways:
+//!
+//! - `control`: [`LspHarness::snapshot()`] and [`LspHarness::diagnose()`] run
+//!   one diagnostics pass on the caller's thread, with no main loop. This
+//!   isolates diagnostics compute.
+//! - `session`: [`LspHarness::start()`] consumes the harness and returns an
+//!   [`LspSession`] that drives the production main loop, schedulers, and
+//!   analysis pool end to end.
+//!
+//! When an end-to-end measurement moves and the control doesn't, the change
+//! came from scheduling or synchronisation rather than compute.
+//!
+//! `editor` simulates the client on the other end of a session.
 
-#[cfg(test)]
-pub(crate) mod client;
-#[cfg(test)]
-pub(crate) mod events;
-#[cfg(test)]
-pub(crate) mod session;
+mod control;
+pub(crate) mod editor;
+mod session;
 
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
+pub use control::HarnessSnapshot;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
-use tower_lsp_server::ls_types::Diagnostic;
+pub use session::LspSession;
 
-use crate::lsp::analysis::is_testthat_path;
-use crate::lsp::analysis::WorldStateSnapshot;
-use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
 
@@ -29,10 +34,6 @@ use crate::lsp::state::WorldState;
 pub struct LspHarness {
     state: WorldState,
 }
-
-/// Keeps a [`WorldStateSnapshot`] private so snapshot creation remains
-/// separately measurable from diagnostics.
-pub struct HarnessSnapshot(WorldStateSnapshot);
 
 impl LspHarness {
     pub fn new(db: OakDatabase) -> Self {
@@ -80,25 +81,5 @@ impl LspHarness {
     pub fn source_text(&self, path: &FilePath) -> anyhow::Result<&str> {
         let file = self.state.open_file(path)?.file();
         Ok(file.source_text(self.state.db()).as_str())
-    }
-
-    pub fn snapshot(&self) -> HarnessSnapshot {
-        HarnessSnapshot(self.state.snapshot())
-    }
-
-    /// Generate diagnostics synchronously, without the auxiliary channel used
-    /// by pool-driven refreshes.
-    pub fn diagnose(
-        &self,
-        path: &FilePath,
-        snapshot: HarnessSnapshot,
-    ) -> anyhow::Result<Vec<Diagnostic>> {
-        let open_file = self.state.open_file(path)?;
-        Ok(generate_diagnostics(
-            open_file.file(),
-            snapshot.0,
-            is_testthat_path(path),
-            open_file.wire_uri(),
-        ))
     }
 }

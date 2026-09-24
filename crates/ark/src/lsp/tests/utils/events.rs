@@ -11,7 +11,7 @@ use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::RequestResponse;
-use crate::lsp::harness::events::initialize_with;
+use crate::lsp::harness::editor::notifications::initialize_with;
 use crate::lsp::main_loop::Event;
 
 /// An `initialize` request opening `path` as the sole workspace folder, from a
