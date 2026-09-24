@@ -204,26 +204,26 @@ struct Shared {
 
 /// Counters describing how the analysis queue processes tasks.
 #[derive(Default, Debug, Clone, Copy)]
-pub(crate) struct PoolMetrics {
+pub struct PoolMetrics {
     /// Submitted tasks, including replacements.
-    pub(crate) queued: u64,
+    pub queued: u64,
     /// Queued entries replaced by a newer task with the same key.
-    pub(crate) replaced: u64,
-    pub(crate) started: u64,
-    pub(crate) completed: u64,
+    pub replaced: u64,
+    pub started: u64,
+    pub completed: u64,
     /// Tasks cancelled before a worker started them.
-    pub(crate) cancelled_queued: u64,
+    pub cancelled_queued: u64,
     /// Tasks cancelled after a worker started them.
-    pub(crate) cancelled_running: u64,
+    pub cancelled_running: u64,
     /// Tasks whose panic a worker caught.
-    pub(crate) panicked: u64,
-    pub(crate) peak_queue_len: usize,
+    pub panicked: u64,
+    pub peak_queue_len: usize,
 }
 
 impl PoolMetrics {
     /// Entries still queued. Derived by subtracting every outcome that removes
     /// an entry. A negative value signals unbalanced counters.
-    pub(crate) fn waiting(&self) -> i64 {
+    pub fn waiting(&self) -> i64 {
         self.queued as i64 -
             self.replaced as i64 -
             self.cancelled_queued as i64 -
@@ -232,7 +232,7 @@ impl PoolMetrics {
 
     /// Tasks still running in workers. Derived by subtracting every terminal
     /// outcome after a task starts. A negative value signals unbalanced counters.
-    pub(crate) fn running(&self) -> i64 {
+    pub fn running(&self) -> i64 {
         self.started as i64 -
             self.completed as i64 -
             self.cancelled_running as i64 -

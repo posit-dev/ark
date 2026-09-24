@@ -406,6 +406,47 @@ fn resolved_source_fetching(options: LspSettings, client_settings: LspSettings) 
     state.config.oak.source_fetching_enabled
 }
 
+#[test]
+fn test_source_fetching_env_bypass_keeps_other_env_overrides() {
+    let env = LspSettings {
+        source_fetching_enabled: Some(false),
+        diagnostics_enable: Some(false),
+        ..Default::default()
+    };
+
+    let mut honoured = WorldState::default();
+    honoured.resolve_config_with_env(env.clone(), LspSettings::default());
+    assert!(!honoured.config.oak.source_fetching_enabled);
+
+    let mut bypassed = WorldState {
+        ignore_source_fetching_env: true,
+        ..Default::default()
+    };
+    bypassed.resolve_config_with_env(env, LspSettings::default());
+    assert!(bypassed.config.oak.source_fetching_enabled);
+    assert!(!bypassed.config.diagnostics.enable);
+}
+
+#[test]
+fn test_source_fetching_env_bypass_holds_for_later_settings_pulls() {
+    let env = LspSettings {
+        source_fetching_enabled: Some(true),
+        ..Default::default()
+    };
+    let mut state = WorldState {
+        ignore_source_fetching_env: true,
+        ..Default::default()
+    };
+    state.resolve_config_with_env(env.clone(), LspSettings::default());
+
+    let pulled = LspSettings {
+        source_fetching_enabled: Some(false),
+        ..Default::default()
+    };
+    state.resolve_config_with_env(env, pulled);
+    assert!(!state.config.oak.source_fetching_enabled);
+}
+
 /// Dotted setting names must be nested objects, not flat `initializationOptions` keys.
 #[test]
 fn test_initialization_options_read_nested_objects_only() {

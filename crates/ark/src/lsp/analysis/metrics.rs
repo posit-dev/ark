@@ -11,15 +11,15 @@ use crate::lsp;
 /// [`super::pool::PoolMetrics`] without synchronizing with the main loop, so a
 /// [`Self::log_snapshot`] taken while tasks are in flight is not a settled total.
 #[derive(Default, Debug, Clone, Copy)]
-pub(crate) struct DiagnosticsMetrics {
-    pub(crate) batches: u64,
-    pub(crate) tasks_queued: u64,
+pub struct DiagnosticsMetrics {
+    pub batches: u64,
+    pub tasks_queued: u64,
     /// Results the main loop accepted as the newest generation for their file.
     /// [`crate::lsp::publish_diagnostics`] can still skip the client notification
     /// when the diagnostic set is unchanged.
-    pub(crate) results_accepted: u64,
+    pub results_accepted: u64,
     /// Results discarded because a newer generation was published for the same file.
-    pub(crate) results_stale: u64,
+    pub results_stale: u64,
 }
 
 impl DiagnosticsMetrics {

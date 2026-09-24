@@ -24,7 +24,8 @@
 //!
 //! The `ctl.*` and `one.*` cases target `R/mutate.R`, with the remaining dplyr
 //! files as workspace context. The `all.*` cases cover every `.R` file under
-//! `R/`.
+//! `R/`. `vdoc.burst` replays Quarto virtual-document churn over a small
+//! temporary fixture instead of the corpus.
 //!
 //! Case IDs are limited to 11 characters. Criterion wraps `id` onto its own
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
@@ -65,6 +66,9 @@ use tokio::runtime::Runtime;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::DiagnosticSeverity;
 use walkdir::WalkDir;
+
+#[path = "../tests/support/burst_replay.rs"]
+mod burst_replay;
 
 /// dplyr v1.1.4. Cloned by tag and checked against this SHA, so the corpus
 /// can't drift under a moved tag.
@@ -175,6 +179,7 @@ fn main() {
     bench_edit(&mut group, &runtime, &fixtures, &cache);
     bench_open(&mut group, &runtime, &fixtures, &cache);
     bench_symbol(&mut group, &runtime, &fixtures, &cache);
+    bench_burst(&mut group, &runtime);
     group.finish();
 
     let mut group = criterion.benchmark_group("diagnostics");
@@ -415,6 +420,35 @@ fn bench_symbol(
                 close_document(runtime, &mut session, &path);
             }
             end_session(runtime, session);
+            total
+        });
+    });
+}
+
+/// Measure final recurring-document diagnostics and probe completion, not full
+/// settlement. Concurrent workspace scans and source ingestion may outlast
+/// this endpoint. The `burst` integration test reports settlement time as well
+/// so work outside the measured interval remains visible.
+fn bench_burst(group: &mut BenchmarkGroup<'_, WallTime>, runtime: &Runtime) {
+    group.bench_function("vdoc.burst", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let fixture = burst_replay::Fixture::new();
+                let mut replay = runtime.block_on(burst_replay::Replay::start(
+                    &fixture,
+                    burst_replay::BurstConfig::DEFAULT,
+                ));
+                replay.enqueue_burst(&fixture);
+
+                let start = Instant::now();
+                runtime.block_on(replay.drive_to_endpoint(&fixture));
+                total += start.elapsed();
+
+                runtime.block_on(replay.settle());
+                replay.assert_final_state(&fixture);
+                end_session(runtime, replay.session);
+            }
             total
         });
     });

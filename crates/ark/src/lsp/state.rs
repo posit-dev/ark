@@ -74,6 +74,11 @@ pub(crate) struct WorldState {
     /// Persist `initializationOptions` so omitted settings in later pulls can
     /// fall through to it.
     pub(crate) initialization_options: LspSettings,
+
+    /// Let tests control source fetching without mutating the process environment.
+    /// Persist this choice because settings pulls reapply environment overrides.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) ignore_source_fetching_env: bool,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -116,8 +121,27 @@ impl WorldState {
     /// initialization options. Earlier layers override later ones, and missing
     /// values use defaults.
     pub(crate) fn resolve_config(&mut self, client_settings: LspSettings) {
-        env_settings()
-            .or(client_settings)
+        self.resolve_config_with_env(env_settings(), client_settings);
+    }
+
+    /// Accept the environment layer as data so tests can check precedence
+    /// without mutating the process environment.
+    pub(crate) fn resolve_config_with_env(
+        &mut self,
+        env: LspSettings,
+        client_settings: LspSettings,
+    ) {
+        #[cfg(any(test, feature = "testing"))]
+        let env = if self.ignore_source_fetching_env {
+            LspSettings {
+                source_fetching_enabled: None,
+                ..env
+            }
+        } else {
+            env
+        };
+
+        env.or(client_settings)
             .or(self.initialization_options.clone())
             .resolve_into(&mut self.config);
     }
