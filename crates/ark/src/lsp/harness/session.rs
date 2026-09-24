@@ -10,14 +10,13 @@
 //! receiver, so sessions must run one after another.
 
 mod package_sources;
+mod requests;
 #[cfg(test)]
 mod test_access;
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -26,8 +25,10 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::Db;
 use package_sources::PackageSources;
+pub use requests::RequestAnswer;
+pub use requests::RequestHandle;
+use requests::Requests;
 use serde_json::Value;
-use tokio::sync::mpsc::error::TryRecvError;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
 use tower_lsp_server::ls_types::Position;
@@ -39,7 +40,6 @@ use super::LspHarness;
 use crate::lsp::analysis::DiagnosticsMetrics;
 use crate::lsp::analysis::PoolMetrics;
 use crate::lsp::backend::LspMessage;
-use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::register_auxiliary_tx;
@@ -49,6 +49,7 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::traits::url::UrlExt;
@@ -116,9 +117,7 @@ impl LspHarness {
             client,
             auxiliary_rx,
             raw_publications: Vec::new(),
-            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
-            definition_answers: Vec::new(),
-            pending_definitions: Vec::new(),
+            definitions: Requests::new(definition_response),
             peak_outstanding_holds: 0,
             background_panics: 0,
         };
@@ -153,58 +152,20 @@ pub struct LspSession {
     /// Main-loop publications before unchanged diagnostics are suppressed.
     raw_publications: Vec<DiagnosticsPublication>,
 
-    /// Tags this session's [`DefinitionRequest`]s so another session can
-    /// reject them.
-    id: u64,
-
-    /// Answers indexed by [`DefinitionRequest`], `None` until collected.
-    definition_answers: Vec<Option<DefinitionAnswer>>,
-
-    /// Requests still awaiting an answer. Collection after each event visits
-    /// only these, so its cost tracks outstanding requests rather than every
-    /// request sent.
-    pending_definitions: Vec<PendingDefinition>,
+    definitions: Requests<DefinitionResult>,
 
     peak_outstanding_holds: usize,
 
     background_panics: usize,
 }
 
-/// Source of [`LspSession::id`]. Sessions run one after another, but a handle
-/// can outlive its session, so ids must not repeat within the process.
-static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(0);
+pub type DefinitionResult = anyhow::Result<Option<GotoDefinitionResponse>>;
 
 /// Identifies a request sent with [`LspSession::send_goto_definition()`].
-#[derive(Debug, Clone, Copy)]
-pub struct DefinitionRequest {
-    session: u64,
-    index: usize,
-}
+pub type DefinitionRequest = RequestHandle<DefinitionResult>;
 
 /// A `textDocument/definition` answer as the session observed it.
-///
-/// Answers are timestamped after each main-loop handler returns and auxiliary
-/// events are collected, not when the server sends them. Even synchronous
-/// replies include that intervening work in their measured latency.
-#[derive(Debug)]
-pub struct DefinitionAnswer {
-    pub response: anyhow::Result<Option<GotoDefinitionResponse>>,
-
-    /// From sending the request until the answer was observed, including the
-    /// time the request waited behind earlier events.
-    pub latency: Duration,
-
-    /// Duration of the definition-request handler immediately preceding answer
-    /// collection, or `None` if a different kind of event was handled. For an
-    /// asynchronous reply, this need not be the handler that produced it.
-    pub handled: Option<Duration>,
-}
-
-struct PendingDefinition {
-    index: usize,
-    sent_at: Instant,
-    response_rx: TokioUnboundedReceiver<RequestResponse>,
-}
+pub type DefinitionAnswer = RequestAnswer<DefinitionResult>;
 
 /// A publication before unchanged diagnostic sets are suppressed, including
 /// accepted diagnostics and the empty sets sent by `didClose`.
@@ -257,17 +218,18 @@ impl LspSession {
     /// The main loop only publishes diagnostics while handling an event, so
     /// collecting auxiliary events here records every publication.
     pub(crate) async fn handle_once(&mut self, event: Event) {
-        let is_definition = matches!(
-            event,
-            Event::Lsp(LspMessage::Request(LspRequest::GotoDefinition(_), _))
-        );
+        let definition = response_tx(&event).and_then(|tx| self.definitions.find(tx));
 
         let started = Instant::now();
         self.state.handle_event_once(event).await;
         let handled = started.elapsed();
 
+        if let Some(definition) = definition {
+            self.definitions.record_handled(definition, handled);
+        }
+
         self.collect_auxiliary();
-        self.collect_definition_answers(is_definition.then_some(handled));
+        self.definitions.collect();
 
         self.peak_outstanding_holds = self
             .peak_outstanding_holds
@@ -305,31 +267,18 @@ impl LspSession {
     /// [`Self::definition_answer()`] once the loop has handled it.
     pub fn send_goto_definition(&mut self, path: &Path, position: Position) -> DefinitionRequest {
         let (event, response_rx) = notifications::goto_definition(path, position);
-        let index = self.definition_answers.len();
-
-        self.definition_answers.push(None);
-        self.pending_definitions.push(PendingDefinition {
-            index,
-            sent_at: Instant::now(),
-            response_rx,
-        });
+        let Some(tx) = response_tx(&event) else {
+            panic!("A goto-definition event carries no reply sender");
+        };
+        let request = self.definitions.track(tx, response_rx);
         self.enqueue(event);
-
-        DefinitionRequest {
-            session: self.id,
-            index,
-        }
+        request
     }
 
     /// Return the observed answer, or `None` until the session collects it.
     /// Panics if `request` was sent by another session.
     pub fn definition_answer(&self, request: DefinitionRequest) -> Option<&DefinitionAnswer> {
-        if request.session != self.id {
-            panic!("{request:?} was sent by another session");
-        }
-        self.definition_answers
-            .get(request.index)
-            .and_then(Option::as_ref)
+        self.definitions.answer(request)
     }
 
     /// Queue an event without handling it, to model a busy main loop.
@@ -503,27 +452,6 @@ impl LspSession {
         self.peak_outstanding_holds
     }
 
-    fn collect_definition_answers(&mut self, definition_handled: Option<Duration>) {
-        let observed_at = Instant::now();
-        let answers = &mut self.definition_answers;
-
-        self.pending_definitions.retain_mut(|pending| {
-            let response = match pending.response_rx.try_recv() {
-                Ok(response) => definition_response(response),
-                Err(TryRecvError::Empty) => return true,
-                Err(TryRecvError::Disconnected) => Err(anyhow!(
-                    "The main loop dropped a definition request without answering"
-                )),
-            };
-            answers[pending.index] = Some(DefinitionAnswer {
-                response,
-                latency: observed_at - pending.sent_at,
-                handled: definition_handled,
-            });
-            false
-        });
-    }
-
     fn collect_auxiliary(&mut self) {
         while let Ok(event) = self.auxiliary_rx.try_recv() {
             self.record_auxiliary(event);
@@ -574,16 +502,27 @@ impl LspSession {
     }
 }
 
-fn definition_response(
-    response: RequestResponse,
-) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+/// The reply sender of a request event, which identifies the request.
+fn response_tx(event: &Event) -> Option<&TokioUnboundedSender<RequestResponse>> {
+    match event {
+        Event::Lsp(LspMessage::Request(_request, response_tx)) => Some(response_tx),
+        _ => None,
+    }
+}
+
+fn definition_response(response: Option<RequestResponse>) -> DefinitionResult {
     match response {
-        RequestResponse::Result(Ok(LspResponse::GotoDefinition(response))) => Ok(response),
-        RequestResponse::Result(Ok(response)) => Err(anyhow!(
+        Some(RequestResponse::Result(Ok(LspResponse::GotoDefinition(response)))) => Ok(response),
+        Some(RequestResponse::Result(Ok(response))) => Err(anyhow!(
             "Unexpected response to a definition request: {response:?}"
         )),
-        RequestResponse::Result(Err(err)) => Err(anyhow!("The definition request failed: {err:?}")),
-        RequestResponse::Disabled => Err(anyhow!("The definition request is disabled")),
+        Some(RequestResponse::Result(Err(err))) => {
+            Err(anyhow!("The definition request failed: {err:?}"))
+        },
+        Some(RequestResponse::Disabled) => Err(anyhow!("The definition request is disabled")),
+        None => Err(anyhow!(
+            "The main loop dropped a definition request without answering"
+        )),
     }
 }
 
@@ -725,7 +664,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(session.pending_definitions.is_empty());
+        assert!(!session.definitions.has_pending());
         let Some(answer) = session.definition_answer(request) else {
             panic!("The definition request was never answered");
         };

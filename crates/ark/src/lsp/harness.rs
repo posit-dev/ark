@@ -26,8 +26,11 @@ use oak_db::OakDatabase;
 use oak_scan::DbScan;
 pub use session::DefinitionAnswer;
 pub use session::DefinitionRequest;
+pub use session::DefinitionResult;
 pub use session::LspSession;
 pub use session::Publication;
+pub use session::RequestAnswer;
+pub use session::RequestHandle;
 
 use crate::console::console_scopes;
 pub use crate::lsp::analysis::DiagnosticsMetrics;
