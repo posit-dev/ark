@@ -1,4 +1,5 @@
-//! A simulated editor peer for the production `Client` path.
+//! The simulated client's receiving end: records the server's notifications
+//! and answers its requests. What it sends lives in `notifications`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use tower_lsp_server::LspService;
 /// `Client` to its init closure; we capture it and drop the service. The
 /// client's sends go nowhere, which is fine since the event paths under test
 /// never use it. Use [`TestClient`] when a handler needs an answer.
+#[cfg(test)]
 pub(crate) fn test_client() -> Client {
     let (_service, _socket, client) = service();
     client
@@ -40,8 +42,10 @@ pub(crate) fn test_client() -> Client {
 /// `didChangeConfiguration` notification.
 pub(crate) struct TestClient {
     client: Client,
+    #[cfg(test)]
     settings: Arc<Mutex<HashMap<String, Value>>>,
     requests: Arc<Mutex<Vec<Result<String, String>>>>,
+    #[cfg(test)]
     notifications: Arc<Mutex<Vec<(String, Value)>>>,
 
     /// Aborts the peer on drop.
@@ -88,8 +92,10 @@ impl TestClient {
 
         Self {
             client,
+            #[cfg(test)]
             settings,
             requests,
+            #[cfg(test)]
             notifications,
             _peer: peer,
         }
@@ -102,6 +108,7 @@ impl TestClient {
 
     /// Change what the peer answers for `section`, as a user changing a setting
     /// does. Takes effect on the next `workspace/configuration` request.
+    #[cfg(test)]
     pub(crate) fn set_setting(&self, section: &str, value: Value) {
         self.settings
             .lock()
@@ -116,6 +123,7 @@ impl TestClient {
     }
 
     /// Methods and params of the notifications the server has sent, in order.
+    #[cfg(test)]
     pub(crate) fn notifications(&self) -> Vec<(String, Value)> {
         self.notifications.lock().unwrap().clone()
     }
@@ -127,6 +135,7 @@ impl TestClient {
     /// A failed round-trip means the peer is gone and [`Self::notifications()`]
     /// may be incomplete, so this panics rather than letting a caller assert
     /// on partial state.
+    #[cfg(test)]
     pub(crate) async fn flush(&self) {
         if let Err(err) = self.client.configuration(vec![]).await {
             panic!("The simulated editor did not answer a flush request: {err:?}");
@@ -202,8 +211,9 @@ fn configuration_result(params: Option<&Value>, settings: &HashMap<String, Value
         .collect()
 }
 
-/// A service, its loopback socket, and the `Client` the service handed to its
-/// init closure.
+/// A service, its loopback socket, and the server's `Client` handle from its
+/// init closure. What the server sends through that handle arrives on the
+/// socket, where the simulated editor reads it.
 fn service() -> (LspService<Dummy>, ClientSocket, Client) {
     let captured = Arc::new(Mutex::new(None));
     let sink = Arc::clone(&captured);

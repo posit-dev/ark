@@ -19,11 +19,11 @@ use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
-pub(super) use crate::lsp::harness::client::test_client;
-pub(super) use crate::lsp::harness::client::TestClient;
-pub(super) use crate::lsp::harness::events::did_change;
-pub(super) use crate::lsp::harness::events::did_open;
-pub(super) use crate::lsp::harness::events::initialized;
+pub(super) use crate::lsp::harness::editor::client::test_client;
+pub(super) use crate::lsp::harness::editor::client::TestClient;
+pub(super) use crate::lsp::harness::editor::notifications::did_change;
+pub(super) use crate::lsp::harness::editor::notifications::did_open;
+pub(super) use crate::lsp::harness::editor::notifications::initialized;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;

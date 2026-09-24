@@ -1,9 +1,9 @@
-//! Lifecycle and document notifications sent by the simulated editor.
+//! The simulated editor's sending end: the lifecycle and document messages it
+//! sends to the server, as main-loop [`Event`]s.
 //!
-//! The session brings the server up with these [`Event`]s, then drives
-//! documents through the same handlers a real editor would.
-//! `lsp::tests::utils::events` builds its own request variants on
-//! [`initialize_with()`].
+//! The session brings the server up with these, then drives documents through
+//! the same handlers a real editor would. `lsp::tests::utils::events` builds
+//! its own request variants on [`initialize_with()`].
 
 use std::path::Path;
 

@@ -138,7 +138,7 @@ impl AnalysisPool {
         self.shared.lock().metrics
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn is_idle(&self) -> bool {
         let metrics = self.metrics();
         metrics.waiting() == 0 && metrics.running() == 0

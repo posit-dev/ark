@@ -513,10 +513,10 @@ impl GlobalState {
         }
     }
 
-    /// Pull the next event off the channel. Only test pumps use this; the
-    /// running loop selects on the channel directly so it can also watch for
-    /// shutdown.
-    #[cfg(test)]
+    /// Pull the next event off the channel. Only the harness session and test
+    /// pumps use this; the running loop selects on the channel directly so it
+    /// can also watch for shutdown.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
     }
@@ -931,12 +931,12 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     }
 }
 
-/// Test access to the main loop without R or a live LSP connection.
+/// Harness access to the main loop without R or a live LSP connection.
 ///
 /// These methods require private channels and dispatch through the real
-/// `handle_event()`. [`crate::lsp::harness::session::LspSession`] builds on
-/// them.
-#[cfg(test)]
+/// `handle_event()`. [`crate::lsp::harness::LspSession`] builds on them, so
+/// benchmarks built with the `testing` feature need them too.
+#[cfg(any(test, feature = "testing"))]
 impl GlobalState {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
@@ -961,7 +961,11 @@ impl GlobalState {
 
         self.lsp_state.analysis_pool.is_idle() && self.events_rx.is_empty()
     }
+}
 
+/// Test-only pumps for driving the main loop to a chosen point.
+#[cfg(test)]
+impl GlobalState {
     /// Run `event` through the real `handle_event`, then pump any pending
     /// events until we reach quiescence. This includes:
     /// - Pending oak scans
@@ -1412,7 +1416,7 @@ mod tests {
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
-    use crate::lsp::harness::client::TestClient;
+    use crate::lsp::harness::editor::client::TestClient;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
