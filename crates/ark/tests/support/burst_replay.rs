@@ -1,8 +1,9 @@
-//! Replays Quarto virtual-document churn through the production event handler.
+//! Replays a burst of document churn through the production event handler.
 //!
-//! Chunk virtual documents use unique URIs and document-height padding before
-//! closing. The replay also edits one persistent virtual document, probes it
-//! with goto-definition after each edit, and fetches package sources.
+//! Temporary documents open under unique URIs and close a few events later.
+//! Padding lines make each one costlier to analyse than its code alone. The
+//! replay also edits one recurring document, probes it with goto-definition
+//! after each edit, and fetches package sources.
 //!
 //! The whole burst is queued before the loop handles any of it, so
 //! notifications accumulate behind the main loop. [`Replay::drive_to_endpoint()`]
@@ -14,7 +15,7 @@
 //! Assertions accept any background completion order but require the final
 //! diagnostics, navigation answers, and publications.
 //!
-//! Shared by the `burst` integration test and the `vdoc.burst` benchmark case.
+//! Shared by the `burst` integration test and the `burst` benchmark case.
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -38,7 +39,7 @@ use tower_lsp_server::ls_types::Uri;
 /// Packages referenced through `::` to trigger source-pool fetches.
 const DONORS: [&str; 2] = ["donor1", "donor2"];
 
-/// Workspace document kept open so refreshes cover a non-vdoc file.
+/// Workspace document kept open so refreshes cover a file outside the burst.
 const SCRIPT: &str = "burst_script <- function() 1\nburst_script()\n";
 
 const HELPER: &str = "burst_helper";
@@ -49,21 +50,24 @@ const DEFINITION_LINE: u32 = 0;
 const CALL_LINE: u32 = 1;
 const MISSING_LINE: u32 = 2;
 
-/// Maximum open one-shot vdocs. Multiple live URIs create backlog that keyed
-/// replacement cannot coalesce.
+/// Maximum open temporary documents. Multiple live URIs create backlog that
+/// keyed replacement cannot coalesce.
 const WINDOW: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BurstConfig {
-    pub vdocs: usize,
+    /// Temporary documents opened and closed during the burst. The recurring
+    /// document gets one edit and one probe per temporary document.
+    pub temporaries: usize,
 
-    /// Padding lines per code line.
+    /// Padding lines per code line. Scales document size, and with it the cost
+    /// of each analysis pass, without changing the code or its diagnostics.
     pub padding_ratio: usize,
 }
 
 impl BurstConfig {
     pub const DEFAULT: Self = Self {
-        vdocs: 8,
+        temporaries: 8,
         padding_ratio: 40,
     };
 
@@ -76,13 +80,14 @@ impl BurstConfig {
     }
 
     fn temporary(&self, index: usize) -> PaddedDocument {
-        let code = format!("burst_chunk_{index} <- 1\nburst_absent_{index}\n");
+        let code = format!("burst_temporary_{index} <- 1\nburst_absent_{index}\n");
         pad(&code, self.padding_ratio)
     }
 
-    /// Reserve the version after all one-shot virtual-document edits.
+    /// Reserve the version after the recurring edits interleaved with
+    /// temporary documents.
     pub fn final_edit(&self) -> usize {
-        self.vdocs + 1
+        self.temporaries + 1
     }
 }
 
@@ -92,7 +97,8 @@ fn missing_symbol(edit: usize) -> String {
 
 type KeyFields = (String, Option<DiagnosticSeverity>, Range);
 
-/// Virtual-document text with Quarto-style padding and code-relative offsets.
+/// Document text with padding around the code, and the line where the code
+/// starts.
 pub struct PaddedDocument {
     pub text: String,
 
@@ -113,7 +119,7 @@ fn pad(code: &str, ratio: usize) -> PaddedDocument {
     }
 }
 
-/// Alternate blank and comment padding to exercise both forms Quarto emits.
+/// Alternate comment and blank lines so padding covers both kinds of trivia.
 fn padding_line(index: usize) -> &'static str {
     if index.is_multiple_of(2) {
         "#\n"
@@ -125,9 +131,9 @@ fn padding_line(index: usize) -> &'static str {
 pub struct Fixture {
     workspace: TempDir,
     library: TempDir,
-    /// Virtual-document URIs use this directory, but their text arrives through
+    /// Burst-document URIs use this directory, but their text arrives through
     /// `didOpen` notifications.
-    vdocs: TempDir,
+    documents: TempDir,
     /// Donor sources, written before the session starts so the source handler
     /// only resolves directories.
     sources: TempDir,
@@ -165,7 +171,7 @@ impl Fixture {
         Self {
             workspace,
             library,
-            vdocs: tempfile::tempdir().unwrap(),
+            documents: tempfile::tempdir().unwrap(),
             sources,
         }
     }
@@ -176,13 +182,13 @@ impl Fixture {
 
     /// Keep one URI stable so keyed replacement can coalesce its updates.
     pub fn recurring(&self) -> PathBuf {
-        self.vdocs.path().join("recurring.vdoc.R")
+        self.documents.path().join("recurring.R")
     }
 
-    /// Use a unique URI to prevent keyed replacement from coalescing one-shot
-    /// virtual documents.
+    /// Use a unique URI to prevent keyed replacement from coalescing temporary
+    /// documents.
     fn temporary(&self, index: usize) -> PathBuf {
-        self.vdocs.path().join(format!("{index}.vdoc.R"))
+        self.documents.path().join(format!("temporary_{index}.R"))
     }
 
     fn source_directories(&self) -> HashMap<String, PathBuf> {
@@ -257,7 +263,7 @@ impl Replay {
             .send_did_open(&recurring, &config.recurring(0).text);
 
         let mut open: VecDeque<PathBuf> = VecDeque::new();
-        for index in 0..config.vdocs {
+        for index in 0..config.temporaries {
             let temporary = fixture.temporary(index);
             self.session
                 .send_did_open(&temporary, &config.temporary(index).text);
@@ -281,7 +287,7 @@ impl Replay {
             .send_did_change(&recurring, &last.text, self.final_version);
     }
 
-    /// Probe the recurring virtual document's in-buffer helper, independent of
+    /// Probe the recurring document's in-buffer helper, independent of
     /// workspace-scan progress.
     fn enqueue_probe(&mut self, path: &Path, document: &PaddedDocument) {
         let call = Position::new(document.code_line + CALL_LINE, 0);
@@ -352,7 +358,7 @@ impl Replay {
 
         // Check for a clearing publication, not necessarily an empty final
         // publication. An in-flight pass can publish after `didClose`.
-        for index in 0..self.config.vdocs {
+        for index in 0..self.config.temporaries {
             let temporary = uri(&fixture.temporary(index));
             assert!(self.session.publications().any(|publication| {
                 *publication.uri() == temporary && publication.diagnostics().is_empty()
@@ -373,13 +379,13 @@ impl Replay {
         expected.sort();
         assert_eq!(open, expected);
 
-        assert_eq!(self.probes.len(), self.config.vdocs);
+        assert_eq!(self.probes.len(), self.config.temporaries);
         for probe in &self.probes {
             self.assert_probe_found_definition(probe);
         }
 
         let diagnostics = self.session.diagnostics_metrics();
-        assert!(diagnostics.batches >= self.config.vdocs as u64);
+        assert!(diagnostics.batches >= self.config.temporaries as u64);
         assert!(diagnostics.results_accepted > 0);
 
         let queue = self.session.analysis_metrics();

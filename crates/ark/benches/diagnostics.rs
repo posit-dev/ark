@@ -24,8 +24,8 @@
 //!
 //! The `ctl.*` and `one.*` cases target `R/mutate.R`, with the remaining dplyr
 //! files as workspace context. The `all.*` cases cover every `.R` file under
-//! `R/`. `vdoc.burst` replays Quarto virtual-document churn over a small
-//! temporary fixture instead of the corpus.
+//! `R/`. `burst` replays a burst of document churn over a small temporary
+//! fixture instead of the corpus.
 //!
 //! Case IDs are limited to 11 characters. Criterion wraps `id` onto its own
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
@@ -430,7 +430,7 @@ fn bench_symbol(
 /// this endpoint. The `burst` integration test reports settlement time as well
 /// so work outside the measured interval remains visible.
 fn bench_burst(group: &mut BenchmarkGroup<'_, WallTime>, runtime: &Runtime) {
-    group.bench_function("vdoc.burst", |bencher| {
+    group.bench_function("burst", |bencher| {
         bencher.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
