@@ -2,8 +2,11 @@
 //! observed for them.
 //!
 //! One [`Requests`] tracks one kind of request and decodes its answers into
-//! `T` as they are collected.
+//! `T`. Only requests answered synchronously by their main-loop handler are
+//! supported: the answer is read right after that handler returns, so no
+//! per-event polling of outstanding requests is needed.
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -47,23 +50,18 @@ impl<T> Clone for RequestHandle<T> {
 
 impl<T> Copy for RequestHandle<T> {}
 
-/// An answer as the session observed it.
-///
-/// Answers are collected after each main-loop handler returns and auxiliary
-/// events are recorded, not when the server sends them. Even synchronous
-/// replies include that intervening work in their measured latency.
+/// An answer as the session observed it, right after the request's handler
+/// returned.
 #[derive(Debug)]
 pub struct RequestAnswer<T> {
     pub response: T,
 
-    /// From sending the request until the answer was observed, including the
-    /// time the request waited behind earlier events.
+    /// From sending the request until its handler returned, including the time
+    /// the request waited behind earlier events.
     pub latency: Duration,
 
-    /// Duration of this request's main-loop handler, whether the handler
-    /// answered or handed the work to another thread. `None` if the session
-    /// never handled the request's event itself.
-    pub handled: Option<Duration>,
+    /// Duration of this request's main-loop handler.
+    pub handled: Duration,
 }
 
 pub(super) struct Requests<T> {
@@ -72,18 +70,19 @@ pub(super) struct Requests<T> {
 
     decode: fn(Option<RequestResponse>) -> T,
 
-    /// Answers indexed by [`RequestHandle`], `None` until collected.
+    /// Answers indexed by [`RequestHandle`], `None` until the request is
+    /// handled.
     answers: Vec<Option<RequestAnswer<T>>>,
 
-    /// Requests still awaiting an answer. Collection after each event visits
-    /// only these, so its cost tracks outstanding requests rather than every
-    /// request sent.
-    pending: Vec<Pending>,
+    /// Requests not yet handled, in send order. The session enqueues them on
+    /// the main loop's FIFO channel, so the next one the loop handles is always
+    /// at the front and matching an event is O(1).
+    pending: VecDeque<Pending>,
 }
 
 /// A tracked request whose event is about to be handled, returned by
-/// [`Requests::find()`] so the handler's duration can be recorded against it.
-pub(super) struct Tracked(usize);
+/// [`Requests::find()`].
+pub(super) struct Tracked(Pending);
 
 struct Pending {
     index: usize,
@@ -93,8 +92,6 @@ struct Pending {
     /// Identifies the request's event by its reply channel. Weak so that a
     /// request the server drops still disconnects `response_rx`.
     response_tx: WeakUnboundedSender<RequestResponse>,
-
-    handled: Option<Duration>,
 }
 
 impl<T> Requests<T> {
@@ -105,7 +102,7 @@ impl<T> Requests<T> {
             id: NEXT_TRACKER_ID.fetch_add(1, Ordering::Relaxed),
             decode,
             answers: Vec::new(),
-            pending: Vec::new(),
+            pending: VecDeque::new(),
         }
     }
 
@@ -118,12 +115,11 @@ impl<T> Requests<T> {
     ) -> RequestHandle<T> {
         let index = self.answers.len();
         self.answers.push(None);
-        self.pending.push(Pending {
+        self.pending.push_back(Pending {
             index,
             sent_at: Instant::now(),
             response_rx,
             response_tx: response_tx.downgrade(),
-            handled: None,
         });
 
         RequestHandle {
@@ -133,8 +129,8 @@ impl<T> Requests<T> {
         }
     }
 
-    /// Return the observed answer, or `None` until it is collected. Panics if
-    /// `handle` was issued by another tracker.
+    /// Return the observed answer, or `None` until the request is handled.
+    /// Panics if `handle` was issued by another tracker.
     pub(super) fn answer(&self, handle: RequestHandle<T>) -> Option<&RequestAnswer<T>> {
         if handle.tracker != self.id {
             panic!("{handle:?} was sent by another session");
@@ -147,54 +143,39 @@ impl<T> Requests<T> {
         !self.pending.is_empty()
     }
 
-    /// Find the pending request whose event carries `response_tx`. Call before
-    /// handling the event, which consumes the sender.
+    /// Claim the tracked request whose event carries `response_tx`, if any.
+    /// Call before handling the event, which consumes the sender.
     pub(super) fn find(
-        &self,
+        &mut self,
         response_tx: &TokioUnboundedSender<RequestResponse>,
     ) -> Option<Tracked> {
-        self.pending
-            .iter()
-            .find(|pending| {
-                pending
-                    .response_tx
-                    .upgrade()
-                    .is_some_and(|tracked_tx| tracked_tx.same_channel(response_tx))
-            })
-            .map(|pending| Tracked(pending.index))
-    }
-
-    /// Record how long the handler of `tracked` ran. Call before
-    /// [`Self::collect()`] so a synchronous answer carries it.
-    pub(super) fn record_handled(&mut self, tracked: Tracked, handled: Duration) {
-        let Tracked(index) = tracked;
-        if let Some(pending) = self
-            .pending
-            .iter_mut()
-            .find(|pending| pending.index == index)
-        {
-            pending.handled = Some(handled);
+        let front = self.pending.front()?;
+        let is_front = front
+            .response_tx
+            .upgrade()
+            .is_some_and(|tracked_tx| tracked_tx.same_channel(response_tx));
+        if !is_front {
+            return None;
         }
+        self.pending.pop_front().map(Tracked)
     }
 
-    /// Record every answer that has arrived.
-    pub(super) fn collect(&mut self) {
-        let observed_at = Instant::now();
-        let decode = self.decode;
-        let answers = &mut self.answers;
+    /// Read the answer to `tracked` after its handler ran for `handled`.
+    pub(super) fn collect(&mut self, tracked: Tracked, handled: Duration) {
+        let Tracked(mut pending) = tracked;
 
-        self.pending.retain_mut(|pending| {
-            let response = match pending.response_rx.try_recv() {
-                Ok(response) => Some(response),
-                Err(TryRecvError::Empty) => return true,
-                Err(TryRecvError::Disconnected) => None,
-            };
-            answers[pending.index] = Some(RequestAnswer {
-                response: decode(response),
-                latency: observed_at - pending.sent_at,
-                handled: pending.handled,
-            });
-            false
+        let response = match pending.response_rx.try_recv() {
+            Ok(response) => Some(response),
+            Err(TryRecvError::Disconnected) => None,
+            Err(TryRecvError::Empty) => {
+                panic!("A tracked request was answered asynchronously, which the harness doesn't poll for")
+            },
+        };
+
+        self.answers[pending.index] = Some(RequestAnswer {
+            response: (self.decode)(response),
+            latency: pending.sent_at.elapsed(),
+            handled,
         });
     }
 }
