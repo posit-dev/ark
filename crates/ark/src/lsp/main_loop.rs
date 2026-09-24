@@ -950,7 +950,8 @@ impl GlobalState {
 
     /// Report whether no scheduler, analysis, or main-loop work is pending.
     /// This is only a predicate, so callers must still check background failures
-    /// and pair it with the retained idle signal to avoid a check-to-wait race.
+    /// and re-check it while waiting, since the pool can go idle without
+    /// sending an event.
     pub(crate) fn is_settled(&self) -> bool {
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
@@ -959,12 +960,6 @@ impl GlobalState {
         }
 
         self.lsp_state.analysis_pool.is_idle() && self.events_rx.is_empty()
-    }
-
-    /// Return an owned idle signal for `select!` with [`Self::next_event()`],
-    /// which requires `&mut self`.
-    pub(crate) fn analysis_idle_signal(&self) -> Arc<tokio::sync::Notify> {
-        self.lsp_state.analysis_pool.idle_signal()
     }
 
     /// Run `event` through the real `handle_event`, then pump any pending

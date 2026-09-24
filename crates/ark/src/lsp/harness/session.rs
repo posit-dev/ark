@@ -10,6 +10,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aether_path::FilePath;
 use serde_json::Value;
@@ -102,6 +103,11 @@ impl LspHarness {
     }
 }
 
+/// How often [`LspSession::next_event()`] re-checks settlement while no event
+/// arrives. The analysis pool can go idle without sending one, for instance
+/// when its last task was cancelled, so waiting on channels alone could hang.
+const SETTLE_POLL: Duration = Duration::from_millis(1);
+
 /// Keeps each selected result owned while [`LspSession::next_event()`] borrows
 /// several fields. Keep [`Event`] inline because boxing it would add an
 /// allocation to every main-loop event.
@@ -109,7 +115,7 @@ impl LspHarness {
 enum Wakeup {
     Event(Event),
     Auxiliary(AuxiliaryEvent),
-    Idle,
+    Tick,
 }
 
 /// A production main loop connected to a simulated editor.
@@ -240,11 +246,8 @@ impl LspSession {
     }
 
     /// Return the next unhandled main-loop event, or `None` once the loop
-    /// settles. Record auxiliary events and idle wakeups before returning.
-    ///
-    /// The idle signal covers the interval after a worker sends its result but
-    /// before it records its terminal outcome. Its retained permit prevents a
-    /// missed wakeup when that interval races the settled check.
+    /// settles. Auxiliary events are recorded while waiting, and settlement is
+    /// re-checked every [`SETTLE_POLL`].
     pub(crate) async fn next_event(&mut self) -> Option<Event> {
         loop {
             // A panicking worker can leave its scheduler pending, so the loop
@@ -256,19 +259,16 @@ impl LspSession {
             }
 
             // Limit the select's borrows so recording can reborrow `self`.
-            let wakeup = {
-                let idle = self.state.analysis_idle_signal();
-                tokio::select! {
-                    event = self.state.next_event() => Wakeup::Event(event),
-                    Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
-                    _ = idle.notified() => Wakeup::Idle,
-                }
+            let wakeup = tokio::select! {
+                event = self.state.next_event() => Wakeup::Event(event),
+                Some(event) = self.auxiliary_rx.recv() => Wakeup::Auxiliary(event),
+                _ = tokio::time::sleep(SETTLE_POLL) => Wakeup::Tick,
             };
 
             match wakeup {
                 Wakeup::Event(event) => return Some(event),
                 Wakeup::Auxiliary(event) => self.record_auxiliary(event),
-                Wakeup::Idle => {},
+                Wakeup::Tick => {},
             }
         }
     }
@@ -364,7 +364,6 @@ mod tests {
     use std::sync::mpsc::Receiver;
     use std::sync::mpsc::Sender;
     use std::time::Duration;
-    use std::time::Instant;
 
     use aether_path::FilePath;
     use oak_db::OakDatabase;
@@ -424,34 +423,9 @@ mod tests {
         (entered_rx, release_tx)
     }
 
-    /// Wait until the worker records its terminal outcome. This establishes a
-    /// precondition, not an ordering guarantee.
-    async fn await_recorded_terminal(session: &LspSession) {
-        let deadline = Instant::now() + TIMEOUT;
-        while session.analysis_metrics().running() != 0 {
-            assert!(Instant::now() < deadline);
-            tokio::task::yield_now().await;
-        }
-    }
-
-    /// Settlement must check the pool before waiting because this worker became
-    /// idle before `settle()` started. The retained permit covers the separate
-    /// check-to-wait race by construction.
-    #[tokio::test]
-    async fn test_settle_returns_when_work_finished_before_the_wait() {
-        let mut session = session().await;
-        let (_entered, release) = spawn_gated_analysis_task(&session);
-
-        release.send(()).unwrap();
-        await_recorded_terminal(&session).await;
-
-        tokio::time::timeout(TIMEOUT, session.settle())
-            .await
-            .unwrap();
-
-        assert_eq!(session.analysis_metrics().completed, 1);
-    }
-
+    /// The task's event is handled while the task is still running, so no
+    /// event arrives when the pool later goes idle. Settlement has to notice
+    /// that through its periodic re-check.
     #[tokio::test]
     async fn test_settle_wakes_when_work_finishes_after_the_wait() {
         let mut session = session().await;
