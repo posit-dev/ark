@@ -5,12 +5,12 @@
 //! Scale the burst and pin the worker count for a measurement run.
 //!
 //! ```text
-//! ARK_BURST_REPORT=1 ARK_BURST_VDOCS=40 ARK_BURST_PADDING=4000 \
+//! ARK_BURST_REPORT=1 ARK_BURST_TEMPORARIES=40 ARK_BURST_PADDING=4000 \
 //!   OAK_MAX_ANALYSIS_THREADS=4 just test --no-capture test_burst_replay
 //! ```
 //!
 //! nextest uses the dev profile. Use `--cargo-profile release` for
-//! release-profile measurements, or the `vdoc.burst` benchmark case for the
+//! release-profile measurements, or the `burst` benchmark case for the
 //! fixed default size.
 
 use std::time::Duration;
@@ -27,10 +27,8 @@ mod burst_replay;
 
 const REPORT_ENV_VAR: &str = "ARK_BURST_REPORT";
 
-const VDOCS_ENV_VAR: &str = "ARK_BURST_VDOCS";
+const TEMPORARIES_ENV_VAR: &str = "ARK_BURST_TEMPORARIES";
 
-/// Padding lines per code line. A ratio of 806 approximates 12,093 padding
-/// lines across 15 code lines.
 const PADDING_ENV_VAR: &str = "ARK_BURST_PADDING";
 
 const MAX_ANALYSIS_THREADS_ENV_VAR: &str = "OAK_MAX_ANALYSIS_THREADS";
@@ -80,7 +78,7 @@ async fn test_burst_replay_publishes_final_diagnostics() {
 
 fn config_from_env() -> BurstConfig {
     BurstConfig {
-        vdocs: env_count(VDOCS_ENV_VAR, BurstConfig::DEFAULT.vdocs),
+        temporaries: env_count(TEMPORARIES_ENV_VAR, BurstConfig::DEFAULT.temporaries),
         padding_ratio: env_count(PADDING_ENV_VAR, BurstConfig::DEFAULT.padding_ratio),
     }
 }
@@ -105,8 +103,8 @@ fn report(replay: &Replay, endpoint: Duration, settled: Duration, cpu: Option<Du
 
     eprintln!("--- burst replay ---");
     eprintln!(
-        "{vdocs} temporary vdocs, {ratio} padding lines per code line, {lines} lines per vdoc",
-        vdocs = config.vdocs,
+        "{temporaries} temporary documents, {ratio} padding lines per code line, {lines} lines per document",
+        temporaries = config.temporaries,
         ratio = config.padding_ratio,
         lines = document.text.lines().count(),
     );
