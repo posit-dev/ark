@@ -11,7 +11,6 @@ use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::harness::LspHarness;
 use crate::lsp::main_loop::DiagnosticsPublication;
 use crate::lsp::main_loop::Event;
-use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::state::WorldState;
@@ -34,10 +33,6 @@ impl LspSession {
 
     pub(crate) fn world(&self) -> &WorldState {
         self.state.world()
-    }
-
-    pub(crate) fn lsp_state(&self) -> &LspState {
-        self.state.lsp_state()
     }
 
     pub(crate) fn raw_publications(&self) -> &[DiagnosticsPublication] {

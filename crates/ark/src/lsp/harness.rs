@@ -24,9 +24,15 @@ use aether_path::FilePath;
 pub use control::HarnessSnapshot;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
+pub use session::DefinitionAnswer;
+pub use session::DefinitionRequest;
 pub use session::LspSession;
+pub use session::Publication;
 
 use crate::console::console_scopes;
+pub use crate::lsp::analysis::DiagnosticsMetrics;
+pub use crate::lsp::analysis::PoolMetrics;
+use crate::lsp::config::LspSettings;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
 
@@ -43,12 +49,14 @@ impl LspHarness {
         }
     }
 
-    /// Ignore `OAK_SOURCE_FETCHING_ENABLED` so editor configuration controls
-    /// source fetching.
-    #[cfg(test)]
-    pub(crate) fn with_default_source_fetching(db: OakDatabase) -> Self {
-        unsafe { std::env::remove_var(crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-        Self::new(db)
+    /// Ignore `OAK_SOURCE_FETCHING_ENABLED` throughout the session so editor
+    /// configuration controls source fetching. Other environment overrides
+    /// still apply, and the process environment is unchanged.
+    pub fn with_default_source_fetching(db: OakDatabase) -> Self {
+        let mut state = WorldState::new(db);
+        state.ignore_source_fetching_env = true;
+        state.resolve_config(LspSettings::default());
+        Self { state }
     }
 
     pub fn set_workspace_folders(&mut self, folders: Vec<AbsPathBuf>) {

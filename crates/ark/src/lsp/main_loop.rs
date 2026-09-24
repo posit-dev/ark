@@ -957,6 +957,10 @@ impl GlobalState {
         &self.lsp_state
     }
 
+    pub(crate) fn world(&self) -> &WorldState {
+        &self.world
+    }
+
     /// Report whether no scheduler, analysis, or main-loop work is pending.
     /// This is only a predicate, so callers must still check background failures
     /// and re-check it while waiting, since the pool can go idle without
@@ -1017,10 +1021,6 @@ impl GlobalState {
             }
             self.handle_event(event).await.unwrap();
         }
-    }
-
-    pub(crate) fn world(&self) -> &WorldState {
-        &self.world
     }
 }
 
