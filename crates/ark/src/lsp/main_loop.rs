@@ -200,7 +200,19 @@ pub(crate) struct GlobalState {
     /// `Event::Task`.
     events_tx: TokioUnboundedSender<Event>,
     events_rx: TokioUnboundedReceiver<Event>,
+
+    /// Diagnostics need a refresh whenever the current oak revision differs.
+    last_refreshed_revision: salsa::plumbing::Revision,
+
+    /// Preserved across intervening writes so a steady backlog cannot reset
+    /// the refresh deadline.
+    refresh_deferred_since: Option<std::time::Instant>,
 }
+
+/// Refresh diagnostics after this delay even if more events are queued.
+/// The check runs between event handlers, so a long-running handler can delay
+/// the refresh further. This does not bound diagnostics completion time.
+const MAX_REFRESH_DELAY: Duration = Duration::from_millis(50);
 
 /// Owns the running LSP loops. Dropping it shuts them down.
 ///
@@ -375,6 +387,7 @@ impl GlobalState {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
+        let last_refreshed_revision = salsa::plumbing::current_revision(world.db());
 
         Self {
             world,
@@ -383,6 +396,8 @@ impl GlobalState {
             reported_request_panics: HashSet::new(),
             events_tx,
             events_rx,
+            last_refreshed_revision,
+            refresh_deferred_since: None,
         }
     }
 
@@ -495,7 +510,8 @@ impl GlobalState {
                         Ok(Ok(())) => {},
                         Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
-                            EventUnwind::Cancelled => {},
+                            // The unwind skipped `handle_event()`'s refresh check.
+                            EventUnwind::Cancelled => self.refresh_if_due(),
                             EventUnwind::Panicked(payload) => {
                                 // `report_crash()` reads only the `Client` handle. Drop `self` after
                                 // the panic because a handler may have partially written its state.
@@ -521,11 +537,24 @@ impl GlobalState {
         self.events_rx.recv().await.unwrap()
     }
 
+    async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+        let _tick = self
+            .lsp_state
+            .watchdog
+            .tick(self.world.db().outstanding_holds());
+
+        let result = self.dispatch_event(event).await;
+
+        // Check for deferred refreshes even when dispatch returns an error.
+        // Otherwise, a failing event that drains the queue could leave
+        // diagnostics waiting indefinitely for another event.
+        self.refresh_if_due();
+
+        result
+    }
+
     #[rustfmt::skip]
-    /// Handle event of main loop
-    ///
-    /// The events are attached to _exclusive_, _sharing_, or _concurrent_
-    /// handlers.
+    /// Events use _exclusive_, _sharing_, or _concurrent_ handlers.
     ///
     /// - Exclusive handlers are passed an `&mut` to the world state so they can
     ///   update it.
@@ -535,18 +564,8 @@ impl GlobalState {
     ///   of the main loop should be as fast as possible to increase throughput)
     ///   they run on the [`crate::lsp::analysis`] pool over a snapshot of the
     ///   state.
-    async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+    async fn dispatch_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
-        let _tick = self.lsp_state.watchdog.tick(self.world.db().outstanding_holds());
-
-        // Diagnostics read the oak database (workspace symbols, imports,
-        // resolved definitions), so any handler that writes to oak invalidates
-        // them. Rather than have each write site remember to refresh, we watch
-        // the oak revision across the whole tick: if a handler advanced it,
-        // refresh centrally. Config and console state live outside oak, so the
-        // handlers that mutate those advance the revision synthetically (see
-        // `WorldState::bump_revision`) to route through this same path.
-        let old_revision = salsa::plumbing::current_revision(self.world.db());
 
         match event {
             Event::Lsp(msg) => match msg {
@@ -744,8 +763,8 @@ impl GlobalState {
                 dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
 
                 // Warm the workspace symbol index once the scan settles. The
-                // oak semantic index is warmed separately on every revision (see
-                // the revision-advanced block below).
+                // oak semantic index is warmed separately, as a side effect of
+                // the diagnostics refresh in `refresh_if_due()`.
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
                     analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
                 }
@@ -801,26 +820,54 @@ impl GlobalState {
             lsp::log_info!("Handler took more than 50ms");
         }
 
-        if salsa::plumbing::current_revision(self.world.db()) != old_revision {
-            lsp::log_info!("World state revision advanced");
+        Ok(())
+    }
 
-            let tasks = self.lsp_state.diagnostics.refresh_all(
-                &self.world,
-                &self.lsp_state.analysis_pool,
-                &self.events_tx,
-            );
-            self.lsp_state.diagnostics_metrics.record_batch(tasks);
-
-            // Empty batches emit no `DiagnosticsReady`, so log their initial
-            // snapshot here.
-            self.lsp_state
-                .diagnostics_metrics
-                .log_snapshot(&self.lsp_state.analysis_pool);
-
-            self.schedule_sources();
+    /// Coalesce refreshes while events are queued to avoid starting diagnostics
+    /// that subsequent writes would cancel. This is not debouncing. A revision
+    /// change refreshes immediately if the queue is empty, and
+    /// [`MAX_REFRESH_DELAY`] limits deferral while a backlog remains.
+    ///
+    /// Revision tracking covers writes to diagnostics dependencies, including
+    /// workspace symbols, imports, and resolved definitions, without requiring
+    /// each writer to request a refresh. Config and console state live outside
+    /// oak, so their handlers call [`WorldState::bump_revision()`] to invalidate
+    /// diagnostics through the same mechanism.
+    ///
+    /// Tracking the last refreshed revision keeps deferred work pending across
+    /// failed or interrupted events and prevents duplicate refreshes when the
+    /// revision is unchanged.
+    fn refresh_if_due(&mut self) {
+        let revision = salsa::plumbing::current_revision(self.world.db());
+        if revision == self.last_refreshed_revision {
+            return;
         }
 
-        Ok(())
+        let deferred_since = *self
+            .refresh_deferred_since
+            .get_or_insert_with(std::time::Instant::now);
+        if !self.events_rx.is_empty() && deferred_since.elapsed() < MAX_REFRESH_DELAY {
+            return;
+        }
+
+        lsp::log_info!("World state revision advanced");
+        self.last_refreshed_revision = revision;
+        self.refresh_deferred_since = None;
+
+        let tasks = self.lsp_state.diagnostics.refresh_all(
+            &self.world,
+            &self.lsp_state.analysis_pool,
+            &self.events_tx,
+        );
+        self.lsp_state.diagnostics_metrics.record_batch(tasks);
+
+        // Empty batches emit no `DiagnosticsReady`, so log their initial
+        // snapshot here.
+        self.lsp_state
+            .diagnostics_metrics
+            .log_snapshot(&self.lsp_state.analysis_pool);
+
+        self.schedule_sources();
     }
 
     fn schedule_sources(&mut self) {
@@ -1396,13 +1443,19 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use std::time::Instant;
+
     use aether_path::FilePath;
     use oak_scan::DbScan;
     use serde_json::Value;
+    use tokio::sync::oneshot;
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
     use super::classify_event_unwind;
+    use super::init_aux_for_test;
     use super::register_auxiliary_tx;
     use super::respond;
     use super::send_auxiliary;
@@ -1411,12 +1464,22 @@ mod tests {
     use super::AuxiliaryState;
     use super::Diagnostic;
     use super::DiagnosticsPublication;
+    use super::Event;
     use super::EventUnwind;
+    use super::GlobalState;
     use super::LspServiceContext;
+    use super::LspState;
+    use super::MAX_REFRESH_DELAY;
     use crate::lsp::backend::LspError;
+    use crate::lsp::backend::LspMessage;
+    use crate::lsp::backend::LspNotification;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::harness::editor::client::test_client;
     use crate::lsp::harness::editor::client::TestClient;
+    use crate::lsp::harness::editor::notifications::did_change;
+    use crate::lsp::harness::editor::notifications::did_open;
+    use crate::lsp::sources::SourceScheduler;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
@@ -1528,6 +1591,106 @@ mod tests {
             diagnostics,
             version: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_failing_event_still_runs_a_deferred_refresh() {
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+        let unopened = dir.path().join("unopened.R");
+
+        state
+            .events_tx
+            .send(did_change(&unopened, "y <- 2\n", 1))
+            .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
+
+        let failing = state.next_event().await;
+        assert!(state.handle_event(failing).await.is_err());
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+    }
+
+    #[tokio::test]
+    async fn test_owed_refresh_runs_after_the_delay_despite_queued_events() {
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+
+        state
+            .events_tx
+            .send(did_change(&dir.path().join("queued.R"), "y <- 2\n", 1))
+            .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
+
+        state.refresh_deferred_since = Some(Instant::now() - MAX_REFRESH_DELAY);
+        state.refresh_if_due();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+        assert!(!state.events_rx.is_empty());
+
+        state.refresh_if_due();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+    }
+
+    /// Exercise `main_loop()` because harness pumps call `handle_event()`
+    /// directly and bypass cancellation recovery. Cancellation skips the normal
+    /// refresh check, so recovery must refresh without waiting for another event.
+    #[tokio::test]
+    async fn test_cancelled_event_still_runs_a_deferred_refresh() {
+        let mut aux_rx = init_aux_for_test();
+        let state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("script.R");
+
+        let events_tx = state.events_tx();
+        events_tx.send(did_open(&script, "x <- 1\n")).unwrap();
+        events_tx
+            .send(Event::Lsp(LspMessage::Notification(
+                LspNotification::TestCancelRTask,
+            )))
+            .unwrap();
+
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (server_shutdown_tx, _server_shutdown_rx) = tokio::sync::mpsc::channel(1);
+        let main_loop = state.main_loop(
+            shutdown_rx,
+            server_shutdown_tx,
+            Arc::new(LspServiceContext::new()),
+        );
+
+        let published = async {
+            loop {
+                match aux_rx.recv().await {
+                    Some(AuxiliaryEvent::PublishDiagnostics(publication)) => return publication,
+                    Some(_) => {},
+                    None => panic!("The auxiliary channel closed"),
+                }
+            }
+        };
+
+        let publication = tokio::select! {
+            _ = main_loop => panic!("The main loop exited"),
+            publication = tokio::time::timeout(Duration::from_secs(10), published) => {
+                publication.unwrap()
+            },
+        };
+        assert_eq!(publication.path, FilePath::from_path_buf(script).unwrap());
+    }
+
+    fn global_state() -> GlobalState {
+        GlobalState::from_parts(
+            test_client(),
+            WorldState::default(),
+            LspState::new(tokio_unbounded_channel().0, SourceScheduler::new(None)),
+        )
     }
 
     #[test]

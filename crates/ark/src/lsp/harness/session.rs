@@ -271,7 +271,7 @@ impl LspSession {
 
         self.peak_outstanding_holds = self
             .peak_outstanding_holds
-            .max(self.state.world().db.outstanding_holds());
+            .max(self.state.world().db().outstanding_holds());
     }
 
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
@@ -477,7 +477,7 @@ impl LspSession {
     /// database has no such package. Empty until the package's sources have
     /// been fetched and ingested.
     pub fn package_sources(&self, name: &str) -> Option<Vec<&str>> {
-        let db = &self.state.world().db;
+        let db = self.state.world().db();
         let package = db.package_by_name(name)?;
         Some(
             package

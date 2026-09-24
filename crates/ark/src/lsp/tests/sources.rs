@@ -418,10 +418,8 @@ fn test_source_fetching_env_bypass_keeps_other_env_overrides() {
     honoured.resolve_config_with_env(env.clone(), LspSettings::default());
     assert!(!honoured.config.oak.source_fetching_enabled);
 
-    let mut bypassed = WorldState {
-        ignore_source_fetching_env: true,
-        ..Default::default()
-    };
+    let mut bypassed = WorldState::default();
+    bypassed.ignore_source_fetching_env = true;
     bypassed.resolve_config_with_env(env, LspSettings::default());
     assert!(bypassed.config.oak.source_fetching_enabled);
     assert!(!bypassed.config.diagnostics.enable);
@@ -433,10 +431,8 @@ fn test_source_fetching_env_bypass_holds_for_later_settings_pulls() {
         source_fetching_enabled: Some(true),
         ..Default::default()
     };
-    let mut state = WorldState {
-        ignore_source_fetching_env: true,
-        ..Default::default()
-    };
+    let mut state = WorldState::default();
+    state.ignore_source_fetching_env = true;
     state.resolve_config_with_env(env.clone(), LspSettings::default());
 
     let pulled = LspSettings {
