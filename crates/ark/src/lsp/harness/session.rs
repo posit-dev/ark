@@ -225,11 +225,10 @@ impl LspSession {
         let handled = started.elapsed();
 
         if let Some(definition) = definition {
-            self.definitions.record_handled(definition, handled);
+            self.definitions.collect(definition, handled);
         }
 
         self.collect_auxiliary();
-        self.definitions.collect();
 
         self.peak_outstanding_holds = self
             .peak_outstanding_holds

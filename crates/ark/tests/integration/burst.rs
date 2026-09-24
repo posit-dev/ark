@@ -150,9 +150,10 @@ fn report(replay: &Replay, endpoint: Duration, settled: Duration, cpu: Option<Du
     );
 }
 
-/// Probe latency includes the remaining burst-enqueue time before the loop
-/// starts, earlier event handling, and answer collection. Handler duration
-/// excludes enqueueing, queue wait, and answer collection.
+/// Probe latency runs from sending until the probe's handler returns, so it
+/// includes the remaining burst-enqueue time before the loop starts and
+/// earlier event handling. Handler duration excludes enqueueing and queue
+/// wait.
 fn format_latencies(replay: &Replay) -> String {
     let answers: Vec<_> = replay
         .probes
@@ -161,7 +162,7 @@ fn format_latencies(replay: &Replay) -> String {
         .collect();
 
     let latency = summarise(answers.iter().map(|answer| answer.latency));
-    let handled = summarise(answers.iter().filter_map(|answer| answer.handled));
+    let handled = summarise(answers.iter().map(|answer| answer.handled));
     format!("latency {latency}, handled {handled}")
 }
 
