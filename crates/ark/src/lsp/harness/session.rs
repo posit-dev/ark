@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::Db;
 use package_sources::PackageSources;
 use serde_json::Value;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -470,6 +471,21 @@ impl LspSession {
             .values()
             .map(|open_file| open_file.wire_uri())
             .collect()
+    }
+
+    /// Source texts ingested for the library package `name`, or `None` if the
+    /// database has no such package. Empty until the package's sources have
+    /// been fetched and ingested.
+    pub fn package_sources(&self, name: &str) -> Option<Vec<&str>> {
+        let db = &self.state.world().db;
+        let package = db.package_by_name(name)?;
+        Some(
+            package
+                .files(db)
+                .iter()
+                .map(|file| file.source_text(db).as_str())
+                .collect(),
+        )
     }
 
     pub fn diagnostics_metrics(&self) -> DiagnosticsMetrics {

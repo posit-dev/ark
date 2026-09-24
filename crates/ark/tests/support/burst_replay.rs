@@ -39,6 +39,9 @@ use tower_lsp_server::ls_types::Uri;
 /// Packages referenced through `::` to trigger source-pool fetches.
 const DONORS: [&str; 2] = ["donor1", "donor2"];
 
+/// The single source file each donor serves.
+const DONOR_SOURCE: &str = "foo <- function() 1\n";
+
 /// Workspace document kept open so refreshes cover a file outside the burst.
 const SCRIPT: &str = "burst_script <- function() 1\nburst_script()\n";
 
@@ -162,10 +165,7 @@ impl Fixture {
 
         let sources = tempfile::tempdir().unwrap();
         for donor in DONORS {
-            write_file(
-                &sources.path().join(donor).join("foo.R"),
-                "foo <- function() 1\n",
-            );
+            write_file(&sources.path().join(donor).join("foo.R"), DONOR_SOURCE);
         }
 
         Self {
@@ -355,6 +355,17 @@ impl Replay {
             final_diagnostics(&self.config)
         );
         assert_eq!(last.version(), Some(self.final_version));
+
+        // The diagnostics and probes above resolve only local symbols, so they
+        // pass without the workspace scan or source ingestion. Check that the
+        // burst's background workload actually ran, or a regression that stops
+        // fetching donors would pass here and make the benchmark look faster.
+        for donor in DONORS {
+            assert_eq!(
+                self.session.package_sources(donor),
+                Some(vec![DONOR_SOURCE])
+            );
+        }
 
         // Check for a clearing publication, not necessarily an empty final
         // publication. An in-flight pass can publish after `didClose`.
