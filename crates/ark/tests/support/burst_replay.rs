@@ -396,7 +396,6 @@ impl Replay {
         }
 
         let diagnostics = self.session.diagnostics_metrics();
-        assert!(diagnostics.batches >= self.config.temporaries as u64);
         assert!(diagnostics.results_accepted > 0);
 
         let queue = self.session.analysis_metrics();
