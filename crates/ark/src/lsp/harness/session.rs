@@ -177,6 +177,10 @@ impl LspSession {
         self.enqueue(notifications::did_change(path, contents, version));
     }
 
+    pub fn send_did_close(&self, path: &Path) {
+        self.enqueue(notifications::did_close(path));
+    }
+
     /// Queue an event without handling it, to model a busy main loop.
     pub(crate) fn enqueue(&self, event: Event) {
         self.state.events_tx().send(event).unwrap();
@@ -199,24 +203,61 @@ impl LspSession {
         path: &Path,
         version: i32,
     ) -> Vec<Diagnostic> {
-        let Some(path) = FilePath::from_path_buf(path.to_path_buf()) else {
-            panic!("Not an absolute UTF-8 path: {}", path.display());
+        let accepted = self
+            .wait_for_all_accepted_diagnostics(&[(path, version)])
+            .await;
+        let Some(diagnostics) = accepted.into_iter().next() else {
+            panic!("Expected one set of diagnostics per target");
         };
-        let first = self.raw_publications.len();
+        diagnostics
+    }
+
+    /// Like [`Self::wait_for_accepted_diagnostics()`], for several documents at
+    /// once. Returns each target's diagnostics in the order given, and returns
+    /// as soon as every target has one publication, even if later refreshes of
+    /// the same documents are still queued.
+    pub async fn wait_for_all_accepted_diagnostics(
+        &mut self,
+        targets: &[(&Path, i32)],
+    ) -> Vec<Vec<Diagnostic>> {
+        let targets: Vec<(FilePath, i32)> = targets
+            .iter()
+            .map(|(path, version)| {
+                let Some(file_path) = FilePath::from_path_buf(path.to_path_buf()) else {
+                    panic!("Not an absolute UTF-8 path: {}", path.display());
+                };
+                (file_path, *version)
+            })
+            .collect();
+
+        let mut accepted: Vec<Option<Vec<Diagnostic>>> = vec![None; targets.len()];
+        let mut scanned = self.raw_publications.len();
 
         loop {
-            let accepted = self.raw_publications[first..].iter().find(|publication| {
-                publication.path == path && publication.version == Some(version)
-            });
-            if let Some(accepted) = accepted {
-                return accepted.diagnostics.clone();
+            for publication in &self.raw_publications[scanned..] {
+                for (slot, (path, version)) in accepted.iter_mut().zip(&targets) {
+                    if slot.is_none() &&
+                        publication.path == *path &&
+                        publication.version == Some(*version)
+                    {
+                        *slot = Some(publication.diagnostics.clone());
+                    }
+                }
+            }
+            scanned = self.raw_publications.len();
+
+            if accepted.iter().all(Option::is_some) {
+                return accepted.into_iter().flatten().collect();
             }
 
             let Some(event) = self.next_event().await else {
-                panic!(
-                    "The main loop settled without accepting diagnostics for {path:?} at \
-                     version {version}"
-                );
+                let missing: Vec<_> = targets
+                    .iter()
+                    .zip(&accepted)
+                    .filter(|(_target, slot)| slot.is_none())
+                    .map(|(target, _slot)| target)
+                    .collect();
+                panic!("The main loop settled without accepting diagnostics for {missing:?}");
             };
             self.handle_once(event).await;
         }

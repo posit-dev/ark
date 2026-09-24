@@ -11,10 +11,12 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::ClientCapabilities;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
+use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializedParams;
 use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
@@ -87,6 +89,16 @@ pub(crate) fn did_change(path: &Path, contents: &str, version: i32) -> Event {
                 range_length: None,
                 text: contents.to_string(),
             }],
+        }),
+    ))
+}
+
+pub(crate) fn did_close(path: &Path) -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidCloseTextDocument(DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier {
+                uri: Uri::from_file_path(path).unwrap(),
+            },
         }),
     ))
 }
