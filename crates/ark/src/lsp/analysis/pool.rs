@@ -13,7 +13,6 @@ use std::sync::MutexGuard;
 
 use aether_path::FilePath;
 use stdext::spawn;
-use tokio::sync::Notify;
 
 use super::catch_cancellation;
 use super::snapshot::WorldStateSnapshot;
@@ -51,12 +50,10 @@ impl AnalysisPool {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue {
                 entries: VecDeque::new(),
-                active: 0,
                 closed: false,
                 metrics: PoolMetrics::default(),
             }),
             ready: Condvar::new(),
-            idle: Arc::new(Notify::new()),
         });
 
         for _ in 0..threads {
@@ -143,7 +140,8 @@ impl AnalysisPool {
 
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
-        self.shared.lock().is_idle()
+        let metrics = self.metrics();
+        metrics.waiting() == 0 && metrics.running() == 0
     }
 
     #[cfg(test)]
@@ -153,17 +151,6 @@ impl AnalysisPool {
         task: impl FnOnce(WorldStateSnapshot) + Send + 'static,
     ) {
         self.spawn(snapshot, task)
-    }
-
-    /// Return an owned signal so callers can wait while mutably borrowing the
-    /// state that owns this pool.
-    ///
-    /// [`Notify::notify_one()`] retains one permit across the race between
-    /// checking the queue and waiting. The permit does not guarantee that the
-    /// pool is still idle, so callers must recheck the queue after waking.
-    #[cfg(test)]
-    pub(crate) fn idle_signal(&self) -> Arc<Notify> {
-        Arc::clone(&self.shared.idle)
     }
 }
 
@@ -195,10 +182,6 @@ impl Drop for AnalysisPool {
 struct Shared {
     queue: Mutex<Queue>,
     ready: Condvar,
-
-    /// Workers can signal an idle transition without entering a Tokio runtime.
-    /// The waiter retains the `Arc` while mutably borrowing the owning state.
-    idle: Arc<Notify>,
 }
 
 /// Counters describing how the analysis queue processes tasks.
@@ -241,16 +224,8 @@ impl PoolMetrics {
 
 struct Queue {
     entries: VecDeque<Entry>,
-    /// Entries owned by workers, including cancelled snapshots being discarded.
-    active: usize,
     closed: bool,
     metrics: PoolMetrics,
-}
-
-impl Queue {
-    fn is_idle(&self) -> bool {
-        self.entries.is_empty() && self.active == 0
-    }
 }
 
 struct Entry {
@@ -274,7 +249,6 @@ impl Shared {
         let mut queue = self.lock();
         loop {
             if let Some(entry) = queue.entries.pop_front() {
-                queue.active += 1;
                 return Some(entry);
             }
             if queue.closed {
@@ -304,54 +278,33 @@ fn run_entry(entry: Entry, shared: &Shared, service_context: &LspServiceContext)
     // query, so go straight to dropping the snapshot. This is what lets a
     // backlog drain in one pass while a writer waits.
     if snapshot.is_cancelled() {
-        finish_entry(shared, |metrics| metrics.cancelled_queued += 1);
+        record_metrics(shared, |metrics| metrics.cancelled_queued += 1);
         return;
     }
 
-    record_started(shared);
+    record_metrics(shared, |metrics| metrics.started += 1);
 
     match panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot))) {
         Ok(Some(())) => {
-            finish_entry(shared, |metrics| metrics.completed += 1);
+            record_metrics(shared, |metrics| metrics.completed += 1);
         },
         Ok(None) => {
-            finish_entry(shared, |metrics| metrics.cancelled_running += 1);
+            record_metrics(shared, |metrics| metrics.cancelled_running += 1);
         },
         Err(message) => {
-            finish_entry(shared, |metrics| metrics.panicked += 1);
+            record_metrics(shared, |metrics| metrics.panicked += 1);
             lsp::log_error!("An analysis task panicked: {message}");
             service_context.report_background_panic();
         },
     }
 }
 
-fn record_started(shared: &Shared) {
+fn record_metrics(shared: &Shared, update: impl FnOnce(&mut PoolMetrics)) {
     let metrics = {
         let mut queue = shared.lock();
-        queue.metrics.started += 1;
+        update(&mut queue.metrics);
         queue.metrics
     };
-    lsp::log_trace!("Analysis queue: {metrics:?}");
-}
-
-/// Record a task's terminal outcome and release the worker's ownership of it.
-/// Cancellation and panic use the same path, so a task that emits no main-loop
-/// event can still wake the harness when the pool becomes idle.
-fn finish_entry(shared: &Shared, record_outcome: impl FnOnce(&mut PoolMetrics)) {
-    let (metrics, idle) = {
-        let mut queue = shared.lock();
-
-        assert!(queue.active > 0);
-        queue.active -= 1;
-        record_outcome(&mut queue.metrics);
-
-        (queue.metrics, queue.is_idle())
-    };
-
-    if idle {
-        shared.idle.notify_one();
-    }
-
     lsp::log_trace!("Analysis queue: {metrics:?}");
 }
 
@@ -633,16 +586,17 @@ mod tests {
         release_tx.send(()).unwrap();
     }
 
-    /// Report pool counters if the expected idle notification is lost.
-    async fn await_idle(pool: &AnalysisPool) {
-        if tokio::time::timeout(Duration::from_secs(10), pool.idle_signal().notified())
-            .await
-            .is_err()
-        {
-            panic!(
-                "The pool never reported itself idle: {metrics:?}",
-                metrics = pool.metrics()
-            );
+    /// Poll until `done` holds, reporting pool counters if it never does.
+    fn wait_for_pool(pool: &AnalysisPool, done: impl Fn(&AnalysisPool) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !done(pool) {
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "The pool never reached the expected state: {:?}",
+                    pool.metrics()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -650,19 +604,19 @@ mod tests {
         AnalysisPool::with_threads(threads, Arc::new(LspServiceContext::new()))
     }
 
-    #[tokio::test]
-    async fn test_pool_notifies_idle_on_completed_task() {
+    #[test]
+    fn test_pool_is_idle_after_completed_task() {
         let state = WorldState::default();
         let pool = test_pool(1);
 
         pool.spawn(state.snapshot(), |_snapshot| {});
 
-        await_idle(&pool).await;
+        wait_for_pool(&pool, AnalysisPool::is_idle);
         assert_eq!(pool.metrics().completed, 1);
     }
 
-    #[tokio::test]
-    async fn test_pool_notifies_idle_on_task_cancelled_before_starting() {
+    #[test]
+    fn test_pool_is_idle_after_task_cancelled_before_starting() {
         let state = WorldState::default();
         let pool = test_pool(1);
 
@@ -670,12 +624,12 @@ mod tests {
         cancelled.cancellation_token().cancel();
         pool.spawn(cancelled, |_snapshot| {});
 
-        await_idle(&pool).await;
+        wait_for_pool(&pool, AnalysisPool::is_idle);
         assert_eq!(pool.metrics().cancelled_queued, 1);
     }
 
-    #[tokio::test]
-    async fn test_pool_notifies_idle_on_task_cancelled_while_running() {
+    #[test]
+    fn test_pool_is_idle_after_task_cancelled_while_running() {
         let state = WorldState::default();
         let pool = test_pool(1);
 
@@ -684,14 +638,14 @@ mod tests {
             salsa::Database::unwind_if_revision_cancelled(snapshot.db());
         });
 
-        await_idle(&pool).await;
+        wait_for_pool(&pool, AnalysisPool::is_idle);
         assert_eq!(pool.metrics().cancelled_running, 1);
     }
 
     /// Install the production hook so an uncaught worker panic aborts the test
     /// process instead of being ignored.
-    #[tokio::test]
-    async fn test_pool_notifies_idle_on_panicking_task() {
+    #[test]
+    fn test_pool_is_idle_after_panicking_task() {
         crate::panic::install();
 
         let state = WorldState::default();
@@ -701,12 +655,14 @@ mod tests {
             panic!("Test panic in an analysis task")
         });
 
-        await_idle(&pool).await;
+        wait_for_pool(&pool, AnalysisPool::is_idle);
         assert_eq!(pool.metrics().panicked, 1);
     }
 
-    #[tokio::test]
-    async fn test_pool_does_not_notify_idle_while_a_task_runs() {
+    /// A finished task must not make the pool look idle while another task is
+    /// still running.
+    #[test]
+    fn test_pool_is_not_idle_while_a_task_runs() {
         let state = WorldState::default();
         let pool = test_pool(2);
 
@@ -719,16 +675,10 @@ mod tests {
         started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
 
         pool.spawn(state.snapshot(), |_snapshot| {});
-
-        // The completed task cannot retain an idle permit while the gated task
-        // is still running.
-        assert!(
-            tokio::time::timeout(Duration::from_millis(250), pool.idle_signal().notified())
-                .await
-                .is_err()
-        );
+        wait_for_pool(&pool, |pool| pool.metrics().completed == 1);
+        assert!(!pool.is_idle());
 
         release_tx.send(()).unwrap();
-        await_idle(&pool).await;
+        wait_for_pool(&pool, AnalysisPool::is_idle);
     }
 }
