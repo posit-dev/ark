@@ -1,4 +1,4 @@
-//! Baseline for one diagnostics pass over a real package corpus.
+//! Diagnostics latency over a real package corpus.
 //!
 //! Run `just bench` for unretained measurements or `just bench-compare` with
 //! Criterion baseline arguments for comparisons. All cases use the optimised
@@ -9,17 +9,26 @@
 //! It and its eleven CRAN imports live under `target/bench-fixtures/`, so
 //! measured runs neither download packages nor use the machine's R library.
 //!
-//! The `one.*` cases diagnose `R/mutate.R` with the remaining dplyr files as
-//! workspace context. The `all.*` cases diagnose every `.R` file under `R/`
-//! with a fresh snapshot per file. `.cold` measures the first pass, while
-//! `.warm` repeats it against warm memos.
+//! Most cases are end to end. They send editor notifications to an
+//! `LspSession` and time until the main loop accepts the resulting
+//! diagnostics, so they cover event handling, scheduling, the analysis pool,
+//! and generation filtering. Timing stops at acceptance rather than at
+//! settlement, which is only detected on a poll tick. Each iteration settles
+//! afterwards, outside the measurement, so leftover work can't overlap the
+//! next one.
+//!
+//! The `ctl.*` cases are controls. They call `generate_diagnostics()` on the
+//! bench thread with no main loop or pool. When `one.cold` or `one.warm` moves
+//! and its `ctl.*` counterpart doesn't, the change came from scheduling or
+//! synchronisation rather than from diagnostics compute.
+//!
+//! The `ctl.*` and `one.*` cases target `R/mutate.R`, with the remaining dplyr
+//! files as workspace context. The `all.*` cases cover every `.R` file under
+//! `R/`.
 //!
 //! Case IDs are limited to 11 characters. Criterion wraps `id` onto its own
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
 //! one-line-per-case output from `just bench`.
-//!
-//! Every case calls `generate_diagnostics()` on the bench thread. No analysis
-//! thread is involved, so `ARK_MAX_ANALYSIS_THREADS` has no effect.
 //!
 //! Diagnostics resolve base symbols through the `ReadConsole` scopes. The
 //! benchmark starts one R session to obtain those scopes, while package
@@ -31,11 +40,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::Instant;
 
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use anyhow::anyhow;
 use ark::lsp::harness::LspHarness;
+use ark::lsp::harness::LspSession;
 use criterion::measurement::WallTime;
 use criterion::BatchSize;
 use criterion::BenchmarkGroup;
@@ -47,6 +58,7 @@ use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use oak_scan::ScanScheduler;
 use oak_source::SourceCache;
+use tokio::runtime::Runtime;
 use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::DiagnosticSeverity;
 use walkdir::WalkDir;
@@ -127,12 +139,14 @@ fn main() {
     }
 
     let cache = fixtures.open_source_cache();
+    let runtime = session_runtime();
 
     // Prime Salsa's ingredient-index lookup before collecting measurements.
     let (mut world, target) = setup(&fixtures, &cache);
     assert_diagnostics(&world.diagnose(&target, world.snapshot()).unwrap());
     assert_undefined_symbol_reported(&mut world, &fixtures);
     drop(world);
+    assert_session_reports_undefined_symbol(&runtime, &fixtures, &cache);
 
     let files = match fixtures.r_files() {
         Ok(files) => files,
@@ -144,15 +158,20 @@ fn main() {
     let mut criterion = Criterion::default().sample_size(10).configure_from_args();
 
     // Each group starts from Criterion's configuration. Isolate the longer
-    // `all.*` window so it does not extend mutation cases.
+    // `all.*` window so it does not extend the single-target cases.
 
     let mut group = criterion.benchmark_group("diagnostics");
-    // Rebuilding corpus databases prevents triangular sampling from fitting the
-    // measurement window.
+    // Starting sessions and rebuilding corpus databases prevents triangular
+    // sampling from fitting the measurement window.
     group.sampling_mode(SamplingMode::Flat);
-    bench_snapshot(&mut group, &fixtures, &cache);
-    bench_cold(&mut group, &fixtures, &cache);
-    bench_warm_repeat(&mut group, &fixtures, &cache);
+    bench_control_snapshot(&mut group, &fixtures, &cache);
+    bench_control_cold(&mut group, &fixtures, &cache);
+    bench_control_warm(&mut group, &fixtures, &cache);
+    bench_one_cold(&mut group, &runtime, &fixtures, &cache);
+    bench_one_warm(&mut group, &runtime, &fixtures, &cache);
+    bench_edit(&mut group, &runtime, &fixtures, &cache);
+    bench_open(&mut group, &runtime, &fixtures, &cache);
+    bench_symbol(&mut group, &runtime, &fixtures, &cache);
     group.finish();
 
     let mut group = criterion.benchmark_group("diagnostics");
@@ -160,27 +179,34 @@ fn main() {
     // At about 300 ms per full-corpus iteration, ten samples do not fit the
     // default 3 s.
     group.measurement_time(Duration::from_secs(6));
-    bench_all_cold(&mut group, &fixtures, &cache, &files, &relative_paths);
-    bench_all_warm(&mut group, &fixtures, &cache, &files, &relative_paths);
-    group.finish();
-
-    let mut group = criterion.benchmark_group("diagnostics");
-    group.sampling_mode(SamplingMode::Flat);
-    bench_unrelated_open_close(&mut group, &fixtures, &cache);
-    bench_unrelated_new_symbol(&mut group, &fixtures, &cache);
-    bench_target_edit(&mut group, &fixtures, &cache);
+    bench_all_cold(
+        &mut group,
+        &runtime,
+        &fixtures,
+        &cache,
+        &files,
+        &relative_paths,
+    );
+    bench_all_warm(
+        &mut group,
+        &runtime,
+        &fixtures,
+        &cache,
+        &files,
+        &relative_paths,
+    );
     group.finish();
 
     criterion.final_summary();
 }
 
-/// The per-task clone the main loop pays before a pass even starts.
-fn bench_snapshot(
+/// Control: the per-task clone the main loop pays before a pass even starts.
+fn bench_control_snapshot(
     group: &mut BenchmarkGroup<'_, WallTime>,
     fixtures: &Fixtures,
     cache: &SourceCache,
 ) {
-    group.bench_function("snapshot", |bencher| {
+    group.bench_function("ctl.snap", |bencher| {
         let (world, target) = setup(fixtures, cache);
         assert_diagnostics(&world.diagnose(&target, world.snapshot()).unwrap());
 
@@ -188,28 +214,34 @@ fn bench_snapshot(
     });
 }
 
-/// First pass on a prepared database: parse, index, and the pass itself.
-fn bench_cold(group: &mut BenchmarkGroup<'_, WallTime>, fixtures: &Fixtures, cache: &SourceCache) {
-    group.bench_function("one.cold", |bencher| {
+/// Control: the first pass on a prepared database, on the bench thread: parse,
+/// index, and the pass itself.
+fn bench_control_cold(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    fixtures: &Fixtures,
+    cache: &SourceCache,
+) {
+    group.bench_function("ctl.cold", |bencher| {
         bencher.iter_batched_ref(
             || setup(fixtures, cache),
             |(world, target)| {
                 let diagnostics = world.diagnose(target, world.snapshot()).unwrap();
                 assert_diagnostics(&diagnostics);
             },
-            // Use `PerIteration`. Each prepared corpus database is too large to batch.
+            // Each prepared corpus database is too large to batch.
             BatchSize::PerIteration,
         );
     });
 }
 
-/// The same file again in the same revision, against warm memos.
-fn bench_warm_repeat(
+/// Control: the target again in the same revision, against warm memos, on the
+/// bench thread.
+fn bench_control_warm(
     group: &mut BenchmarkGroup<'_, WallTime>,
     fixtures: &Fixtures,
     cache: &SourceCache,
 ) {
-    group.bench_function("one.warm", |bencher| {
+    group.bench_function("ctl.warm", |bencher| {
         let (world, target) = setup(fixtures, cache);
         assert_diagnostics(&world.diagnose(&target, world.snapshot()).unwrap());
 
@@ -220,137 +252,276 @@ fn bench_warm_repeat(
     });
 }
 
-/// An unrelated file opens with the contents it already has on disk and closes
-/// again, so the revision advances twice without any symbol or source
-/// relationship changing.
-fn bench_unrelated_open_close(
+/// The target's first diagnostics after startup: the `didOpen` handler, the
+/// scheduler, and a pass on a pool thread. Startup has already scanned and
+/// warmed the workspace index, as it has by the time a user opens a file.
+fn bench_one_cold(
     group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
     fixtures: &Fixtures,
     cache: &SourceCache,
 ) {
-    let mutate = |world: &mut LspHarness, fixtures: &Fixtures| {
-        let path = fixtures.workspace_path(UNRELATED);
-        let contents = read_source(&fixtures.dplyr().join(UNRELATED));
-        world.prepare_document(&path, contents).unwrap();
-        world.close_document(&path);
-    };
+    let target = fixtures.dplyr().join(TARGET);
+    let contents = read_source(&target);
 
-    bench_mutation_then_pass(group, fixtures, cache, "open", "update", mutate);
+    group.bench_function("one.cold", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let mut session = start_session(runtime, fixtures, cache);
+                let (diagnostics, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_open(&target, &contents);
+                    session.wait_for_accepted_diagnostics(&target, 0).await
+                });
+                assert_diagnostics(&diagnostics);
+                total += elapsed;
+                end_session(runtime, session);
+            }
+            total
+        });
+    });
+}
+
+/// Change the target without altering its text. The revision advances, so the
+/// target re-parses and its pass reruns against otherwise warm memos. This is
+/// the single-file counterpart of `all.warm`.
+fn bench_one_warm(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
+    fixtures: &Fixtures,
+    cache: &SourceCache,
+) {
+    let target = fixtures.dplyr().join(TARGET);
+    let contents = read_source(&target);
+
+    group.bench_function("one.warm", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut session = start_session_with_target(runtime, fixtures, cache);
+            let mut total = Duration::ZERO;
+            for version in document_versions(iters) {
+                let (diagnostics, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_change(&target, &contents, version);
+                    session
+                        .wait_for_accepted_diagnostics(&target, version)
+                        .await
+                });
+                assert_diagnostics(&diagnostics);
+                total += elapsed;
+            }
+            end_session(runtime, session);
+            total
+        });
+    });
+}
+
+/// Edit the target and wait for its refresh. The edit alternates between
+/// appending a comment and restoring the original, so every iteration changes
+/// the text while one session serves every iteration of a sample.
+fn bench_edit(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
+    fixtures: &Fixtures,
+    cache: &SourceCache,
+) {
+    let target = fixtures.dplyr().join(TARGET);
+    let original = read_source(&target);
+    let edited = format!("{original}\n# A comment\n");
+
+    group.bench_function("one.edit", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut session = start_session_with_target(runtime, fixtures, cache);
+            let mut total = Duration::ZERO;
+            for version in document_versions(iters) {
+                let contents = if version % 2 == 1 { &edited } else { &original };
+                let (diagnostics, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_change(&target, contents, version);
+                    session
+                        .wait_for_accepted_diagnostics(&target, version)
+                        .await
+                });
+                assert_diagnostics(&diagnostics);
+                total += elapsed;
+            }
+            end_session(runtime, session);
+            total
+        });
+    });
+}
+
+/// An unrelated file opens with its on-disk contents. No symbol changes, but
+/// the revision advances, so the target is refreshed along with the new
+/// buffer. The close that resets the next iteration is not measured.
+fn bench_open(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
+    fixtures: &Fixtures,
+    cache: &SourceCache,
+) {
+    let target = fixtures.dplyr().join(TARGET);
+    let unrelated = fixtures.dplyr().join(UNRELATED);
+    let contents = read_source(&unrelated);
+
+    group.bench_function("one.open", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut session = start_session_with_target(runtime, fixtures, cache);
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let (accepted, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_open(&unrelated, &contents);
+                    session
+                        .wait_for_all_accepted_diagnostics(&[(&target, 0), (&unrelated, 0)])
+                        .await
+                });
+                assert_diagnostics(&accepted[0]);
+                total += elapsed;
+                close_document(runtime, &mut session, &unrelated);
+            }
+            end_session(runtime, session);
+            total
+        });
+    });
 }
 
 /// Open a new file that defines a top-level symbol, invalidating the
-/// workspace-symbol dependency read by the target pass.
-fn bench_unrelated_new_symbol(
+/// workspace symbols the target pass reads. Each iteration opens a fresh
+/// path, so none resurrects a buffer closed by an earlier iteration.
+fn bench_symbol(
     group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
     fixtures: &Fixtures,
     cache: &SourceCache,
 ) {
-    let mutate = |world: &mut LspHarness, fixtures: &Fixtures| {
-        let path = fixtures.workspace_path("R/zzz-bench-new-symbol.R");
-        world
-            .prepare_document(&path, String::from("bench_new_symbol <- function() NULL\n"))
-            .unwrap();
-    };
+    let target = fixtures.dplyr().join(TARGET);
 
-    bench_mutation_then_pass(group, fixtures, cache, "symbol", "add", mutate);
+    group.bench_function("one.symbol", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut session = start_session_with_target(runtime, fixtures, cache);
+            let mut total = Duration::ZERO;
+            for iteration in 0..iters {
+                let path = fixtures
+                    .dplyr()
+                    .join(format!("R/zzz-bench-new-symbol-{iteration}.R"));
+                let (accepted, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_open(&path, "bench_new_symbol <- function() NULL\n");
+                    session
+                        .wait_for_all_accepted_diagnostics(&[(&target, 0), (&path, 0)])
+                        .await
+                });
+                assert_diagnostics(&accepted[0]);
+                total += elapsed;
+                close_document(runtime, &mut session, &path);
+            }
+            end_session(runtime, session);
+            total
+        });
+    });
 }
 
-/// Edit the diagnosed file itself, unlike the unrelated-file cases.
-fn bench_target_edit(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    fixtures: &Fixtures,
-    cache: &SourceCache,
-) {
-    let mutate = |world: &mut LspHarness, fixtures: &Fixtures| {
-        let path = fixtures.workspace_path(TARGET);
-        let edited = format!("{}\n# A comment\n", world.source_text(&path).unwrap());
-        world.prepare_document(&path, edited).unwrap();
-    };
-
-    bench_mutation_then_pass(group, fixtures, cache, "edit", "update", mutate);
-}
-
-/// Uses a fresh snapshot for each file to include the per-task snapshot cost
-/// that a workspace-wide snapshot would hide.
+/// Open every corpus file at once, as when an editor restores a session, and
+/// wait until each has published. Every `didOpen` advances the revision and
+/// refreshes all files opened so far, so this includes keyed replacement in
+/// the pool under a burst.
 fn bench_all_cold(
     group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
     fixtures: &Fixtures,
     cache: &SourceCache,
     files: &[PathBuf],
     relative_paths: &[String],
 ) {
+    let contents: Vec<String> = files.iter().map(|file| read_source(file)).collect();
+    let targets: Vec<(&Path, i32)> = files.iter().map(|file| (file.as_path(), 0)).collect();
+
     group.bench_function("all.cold", |bencher| {
-        bencher.iter_batched_ref(
-            || setup_all(fixtures, cache, files),
-            |(world, targets)| diagnose_all(world, targets, relative_paths),
-            // A prepared corpus database is too large to batch.
-            BatchSize::PerIteration,
-        );
+        bencher.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let mut session = start_session(runtime, fixtures, cache);
+                let (accepted, elapsed) = measure(runtime, &mut session, async |session| {
+                    for (file, contents) in files.iter().zip(&contents) {
+                        session.send_did_open(file, contents);
+                    }
+                    session.wait_for_all_accepted_diagnostics(&targets).await
+                });
+                assert_all_accepted(relative_paths, &accepted);
+                total += elapsed;
+                end_session(runtime, session);
+            }
+            total
+        });
     });
 }
 
-/// Repeat the full-corpus pass against warm memos.
+/// With every corpus file open and diagnosed, change `UNRELATED` without
+/// altering its text. The revision advances and every open file refreshes:
+/// that one re-parses and the rest revalidate warm memos.
 fn bench_all_warm(
     group: &mut BenchmarkGroup<'_, WallTime>,
+    runtime: &Runtime,
     fixtures: &Fixtures,
     cache: &SourceCache,
     files: &[PathBuf],
     relative_paths: &[String],
 ) {
+    let contents: Vec<String> = files.iter().map(|file| read_source(file)).collect();
+    let unrelated = fixtures.dplyr().join(UNRELATED);
+    let unrelated_contents = read_source(&unrelated);
+
     group.bench_function("all.warm", |bencher| {
-        let (world, targets) = setup_all_warm(fixtures, cache, files, relative_paths);
+        bencher.iter_custom(|iters| {
+            let mut session = start_session(runtime, fixtures, cache);
+            runtime.block_on(async {
+                for (file, contents) in files.iter().zip(&contents) {
+                    session.send_did_open(file, contents);
+                }
+                session.settle().await;
+            });
 
-        bencher.iter(|| diagnose_all(&world, &targets, relative_paths));
+            let mut total = Duration::ZERO;
+            for version in document_versions(iters) {
+                let targets: Vec<(&Path, i32)> = files
+                    .iter()
+                    .map(|file| (file.as_path(), if *file == unrelated { version } else { 0 }))
+                    .collect();
+                let (accepted, elapsed) = measure(runtime, &mut session, async |session| {
+                    session.send_did_change(&unrelated, &unrelated_contents, version);
+                    session.wait_for_all_accepted_diagnostics(&targets).await
+                });
+                assert_all_accepted(relative_paths, &accepted);
+                total += elapsed;
+            }
+            end_session(runtime, session);
+            total
+        });
     });
 }
 
-/// Keep per-file snapshot, diagnostics, and assertion work identical in both
-/// full-corpus cases.
-fn diagnose_all(world: &LspHarness, targets: &[FilePath], relative_paths: &[String]) {
-    let per_file: Vec<(&str, Vec<Diagnostic>)> = targets
-        .iter()
-        .zip(relative_paths)
-        .map(|(target, relative)| {
-            let diagnostics = world.diagnose(target, world.snapshot()).unwrap();
-            (relative.as_str(), diagnostics)
-        })
-        .collect();
+/// Time `work`, then settle outside the measurement so leftover refreshes
+/// can't overlap the next iteration.
+fn measure<T>(
+    runtime: &Runtime,
+    session: &mut LspSession,
+    work: impl AsyncFnOnce(&mut LspSession) -> T,
+) -> (T, Duration) {
+    let start = Instant::now();
+    let output = runtime.block_on(work(session));
+    let elapsed = start.elapsed();
 
-    assert_all_diagnostics(&diagnostic_counts_by_path(&per_file));
+    runtime.block_on(session.settle());
+    (output, elapsed)
 }
 
-/// Time `mutate` and the pass that follows it as two cases, so input-update
-/// cost never hides inside the analysis number.
-fn bench_mutation_then_pass(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    fixtures: &Fixtures,
-    cache: &SourceCache,
-    name: &str,
-    mutation: &str,
-    mutate: impl Fn(&mut LspHarness, &Fixtures),
-) {
-    group.bench_function(format!("{name}.{mutation}"), |bencher| {
-        bencher.iter_batched_ref(
-            || warm_setup(fixtures, cache),
-            |(world, _target)| mutate(world, fixtures),
-            BatchSize::PerIteration,
-        );
-    });
+/// Versions `1..=iters` for successive changes to a document opened at 0.
+fn document_versions(iters: u64) -> impl Iterator<Item = i32> {
+    let Ok(last) = i32::try_from(iters) else {
+        panic!("Too many iterations for LSP document versions: {iters}");
+    };
+    1..=last
+}
 
-    group.bench_function(format!("{name}.pass"), |bencher| {
-        bencher.iter_batched_ref(
-            || {
-                let (mut world, target) = warm_setup(fixtures, cache);
-                mutate(&mut world, fixtures);
-                (world, target)
-            },
-            |(world, target)| {
-                let diagnostics = world.diagnose(target, world.snapshot()).unwrap();
-                assert_diagnostics(&diagnostics);
-            },
-            BatchSize::PerIteration,
-        );
-    });
+fn close_document(runtime: &Runtime, session: &mut LspSession, path: &Path) {
+    session.send_did_close(path);
+    runtime.block_on(session.settle());
 }
 
 /// A database over the fixture corpus with the target open, before any pass.
@@ -361,35 +532,49 @@ fn setup(fixtures: &Fixtures, cache: &SourceCache) -> (LspHarness, FilePath) {
     }
 }
 
-/// Build the target database and prime the memos used by incremental cases.
-fn warm_setup(fixtures: &Fixtures, cache: &SourceCache) -> (LspHarness, FilePath) {
-    let (world, target) = setup(fixtures, cache);
-    assert_diagnostics(&world.diagnose(&target, world.snapshot()).unwrap());
-    (world, target)
-}
-
-fn setup_all(
-    fixtures: &Fixtures,
-    cache: &SourceCache,
-    files: &[PathBuf],
-) -> (LspHarness, Vec<FilePath>) {
-    match build_world_all(fixtures, cache, files) {
-        Ok(world) => world,
-        Err(err) => panic!("Failed to build the bench world: {err:?}"),
+/// The session's main loop and simulated editor run on the bench thread, as
+/// in `#[tokio::test]`. Analysis tasks run on the pool's own threads.
+fn session_runtime() -> Runtime {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => panic!("Failed to build the session runtime: {err:?}"),
     }
 }
 
-/// Runs one untimed full-corpus pass so [`bench_all_warm()`] measures warm
-/// memos.
-fn setup_all_warm(
+/// A settled session over the fixture corpus with no document open.
+fn start_session(runtime: &Runtime, fixtures: &Fixtures, cache: &SourceCache) -> LspSession {
+    let harness = match build_world_base(fixtures, cache) {
+        Ok(harness) => harness,
+        Err(err) => panic!("Failed to build the bench world: {err:?}"),
+    };
+    runtime.block_on(harness.start(&[]))
+}
+
+/// A settled session with the target open and diagnosed once.
+fn start_session_with_target(
+    runtime: &Runtime,
     fixtures: &Fixtures,
     cache: &SourceCache,
-    files: &[PathBuf],
-    relative_paths: &[String],
-) -> (LspHarness, Vec<FilePath>) {
-    let (world, targets) = setup_all(fixtures, cache, files);
-    diagnose_all(&world, &targets, relative_paths);
-    (world, targets)
+) -> LspSession {
+    let mut session = start_session(runtime, fixtures, cache);
+    let target = fixtures.dplyr().join(TARGET);
+
+    runtime.block_on(async {
+        session.send_did_open(&target, &read_source(&target));
+        assert_diagnostics(&session.wait_for_accepted_diagnostics(&target, 0).await);
+        session.settle().await;
+    });
+
+    session
+}
+
+/// Drop inside the runtime because the simulated editor's peer task belongs
+/// to it.
+fn end_session(runtime: &Runtime, session: LspSession) {
+    runtime.block_on(async move { drop(session) });
 }
 
 fn build_world(fixtures: &Fixtures, cache: &SourceCache) -> anyhow::Result<(LspHarness, FilePath)> {
@@ -399,25 +584,6 @@ fn build_world(fixtures: &Fixtures, cache: &SourceCache) -> anyhow::Result<(LspH
     world.prepare_document(&target, read_source(&fixtures.dplyr().join(TARGET)))?;
 
     Ok((world, target))
-}
-
-/// Opens every file discovered by [`Fixtures::r_files()`] because
-/// [`LspHarness::diagnose()`] only operates on open editor buffers.
-fn build_world_all(
-    fixtures: &Fixtures,
-    cache: &SourceCache,
-    files: &[PathBuf],
-) -> anyhow::Result<(LspHarness, Vec<FilePath>)> {
-    let mut world = build_world_base(fixtures, cache)?;
-
-    let mut targets = Vec::with_capacity(files.len());
-    for absolute in files {
-        let target = fixtures.file_path(absolute.clone());
-        world.prepare_document(&target, read_source(absolute))?;
-        targets.push(target);
-    }
-
-    Ok((world, targets))
 }
 
 /// Initialize shared scan, package, and console-scope state without opening
@@ -471,8 +637,41 @@ fn assert_diagnostics(diagnostics: &[Diagnostic]) {
 }
 
 #[track_caller]
-fn assert_all_diagnostics(counts: &[DiagnosticCountByPath<'_>]) {
-    assert_eq!(counts, EXPECTED_ALL_DIAGNOSTIC_COUNTS);
+fn assert_all_accepted(relative_paths: &[String], accepted: &[Vec<Diagnostic>]) {
+    let per_file: Vec<(&str, Vec<Diagnostic>)> = relative_paths
+        .iter()
+        .map(String::as_str)
+        .zip(accepted.iter().cloned())
+        .collect();
+    assert_eq!(
+        diagnostic_counts_by_path(&per_file),
+        EXPECTED_ALL_DIAGNOSTIC_COUNTS
+    );
+}
+
+/// The session counterpart of [`assert_undefined_symbol_reported()`]. It
+/// checks that the settings the session pulls leave diagnostics enabled.
+#[track_caller]
+fn assert_session_reports_undefined_symbol(
+    runtime: &Runtime,
+    fixtures: &Fixtures,
+    cache: &SourceCache,
+) {
+    let mut session = start_session(runtime, fixtures, cache);
+    let path = fixtures.dplyr().join("R/zzz-bench-undefined.R");
+
+    let diagnostics = runtime.block_on(async {
+        session.send_did_open(&path, "zzz_bench_undefined\n");
+        session.wait_for_accepted_diagnostics(&path, 0).await
+    });
+    assert_eq!(key_fields(&diagnostics), [(
+        "No symbol named 'zzz_bench_undefined' in scope.",
+        WARN,
+        (0, 0),
+        (0, 19)
+    )]);
+
+    end_session(runtime, session);
 }
 
 /// Verify that diagnostics are enabled, since a clean target also produces no
