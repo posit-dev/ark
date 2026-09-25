@@ -1382,6 +1382,9 @@ mod tests {
     async fn test_background_panic_is_reported_once_per_session() {
         let client = TestClient::new(&[]).await;
         let auxiliary = AuxiliaryState::new(client.client());
+        // Keep an unexpected loop panic visible through `auxiliary_loop.await`.
+        // `panic::spawn()` would log it and return a successful `JoinHandle`.
+        #[allow(clippy::disallowed_methods)]
         let auxiliary_loop = tokio::spawn(auxiliary.start());
         let first_session = LspServiceContext::new();
         let second_session = LspServiceContext::new();

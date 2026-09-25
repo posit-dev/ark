@@ -114,17 +114,11 @@ pub fn start(target_port: u16) -> anyhow::Result<(u16, ProxyHandle)> {
                 // the `ServerHandle` can't stop the server (the `Server` future
                 // owns its own handle). `stop()` lets the `server.await` call
                 // return, allowing the task and runtime to exit.
-                tokio::spawn(async move {
-                    let shutdown = async {
-                        // We never send on the sender, so this only resolves (to `Err`)
-                        // when `ProxyHandle` drops. Either way it means "shut down".
-                        shutdown_rx.await.ok();
-                        handle.stop(false).await;
-                    };
-
-                    if let Err(msg) = panic::catch_unwind_async(Recovery::Always, shutdown).await {
-                        log::error!("Panic in help proxy shutdown task: {msg}");
-                    }
+                panic::spawn(Recovery::Always, async move {
+                    // We never send on the sender, so this only resolves (to `Err`)
+                    // when `ProxyHandle` drops. Either way it means "shut down".
+                    shutdown_rx.await.ok();
+                    handle.stop(false).await;
                 });
 
                 match server.await {

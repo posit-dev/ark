@@ -15,6 +15,7 @@ use std::panic::AssertUnwindSafe;
 use std::task::Poll;
 
 use stdext::panic_message;
+use tokio::task::JoinHandle;
 
 pub(crate) type PanicPayload = Box<dyn std::any::Any + Send + 'static>;
 
@@ -169,6 +170,24 @@ pub(crate) async fn catch_unwind_async_payload<T>(
     .await
 }
 
+/// Catch and log task panics instead of letting the panic hook abort the process.
+///
+/// [`catch_unwind_async()`] declares a boundary only during each poll of its future.
+/// Other tasks on the same worker thread cannot inherit that boundary, so a task
+/// spawned with `tokio::spawn()` alone would abort on panic rather than fail its
+/// `JoinHandle` as it would without Ark's panic hook.
+#[expect(clippy::disallowed_methods)]
+pub(crate) fn spawn(
+    recovery: Recovery,
+    future: impl Future<Output = ()> + Send + 'static,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(msg) = catch_unwind_async(recovery, future).await {
+            log::error!("Panic in spawned task: {msg}");
+        }
+    })
+}
+
 pub(crate) fn message(payload: &PanicPayload) -> String {
     panic_message(payload.as_ref())
 }
@@ -276,6 +295,12 @@ mod tests {
             panic!("Expected a panic payload");
         };
         assert_eq!(message(&payload), "oh no");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_recovers_panic_instead_of_propagating() {
+        let handle = spawn(Recovery::Always, async { panic!("oh no") });
+        assert!(handle.await.is_ok());
     }
 
     #[tokio::test]
