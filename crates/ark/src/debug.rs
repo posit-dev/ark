@@ -6,6 +6,8 @@ use harp::utils::r_str_to_owned_utf8_unchecked;
 use harp::utils::r_typeof;
 
 use crate::console::Console;
+use crate::panic;
+use crate::panic::Recovery;
 
 // To ensure the compiler includes the C entry points in `debug.c` in the binary,
 // we store function pointers in global variables that are declared "used" (even
@@ -153,8 +155,11 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 /// being sent over IOPub.
 ///
 /// The closure is run in a `harp::try_catch()` context to prevent R errors and
-/// other C longjumps from collapsing the debugging context. If a Rust panic
-/// occurs however, it is propagated as normal.
+/// other C longjumps from collapsing the debugging context. Rust panics are
+/// also recovered: these entry points are called directly from a C debugger
+/// with no other boundary declared on the stack, so without one, the panic
+/// hook would abort the whole process being inspected. The panic message is
+/// appended to the captured output instead.
 ///
 /// Note that the resulting string is stored on the Rust heap and never freed.
 /// This should only be used in a debugging context where leaking is not an
@@ -162,24 +167,20 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
     let mut capture = Console::get_mut().start_capture();
 
-    // We protect from panics to correctly restore `captured_output`'s state.
-    // The panic is resumed right after.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
+    let result = panic::catch_unwind(Recovery::Always, || harp::try_catch(cb));
 
     let mut out = capture.take();
     drop(capture);
 
-    // Unwrap catch-unwind's result and resume panic if needed
-    let result = match result {
-        Ok(res) => res,
-        Err(err) => {
-            std::panic::resume_unwind(err);
+    match result {
+        Ok(Ok(())) => {},
+        // Unwrap try-catch's result
+        Ok(Err(err)) => {
+            out = format!("{out}\nUnexpected longjump in `capture_console_output()`: {err:?}");
         },
-    };
-
-    // Unwrap try-catch's result
-    if let Err(err) = result {
-        out = format!("{out}\nUnexpected longjump in `capture_console_output()`: {err:?}");
+        Err(message) => {
+            out = format!("{out}\nPanic in `capture_console_output()`: {message}");
+        },
     }
 
     // Intentionally leaks, should only be used in the debugger

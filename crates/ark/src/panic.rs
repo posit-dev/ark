@@ -15,6 +15,7 @@ use std::panic::AssertUnwindSafe;
 use std::task::Poll;
 
 use stdext::panic_message;
+use tokio::task::JoinHandle;
 
 pub(crate) type PanicPayload = Box<dyn std::any::Any + Send + 'static>;
 
@@ -54,12 +55,6 @@ pub fn install() {
         // backtrace is already logged above.
         if recovers_panic() {
             // Return and let the panic continue unwinding to the catch site
-            return;
-        }
-
-        // A current Tokio handle may be unrelated to the LSP, but Tokio captures task
-        // panics for its caller to handle.
-        if tokio::runtime::Handle::try_current().is_ok() {
             return;
         }
 
@@ -109,21 +104,55 @@ pub(crate) fn recovers_panic() -> bool {
     }
 }
 
-/// Runs `f` inside a `catch_unwind()` boundary. `Err` preserves the panic payload so
-/// callers can distinguish control-flow unwinds such as `salsa::Cancelled` from genuine
-/// panics. Unwind safety is asserted on the caller's behalf.
-pub(crate) fn catch_unwind<T>(
+/// Whether a `catch_unwind()` boundary is declared on this thread. Unlike
+/// [`recovers_panic()`], this includes `ReleaseOnly` boundaries in debug builds,
+/// which abort rather than recover.
+fn in_catch_boundary() -> bool {
+    BOUNDARY.get().is_some()
+}
+
+/// Assert that Salsa database access runs inside a declared `catch_unwind()` boundary.
+/// Salsa queries can panic on cycles.
+///
+/// Tests invoke LSP handlers without their normal boundaries, so `cfg!(test)` exempts
+/// them.
+pub(crate) fn assert_in_catch_boundary() {
+    debug_assert!(cfg!(test) || in_catch_boundary());
+}
+
+/// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
+/// unwind safety is asserted on the caller's behalf.
+pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Result<T, String> {
+    catch_unwind_payload(recovery, f).map_err(|payload| panic_message(payload.as_ref()))
+}
+
+/// [`catch_unwind()`] for a caller that hands the panic on to `resume_unwind()`
+/// elsewhere, or that must classify the payload (e.g. distinguish `salsa::Cancelled`
+/// from a genuine panic), and so needs the payload rather than a message.
+#[expect(clippy::disallowed_methods)]
+pub(crate) fn catch_unwind_payload<T>(
     recovery: Recovery,
     f: impl FnOnce() -> T,
-) -> Result<T, PanicPayload> {
+) -> std::thread::Result<T> {
     let _boundary = catch_boundary(recovery);
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+    std::panic::catch_unwind(AssertUnwindSafe(f))
 }
 
 /// Recover panics while polling a future. Enter the recovery boundary for each poll so
-/// unrelated work on the polling thread cannot inherit it. Preserve the panic payload so
-/// the caller can distinguish control-flow unwinds from genuine panics.
+/// unrelated work on the polling thread cannot inherit it.
 pub(crate) async fn catch_unwind_async<T>(
+    recovery: Recovery,
+    future: impl Future<Output = T>,
+) -> Result<T, String> {
+    catch_unwind_async_payload(recovery, future)
+        .await
+        .map_err(|payload| panic_message(payload.as_ref()))
+}
+
+/// [`catch_unwind_async()`] for a caller that must classify the payload, such as the
+/// LSP event loop distinguishing `salsa::Cancelled` from a genuine panic.
+#[expect(clippy::disallowed_methods)]
+pub(crate) async fn catch_unwind_async_payload<T>(
     recovery: Recovery,
     future: impl Future<Output = T>,
 ) -> Result<T, PanicPayload> {
@@ -139,6 +168,24 @@ pub(crate) async fn catch_unwind_async<T>(
         }
     })
     .await
+}
+
+/// Catch and log task panics instead of letting the panic hook abort the process.
+///
+/// [`catch_unwind_async()`] declares a boundary only during each poll of its future.
+/// Other tasks on the same worker thread cannot inherit that boundary, so a task
+/// spawned with `tokio::spawn()` alone would abort on panic rather than fail its
+/// `JoinHandle` as it would without Ark's panic hook.
+#[expect(clippy::disallowed_methods)]
+pub(crate) fn spawn(
+    recovery: Recovery,
+    future: impl Future<Output = ()> + Send + 'static,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(msg) = catch_unwind_async(recovery, future).await {
+            log::error!("Panic in spawned task: {msg}");
+        }
+    })
 }
 
 pub(crate) fn message(payload: &PanicPayload) -> String {
@@ -201,17 +248,28 @@ mod tests {
     }
 
     #[test]
-    fn test_catch_unwind_passes_through_ok() {
-        let result = catch_unwind(Recovery::Always, || 1 + 1);
-        let Ok(value) = result else {
-            panic!("Expected a value");
-        };
-        assert_eq!(value, 2);
+    fn test_in_catch_boundary_ignores_recovery_kind() {
+        assert!(!in_catch_boundary());
+
+        let _boundary = catch_boundary(Recovery::ReleaseOnly);
+        assert!(in_catch_boundary());
     }
 
     #[test]
-    fn test_catch_unwind_preserves_panic_payload() {
+    fn test_catch_unwind_passes_through_ok() {
+        let result = catch_unwind(Recovery::Always, || 1 + 1);
+        assert_eq!(result, Ok(2));
+    }
+
+    #[test]
+    fn test_catch_unwind_converts_panic_to_message() {
         let result = catch_unwind(Recovery::Always, || panic!("oh no"));
+        assert_eq!(result, Err(String::from("oh no")));
+    }
+
+    #[test]
+    fn test_catch_unwind_payload_preserves_panic_payload() {
+        let result = catch_unwind_payload(Recovery::Always, || panic!("oh no"));
         let Err(payload) = result else {
             panic!("Expected a panic payload");
         };
@@ -221,15 +279,18 @@ mod tests {
     #[tokio::test]
     async fn test_catch_unwind_async_passes_through_ok() {
         let result = catch_unwind_async(Recovery::Always, async { 1 + 1 }).await;
-        let Ok(value) = result else {
-            panic!("Expected a value");
-        };
-        assert_eq!(value, 2);
+        assert_eq!(result, Ok(2));
     }
 
     #[tokio::test]
-    async fn test_catch_unwind_async_preserves_panic_payload() {
+    async fn test_catch_unwind_async_converts_panic_to_message() {
         let result = catch_unwind_async(Recovery::Always, async { panic!("oh no") }).await;
+        assert_eq!(result, Err(String::from("oh no")));
+    }
+
+    #[tokio::test]
+    async fn test_catch_unwind_async_payload_preserves_panic_payload() {
+        let result = catch_unwind_async_payload(Recovery::Always, async { panic!("oh no") }).await;
         let Err(payload) = result else {
             panic!("Expected a panic payload");
         };
@@ -237,8 +298,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_catch_unwind_async_preserves_salsa_cancellation() {
-        let result = catch_unwind_async(Recovery::Always, async {
+    async fn test_spawn_recovers_panic_instead_of_propagating() {
+        let handle = spawn(Recovery::Always, async { panic!("oh no") });
+        assert!(handle.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_catch_unwind_async_payload_preserves_salsa_cancellation() {
+        let result = catch_unwind_async_payload(Recovery::Always, async {
             std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite))
         })
         .await;
