@@ -52,6 +52,20 @@ pub struct ShowHelpTopicParams {
 pub struct SearchHelpParams {
 	/// The help query to search for
 	pub query: String,
+
+	/// Opaque identifier supplied by the frontend for this UI search. Echo it
+	/// in the resulting Show Help notification.
+	pub search_id: String,
+}
+
+/// Parameters for the GetHelpTopics method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GetHelpTopicsParams {
+	/// The text to match against help topic labels.
+	pub query: String,
+
+	/// Maximum number of suggestions to return, from 1 to 50.
+	pub limit: i64,
 }
 
 /// Parameters for the ShowHelp method.
@@ -65,6 +79,11 @@ pub struct ShowHelpParams {
 
 	/// Whether to focus the Help pane when the content is displayed.
 	pub focus: bool,
+
+	/// Identifier of the UI search that requested this navigation, if any.
+	/// Omit for console help and other help navigation. The frontend ignores
+	/// identifiers that are no longer current.
+	pub search_id: Option<String>,
 }
 
 /**
@@ -89,12 +108,12 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "search_help")]
 	SearchHelp(SearchHelpParams),
 
-	/// List help topics for autocomplete.
+	/// Find help topics for autocomplete.
 	///
-	/// Returns interpreter-wide help topics that can be offered as search
-	/// suggestions.
+	/// Returns at most limit matching help topic suggestions, filtered and
+	/// ranked by the backend. An empty query returns no suggestions.
 	#[serde(rename = "get_help_topics")]
-	GetHelpTopics,
+	GetHelpTopics(GetHelpTopicsParams),
 
 }
 
@@ -108,7 +127,8 @@ pub enum HelpBackendReply {
 	/// Help notification.
 	ShowHelpTopicReply(bool),
 
-	/// Whether the search results page was shown.
+	/// Whether the search results navigation was requested. This does not
+	/// confirm that the frontend displayed or finished loading the page.
 	SearchHelpReply(bool),
 
 	/// Help topic suggestions.
