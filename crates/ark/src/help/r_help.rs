@@ -5,6 +5,8 @@
 //
 //
 
+use std::cell::RefCell;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
@@ -31,6 +33,26 @@ use crate::help_proxy;
 use crate::methods::ArkGenerics;
 
 pub const HELP_COMM_NAME: &str = "positron.help";
+
+thread_local! {
+    // Browser callbacks run synchronously on the R thread while a search is printed.
+    // Keep this separate from RHelp, which is already borrowed during RPC dispatch.
+    static SEARCH_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+struct SearchContext(Option<String>);
+
+impl SearchContext {
+    fn enter(id: String) -> Self {
+        Self(SEARCH_ID.replace(Some(id)))
+    }
+}
+
+impl Drop for SearchContext {
+    fn drop(&mut self) {
+        SEARCH_ID.set(self.0.take());
+    }
+}
 
 /// Ports for the R help server and our proxy, recorded on `Console` once both
 /// are running.
@@ -77,14 +99,20 @@ impl RHelp {
                 }
             },
             HelpBackendRequest::SearchHelp(search) => {
+                let _search_context = SearchContext::enter(search.search_id);
                 let shown = RFunction::from(".ps.help.searchHelp")
                     .add(search.query)
                     .call()?
                     .to::<bool>()?;
                 Ok(HelpBackendReply::SearchHelpReply(shown))
             },
-            HelpBackendRequest::GetHelpTopics => {
+            HelpBackendRequest::GetHelpTopics(params) => {
+                if !(1..=50).contains(&params.limit) {
+                    return Err(anyhow!("Help suggestion limit must be between 1 and 50."));
+                }
                 let topics = RFunction::from(".ps.help.getHelpTopics")
+                    .add(params.query)
+                    .add(params.limit as i32)
                     .call()?
                     .to::<Vec<String>>()?;
                 let suggestions = topics
@@ -161,6 +189,7 @@ impl RHelp {
             content: url,
             kind: ShowHelpKind::Url,
             focus: true,
+            search_id: SEARCH_ID.with(|id| id.borrow().clone()),
         });
         ctx.send_event(&msg);
 
@@ -306,4 +335,33 @@ pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
     }))?;
 
     Ok(R_NilValue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchContext;
+    use super::SEARCH_ID;
+
+    #[test]
+    fn search_context_restores_after_error() {
+        fn fail() -> anyhow::Result<()> {
+            let _context = SearchContext::enter(String::from("inner"));
+            assert_eq!(
+                SEARCH_ID.with(|id| id.borrow().clone()),
+                Some(String::from("inner"))
+            );
+            Err(anyhow::anyhow!("search failed"))
+        }
+
+        assert_eq!(SEARCH_ID.with(|id| id.borrow().clone()), None);
+        {
+            let _context = SearchContext::enter(String::from("outer"));
+            assert!(fail().is_err());
+            assert_eq!(
+                SEARCH_ID.with(|id| id.borrow().clone()),
+                Some(String::from("outer"))
+            );
+        }
+        assert_eq!(SEARCH_ID.with(|id| id.borrow().clone()), None);
+    }
 }

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
+use amalthea::comm::help_comm::GetHelpTopicsParams;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::HelpTopicSuggestion;
@@ -19,11 +20,13 @@ use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
 use ark::comm_handler::CommHandler;
 use ark::comm_handler::CommHandlerContext;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
+use ark::modules::ARK_ENVS;
 use ark::r_task::r_task;
 use ark_test::dummy_jupyter_header;
 use ark_test::DummyArkFrontend;
@@ -94,6 +97,7 @@ impl TestRHelp {
     fn test_search(&self, query: &str, id: &str) {
         let request = HelpBackendRequest::SearchHelp(SearchHelpParams {
             query: String::from(query),
+            search_id: String::from(id),
         });
         assert_eq!(
             self.request(request, id),
@@ -101,8 +105,14 @@ impl TestRHelp {
         );
     }
 
-    fn get_topics(&self, id: &str) -> Vec<HelpTopicSuggestion> {
-        match self.request(HelpBackendRequest::GetHelpTopics, id) {
+    fn get_topics(&self, query: &str, limit: i64, id: &str) -> Vec<HelpTopicSuggestion> {
+        match self.request(
+            HelpBackendRequest::GetHelpTopics(GetHelpTopicsParams {
+                query: String::from(query),
+                limit,
+            }),
+            id,
+        ) {
             HelpBackendReply::GetHelpTopicsReply(topics) => topics,
             reply => panic!("Unexpected help reply: {reply:?}"),
         }
@@ -148,7 +158,11 @@ fn test_help_search_comm() {
     let r_help = TestRHelp::new();
 
     r_help.test_search("linear model", "help-search-test-id");
-    let topics = r_help.get_topics("help-topics-test-id");
+    let topics = r_help.get_topics("plot", 50, "help-topics-test-id");
+    assert!(topics.len() <= 50);
+    assert_eq!(topics[0].label, "plot");
+    assert!(r_help.get_topics("", 50, "empty-help-topics").is_empty());
+    assert_eq!(r_help.get_topics("plot", 1, "limited-help-topics").len(), 1);
     assert!(topics
         .iter()
         .any(|topic| { topic.label == "plot" && topic.topic == "graphics::plot" }));
@@ -222,6 +236,7 @@ fn test_help_show_help_event() {
         Some("show_help")
     );
     assert_eq!(msg.data["params"]["kind"], "url");
+    assert!(msg.data["params"]["search_id"].is_null());
     let content = msg.data["params"]["content"].as_str().unwrap();
     assert!(content.starts_with("http://127.0.0.1:"));
     assert!(content.contains("plot"));
@@ -313,4 +328,74 @@ fn wait_until_proxy_stops(port: u16) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("Proxy on port {port} is still accepting connections after teardown");
+}
+
+#[test]
+fn test_help_search_navigation_correlation() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = open_help_comm(&frontend);
+    frontend.send_shell(CommWireMsg {
+        comm_id: comm_id.clone(),
+        data: serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "search_help",
+            "params": { "query": "linear model", "search_id": "ui-search" }
+        }),
+    });
+    frontend.recv_iopub_busy();
+    let event = frontend.recv_iopub_comm_msg();
+    assert_eq!(event.comm_id, comm_id);
+    assert_eq!(event.data["method"], "show_help");
+    assert_eq!(event.data["params"]["search_id"], "ui-search");
+    let reply = frontend.recv_iopub_comm_msg();
+    assert_eq!(reply.data["result"], true);
+    frontend.recv_iopub_idle();
+
+    // The scope has ended: console search must remain ordinary native Help.
+    frontend.send_execute_request("??plot", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let event = frontend.recv_iopub_comm_msg();
+    assert_eq!(event.data["method"], "show_help");
+    assert!(event.data["params"]["search_id"].is_null());
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_help_index_freshness() {
+    assert!(r_task(|| {
+        harp::parse_eval0(r#"
+local({
+    old_paths <- .libPaths()
+    library <- tempfile("ark-help-index-")
+    dir.create(library)
+    on.exit({ .libPaths(old_paths); unlink(library, recursive = TRUE) })
+    dir.create(file.path(library, "stats"))
+    stopifnot(file.copy(file.path(find.package("stats"), "Meta"), file.path(library, "stats"), recursive = TRUE))
+    .libPaths(c(library, old_paths))
+    stopifnot(length(.ps.help.getHelpTopics("", 50L)) == 0L)
+    stopifnot(length(.ps.help.getHelpTopics("lm", 1L)) == 1L)
+    stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
+    stopifnot(inherits(try(.ps.help.getHelpTopics("lm", 0L), silent = TRUE), "try-error"))
+    marker <- "zzzz_ark_help_cache_alias"
+    stopifnot(length(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    metadata <- file.path(library, "stats", "Meta", "hsearch.rds")
+    db <- readRDS(metadata)
+    alias <- db[[2L]][1L, , drop = FALSE]
+    alias[1L, "Alias"] <- marker
+    db[[2L]] <- rbind(db[[2L]], alias)
+    saveRDS(db, metadata)
+    # Force a distinguishable metadata time even on low-resolution filesystems.
+    # The library directory itself has not changed.
+    Sys.setFileTime(metadata, Sys.time() + 2)
+    stopifnot(identical(.ps.help.getHelpTopics(marker, 50L), paste("stats", marker, sep = "\u001f")))
+    stopifnot(nrow(utils::help.search(marker, agrep = FALSE)$matches) > 0L)
+    unlink(file.path(library, "stats"), recursive = TRUE)
+    stopifnot(length(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    TRUE
+})
+
+"#, ARK_ENVS.positron_ns).unwrap().to::<bool>().unwrap()
+    }));
 }
