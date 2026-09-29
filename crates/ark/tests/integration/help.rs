@@ -22,12 +22,14 @@ use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
+use amalthea::wire::jupyter_message::Message;
 use ark::comm_handler::CommHandler;
 use ark::comm_handler::CommHandlerContext;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
 use ark::modules::ARK_ENVS;
 use ark::r_task::r_task;
+use ark_test::dummy_frontend::IopubExpectation;
 use ark_test::dummy_jupyter_header;
 use ark_test::DummyArkFrontend;
 use ark_test::IOPubReceiverExt;
@@ -343,13 +345,22 @@ fn test_help_search_navigation_correlation() {
         }),
     });
     frontend.recv_iopub_busy();
-    let event = frontend.recv_iopub_comm_msg();
-    assert_eq!(event.comm_id, comm_id);
-    assert_eq!(event.data["method"], "show_help");
-    assert_eq!(event.data["params"]["search_id"], "ui-search");
-    let reply = frontend.recv_iopub_comm_msg();
-    assert_eq!(reply.data["result"], true);
-    frontend.recv_iopub_idle();
+    // Shell idle and comm delivery come from different threads and may interleave.
+    let messages = frontend.recv_iopub_interleaved(&[&[IopubExpectation::Idle], &[
+        IopubExpectation::CommMsg,
+        IopubExpectation::CommMsg,
+    ]]);
+    let comms: Vec<_> = messages
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::CommMsg(message) => Some(message.content),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(comms[0].comm_id, comm_id);
+    assert_eq!(comms[0].data["method"], "show_help");
+    assert_eq!(comms[0].data["params"]["search_id"], "ui-search");
+    assert_eq!(comms[1].data["result"], true);
 
     // The scope has ended: console search must remain ordinary native Help.
     frontend.send_execute_request("??plot", ExecuteRequestOptions::default());
