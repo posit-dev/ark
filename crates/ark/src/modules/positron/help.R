@@ -63,6 +63,7 @@ help <- function(topic, package = NULL) {
 # Search all installed help documentation and show R's native HTML results page.
 #' @export
 .ps.help.searchHelp <- function(query) {
+    .ps.help.searchIndex()
     results <- utils::help.search(query, package = NULL)
 
     if (!in_ark_tests()) {
@@ -72,12 +73,59 @@ help <- function(topic, package = NULL) {
     TRUE
 }
 
-# Return package-qualified help aliases for frontend autocomplete.
+# Cache sorted aliases, rebuilding native R's search database when library metadata
+# changes. Checking metadata also catches in-place updates that do not change the
+# library directory's mtime (which is what help.search() checks itself).
+.ps.help.searchIndex <- local({
+    signature <- NULL
+    index <- NULL
+
+    function() {
+        libraries <- .libPaths()
+        packages <- unlist(lapply(libraries, list.dirs, recursive = FALSE), use.names = FALSE)
+        metadata <- unlist(lapply(
+            c("package.rds", "hsearch.rds", "vignette.rds", "demo.rds"),
+            function(name) file.path(packages, "Meta", name)
+        ), use.names = FALSE)
+        current <- list(
+            libraries = libraries,
+            files = file.info(c(libraries, metadata))[, c("size", "mtime", "ctime"), drop = FALSE],
+            locale = Sys.getlocale("LC_CTYPE"),
+            collation = Sys.getlocale("LC_COLLATE"),
+            types = getOption("help.search.types")
+        )
+        if (!identical(current, signature)) {
+            matches <- utils::help.search(".", fields = "alias", package = NULL, rebuild = TRUE)$matches
+            matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
+            topics <- unique(data.frame(package = matches[, "Package"], label = matches[, "Entry"]))
+            labels <- tolower(topics$label)
+            sorted <- order(labels, topics$package)
+            index <<- list(
+                labels = labels[sorted],
+                entries = paste(topics$package[sorted], topics$label[sorted], sep = "\u001f")
+            )
+            signature <<- current
+        }
+        index
+    }
+})
+
+# Return only matching package-qualified aliases, ranked as in the search box:
+# exact label, prefix, then substring; alphabetical within each group.
 #' @export
-.ps.help.getHelpTopics <- function() {
-    matches <- utils::help.search(".", fields = "alias", package = NULL)$matches
-    matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
-    unique(paste(matches[, "Package"], matches[, "Entry"], sep = "\u001f"))
+.ps.help.getHelpTopics <- function(query, limit) {
+    if (length(limit) != 1L || is.na(limit) || limit < 1L || limit > 50L || limit != as.integer(limit)) {
+        stop("Help suggestion limit must be between 1 and 50.")
+    }
+    query <- tolower(trimws(query))
+    if (!nzchar(query)) {
+        return(character())
+    }
+    index <- .ps.help.searchIndex()
+    hits <- which(grepl(query, index$labels, fixed = TRUE))
+    labels <- index$labels[hits]
+    rank <- ifelse(labels == query, 0L, ifelse(startsWith(labels, query), 1L, 2L))
+    index$entries[utils::head(hits[order(rank)], limit)]
 }
 
 # Resolve the package specifier, if there is one
