@@ -335,11 +335,14 @@ fn wait_until_proxy_stops(port: u16) {
 #[test]
 fn test_help_search_navigation_correlation() {
     let frontend = DummyArkFrontend::lock();
+    // This full kernel test needs HTML navigation; unit-test mode suppresses it.
+    frontend.execute_request_invisibly("options(ark.testing = FALSE)");
     let comm_id = open_help_comm(&frontend);
     frontend.send_shell(CommWireMsg {
         comm_id: comm_id.clone(),
         data: serde_json::json!({
             "jsonrpc": "2.0",
+            "id": "help-search-request",
             "method": "search_help",
             "params": { "query": "linear model", "search_id": "ui-search" }
         }),
