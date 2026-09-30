@@ -92,10 +92,14 @@ pub(crate) enum SearchPathTail {
     Default,
 }
 
-/// Selects the first matching loader. Classifications overlap, so `testthat`
-/// precedes package loading and package ownership precedes directory
+/// Selects the first matching loader. Classifications overlap, so notebook
+/// cells come first (a cell is never a package or app file), `testthat`
+/// precedes package loading, and package ownership precedes directory
 /// conventions.
 pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -> LoadContext {
+    if let Some(context) = contrib::notebook::load_context(db, file, view) {
+        return context;
+    }
     if let Some(context) = contrib::testthat::load_context(db, file, view) {
         return context;
     }
