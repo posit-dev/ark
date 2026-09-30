@@ -239,3 +239,49 @@ fn test_notebook_did_close_forgets_cell_order() {
     assert!(state.open_files.is_empty());
     assert!(state.db().open_notebooks().notebooks(state.db()).is_empty());
 }
+
+#[test]
+fn test_notebook_did_change_ignores_unknown_notebook() {
+    // The client sends cell edits to every server whose selector matches, even
+    // one whose `filterCells` dropped the notebook. That server never opened it.
+    let mut state = WorldState::default();
+
+    let edit = NotebookDocumentCellChange {
+        structure: None,
+        data: None,
+        text_content: Some(vec![NotebookDocumentChangeTextContent {
+            document: VersionedTextDocumentIdentifier {
+                uri: cell_uri(0),
+                version: 1,
+            },
+            changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "x <- 1\n".to_string(),
+            }],
+        }]),
+    };
+    change(&mut state, edit).unwrap();
+
+    assert!(state.open_files.is_empty());
+    assert!(state.notebooks.is_empty());
+}
+
+#[test]
+fn test_notebook_did_close_closes_cells_the_client_omits() {
+    // Deleting the last R cell makes the client close the notebook. It lists
+    // only the cells still in the notebook, so the deleted cell is missing.
+    let _aux = init_aux_for_test();
+    let mut state = WorldState::default();
+    open(&mut state, &[0], &[(0, "x <- 1\n")]);
+
+    let params = DidCloseNotebookDocumentParams {
+        notebook_document: NotebookDocumentIdentifier {
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        cell_text_documents: vec![],
+    };
+    did_close_notebook(params, &mut state).unwrap();
+
+    assert!(state.open_files.is_empty());
+}

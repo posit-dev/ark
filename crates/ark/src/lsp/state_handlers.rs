@@ -52,6 +52,7 @@ use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
 use tower_lsp_server::ls_types::ServerCapabilities;
 use tower_lsp_server::ls_types::ServerInfo;
 use tower_lsp_server::ls_types::SignatureHelpOptions;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentSyncCapability;
 use tower_lsp_server::ls_types::TextDocumentSyncKind;
 use tower_lsp_server::ls_types::Uri;
@@ -476,6 +477,13 @@ pub(crate) fn did_change_notebook(
 ) -> anyhow::Result<()> {
     let path = params.notebook_document.uri.to_document_path()?;
 
+    // The client sends cell edits to every server whose notebook selector
+    // matches, without applying `filterCells`. Ignore notebooks we never opened.
+    if !state.notebooks.contains_key(&path) {
+        log::trace!("Ignoring change to notebook {path}, which is not open");
+        return Ok(());
+    }
+
     // A metadata-only change leaves cells and their order alone.
     let Some(cells) = params.change.cells else {
         return Ok(());
@@ -541,10 +549,26 @@ pub(crate) fn did_close_notebook(
 
     // Forget the order before closing the cells, so no query sees a notebook
     // that lists closed cells.
-    state.notebooks.remove(&path);
+    let known_cells = state.notebooks.remove(&path).unwrap_or_default();
     state.db_mut().close_notebook(&path);
 
-    for text_document in params.cell_text_documents {
+    // The client lists only the cells still in the notebook. When the user
+    // deletes the last R cell, the client closes the notebook and the deleted
+    // cell is missing from the list. Close every cell we know too, once each.
+    let mut cells = params
+        .cell_text_documents
+        .iter()
+        .map(|text_document| text_document.uri.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    cells.extend(known_cells);
+
+    for cell in cells {
+        let Some(open_file) = state.open_files.get(&cell) else {
+            continue;
+        };
+        let text_document = TextDocumentIdentifier {
+            uri: open_file.wire_uri().clone(),
+        };
         did_close(DidCloseTextDocumentParams { text_document }, state)?;
     }
 
