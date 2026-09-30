@@ -93,7 +93,7 @@ fn test_notebook_library_in_earlier_cell_attaches_for_later_cell() {
 
     // Same layer order as a package collation: the earlier cell, then its
     // attaches, then the default search path.
-    assert_eq!(shape(&db, &cells[1].imports(&db)), vec![
+    assert_eq!(shape(&db, cells[1].imports(&db)), vec![
         "File(nb.ipynb)".to_string(),
         "Package(dplyr)".to_string(),
         "Package(base)".to_string(),

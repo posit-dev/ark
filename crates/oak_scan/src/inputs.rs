@@ -26,6 +26,7 @@ use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::FileRevision;
+use oak_db::Notebook;
 use oak_db::Package;
 use oak_db::Root;
 use salsa::Setter;
@@ -116,6 +117,17 @@ pub trait DbScan: Db + DbInputs {
     /// no-op.
     fn close_editor(&mut self, path: &FilePath);
 
+    /// Record the notebook at `path` with its R code cells in document order.
+    /// Each cell must already be an editor buffer from [`Self::upsert_editor`].
+    ///
+    /// Reuses the `Notebook` entity when `path` is already open, so a
+    /// structural edit only updates the cell list.
+    fn set_notebook_cells(&mut self, path: FilePath, cells: Vec<File>) -> Notebook;
+
+    /// Forget the notebook at `path`, so its cells stop seeing each other.
+    /// Closing the cell buffers is left to [`Self::close_editor`].
+    fn close_notebook(&mut self, path: &FilePath);
+
     /// Set `package`'s `files` / `scripts` to the `.R` files found directly
     /// under `directory`, respecting the package's `Collate` rules.
     ///
@@ -173,6 +185,42 @@ impl<DB: Db + DbInputs> DbScan for DB {
         let stale = self.stale_root();
         if let Some(stale_files) = with_cow_insert(stale.files(self), file) {
             stale.set_files(self).to(stale_files);
+        }
+    }
+
+    fn set_notebook_cells(&mut self, path: FilePath, cells: Vec<File>) -> Notebook {
+        let open = self.open_notebooks();
+        let existing = open
+            .notebooks(self)
+            .iter()
+            .copied()
+            .find(|notebook| notebook.path(self) == &path);
+
+        if let Some(notebook) = existing {
+            if notebook.cells(self) != &cells {
+                notebook.set_cells(self).to(cells);
+            }
+            return notebook;
+        }
+
+        let notebook = Notebook::new(self, path, cells);
+        let mut notebooks = open.notebooks(self).clone();
+        notebooks.push(notebook);
+        open.set_notebooks(self).to(notebooks);
+        notebook
+    }
+
+    fn close_notebook(&mut self, path: &FilePath) {
+        let open = self.open_notebooks();
+        let notebooks: Vec<Notebook> = open
+            .notebooks(self)
+            .iter()
+            .copied()
+            .filter(|notebook| notebook.path(self) != path)
+            .collect();
+
+        if notebooks.len() != open.notebooks(self).len() {
+            open.set_notebooks(self).to(notebooks);
         }
     }
 

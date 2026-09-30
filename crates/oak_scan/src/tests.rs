@@ -1,3 +1,4 @@
+mod notebook;
 mod packages;
 mod scheduler;
 mod sources;
