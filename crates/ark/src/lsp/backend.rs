@@ -116,6 +116,9 @@ pub(crate) enum LspNotification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
+    DidOpenNotebookDocument(DidOpenNotebookDocumentParams),
+    DidChangeNotebookDocument(DidChangeNotebookDocumentParams),
+    DidCloseNotebookDocument(DidCloseNotebookDocumentParams),
     #[cfg(feature = "testing")]
     TestPanic,
     #[cfg(feature = "testing")]
@@ -410,6 +413,18 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         self.notify(LspNotification::DidCloseTextDocument(params));
+    }
+
+    async fn notebook_did_open(&self, params: DidOpenNotebookDocumentParams) {
+        self.notify(LspNotification::DidOpenNotebookDocument(params));
+    }
+
+    async fn notebook_did_change(&self, params: DidChangeNotebookDocumentParams) {
+        self.notify(LspNotification::DidChangeNotebookDocument(params));
+    }
+
+    async fn notebook_did_close(&self, params: DidCloseNotebookDocumentParams) {
+        self.notify(LspNotification::DidCloseNotebookDocument(params));
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {

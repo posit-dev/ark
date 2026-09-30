@@ -19,11 +19,14 @@ use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionOptions;
 use tower_lsp_server::ls_types::CompletionOptionsCompletionItem;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
 use tower_lsp_server::ls_types::ExecuteCommandOptions;
@@ -400,6 +403,34 @@ pub(crate) fn did_close(
         wire_uri.as_str()
     );
 
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_open_notebook(
+    params: DidOpenNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let _ = (params, state);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_notebook(
+    params: DidChangeNotebookDocumentParams,
+    lsp_state: &mut LspState,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let _ = (params, lsp_state, state);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_close_notebook(
+    params: DidCloseNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let _ = (params, state);
     Ok(())
 }
 

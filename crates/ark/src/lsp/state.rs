@@ -36,6 +36,12 @@ pub(crate) struct WorldState {
     /// for wire output.
     pub(crate) open_files: HashMap<FilePath, OpenFile>,
 
+    /// Open notebooks, keyed on the notebook's [`FilePath`]. Each value is the
+    /// notebook's cell paths as the client last described them, in the
+    /// client's order, so `didChange` splice indices apply directly. The cells
+    /// themselves are ordinary entries in `open_files`.
+    pub(crate) notebooks: HashMap<FilePath, Vec<FilePath>>,
+
     /// Watched folders
     pub(crate) workspace: Workspace,
 
