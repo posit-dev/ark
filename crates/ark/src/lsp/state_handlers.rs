@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::File;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
@@ -411,7 +412,36 @@ pub(crate) fn did_open_notebook(
     params: DidOpenNotebookDocumentParams,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let _ = (params, state);
+    for text_document in params.cell_text_documents {
+        did_open(DidOpenTextDocumentParams { text_document }, state)?;
+    }
+
+    let path = params.notebook_document.uri.to_document_path()?;
+    let cells = params
+        .notebook_document
+        .cells
+        .iter()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    state.notebooks.insert(path.clone(), cells);
+
+    sync_notebook_cells(state, &path)
+}
+
+/// Push the notebook's cell order into oak. Cells the client lists without
+/// syncing their text (for example a markdown cell) are skipped, since oak
+/// only knows cells that are open files.
+fn sync_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
+    let Some(cell_paths) = state.notebooks.get(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+    let cells: Vec<File> = cell_paths
+        .iter()
+        .filter_map(|cell| state.open_files.get(cell))
+        .map(|open_file| open_file.file())
+        .collect();
+
+    state.db_mut().set_notebook_cells(path.clone(), cells);
     Ok(())
 }
 
