@@ -40,6 +40,7 @@ use tower_lsp_server::ls_types::HoverProviderCapability;
 use tower_lsp_server::ls_types::ImplementationProviderCapability;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializeResult;
+use tower_lsp_server::ls_types::NotebookCellArrayChange;
 use tower_lsp_server::ls_types::OneOf;
 use tower_lsp_server::ls_types::Registration;
 use tower_lsp_server::ls_types::RenameOptions;
@@ -451,7 +452,61 @@ pub(crate) fn did_change_notebook(
     lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let _ = (params, lsp_state, state);
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // A metadata-only change leaves cells and their order alone.
+    let Some(cells) = params.change.cells else {
+        return Ok(());
+    };
+
+    if let Some(structure) = cells.structure {
+        for text_document in structure.did_open.into_iter().flatten() {
+            did_open(DidOpenTextDocumentParams { text_document }, state)?;
+        }
+        apply_cell_splice(state, &path, &structure.array)?;
+        for text_document in structure.did_close.into_iter().flatten() {
+            did_close(DidCloseTextDocumentParams { text_document }, state)?;
+        }
+    }
+
+    for content in cells.text_content.into_iter().flatten() {
+        let params = DidChangeTextDocumentParams {
+            text_document: content.document,
+            content_changes: content.changes,
+        };
+        did_change(params, lsp_state, state)?;
+    }
+
+    sync_notebook_cells(state, &path)
+}
+
+/// Apply a client cell-array splice to our copy of the notebook's cell list.
+fn apply_cell_splice(
+    state: &mut WorldState,
+    path: &FilePath,
+    array: &NotebookCellArrayChange,
+) -> anyhow::Result<()> {
+    let inserted = array
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+
+    let Some(cells) = state.notebooks.get_mut(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+
+    let start = array.start as usize;
+    let end = start + array.delete_count as usize;
+    if end > cells.len() {
+        return Err(anyhow!(
+            "Cell splice {start}..{end} is out of range for notebook {path} with {len} cells",
+            len = cells.len()
+        ));
+    }
+
+    cells.splice(start..end, inserted);
     Ok(())
 }
 

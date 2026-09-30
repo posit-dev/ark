@@ -1,15 +1,27 @@
 use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
 use tower_lsp_server::ls_types::NotebookCell;
+use tower_lsp_server::ls_types::NotebookCellArrayChange;
 use tower_lsp_server::ls_types::NotebookCellKind;
 use tower_lsp_server::ls_types::NotebookDocument;
+use tower_lsp_server::ls_types::NotebookDocumentCellChange;
+use tower_lsp_server::ls_types::NotebookDocumentCellChangeStructure;
+use tower_lsp_server::ls_types::NotebookDocumentChangeEvent;
+use tower_lsp_server::ls_types::NotebookDocumentChangeTextContent;
+use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
 use crate::lsp::goto_definition::goto_definition;
+use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
+use crate::lsp::state_handlers::did_change_notebook;
 use crate::lsp::state_handlers::did_open_notebook;
 
 const NOTEBOOK: &str = "file:///proj/analysis.ipynb";
@@ -104,4 +116,97 @@ fn test_notebook_did_open_registers_cells_as_open_files() {
 
     assert_eq!(state.open_files.len(), 1);
     assert_eq!(state.notebooks.len(), 1);
+}
+
+fn test_lsp_state() -> LspState {
+    LspState::new(
+        tokio::sync::mpsc::unbounded_channel().0,
+        SourceScheduler::new(None),
+    )
+}
+
+fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::Result<()> {
+    let params = DidChangeNotebookDocumentParams {
+        notebook_document: VersionedNotebookDocumentIdentifier {
+            version: 1,
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        change: NotebookDocumentChangeEvent {
+            metadata: None,
+            cells: Some(cells),
+        },
+    };
+    did_change_notebook(params, &mut test_lsp_state(), state)
+}
+
+fn splice(start: u32, delete_count: u32, inserted: &[(usize, &str)]) -> NotebookDocumentCellChange {
+    NotebookDocumentCellChange {
+        structure: Some(NotebookDocumentCellChangeStructure {
+            array: NotebookCellArrayChange {
+                start,
+                delete_count,
+                cells: Some(
+                    inserted
+                        .iter()
+                        .map(|&(handle, _)| code_cell(handle))
+                        .collect(),
+                ),
+            },
+            did_open: Some(
+                inserted
+                    .iter()
+                    .map(|&(handle, text)| cell_item(handle, text))
+                    .collect(),
+            ),
+            did_close: None,
+        }),
+        data: None,
+        text_content: None,
+    }
+}
+
+#[test]
+fn test_notebook_did_change_splice_inserts_cell() {
+    let mut state = WorldState::default();
+    open(&mut state, &[1], &[(1, "y\n")]);
+    assert_eq!(definition_uri(&state, 1, 0, 0), None);
+
+    // Insert a new cell above the use that defines the name.
+    change(&mut state, splice(0, 0, &[(5, "y <- 1\n")])).unwrap();
+
+    assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(5)));
+}
+
+#[test]
+fn test_notebook_did_change_text_updates_resolution() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1], &[(0, "old <- 1\n"), (1, "old\n")]);
+    assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(0)));
+
+    let edit = NotebookDocumentCellChange {
+        structure: None,
+        data: None,
+        text_content: Some(vec![NotebookDocumentChangeTextContent {
+            document: VersionedTextDocumentIdentifier {
+                uri: cell_uri(0),
+                version: 1,
+            },
+            changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "new <- 1\n".to_string(),
+            }],
+        }]),
+    };
+    change(&mut state, edit).unwrap();
+
+    assert_eq!(definition_uri(&state, 1, 0, 0), None);
+}
+
+#[test]
+fn test_notebook_did_change_out_of_range_splice_errors() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0], &[(0, "x <- 1\n")]);
+
+    assert!(change(&mut state, splice(3, 1, &[])).is_err());
 }
