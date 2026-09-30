@@ -1,5 +1,7 @@
+use oak_db::DbInputs;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
@@ -11,17 +13,21 @@ use tower_lsp_server::ls_types::NotebookDocumentCellChange;
 use tower_lsp_server::ls_types::NotebookDocumentCellChangeStructure;
 use tower_lsp_server::ls_types::NotebookDocumentChangeEvent;
 use tower_lsp_server::ls_types::NotebookDocumentChangeTextContent;
+use tower_lsp_server::ls_types::NotebookDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
 use crate::lsp::goto_definition::goto_definition;
+use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_notebook;
+use crate::lsp::state_handlers::did_close_notebook;
 use crate::lsp::state_handlers::did_open_notebook;
 
 const NOTEBOOK: &str = "file:///proj/analysis.ipynb";
@@ -209,4 +215,27 @@ fn test_notebook_did_change_out_of_range_splice_errors() {
     open(&mut state, &[0], &[(0, "x <- 1\n")]);
 
     assert!(change(&mut state, splice(3, 1, &[])).is_err());
+}
+
+#[test]
+fn test_notebook_did_close_forgets_cell_order() {
+    // `did_close` publishes empty diagnostics through the auxiliary loop.
+    let _aux = init_aux_for_test();
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1], &[(0, "x <- 1\n"), (1, "x\n")]);
+
+    let params = DidCloseNotebookDocumentParams {
+        notebook_document: NotebookDocumentIdentifier {
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        cell_text_documents: vec![
+            TextDocumentIdentifier { uri: cell_uri(0) },
+            TextDocumentIdentifier { uri: cell_uri(1) },
+        ],
+    };
+    did_close_notebook(params, &mut state).unwrap();
+
+    assert!(state.notebooks.is_empty());
+    assert!(state.open_files.is_empty());
+    assert!(state.db().open_notebooks().notebooks(state.db()).is_empty());
 }

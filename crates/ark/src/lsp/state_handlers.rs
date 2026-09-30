@@ -515,7 +515,17 @@ pub(crate) fn did_close_notebook(
     params: DidCloseNotebookDocumentParams,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let _ = (params, state);
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // Forget the order before closing the cells, so no query sees a notebook
+    // that lists closed cells.
+    state.notebooks.remove(&path);
+    state.db_mut().close_notebook(&path);
+
+    for text_document in params.cell_text_documents {
+        did_close(DidCloseTextDocumentParams { text_document }, state)?;
+    }
+
     Ok(())
 }
 
