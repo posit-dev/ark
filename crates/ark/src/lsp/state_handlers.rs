@@ -40,7 +40,11 @@ use tower_lsp_server::ls_types::HoverProviderCapability;
 use tower_lsp_server::ls_types::ImplementationProviderCapability;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializeResult;
+use tower_lsp_server::ls_types::Notebook;
 use tower_lsp_server::ls_types::NotebookCellArrayChange;
+use tower_lsp_server::ls_types::NotebookCellSelector;
+use tower_lsp_server::ls_types::NotebookDocumentSyncOptions;
+use tower_lsp_server::ls_types::NotebookSelector;
 use tower_lsp_server::ls_types::OneOf;
 use tower_lsp_server::ls_types::Registration;
 use tower_lsp_server::ls_types::RenameOptions;
@@ -133,6 +137,14 @@ pub(crate) fn initialize(
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
             )),
+            // Claim R cells of Jupyter notebooks and of the notebooks Positron
+            // builds for Quarto and R Markdown documents. The client then sends
+            // them through `notebookDocument/*`, which carries cell order, and
+            // stops sending `textDocument/did*` for them.
+            notebook_document_sync: Some(OneOf::Left(NotebookDocumentSyncOptions {
+                notebook_selector: vec![r_cells_of("jupyter-notebook"), r_cells_of("quarto-cells")],
+                save: None,
+            })),
             selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
             hover_provider: Some(HoverProviderCapability::from(true)),
             completion_provider: Some(CompletionOptions {
@@ -190,6 +202,16 @@ pub(crate) fn initialize(
     };
 
     Ok(result)
+}
+
+/// Selects the R cells of notebooks of type `notebook_type`.
+fn r_cells_of(notebook_type: &str) -> NotebookSelector {
+    NotebookSelector::ByNotebook {
+        notebook: Notebook::String(notebook_type.to_string()),
+        cells: Some(vec![NotebookCellSelector {
+            language: String::from("r"),
+        }]),
+    }
 }
 
 /// Resolve the effective workspace folders from `InitializeParams`.
