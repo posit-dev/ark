@@ -8,6 +8,8 @@ use rustc_hash::FxHashSet;
 use crate::File;
 use crate::LibraryRoots;
 use crate::LiveRoot;
+use crate::Notebook;
+use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
@@ -39,6 +41,9 @@ pub trait DbInputs: salsa::Database {
     /// tracked and callers _must_ depend on the corresponding revision input
     /// for the file before reading.
     fn read_to_string(&self, path: &Utf8Path) -> io::Result<String>;
+
+    /// Notebooks open in the editor, with their cells in document order.
+    fn open_notebooks(&self) -> OpenNotebooks;
 }
 
 /// Database access for source text, syntax, membership, and package metadata.
@@ -388,6 +393,24 @@ fn root_package_index(db: &dyn SourceDb, root: Root) -> FxHashMap<String, Packag
     let mut map = FxHashMap::default();
     for &pkg in root.packages(db) {
         map.insert(pkg.name(db).clone(), pkg);
+    }
+    map
+}
+
+/// The open notebook that holds `file` as a cell, if any.
+pub(crate) fn notebook_by_cell(db: &dyn Db, file: File) -> Option<Notebook> {
+    notebook_cell_index(db).get(&file).copied()
+}
+
+/// Cell -> notebook index over every open notebook. Rebuilt when any
+/// notebook's cell list changes. Notebooks are few, so one flat map is enough.
+#[salsa::tracked(returns(ref))]
+fn notebook_cell_index(db: &dyn Db) -> FxHashMap<File, Notebook> {
+    let mut map = FxHashMap::default();
+    for &notebook in db.open_notebooks().notebooks(db) {
+        for &cell in notebook.cells(db) {
+            map.insert(cell, notebook);
+        }
     }
     map
 }

@@ -23,6 +23,7 @@ use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::LibraryRoots;
+use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
@@ -43,6 +44,7 @@ pub(super) struct TestDb {
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
     stale_root: Arc<OnceLock<StaleRoot>>,
+    open_notebooks: Arc<OnceLock<OpenNotebooks>>,
 }
 
 impl TestDb {
@@ -62,6 +64,7 @@ impl TestDb {
             library_roots: Arc::new(OnceLock::new()),
             orphan_root: Arc::new(OnceLock::new()),
             stale_root: Arc::new(OnceLock::new()),
+            open_notebooks: Arc::new(OnceLock::new()),
         }
     }
 
@@ -134,6 +137,12 @@ impl DbInputs for TestDb {
 
     fn stale_root(&self) -> StaleRoot {
         *self.stale_root.get_or_init(|| StaleRoot::empty(self))
+    }
+
+    fn open_notebooks(&self) -> OpenNotebooks {
+        *self
+            .open_notebooks
+            .get_or_init(|| OpenNotebooks::empty(self))
     }
 }
 
