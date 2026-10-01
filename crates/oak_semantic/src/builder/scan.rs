@@ -54,13 +54,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///   entered (its `BodyScan::Deferred` snapshot). The parent's own scan was
     ///   seeded the same way, so this is transitively complete: it holds every
     ///   eager binding visible from an ancestor at this scope's definition point.
-    /// - The scope's own already-bound names. For a function scope that's the
-    ///   parameters, recorded just before the scan runs. For file and NSE scopes
-    ///   nothing local is bound yet.
+    /// - The scope's own already-bound names from its symbol table.
     ///
-    /// Parameter defaults are a special case: they are scanned before the params
-    /// are recorded, so `walk_function` seeds the full formal set by hand
-    /// (all formals bind at once in R, so a default sees every parameter name).
+    /// A function scope's parameters are not in its symbol table yet, because
+    /// the walk records them after the scan. `scan_parameter_defaults()` seeds
+    /// the formals instead.
     pub(super) fn begin_scan(&mut self) {
         let range = self.scopes[self.current_scope].range;
 
@@ -745,8 +743,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     pub(super) fn scan_parameter_defaults(&mut self, params: &RParameters) {
-        // Seed `bound_so_far` with every parameter names so a callee inside a
-        // default value sees the full formal set
+        // Every default sees all formals because R binds them into the frame
+        // at once, regardless of parameter order. For example, `local()` in
+        // `function(b = local(...), local)` does not use base NSE semantics.
+        //
+        // The scan approximates defaults as forced at function entry, in
+        // declaration order. Their bindings and package attachments are visible
+        // throughout the body, and their callees resolve before body bindings.
+        // R instead forces default promises on first use, possibly in another
+        // order or not at all. These differences produce no diagnostic, as
+        // asserted by the `test_approximation_` tests in `contrib/base.rs`.
+        //
+        // Both `bound_so_far` and `bound_anywhere` need the formals for the
+        // defaults and body, including frame queries such as `substitute()`.
+        // The walk cannot supply them because it runs after the body scan.
         for param in params.items().iter() {
             let Ok(param) = param else { continue };
             let Ok(name) = param.name() else { continue };
@@ -755,7 +765,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.scan.bound_so_far.bind(text);
+            self.record_binding(text, name.syntax().text_trimmed_range());
         }
 
         for param in params.items().iter() {

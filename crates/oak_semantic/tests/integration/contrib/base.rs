@@ -1026,16 +1026,14 @@ fn test_callee_dependencies_are_in_source_order() {
 
 #[test]
 fn test_callee_dependencies_keep_value_callees_of_deferred_parameter_defaults() {
-    // The `on.exit()` body in the default is scanned after the walk has
-    // already visited the parameters. Its `c` dependency still reaches the
-    // index, even though the `source()` effect itself is lost.
+    // Deferring `source()` through `on.exit()` must not hide its effect
+    // dependency or the nested `c()` value dependency.
     let source = "f <- function(x = on.exit(source(c(\"more.R\")))) x\n";
     let index = index_with_base(source);
-    assert_eq!(callee_dependencies(&index, source), [(
-        "c",
-        "c(\"more.R\")",
-        CalleeUsage::Value
-    )]);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("source", "source(c(\"more.R\"))", CalleeUsage::Effects),
+        ("c", "c(\"more.R\")", CalleeUsage::Value),
+    ]);
 }
 
 /// Each dependency's callee name, call text, and usage.
@@ -3585,4 +3583,248 @@ f <- function() {
     assert_eq!(enclosing_scope, f_scope);
     assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
     assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_nse_on_exit_in_parameter_default_records_attach() {
+    let index = index_with_base("f <- function(x = on.exit(library(dplyr))) x\n");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
+    }]);
+}
+
+#[test]
+fn test_nse_on_exit_in_parameter_default_records_source() {
+    let index = index_with_base("f <- function(x = on.exit(source(\"a.R\"))) x\n");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "a.R".into(),
+        resolved: None,
+    }]);
+}
+
+// These tests assert where `scan_parameter_defaults()` differs from R's lazy
+// default forcing without reporting a diagnostic. The scan assumes defaults
+// are forced at entry in declaration order. R forces them on first use,
+// possibly in another order or not at all.
+
+#[test]
+fn test_approximation_default_binding_shadows_body_callee() {
+    // The scan resolves `local()` to `identity()` and creates no NSE scope
+    // because it treats `x`'s default as forced at entry. R never forces `x`
+    // in this body, so `local()` retains base NSE semantics.
+    let source = "\
+f <- function(x = (local <- identity)) {
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_default_attach_is_visible_to_body() {
+    // The scan gives `reactive()` shiny's NSE semantics because it treats
+    // `x`'s default as forced at entry. R never forces `x` in this body, so
+    // the default does not attach `shiny`. Runtime resolution of `reactive()`
+    // depends on the existing environment.
+    let source = "\
+f <- function(x = library(shiny)) {
+    reactive({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "shiny".into(),
+        region: AttachRegion::Unconditional,
+    }]);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(
+        index.symbols(reactive_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_default_callee_resolves_before_body_bindings() {
+    // The scan gives the default's `local()` base NSE semantics because it
+    // resolves the call before the body binding. At runtime, the body binds
+    // `local` to `identity()` before forcing `x`.
+    let source = "\
+f <- function(x = local({ y <- 1 })) {
+    local <- identity
+    x
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    // `local` also has `IS_USED` because the default calls it before the scan
+    // reaches the body binding.
+    assert!(index
+        .symbols(f_scope)
+        .get("local")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_defaults_scan_in_declaration_order() {
+    // The scan gives `x`'s `local()` base NSE semantics because declaration
+    // order puts it before `z`'s binding. At runtime, the body forces `z`
+    // before `x`, so the call resolves to `identity()`.
+    let source = "\
+f <- function(x = local({ y <- 1 }), z = (local <- identity)) {
+    z
+    x
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    // `local` also has `IS_USED` because the scan reaches `x`'s call before
+    // the binding in `z`'s default.
+    assert!(index
+        .symbols(f_scope)
+        .get("local")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_parameter_default_conditional_binding_stays_conditional_in_body() {
+    // The body's `local()` retains base NSE semantics but gets an ambiguity
+    // diagnostic because the default binds `local` only when `cond` is true.
+    let source = "\
+f <- function(x = if (cond) local <- identity) {
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(f_scope).get("y").is_none());
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { binding_range },
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+
+            let start = u32::from(binding_range.start()) as usize;
+            assert_eq!(start, source.find("local").unwrap());
+            assert_eq!(u32::from(binding_range.len()), 5);
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+// `<<-` to a name that only base binds targets base's locked binding: R
+// signals "cannot change value of locked binding" and binds nothing, so the
+// later call still reaches base `local()`. These tests pin that reading: NSE,
+// with no ambiguity diagnostic.
+
+#[test]
+fn test_super_assignment_to_locked_base_name_in_default_keeps_callee() {
+    let source = "\
+f <- function(x = (local <<- identity)) {
+    x
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_to_locked_base_name_in_body_keeps_callee() {
+    let source = "\
+f <- function() {
+    local <<- identity
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_parameter_shadows_body_callee() {
+    let index = index_with_base("f <- function(local) local({ y <- 1 })\n");
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
 }
