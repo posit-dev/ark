@@ -115,7 +115,7 @@ pub(crate) fn lower_semantic_diagnostic(
     diagnostic: &SemanticDiagnostic,
 ) -> Diagnostic {
     match diagnostic {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason,
