@@ -7,6 +7,7 @@ use biome_rowan::AstNode;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 
+use crate::effects::inert_argument_effects;
 use crate::effects::BoundArguments;
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
@@ -27,7 +28,9 @@ impl EffectHandler for SubstituteHandler {
 
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let formals: Formals = &["expr", "env"];
-        let bound = BoundArguments::new(call, formals);
+        let Some(bound) = BoundArguments::new(call, formals) else {
+            return Some(inert_argument_effects(call));
+        };
         let expr_pos = bound
             .arguments()
             .position(|(formal, _)| formal == Some("expr"))?;

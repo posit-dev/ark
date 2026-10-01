@@ -338,6 +338,59 @@ fn test_substitute_leaves_free_symbol_quoted() {
 }
 
 #[test]
+fn test_substitute_repeated_named_argument_is_inert() {
+    // R rejects the duplicate `expr` before evaluating either argument, so the
+    // assignment never runs and `c` stays base `c()`.
+    let source = "substitute(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_bquote_repeated_named_argument_is_inert() {
+    let source = "bquote(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_local_repeated_named_argument_is_inert() {
+    // Declared argument effects take the same fallback: no NSE scope is pushed
+    // and nothing in the arguments binds.
+    let source = "local(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
 fn test_substitute_global_frame_quotes() {
     // R substitutes nothing in the global environment, so a top-level
     // `substitute` is a plain quote: `a` stays bound-only and `b` is absent. The
@@ -589,6 +642,13 @@ fn test_directive_character_only_string() {
 }
 
 #[test]
+fn test_directive_repeated_named_argument_not_attached() {
+    // R errors when several named arguments match the same formal.
+    let index = index_with_base("library(dplyr, character.only = FALSE, character.only = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
 fn test_directive_character_only_identifier_not_attached() {
     // With `character.only = TRUE` the package argument is a variable to resolve,
     // not a symbol. We can't chase it statically, so nothing is attached, rather
@@ -756,6 +816,69 @@ fn test_source_call_c_concatenates_nested_and_null_elements() {
 #[test]
 fn test_source_call_c_options_are_not_elements() {
     let index = index_with_base("source(c(\"helpers.R\", use.names = FALSE, recursive = TRUE))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_repeated_named_argument_ignored() {
+    // R errors when several named arguments match the same formal.
+    let index = index_with_base("source(\"helpers.R\", local = FALSE, local = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_repeated_element_names_are_elements() {
+    // Names that match no formal go to `...`, where they may repeat.
+    let index = index_with_base("source(c(a = \"helpers.R\", a = NULL))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_unnamed_options_are_elements() {
+    // `recursive` and `use.names` follow `...`, so positional arguments never
+    // fill them. `TRUE` is an element here, and not a character one.
+    let index = index_with_base("source(c(\"helpers.R\", TRUE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_repeated_option_ignored() {
+    // R errors when a formal is matched by several arguments.
+    let index = index_with_base("source(c(\"helpers.R\", recursive = TRUE, recursive = FALSE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = TRUE, use.names = TRUE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_missing_option_value_ignored() {
+    let index = index_with_base("source(c(\"helpers.R\", recursive = ))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = ))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_dynamic_option_value_ignored() {
+    let index = index_with_base("source(c(\"helpers.R\", recursive = flag))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = NA))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_options_named_by_strings_are_options() {
+    let index =
+        index_with_base("source(c(\"helpers.R\", \"recursive\" = TRUE, `use.names` = FALSE))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
         path: "helpers.R".into(),
         resolved: None,

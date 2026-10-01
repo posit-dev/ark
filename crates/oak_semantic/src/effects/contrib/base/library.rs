@@ -20,7 +20,7 @@ impl EffectHandler for LibraryHandler {
 
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<String> {
         let formals: Formals = &["package", "help", "pos", "lib.loc", "character.only"];
-        let bound = BoundArguments::new(call, formals);
+        let bound = BoundArguments::new(call, formals)?;
 
         let package = bound.get("package")?;
         let character_only = bound
