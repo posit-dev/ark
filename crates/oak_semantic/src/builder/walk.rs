@@ -1017,10 +1017,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 }
 
-/// The callee of `call` when it's written as a bare identifier. `None` for
-/// anything else, including a `pkg::fn` callee: `::` names the package outright,
-/// so no binding can shadow it. Mirrors the two cases
-/// `resolve_effects_handlers` recognizes.
+/// Only bare callees can be shadowed by bindings. Qualified callees such as
+/// `pkg::fn` name the package explicitly and are excluded.
 fn bare_callee_name(call: &RCall) -> Option<String> {
     match call.function().ok()? {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text().to_string()),

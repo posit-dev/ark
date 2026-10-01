@@ -190,12 +190,12 @@ with(d, {
 #[test]
 fn test_diagnostic_gap_lazy_sibling_attach() {
     // Known gap, silent. `g`'s `library(shiny)` never runs, since nothing
-    // calls `g`. Even if it did, `conditional_attach_candidates()`'s
+    // calls `g`. Even if it did, `conditional_attach_uncertainty()`'s
     // call-site probe only sees attaches reachable from its own scan, so it
     // can't tell that `f`'s `reactive()` might one day run after `g`.
     // Catching this needs a whole-file post-pass over lazy contexts, not a
     // call-site probe (see the doc comment on
-    // `conditional_attach_candidates()` in
+    // `conditional_attach_uncertainty()` in
     // `crates/oak_semantic/src/builder/effects.rs`).
     let mut db = TestDb::new();
     install_packages(&mut db, &["shiny"]);

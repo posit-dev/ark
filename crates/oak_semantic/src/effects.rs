@@ -26,22 +26,23 @@ mod contrib;
 mod value;
 
 pub use value::StaticValue;
+pub use value::ValueHandler;
 
 /// Registry entries keyed by function name so they can be queried by `lookup()`
 /// (package plus function) and `annotates()` (function only) probe on. Entries
 /// for a name carried by several packages (e.g. `defer()` in both withr and
 /// rlang) are kept in registry order, so `lookup` breaks a tie the same way a
 /// scan of `REGISTRY` would.
-static INDEX: LazyLock<FxHashMap<&'static str, Vec<(&'static str, &'static EffectsHandlers)>>> =
+static INDEX: LazyLock<FxHashMap<&'static str, Vec<(&'static str, &'static FunctionHandlers)>>> =
     LazyLock::new(|| {
-        let mut index: FxHashMap<&'static str, Vec<(&'static str, &'static EffectsHandlers)>> =
+        let mut index: FxHashMap<&'static str, Vec<(&'static str, &'static FunctionHandlers)>> =
             FxHashMap::default();
         for package in contrib::REGISTRY {
             for entry in package.functions {
                 index
                     .entry(entry.function)
                     .or_default()
-                    .push((package.name, &entry.effects));
+                    .push((package.name, &entry.handlers));
             }
         }
         index
@@ -80,6 +81,38 @@ pub struct AssignBinding {
     pub target: TargetAccess,
 }
 
+/// Effect handling and static evaluation are independent. For example, `c()`
+/// has a value handler but no effects.
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionHandlers {
+    pub effects: EffectsHandlers,
+    pub value: Option<&'static dyn ValueHandler>,
+}
+
+impl FunctionHandlers {
+    pub const fn with_effects(effects: EffectsHandlers) -> Self {
+        Self {
+            effects,
+            value: None,
+        }
+    }
+
+    pub const fn with_value(value: &'static dyn ValueHandler) -> Self {
+        Self {
+            effects: EffectsHandlers::EMPTY,
+            value: Some(value),
+        }
+    }
+
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
+    }
+
+    pub fn has_value(&self) -> bool {
+        self.value.is_some()
+    }
+}
+
 /// The handlers that compute a function's effects.
 #[derive(Debug, Clone, Copy)]
 pub struct EffectsHandlers {
@@ -87,34 +120,6 @@ pub struct EffectsHandlers {
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
     pub source: Option<&'static dyn EffectHandler<Output = Vec<SourcePath>>>,
     pub assign: Option<&'static dyn AssignHandler>,
-    /// Evaluates pure calls such as `c()` only when an effect argument needs
-    /// their static value. This handler does not itself produce an effect.
-    pub value: Option<&'static dyn EffectHandler<Output = StaticValue>>,
-}
-
-/// Handler lookup and the search-path uncertainty visible at the call site.
-/// Conditional attaches are ordered most recent first so each consumer can
-/// select the first package providing the handler it needs.
-pub struct ResolvedEffectsHandlers {
-    pub handlers: Option<EffectsHandlers>,
-    pub lazy_shadow: Option<TextRange>,
-    pub conditional_attaches: Vec<ConditionalAttachCandidate>,
-}
-
-pub struct ConditionalAttachCandidate {
-    pub handlers: EffectsHandlers,
-    pub package: String,
-    pub attach_range: TextRange,
-}
-
-impl ResolvedEffectsHandlers {
-    pub fn certain(handlers: Option<EffectsHandlers>) -> Self {
-        Self {
-            handlers,
-            lazy_shadow: None,
-            conditional_attaches: Vec::new(),
-        }
-    }
 }
 
 impl EffectsHandlers {
@@ -123,20 +128,108 @@ impl EffectsHandlers {
         attach: None,
         source: None,
         assign: None,
-        value: None,
     };
 
-    /// Excludes value-only handlers so a pure call is not treated as an effect.
-    pub fn has_effects(&self) -> bool {
-        self.arguments.is_some() ||
-            self.attach.is_some() ||
-            self.source.is_some() ||
-            self.assign.is_some()
+    pub fn is_empty(&self) -> bool {
+        self.arguments.is_none() &&
+            self.attach.is_none() &&
+            self.source.is_none() &&
+            self.assign.is_none()
     }
 }
 
-/// Look up the effect handlers of a `(package, function)` pair.
-pub fn lookup(package: &str, function: &str) -> Option<&'static EffectsHandlers> {
+/// The source of a callee resolution, including lookups with no known handlers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalleeOrigin {
+    /// A binding in the file's own scopes, visible at the call site.
+    Local,
+    /// The name is locally unbound, so attached packages and base decide it.
+    /// This includes lookups that found no handler.
+    SearchPath,
+    /// `pkg::fn` or `pkg:::fn`, which no binding or attach can change.
+    Qualified,
+    /// Callees such as `f()()` or `x$f()` require runtime evaluation, so
+    /// name lookup cannot provide handlers.
+    Dynamic,
+}
+
+/// Flow uncertainty is retained alongside the handlers so each consumer can
+/// report only ambiguity relevant to the handler it uses.
+#[derive(Debug, Clone)]
+pub struct CalleeResolution {
+    pub origin: CalleeOrigin,
+    pub handlers: Option<FunctionHandlers>,
+    uncertainty: Option<CalleeUncertainty>,
+}
+
+/// Search-path uncertainty is classified by whether handlers were found.
+/// Only successful lookups are checked for lazy shadowing, and only lookups
+/// without handlers are checked for dropped attaches.
+#[derive(Debug, Clone)]
+pub(crate) enum CalleeUncertainty {
+    /// A binding in an enclosing scope, whose timing relative to this lazy
+    /// body is unknown, could shadow the handlers that were found.
+    LazyShadow { overwrite_range: TextRange },
+    /// Attaches dropped at a branch or loop join could supply missing handlers.
+    /// Candidates are in reverse attach order, not a reconstructed runtime
+    /// search path. Each consumer reports the first candidate with the handler
+    /// it needs, even if a newer candidate binds the name without that handler.
+    ConditionalAttach(Vec<DroppedAttach>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DroppedAttach {
+    pub(crate) package: String,
+    pub(crate) attach_range: TextRange,
+    pub(crate) handlers: FunctionHandlers,
+}
+
+impl CalleeResolution {
+    pub(crate) fn new(
+        origin: CalleeOrigin,
+        handlers: Option<FunctionHandlers>,
+        uncertainty: Option<CalleeUncertainty>,
+    ) -> Self {
+        Self {
+            origin,
+            handlers,
+            uncertainty,
+        }
+    }
+
+    /// Construct a resolution with no recorded flow uncertainty. This lets
+    /// [`ScopeContext`] implementations outside the scan return a resolution
+    /// without access to the scanner's uncertainty tracking.
+    pub fn settled(origin: CalleeOrigin, handlers: Option<FunctionHandlers>) -> Self {
+        Self::new(origin, handlers, None)
+    }
+
+    /// Report only uncertainty involving handlers accepted by `uses`, such as
+    /// [`FunctionHandlers::has_value()`]. A value-only handler should not cause
+    /// an effect diagnostic, and an effect-only handler should not cause a
+    /// static-value diagnostic.
+    pub fn ambiguity(&self, uses: fn(&FunctionHandlers) -> bool) -> Option<AmbiguityReason> {
+        match self.uncertainty.as_ref()? {
+            CalleeUncertainty::LazyShadow { overwrite_range } => self
+                .handlers
+                .as_ref()
+                .is_some_and(uses)
+                .then_some(AmbiguityReason::LazyShadow {
+                    overwrite_range: *overwrite_range,
+                }),
+            CalleeUncertainty::ConditionalAttach(dropped) => dropped
+                .iter()
+                .find(|attach| uses(&attach.handlers))
+                .map(|attach| AmbiguityReason::ConditionalAttach {
+                    package: attach.package.clone(),
+                    attach_range: attach.attach_range,
+                }),
+        }
+    }
+}
+
+/// Look up the handlers of a `(package, function)` pair.
+pub fn lookup(package: &str, function: &str) -> Option<&'static FunctionHandlers> {
     INDEX
         .get(function)?
         .iter()
@@ -159,11 +252,8 @@ pub fn annotates(name: &str) -> bool {
 ///
 /// The copied `sourceDir()` idiom leaves `list.files()` at its
 /// `recursive = FALSE` default, so nested scripts are excluded.
-pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
-    if name != "sourceDir" {
-        return None;
-    }
-    Some(&EffectsHandlers {
+pub fn source_dir_idiom(name: &str) -> Option<&'static FunctionHandlers> {
+    static SOURCE_DIR: FunctionHandlers = FunctionHandlers::with_effects(EffectsHandlers {
         source: Some(&SourceAnnotation {
             formals: &["path"],
             path: "path",
@@ -171,7 +261,9 @@ pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
             default_path: None,
         }),
         ..EffectsHandlers::EMPTY
-    })
+    });
+
+    (name == "sourceDir").then_some(&SOURCE_DIR)
 }
 
 /// Resolver for an effect of a call.
@@ -230,7 +322,7 @@ pub trait ScopeContext {
 
     /// Use live bindings and the search path for nested calls, so a local
     /// definition can shadow a registered value handler.
-    fn resolve_callee(&mut self, call: &RCall) -> ResolvedEffectsHandlers;
+    fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution;
 
     fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason);
 }
@@ -345,38 +437,14 @@ impl<'a> CallContext<'a> {
             },
             AnyRExpression::RNullExpression(_) => Some(StaticValue::Null),
             AnyRExpression::RCall(call) => {
-                let resolved = self.scope.resolve_callee(call);
-                self.report_static_value_ambiguity(call, &resolved);
-                resolved.handlers?.value?.resolve(call, self)
+                let resolution = self.scope.resolve_callee(call);
+                if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_value) {
+                    self.scope.record_callee_ambiguity(call, reason);
+                }
+                resolution.handlers?.value?.evaluate(call, self)
             },
             _ => None,
         }
-    }
-
-    fn report_static_value_ambiguity(&mut self, call: &RCall, resolved: &ResolvedEffectsHandlers) {
-        let reason = match resolved.handlers.as_ref() {
-            Some(handlers) if handlers.value.is_some() => {
-                let Some(overwrite_range) = resolved.lazy_shadow else {
-                    return;
-                };
-                AmbiguityReason::LazyShadow { overwrite_range }
-            },
-            Some(_) => return,
-            None => {
-                let Some(candidate) = resolved
-                    .conditional_attaches
-                    .iter()
-                    .find(|candidate| candidate.handlers.value.is_some())
-                else {
-                    return;
-                };
-                AmbiguityReason::ConditionalAttach {
-                    package: candidate.package.clone(),
-                    attach_range: candidate.attach_range,
-                }
-            },
-        };
-        self.scope.record_callee_ambiguity(call, reason);
     }
 
     /// Require a character vector rather than treating `NULL` as an empty one.

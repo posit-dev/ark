@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use oak_semantic::effects;
 use oak_semantic::effects::DirWalk;
-use oak_semantic::EffectsHandlers;
+use oak_semantic::FunctionHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -90,7 +90,7 @@ impl ImportsResolver for TestImportsResolver {
             .unwrap_or_default()
     }
 
-    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
         self.consultations.set(self.consultations.get() + 1);
         attached
             .iter()
@@ -118,7 +118,7 @@ impl ImportsResolver for MissingPackageResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         effects::lookup("base", name).copied()
     }
 

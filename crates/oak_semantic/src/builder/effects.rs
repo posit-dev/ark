@@ -15,11 +15,13 @@ use super::SemanticIndexBuilder;
 use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
-use crate::effects::ConditionalAttachCandidate;
+use crate::effects::CalleeOrigin;
+use crate::effects::CalleeResolution;
+use crate::effects::CalleeUncertainty;
+use crate::effects::DroppedAttach;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
-use crate::effects::EffectsHandlers;
-use crate::effects::ResolvedEffectsHandlers;
+use crate::effects::FunctionHandlers;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::ScopeId;
@@ -27,10 +29,11 @@ use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     pub(super) fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
-        let resolved = self.resolve_effects_handlers(call);
-        let range = call.syntax().text_trimmed_range();
-        self.record_effects_uncertainty(call, &resolved, range);
-        let handlers = resolved.handlers?;
+        let resolution = self.resolve_callee(call);
+        if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_effects) {
+            self.record_call_ambiguity(call, reason);
+        }
+        let handlers = resolution.handlers?.effects;
 
         let mut bindings = ScanBindings { builder: self };
         let mut ctx = CallContext::new(&mut bindings);
@@ -56,53 +59,47 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         })
     }
 
-    /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
+    /// Resolve during the scan, not the walk, because bare names depend on
+    /// flow-precise bindings and attachments at the call site. Qualified names
+    /// bypass those bindings, and the `sourceDir()` idiom overrides the handlers
+    /// that name lookup finds.
     ///
-    /// The shared core for both NSE recognition ([`scan_call`] reads `.arguments`) and
-    /// attach recognition ([`scan_call`] reads `.attach`). Two cases resolve:
-    /// - A bare identifier. If bound locally it goes through the local
-    ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
-    ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path, against the attach set in `attached_so_far`.
-    /// - A `pkg::fn` namespace expression, resolved through
-    ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
-    ///   so there's no search-path disambiguation; the resolver answers from
-    ///   per-package knowledge (the static registry, plus cross-file knowledge
-    ///   like the re-export chase once that lands).
-    ///
-    /// The bound check reads the scan pass's flow-precise binding state
-    /// for the current scope, so this must run during the scan, not the walk.
-    /// Lookup returns uncertainty without emitting diagnostics. Each caller
-    /// decides whether its required handler makes the uncertainty relevant.
-    ///
-    /// [`EffectsHandlers`]: crate::effects::EffectsHandlers
-    /// [`scan_call`]: Self::scan_call
-    pub(super) fn resolve_effects_handlers(&mut self, call: &RCall) -> ResolvedEffectsHandlers {
+    /// Lookup returns uncertainty without emitting diagnostics. Effect handling
+    /// and static evaluation each use [`CalleeResolution::ambiguity()`] to
+    /// report only uncertainty relevant to the handlers they need.
+    pub(super) fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
         let Ok(func) = call.function() else {
-            return ResolvedEffectsHandlers::certain(None);
+            return CalleeResolution::settled(CalleeOrigin::Dynamic, None);
         };
 
         match &func {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
-                if let Some(effects) = effects::source_dir_idiom(&name) {
-                    return ResolvedEffectsHandlers::certain(Some(*effects));
+                let resolution = self.resolve_symbol(&name);
+
+                // Local bindings must not disable the `sourceDir()` idiom,
+                // which is usually defined in the file itself. Keep the lookup
+                // origin, but discard its uncertainty because the idiom's
+                // handlers apply regardless of which binding the name resolves to.
+                match effects::source_dir_idiom(&name) {
+                    Some(handlers) => CalleeResolution::settled(resolution.origin, Some(*handlers)),
+                    None => resolution,
                 }
-                self.resolve_symbol_effects(&name)
             },
 
-            AnyRExpression::RNamespaceExpression(ns_expr) => {
-                ResolvedEffectsHandlers::certain(self.resolve_qualified_effects(ns_expr))
-            },
+            AnyRExpression::RNamespaceExpression(ns_expr) => CalleeResolution::settled(
+                CalleeOrigin::Qualified,
+                self.resolve_qualified_effects(ns_expr),
+            ),
 
-            _ => ResolvedEffectsHandlers::certain(None),
+            _ => CalleeResolution::settled(CalleeOrigin::Dynamic, None),
         }
     }
 
     fn resolve_qualified_effects(
         &mut self,
         ns_expr: &RNamespaceExpression,
-    ) -> Option<EffectsHandlers> {
+    ) -> Option<FunctionHandlers> {
         let pkg = ns_expr.left().ok()?.identifier_text()?;
         let func_name = ns_expr.right().ok()?.identifier_text()?;
 
@@ -113,19 +110,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         self.resolver.resolve_qualified_effects(&pkg, &func_name)
     }
 
-    /// Local bindings take precedence and cannot be affected by a dropped
-    /// attach or a lazy ancestor binding.
-    fn resolve_symbol_effects(&mut self, sym: &str) -> ResolvedEffectsHandlers {
+    /// Local bindings take precedence over both dropped attaches and lazy
+    /// ancestor bindings. Calls and binding operators share this lookup.
+    fn resolve_symbol(&mut self, sym: &str) -> CalleeResolution {
         // First check for a local definition (which in the future may
         // carry declared effects that we resolve here).
         if self.scan.bound_so_far.is_bound(sym) {
-            return ResolvedEffectsHandlers::certain(self.resolve_local_effects(sym));
+            return CalleeResolution::settled(CalleeOrigin::Local, self.resolve_local_effects(sym));
         }
 
         // Bail early if it is known that no package annotates this name
         // with effects. This speeds up the common case of no known annotations.
         if !effects::annotates(sym) {
-            return ResolvedEffectsHandlers::certain(None);
+            return CalleeResolution::settled(CalleeOrigin::SearchPath, None);
         }
 
         // Now check imports since the symbol is locally unbound
@@ -133,64 +130,19 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             &self.scan.attached_inherited,
             self.scan.attached_so_far.packages(),
         );
-        let effects = self.resolver.resolve_effects(sym, &attached);
+        let handlers = self.resolver.resolve_effects(sym, &attached);
 
-        if effects.is_none() {
-            return ResolvedEffectsHandlers {
-                handlers: None,
-                lazy_shadow: None,
-                conditional_attaches: self.conditional_attach_candidates(sym),
-            };
-        }
-
-        ResolvedEffectsHandlers {
-            handlers: effects,
-            lazy_shadow: self.is_lazily_shadowed(sym),
-            conditional_attaches: Vec::new(),
-        }
-    }
-
-    fn record_effects_uncertainty(
-        &mut self,
-        call: &RCall,
-        resolved: &ResolvedEffectsHandlers,
-        range: TextRange,
-    ) {
-        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
-            return;
+        let uncertainty = match handlers {
+            Some(_) => self
+                .is_lazily_shadowed(sym)
+                .map(|overwrite_range| CalleeUncertainty::LazyShadow { overwrite_range }),
+            None => self.conditional_attach_uncertainty(sym),
         };
-        self.record_uncertainty(&ident.name_text(), range, resolved);
+
+        CalleeResolution::new(CalleeOrigin::SearchPath, handlers, uncertainty)
     }
 
-    fn record_uncertainty(
-        &mut self,
-        name: &str,
-        range: TextRange,
-        resolved: &ResolvedEffectsHandlers,
-    ) {
-        if resolved
-            .handlers
-            .as_ref()
-            .is_some_and(EffectsHandlers::has_effects)
-        {
-            if let Some(overwrite_range) = resolved.lazy_shadow {
-                self.record_ambiguity(name, range, AmbiguityReason::LazyShadow { overwrite_range });
-            }
-        } else if resolved.handlers.is_none() {
-            if let Some(candidate) = resolved
-                .conditional_attaches
-                .iter()
-                .find(|candidate| candidate.handlers.has_effects())
-            {
-                self.record_ambiguity(name, range, AmbiguityReason::ConditionalAttach {
-                    package: candidate.package.clone(),
-                    attach_range: candidate.attach_range,
-                });
-            }
-        }
-    }
-
-    pub(super) fn record_nested_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
+    pub(super) fn record_call_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
         };
@@ -217,7 +169,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// TODO(nse, inference): Infer effects from local function bodies. Calling
     /// `g()` should apply the attach in `g <- function() library(shiny)`. Mutual
     /// recursion needs a fixed point.
-    fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
+    fn resolve_local_effects(&self, _name: &str) -> Option<FunctionHandlers> {
         None
     }
 
@@ -242,10 +194,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        let resolved = self.resolve_symbol_effects(op_text);
-
-        self.record_uncertainty(op_text, bin.syntax().text_trimmed_range(), &resolved);
-        let handlers = resolved.handlers?;
+        let resolution = self.resolve_symbol(op_text);
+        if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_effects) {
+            self.record_ambiguity(op_text, bin.syntax().text_trimmed_range(), reason);
+        }
+        let handlers = resolution.handlers?.effects;
 
         let mut bindings = ScanBindings { builder: self };
         let mut ctx = CallContext::new(&mut bindings);
@@ -328,12 +281,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         None
     }
 
-    /// Probe whether `sym`'s handler would resolve through a dropped attach.
+    /// Probe dropped attaches independently, in reverse attach order, so each
+    /// consumer can report the most recent candidate with the handler it needs.
+    /// This does not reconstruct the runtime search path.
     ///
     /// The probe sees only attaches reachable from the callee's scan. Attaches
     /// in sibling lazy bodies are not in that set, even if those bodies could
     /// run before the callee.
-    fn conditional_attach_candidates(&mut self, sym: &str) -> Vec<ConditionalAttachCandidate> {
+    fn conditional_attach_uncertainty(&mut self, sym: &str) -> Option<CalleeUncertainty> {
         // A package in `attached_anywhere` but off the search path means it was
         // dropped at a branch or loop join
         let search_path = attach_search_path(
@@ -348,20 +303,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .cloned()
             .collect();
 
-        dropped
+        let candidates: Vec<DroppedAttach> = dropped
             .into_iter()
             .rev()
             .filter_map(|(package, attach_range)| {
                 let handlers = self
                     .resolver
                     .resolve_effects(sym, std::slice::from_ref(&package))?;
-                Some(ConditionalAttachCandidate {
-                    handlers,
+                Some(DroppedAttach {
                     package,
                     attach_range,
+                    handlers,
                 })
             })
-            .collect()
+            .collect();
+
+        (!candidates.is_empty()).then_some(CalleeUncertainty::ConditionalAttach(candidates))
     }
 }
 
