@@ -1,11 +1,20 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
+use aether_syntax::AnyRExpression;
+use aether_syntax::RCall;
 use biome_rowan::AstNode;
+use biome_rowan::AstNodeList;
+use oak_core::syntax_ext::RIdentifierExt;
 use oak_semantic::build_index;
 use oak_semantic::effects;
+use oak_semantic::effects::CallContext;
+use oak_semantic::effects::CalleeOrigin;
+use oak_semantic::effects::CalleeResolution;
 use oak_semantic::effects::DirWalk;
+use oak_semantic::effects::ScopeContext;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects::SourceTarget;
+use oak_semantic::effects::StaticValue;
 use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::AttachRegion;
 use oak_semantic::semantic_index::DefinitionId;
@@ -20,6 +29,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
 use oak_semantic::EffectsHandlers;
+use oak_semantic::FunctionHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
@@ -69,7 +79,7 @@ impl ImportsResolver for ConstResolver {
         Some(self.0.clone())
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         // `source()` recognition runs on the resolve path, so a source-only
         // resolver still has to resolve base effects for `source` to be seen.
         effects::lookup("base", name).copied()
@@ -84,7 +94,7 @@ impl ImportsResolver for MapResolver {
         self.0.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         effects::lookup("base", name).copied()
     }
 }
@@ -118,12 +128,12 @@ impl ImportsResolver for MultiFileResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "source" {
-            return Some(EffectsHandlers {
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 source: Some(&COLLATION_HANDLER),
                 ..EffectsHandlers::EMPTY
-            });
+            }));
         }
         effects::lookup("base", name).copied()
     }
@@ -144,12 +154,12 @@ impl ImportsResolver for PositionResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "source" {
-            return Some(EffectsHandlers {
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 source: Some(&SOURCE_PATH_SECOND),
                 ..EffectsHandlers::EMPTY
-            });
+            }));
         }
         None
     }
@@ -162,12 +172,12 @@ impl ImportsResolver for MultiAssignResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "assign" {
-            return Some(EffectsHandlers {
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 assign: Some(&MULTI_ASSIGN_HANDLER),
                 ..EffectsHandlers::EMPTY
-            });
+            }));
         }
         None
     }
@@ -845,10 +855,10 @@ impl ImportsResolver for ConditionalValueResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
         if name == "c" {
             return match attached.last().map(String::as_str) {
-                Some("testthat") => Some(EffectsHandlers::EMPTY),
+                Some("testthat") => Some(FunctionHandlers::with_effects(EffectsHandlers::EMPTY)),
                 Some("shiny") => effects::lookup("base", "c").copied(),
                 _ => None,
             };
@@ -893,6 +903,46 @@ fn test_assign_c_name_records_binding() {
         .unwrap()
         .flags()
         .contains(SymbolFlags::IS_BOUND));
+}
+
+/// A context outside the scan, resolving every bare callee through base.
+struct BaseOnlyScope;
+
+impl ScopeContext for BaseOnlyScope {
+    fn is_bound(&self, _name: &str, _inherits: bool) -> bool {
+        false
+    }
+
+    fn is_global(&self) -> bool {
+        true
+    }
+
+    fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
+        let handlers = match call.function() {
+            Ok(AnyRExpression::RIdentifier(ident)) => {
+                effects::lookup("base", &ident.name_text()).copied()
+            },
+            _ => None,
+        };
+        CalleeResolution::settled(CalleeOrigin::SearchPath, handlers)
+    }
+
+    fn record_callee_ambiguity(&mut self, _call: &RCall, _reason: AmbiguityReason) {}
+}
+
+#[test]
+fn test_static_value_with_explicit_scope_context() {
+    let parsed = parse("c(\"a\", c(NULL, \"b\"))", RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+    assert_eq!(
+        ctx.resolve_static_value(&expr),
+        Some(StaticValue::Character(vec![
+            "a".to_string(),
+            "b".to_string()
+        ]))
+    );
 }
 
 #[test]

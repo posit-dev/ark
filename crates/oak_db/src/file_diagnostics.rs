@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::ptr;
 
-use oak_semantic::EffectsHandlers;
+use oak_semantic::FunctionHandlers;
 use rustc_hash::FxHashSet;
 
 use crate::diagnostic::Diagnostic;
@@ -87,7 +87,7 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
 fn sourcing_context_conflict_clauses<'db>(
     db: &'db dyn Db,
     contexts: &[(File, Vec<ImportLayer>)],
-    standalone_effect: Option<&'static EffectsHandlers>,
+    standalone_effect: Option<&'static FunctionHandlers>,
     name: Name<'db>,
 ) -> Vec<String> {
     let callee_text = name.text(db);
@@ -125,7 +125,7 @@ fn join_clauses(clauses: &[String]) -> String {
 
 /// Whether two layer chains resolve a bare call to the same effect.
 ///
-/// The effect registry provides one static [`EffectsHandlers`] per
+/// The effect registry provides one static [`FunctionHandlers`] per
 /// `(package, function)`, so pointer identity is sufficient.
 ///
 /// TODO(declarations): Only attach and source callees reach this comparison,
@@ -133,8 +133,8 @@ fn join_clauses(clauses: &[String]) -> String {
 /// we're missing test coverage. We should complete test coverage once local
 /// declaration of effects lands.
 fn same_effect(
-    left: Option<&'static EffectsHandlers>,
-    right: Option<&'static EffectsHandlers>,
+    left: Option<&'static FunctionHandlers>,
+    right: Option<&'static FunctionHandlers>,
 ) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => ptr::eq(left, right),

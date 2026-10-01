@@ -27,9 +27,9 @@ use super::is_right_assignment;
 use super::is_super_assignment;
 use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
+use crate::effects::CalleeResolution;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
-use crate::effects::ResolvedEffectsHandlers;
 use crate::effects::ScopeContext;
 use crate::effects::SourcePath;
 use crate::effects::SourceTarget;
@@ -967,12 +967,12 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
         self.builder.scan_scope_is_global()
     }
 
-    fn resolve_callee(&mut self, call: &RCall) -> ResolvedEffectsHandlers {
-        self.builder.resolve_effects_handlers(call)
+    fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
+        self.builder.resolve_callee(call)
     }
 
     fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
-        self.builder.record_nested_ambiguity(call, reason);
+        self.builder.record_call_ambiguity(call, reason);
     }
 }
 

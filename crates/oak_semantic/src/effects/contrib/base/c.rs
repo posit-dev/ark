@@ -6,8 +6,8 @@ use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 
 use crate::effects::CallContext;
-use crate::effects::EffectHandler;
 use crate::effects::StaticValue;
+use crate::effects::ValueHandler;
 
 /// Evaluate `c()` only when every element is a known character vector or
 /// `NULL`. R coerces mixed types, but unsupported coercions such as
@@ -15,10 +15,8 @@ use crate::effects::StaticValue;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CHandler;
 
-impl EffectHandler for CHandler {
-    type Output = StaticValue;
-
-    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<StaticValue> {
+impl ValueHandler for CHandler {
+    fn evaluate(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<StaticValue> {
         // Distinguish `c()` (which returns `NULL`) from a character vector.
         let mut out: Option<Vec<String>> = None;
 

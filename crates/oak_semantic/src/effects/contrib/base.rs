@@ -14,6 +14,7 @@ use crate::effects::contrib::quoted;
 use crate::effects::contrib::source;
 use crate::effects::contrib::Entry;
 use crate::effects::EffectsHandlers;
+use crate::effects::FunctionHandlers;
 use crate::semantic_index::EvalEnv::Current;
 use crate::semantic_index::EvalEnv::Nested;
 use crate::semantic_index::EvalTiming::Eager;
@@ -40,20 +41,20 @@ pub(crate) static ENTRIES: &[Entry] = &[
     // it needs a handler rather than a static per-argument effect.
     Entry {
         function: "bquote",
-        effects: EffectsHandlers {
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             arguments: Some(&BquoteHandler),
             ..EffectsHandlers::EMPTY
-        },
+        }),
     },
     // `substitute` quotes `expr` too, but replaces the symbols its environment
     // binds, so it needs a handler that queries the scope rather than a static
     // per-argument effect.
     Entry {
         function: "substitute",
-        effects: EffectsHandlers {
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             arguments: Some(&SubstituteHandler),
             ..EffectsHandlers::EMPTY
-        },
+        }),
     },
     // base attach. `library`/`require` share `LibraryHandler` (below).
     attach_entry("library"),
@@ -77,10 +78,7 @@ pub(crate) static ENTRIES: &[Entry] = &[
     ),
     Entry {
         function: "c",
-        effects: EffectsHandlers {
-            value: Some(&CHandler),
-            ..EffectsHandlers::EMPTY
-        },
+        handlers: FunctionHandlers::with_value(&CHandler),
     },
 ];
 
@@ -88,9 +86,9 @@ pub(crate) static ENTRIES: &[Entry] = &[
 const fn attach_entry(function: &'static str) -> Entry {
     Entry {
         function,
-        effects: EffectsHandlers {
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             attach: Some(&LibraryHandler),
             ..EffectsHandlers::EMPTY
-        },
+        }),
     }
 }

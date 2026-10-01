@@ -1,4 +1,4 @@
-use crate::effects::EffectsHandlers;
+use crate::effects::FunctionHandlers;
 
 mod base;
 mod magrittr;
@@ -13,7 +13,7 @@ mod withr;
 // `effects` module, hence `pub(super)`.
 pub(crate) struct Entry {
     pub(super) function: &'static str,
-    pub(super) effects: EffectsHandlers,
+    pub(super) handlers: FunctionHandlers,
 }
 
 /// A package's function entries, grouped under the name they all share.
@@ -30,7 +30,7 @@ macro_rules! nse {
     ($func:literal, [$($formal:literal),+ $(,)?], $(($name:literal, $scope:expr, $timing:expr)),+ $(,)?) => {
         $crate::effects::contrib::Entry {
             function: $func,
-            effects: $crate::effects::EffectsHandlers {
+            handlers: $crate::effects::FunctionHandlers::with_effects($crate::effects::EffectsHandlers {
                 arguments: Some(&$crate::effects::ArgumentsAnnotation {
                     formals: &[$($formal),+],
                     arguments: &[$($crate::effects::Argument {
@@ -42,7 +42,7 @@ macro_rules! nse {
                     }),+],
                 }),
                 ..$crate::effects::EffectsHandlers::EMPTY
-            },
+            }),
         }
     };
 }
@@ -56,7 +56,7 @@ macro_rules! quoted {
     ($func:literal, [$($formal:literal),+ $(,)?], $($name:literal),+ $(,)?) => {
         $crate::effects::contrib::Entry {
             function: $func,
-            effects: $crate::effects::EffectsHandlers {
+            handlers: $crate::effects::FunctionHandlers::with_effects($crate::effects::EffectsHandlers {
                 arguments: Some(&$crate::effects::ArgumentsAnnotation {
                     formals: &[$($formal),+],
                     arguments: &[$($crate::effects::Argument {
@@ -65,7 +65,7 @@ macro_rules! quoted {
                     }),+],
                 }),
                 ..$crate::effects::EffectsHandlers::EMPTY
-            },
+            }),
         }
     };
 }
@@ -89,7 +89,7 @@ macro_rules! source {
     ($func:literal, [$($formal:literal),+ $(,)?], $path:literal, $target:expr, $default:expr) => {
         $crate::effects::contrib::Entry {
             function: $func,
-            effects: $crate::effects::EffectsHandlers {
+            handlers: $crate::effects::FunctionHandlers::with_effects($crate::effects::EffectsHandlers {
                 source: Some(&$crate::effects::SourceAnnotation {
                     formals: &[$($formal),+],
                     path: $path,
@@ -97,7 +97,7 @@ macro_rules! source {
                     default_path: $default,
                 }),
                 ..$crate::effects::EffectsHandlers::EMPTY
-            },
+            }),
         }
     };
 }
@@ -114,7 +114,7 @@ macro_rules! assign {
     ) => {
         $crate::effects::contrib::Entry {
             function: $func,
-            effects: $crate::effects::EffectsHandlers {
+            handlers: $crate::effects::FunctionHandlers::with_effects($crate::effects::EffectsHandlers {
                 assign: Some(&$crate::effects::AssignAnnotation {
                     formals: &[$($formal),+],
                     name: $name,
@@ -122,7 +122,7 @@ macro_rules! assign {
                     target_env: &[$($target_env),*],
                 }),
                 ..$crate::effects::EffectsHandlers::EMPTY
-            },
+            }),
         }
     };
 }
@@ -136,10 +136,12 @@ macro_rules! assign_op {
     ($func:literal, $target:expr) => {
         $crate::effects::contrib::Entry {
             function: $func,
-            effects: $crate::effects::EffectsHandlers {
-                assign: Some(&$crate::effects::BindingOperatorHandler { target: $target }),
-                ..$crate::effects::EffectsHandlers::EMPTY
-            },
+            handlers: $crate::effects::FunctionHandlers::with_effects(
+                $crate::effects::EffectsHandlers {
+                    assign: Some(&$crate::effects::BindingOperatorHandler { target: $target }),
+                    ..$crate::effects::EffectsHandlers::EMPTY
+                },
+            ),
         }
     };
 }
