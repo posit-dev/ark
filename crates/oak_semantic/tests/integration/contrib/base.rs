@@ -8,6 +8,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 use oak_semantic::build_index;
 use oak_semantic::effects;
 use oak_semantic::effects::CallContext;
+use oak_semantic::effects::CalleeImport;
 use oak_semantic::effects::CalleeOrigin;
 use oak_semantic::effects::CalleeResolution;
 use oak_semantic::effects::DirWalk;
@@ -924,10 +925,8 @@ impl ScopeContext for BaseOnlyScope {
             },
             _ => None,
         };
-        CalleeResolution::settled(CalleeOrigin::SearchPath, handlers)
+        CalleeResolution::settled(CalleeOrigin::Import, handlers)
     }
-
-    fn record_callee_ambiguity(&mut self, _call: &RCall, _reason: AmbiguityReason) {}
 }
 
 #[test]
@@ -943,6 +942,87 @@ fn test_static_value_with_explicit_scope_context() {
             "b".to_string()
         ]))
     );
+}
+
+#[test]
+fn test_static_value_records_callee_imports() {
+    let source = "c(\"a\", paste0(\"b\"))";
+    let parsed = parse(source, RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+
+    // `paste0()` has no value handler, so the outer `c()` is unknown, but the
+    // result still depends on both imported lookups.
+    assert_eq!(ctx.resolve_static_value(&expr), None);
+
+    let callee_imports = ctx.into_callee_imports();
+    assert_eq!(consulted_calls(&callee_imports, source), [
+        ("c", "c(\"a\", paste0(\"b\"))"),
+        ("paste0", "paste0(\"b\")"),
+    ]);
+}
+
+#[test]
+fn test_static_value_records_each_call_site_once() {
+    let source = "c(\"a\", c(\"b\"))";
+    let parsed = parse(source, RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+
+    // As when several handlers evaluate the same argument
+    ctx.resolve_static_value(&expr);
+    ctx.resolve_static_value(&expr);
+
+    let callee_imports = ctx.into_callee_imports();
+    assert_eq!(consulted_calls(&callee_imports, source), [
+        ("c", "c(\"a\", c(\"b\"))"),
+        ("c", "c(\"b\")")
+    ]);
+}
+
+/// Each imported callee's name and call text.
+fn consulted_calls<'a>(
+    callee_imports: &'a [CalleeImport],
+    source: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    callee_imports
+        .iter()
+        .map(|import| {
+            let start = u32::from(import.call_range.start()) as usize;
+            let end = u32::from(import.call_range.end()) as usize;
+            (import.name.as_str(), &source[start..end])
+        })
+        .collect()
+}
+
+/// A context outside the scan where every bare callee is a local binding
+/// without handlers, as with a function-local `c <- ...`.
+struct LocalOnlyScope;
+
+impl ScopeContext for LocalOnlyScope {
+    fn is_bound(&self, _name: &str, _inherits: bool) -> bool {
+        true
+    }
+
+    fn is_global(&self) -> bool {
+        false
+    }
+
+    fn resolve_callee(&mut self, _call: &RCall) -> CalleeResolution {
+        CalleeResolution::settled(CalleeOrigin::Local, None)
+    }
+}
+
+#[test]
+fn test_static_value_skips_local_callees() {
+    let parsed = parse("c(\"a\")", RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = LocalOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+    assert_eq!(ctx.resolve_static_value(&expr), None);
+    assert!(ctx.into_callee_imports().is_empty());
 }
 
 #[test]

@@ -944,8 +944,8 @@ pub(super) struct SourcedFile {
 }
 
 /// Backs a [`CallContext`]'s [`ScopeContext`] with live scan state. Resolving
-/// a nested callee may mutate the imports cache, and reporting its uncertainty
-/// records a diagnostic, so this holds the builder mutably.
+/// a nested callee may mutate the imports cache, so this holds the builder
+/// mutably.
 ///
 /// [`CallContext`]: crate::effects::CallContext
 pub(super) struct ScanBindings<'a, R: ImportsResolver> {
@@ -969,10 +969,6 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
 
     fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
         self.builder.resolve_callee(call)
-    }
-
-    fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
-        self.builder.record_call_ambiguity(call, reason);
     }
 }
 

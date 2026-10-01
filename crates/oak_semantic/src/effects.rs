@@ -24,9 +24,11 @@ use crate::semantic_index::EvalTiming;
 /// `lookup`/`annotates` query API below.
 mod contrib;
 mod value;
+mod value_eval;
 
 pub use value::StaticValue;
-pub use value::ValueHandler;
+pub use value_eval::CalleeImport;
+pub use value_eval::ValueHandler;
 
 /// Registry entries keyed by function name so they can be queried by `lookup()`
 /// (package plus function) and `annotates()` (function only) probe on. Entries
@@ -143,9 +145,10 @@ impl EffectsHandlers {
 pub enum CalleeOrigin {
     /// A binding in the file's own scopes, visible at the call site.
     Local,
-    /// The name is locally unbound, so attached packages and base decide it.
-    /// This includes lookups that found no handler.
-    SearchPath,
+    /// The name is locally unbound, so the imports resolver decides it: the
+    /// file's attaches, what sourcing files bring in, and base. This includes
+    /// lookups that found no handler.
+    Import,
     /// `pkg::fn` or `pkg:::fn`, which no binding or attach can change.
     Qualified,
     /// Callees such as `f()()` or `x$f()` require runtime evaluation, so
@@ -162,7 +165,7 @@ pub struct CalleeResolution {
     uncertainty: Option<CalleeUncertainty>,
 }
 
-/// Search-path uncertainty is classified by whether handlers were found.
+/// Import uncertainty is classified by whether handlers were found.
 /// Only successful lookups are checked for lazy shadowing, and only lookups
 /// without handlers are checked for dropped attaches.
 #[derive(Debug, Clone)]
@@ -320,11 +323,9 @@ pub trait ScopeContext {
     /// a plain quote there.
     fn is_global(&self) -> bool;
 
-    /// Use live bindings and the search path for nested calls, so a local
+    /// Use live local bindings, then imports, for nested calls, so a local
     /// definition can shadow a registered value handler.
     fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution;
-
-    fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason);
 }
 
 /// Whether an assign effect reads its target before writing it.
@@ -337,14 +338,26 @@ pub enum TargetAccess {
     ReadWrite,
 }
 
-/// Scope context for static evaluation and binding queries in effect handlers.
+/// Gives effect handlers access to scope bindings and static argument values.
 pub struct CallContext<'a> {
     scope: &'a mut dyn ScopeContext,
+    /// Collected by static evaluation and left to the consumer to report, so
+    /// requesting a value has no diagnostic side effect.
+    callee_imports: Vec<CalleeImport>,
 }
 
 impl<'a> CallContext<'a> {
     pub fn new(scope: &'a mut dyn ScopeContext) -> Self {
-        Self { scope }
+        Self {
+            scope,
+            callee_imports: Vec::new(),
+        }
+    }
+
+    /// The imported callees static evaluation consulted, one per call site, in
+    /// the order they were first consulted.
+    pub fn into_callee_imports(self) -> Vec<CalleeImport> {
+        self.callee_imports
     }
 
     /// Whether `name` is bound in the current scope (see
@@ -357,49 +370,6 @@ impl<'a> CallContext<'a> {
     /// [`ScopeContext::is_global`]).
     pub fn current_scope_is_global(&self) -> bool {
         self.scope.is_global()
-    }
-
-    /// Recognize string literals, `NULL`, and calls with a registered value
-    /// handler. Other expressions are not evaluated or coerced.
-    pub fn resolve_static_value(&mut self, value: &AnyRExpression) -> Option<StaticValue> {
-        match value {
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-                Some(StaticValue::Character(vec![s.string_text()?]))
-            },
-            AnyRExpression::RNullExpression(_) => Some(StaticValue::Null),
-            AnyRExpression::RCall(call) => {
-                let resolution = self.scope.resolve_callee(call);
-                if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_value) {
-                    self.scope.record_callee_ambiguity(call, reason);
-                }
-                resolution.handlers?.value?.evaluate(call, self)
-            },
-            _ => None,
-        }
-    }
-
-    /// Require a character vector rather than treating `NULL` as an empty one.
-    pub fn resolve_static_character(&mut self, value: &AnyRExpression) -> Option<Vec<String>> {
-        self.resolve_static_value(value)?.into_character()
-    }
-
-    /// Require exactly one character element for a scalar argument.
-    pub fn resolve_static_string(&mut self, value: &AnyRExpression) -> Option<String> {
-        let mut elements = self.resolve_static_character(value)?;
-        if elements.len() != 1 {
-            return None;
-        }
-        elements.pop()
-    }
-
-    /// Statically evaluate an argument's value expression to a bool.
-    pub fn resolve_static_bool(&self, value: &AnyRExpression) -> Option<bool> {
-        match value {
-            AnyRExpression::RTrueExpression(_) => Some(true),
-            AnyRExpression::RFalseExpression(_) => Some(false),
-            // Static resolution of expressions is not implemented yet
-            _ => None,
-        }
     }
 }
 
@@ -641,13 +611,9 @@ impl EffectHandler for SourceAnnotation {
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
         let bound = BoundArguments::new(call, self.formals);
 
+        // Only a statically known `local` makes the source scope known.
         if let Some(local) = bound.get("local") {
-            match local {
-                AnyRExpression::RTrueExpression(_) | AnyRExpression::RFalseExpression(_) => {},
-                // Only literal `TRUE` and `FALSE` make the source scope statically
-                // known.
-                _ => return None,
-            }
+            ctx.resolve_static_bool(local)?;
         }
 
         let paths = match bound.get(self.path) {
