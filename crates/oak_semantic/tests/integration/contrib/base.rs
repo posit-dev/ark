@@ -121,10 +121,8 @@ impl ImportsResolver for MultiFileResolver {
     fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "source" {
             return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
                 source: Some(&COLLATION_HANDLER),
-                assign: None,
+                ..EffectsHandlers::EMPTY
             });
         }
         effects::lookup("base", name).copied()
@@ -149,10 +147,8 @@ impl ImportsResolver for PositionResolver {
     fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "source" {
             return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
                 source: Some(&SOURCE_PATH_SECOND),
-                assign: None,
+                ..EffectsHandlers::EMPTY
             });
         }
         None
@@ -169,10 +165,8 @@ impl ImportsResolver for MultiAssignResolver {
     fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
         if name == "assign" {
             return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
                 assign: Some(&MULTI_ASSIGN_HANDLER),
+                ..EffectsHandlers::EMPTY
             });
         }
         None
@@ -718,6 +712,187 @@ fn test_source_call_shadowed_by_local_binding_not_recognized() {
     // sees the local binding first.
     let index = index_with_base("source <- function(...) {}\nsource(\"helpers.R\")");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_path_records_path() {
+    let index = index_with_base("source(c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_qualified_c_path_records_path() {
+    let index = index_with_base("source(base::c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_concatenates_nested_and_null_elements() {
+    let index = index_with_base("source(c(NULL, c(c(\"helpers.R\")), c()))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_options_are_not_elements() {
+    let index = index_with_base("source(c(\"helpers.R\", use.names = FALSE, recursive = TRUE))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_named_element_is_an_element() {
+    let index = index_with_base("source(c(file = \"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_of_several_paths_ignored() {
+    // `source()` errors when its path is a character vector with multiple values.
+    let index = index_with_base("source(c(\"a.R\", \"b.R\"))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_null_ignored() {
+    let index = index_with_base("source(c())");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_dynamic_element_ignored() {
+    let index = index_with_base("source(c(path))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_non_character_element_ignored() {
+    // `c()` coerces `1` to `"1"`, which static evaluation does not model.
+    let index = index_with_base("source(c(\"helpers.R\", 1))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_shadowed_by_local_binding_ignored() {
+    let index = index_with_base("c <- function(...) \"other.R\"\nsource(c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_c_lazily_shadowed_in_source_path_is_linted() {
+    let source = "f <- function() source(c(\"helpers.R\"))\nc <- identity\n";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousEffect {
+            name,
+            call_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
+        } => {
+            assert_eq!(name, "c");
+
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "c(\"helpers.R\")");
+
+            let overwrite_start = u32::from(overwrite_range.start()) as usize;
+            let overwrite_end = u32::from(overwrite_range.end()) as usize;
+            assert_eq!(&source[overwrite_start..overwrite_end], "c");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_c_lazily_shadowed_in_unresolvable_source_path_is_linted() {
+    let index = index_with_base("f <- function() source(c(path))\nc <- identity\n");
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert!(
+        matches!(diagnostics[0], SemanticDiagnostic::AmbiguousEffect {
+        ref name,
+        reason: AmbiguityReason::LazyShadow { .. },
+        ..
+    } if name == "c")
+    );
+}
+
+#[test]
+fn test_c_lazily_shadowed_outside_effect_is_not_linted() {
+    let index = index_with_base("f <- function() c(\"helpers.R\")\nc <- identity\n");
+    assert_eq!(index.diagnostics(), []);
+}
+
+struct ConditionalValueResolver;
+
+impl ImportsResolver for ConditionalValueResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+        if name == "c" {
+            return match attached.last().map(String::as_str) {
+                Some("testthat") => Some(EffectsHandlers::EMPTY),
+                Some("shiny") => effects::lookup("base", "c").copied(),
+                _ => None,
+            };
+        }
+        effects::lookup("base", name).copied()
+    }
+}
+
+#[test]
+fn test_conditional_value_attach_skips_newer_candidate_without_value() {
+    let source = "if (a) library(shiny)\nif (b) library(testthat)\nsource(c(\"helpers.R\"))\n";
+    let index = build_with(source, ConditionalValueResolver);
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousEffect {
+            name,
+            reason:
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+            ..
+        } => {
+            assert_eq!(name, "c");
+            assert_eq!(package, "shiny");
+            let start = u32::from(attach_range.start()) as usize;
+            let end = u32::from(attach_range.end()) as usize;
+            assert_eq!(&source[start..end], "library(shiny)");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_assign_c_name_records_binding() {
+    let index = index_with_base("assign(c(\"x\"), 1)");
+    let file = ScopeId::from(0);
+    assert!(index
+        .symbols(file)
+        .get("x")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
 }
 
 #[test]

@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
+use aether_syntax::RNamespaceExpression;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
@@ -14,9 +15,11 @@ use super::SemanticIndexBuilder;
 use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
+use crate::effects::ConditionalAttachCandidate;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
 use crate::effects::EffectsHandlers;
+use crate::effects::ResolvedEffectsHandlers;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::ScopeId;
@@ -24,25 +27,26 @@ use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     pub(super) fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
-        let handlers = self.resolve_effects_handlers(call)?;
+        let resolved = self.resolve_effects_handlers(call);
+        let range = call.syntax().text_trimmed_range();
+        self.record_effects_uncertainty(call, &resolved, range);
+        let handlers = resolved.handlers?;
 
-        // `resolve_effects_handlers()` returns owned handlers, so its `&mut
-        // self` borrow is finished. Reborrow immutably.
-        let bindings = ScanBindings { builder: &*self };
-        let ctx = CallContext::with_bindings(&bindings);
+        let mut bindings = ScanBindings { builder: self };
+        let mut ctx = CallContext::new(&mut bindings);
 
         let arguments = handlers
             .arguments
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let attach = handlers
             .attach
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let source = handlers
             .source
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let assign = handlers
             .assign
-            .and_then(|handler| handler.resolve(EffectSite::Call(call), &ctx));
+            .and_then(|handler| handler.resolve(EffectSite::Call(call), &mut ctx));
 
         Some(Effects {
             arguments,
@@ -68,53 +72,60 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///
     /// The bound check reads the scan pass's flow-precise binding state
     /// for the current scope, so this must run during the scan, not the walk.
+    /// Lookup returns uncertainty without emitting diagnostics. Each caller
+    /// decides whether its required handler makes the uncertainty relevant.
     ///
     /// [`EffectsHandlers`]: crate::effects::EffectsHandlers
     /// [`scan_call`]: Self::scan_call
-    fn resolve_effects_handlers(&mut self, call: &RCall) -> Option<EffectsHandlers> {
-        let func = call.function().ok()?;
+    pub(super) fn resolve_effects_handlers(&mut self, call: &RCall) -> ResolvedEffectsHandlers {
+        let Ok(func) = call.function() else {
+            return ResolvedEffectsHandlers::certain(None);
+        };
 
         match &func {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
                 if let Some(effects) = effects::source_dir_idiom(&name) {
-                    return Some(*effects);
+                    return ResolvedEffectsHandlers::certain(Some(*effects));
                 }
-                self.resolve_symbol_effects(&name, call.syntax().text_trimmed_range())
+                self.resolve_symbol_effects(&name)
             },
 
             AnyRExpression::RNamespaceExpression(ns_expr) => {
-                let left = ns_expr.left().ok()?;
-                let right = ns_expr.right().ok()?;
-                let pkg = left.identifier_text()?;
-                let func_name = right.identifier_text()?;
-
-                if !effects::annotates(&func_name) {
-                    return None;
-                }
-
-                self.resolver.resolve_qualified_effects(&pkg, &func_name)
+                ResolvedEffectsHandlers::certain(self.resolve_qualified_effects(ns_expr))
             },
 
-            _ => None,
+            _ => ResolvedEffectsHandlers::certain(None),
         }
     }
 
-    /// Resolve a callee `sym` to its [`EffectsHandlers`].
-    ///
-    /// `range` is the invocation's range, used to anchor a lazy-shadow
-    /// diagnostic.
-    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
+    fn resolve_qualified_effects(
+        &mut self,
+        ns_expr: &RNamespaceExpression,
+    ) -> Option<EffectsHandlers> {
+        let pkg = ns_expr.left().ok()?.identifier_text()?;
+        let func_name = ns_expr.right().ok()?.identifier_text()?;
+
+        if !effects::annotates(&func_name) {
+            return None;
+        }
+
+        self.resolver.resolve_qualified_effects(&pkg, &func_name)
+    }
+
+    /// Local bindings take precedence and cannot be affected by a dropped
+    /// attach or a lazy ancestor binding.
+    fn resolve_symbol_effects(&mut self, sym: &str) -> ResolvedEffectsHandlers {
         // First check for a local definition (which in the future may
         // carry declared effects that we resolve here).
         if self.scan.bound_so_far.is_bound(sym) {
-            return self.resolve_local_effects(sym);
+            return ResolvedEffectsHandlers::certain(self.resolve_local_effects(sym));
         }
 
         // Bail early if it is known that no package annotates this name
         // with effects. This speeds up the common case of no known annotations.
         if !effects::annotates(sym) {
-            return None;
+            return ResolvedEffectsHandlers::certain(None);
         }
 
         // Now check imports since the symbol is locally unbound
@@ -124,22 +135,78 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         );
         let effects = self.resolver.resolve_effects(sym, &attached);
 
-        let Some(effects) = effects else {
-            // The search path didn't resolve. Probe whether it would have if a
-            // dropped attach had survived the join, so we can flag it.
-            self.record_conditional_attach_ambiguity(sym, range);
-            return None;
-        };
-
-        // The callee is unbound by any eager binding, so its effect
-        // holds. If a lazy-crossed ancestor binds it whole-scope, that
-        // binding's timing relative to this deferred body is
-        // undetermined, so the decision is a guess. Flag it.
-        if let Some(overwrite_range) = self.is_lazily_shadowed(sym) {
-            self.record_lazy_shadow_ambiguity(sym.to_string(), range, overwrite_range);
+        if effects.is_none() {
+            return ResolvedEffectsHandlers {
+                handlers: None,
+                lazy_shadow: None,
+                conditional_attaches: self.conditional_attach_candidates(sym),
+            };
         }
 
-        Some(effects)
+        ResolvedEffectsHandlers {
+            handlers: effects,
+            lazy_shadow: self.is_lazily_shadowed(sym),
+            conditional_attaches: Vec::new(),
+        }
+    }
+
+    fn record_effects_uncertainty(
+        &mut self,
+        call: &RCall,
+        resolved: &ResolvedEffectsHandlers,
+        range: TextRange,
+    ) {
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        self.record_uncertainty(&ident.name_text(), range, resolved);
+    }
+
+    fn record_uncertainty(
+        &mut self,
+        name: &str,
+        range: TextRange,
+        resolved: &ResolvedEffectsHandlers,
+    ) {
+        if resolved
+            .handlers
+            .as_ref()
+            .is_some_and(EffectsHandlers::has_effects)
+        {
+            if let Some(overwrite_range) = resolved.lazy_shadow {
+                self.record_ambiguity(name, range, AmbiguityReason::LazyShadow { overwrite_range });
+            }
+        } else if resolved.handlers.is_none() {
+            if let Some(candidate) = resolved
+                .conditional_attaches
+                .iter()
+                .find(|candidate| candidate.handlers.has_effects())
+            {
+                self.record_ambiguity(name, range, AmbiguityReason::ConditionalAttach {
+                    package: candidate.package.clone(),
+                    attach_range: candidate.attach_range,
+                });
+            }
+        }
+    }
+
+    pub(super) fn record_nested_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        self.record_ambiguity(
+            &ident.name_text(),
+            call.syntax().text_trimmed_range(),
+            reason,
+        );
+    }
+
+    fn record_ambiguity(&mut self, name: &str, call_range: TextRange, reason: AmbiguityReason) {
+        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
+            name: name.to_string(),
+            call_range,
+            reason,
+        });
     }
 
     /// Local resolver for declared effects, mirroring the imports resolver's
@@ -175,11 +242,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+        let resolved = self.resolve_symbol_effects(op_text);
 
-        let bindings = ScanBindings { builder: &*self };
-        let ctx = CallContext::with_bindings(&bindings);
-        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
+        self.record_uncertainty(op_text, bin.syntax().text_trimmed_range(), &resolved);
+        let handlers = resolved.handlers?;
+
+        let mut bindings = ScanBindings { builder: self };
+        let mut ctx = CallContext::new(&mut bindings);
+        handlers
+            .assign?
+            .resolve(EffectSite::Operator(bin), &mut ctx)
     }
 
     /// Detect ambiguities caused by laziness.
@@ -256,29 +328,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         None
     }
 
-    fn record_lazy_shadow_ambiguity(
-        &mut self,
-        name: String,
-        call_range: TextRange,
-        overwrite_range: TextRange,
-    ) {
-        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-            name,
-            call_range,
-            reason: AmbiguityReason::LazyShadow { overwrite_range },
-        });
-    }
-
-    /// Probe whether `sym`'s effect still resolves after a conditional
-    /// attach. If the case, we record the ambiguity for diagnostics.
+    /// Probe whether `sym`'s handler would resolve through a dropped attach.
     ///
-    /// This handles the eager case, where the dropped attach and the callee are
-    /// both reachable from the same scan. What's still open is the lazy-sibling
-    /// case (`g <- function() library(shiny); f <- function() reactive({...})`),
-    /// which needs the complete set of lazy-context attaches from a post-pass,
-    /// not this call-site probe. That belongs in the future salsa diagnostics
-    /// query where this lint family should move too.
-    fn record_conditional_attach_ambiguity(&mut self, sym: &str, call_range: TextRange) {
+    /// The probe sees only attaches reachable from the callee's scan. Attaches
+    /// in sibling lazy bodies are not in that set, even if those bodies could
+    /// run before the callee.
+    fn conditional_attach_candidates(&mut self, sym: &str) -> Vec<ConditionalAttachCandidate> {
         // A package in `attached_anywhere` but off the search path means it was
         // dropped at a branch or loop join
         let search_path = attach_search_path(
@@ -293,27 +348,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .cloned()
             .collect();
 
-        // Probe one package at a time, most recent first, so the diagnostic
-        // mentions the attach that would actually have carried the effect.
-        for (package, attach_range) in dropped.into_iter().rev() {
-            if self
-                .resolver
-                .resolve_effects(sym, std::slice::from_ref(&package))
-                .is_none()
-            {
-                continue;
-            }
-
-            self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-                name: sym.to_string(),
-                call_range,
-                reason: AmbiguityReason::ConditionalAttach {
+        dropped
+            .into_iter()
+            .rev()
+            .filter_map(|(package, attach_range)| {
+                let handlers = self
+                    .resolver
+                    .resolve_effects(sym, std::slice::from_ref(&package))?;
+                Some(ConditionalAttachCandidate {
+                    handlers,
                     package,
                     attach_range,
-                },
-            });
-            return;
-        }
+                })
+            })
+            .collect()
     }
 }
 

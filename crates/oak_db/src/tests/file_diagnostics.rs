@@ -190,12 +190,12 @@ with(d, {
 #[test]
 fn test_diagnostic_gap_lazy_sibling_attach() {
     // Known gap, silent. `g`'s `library(shiny)` never runs, since nothing
-    // calls `g`. Even if it did, `record_conditional_attach_ambiguity()`'s
+    // calls `g`. Even if it did, `conditional_attach_candidates()`'s
     // call-site probe only sees attaches reachable from its own scan, so it
     // can't tell that `f`'s `reactive()` might one day run after `g`.
     // Catching this needs a whole-file post-pass over lazy contexts, not a
     // call-site probe (see the doc comment on
-    // `record_conditional_attach_ambiguity()` in
+    // `conditional_attach_candidates()` in
     // `crates/oak_semantic/src/builder/effects.rs`).
     let mut db = TestDb::new();
     install_packages(&mut db, &["shiny"]);
@@ -272,6 +272,18 @@ fn test_diagnostic_lazy_shadow_reassignment() {
     let source = "\
 f <- function() local({ x <- 1 })
 local <- identity
+";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_lazy_shadow_value_in_effect_argument() {
+    let db = TestDb::new();
+    let source = "\
+f <- function() source(c(\"helpers.R\"))
+c <- identity
 ";
     let file = new_file(&db, "a.R", source);
 

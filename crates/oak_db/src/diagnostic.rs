@@ -140,8 +140,8 @@ fn lower_ambiguous_effect(
     let (message, annotation) = match reason {
         AmbiguityReason::LazyShadow { overwrite_range } => (
             format!(
-                "Ambiguous reading of effectful `{name}()`.\nAn assignment to `{name}` in an enclosing \
-                 scope could run before this call and change its effect."
+                "Ambiguous reading of `{name}()`.\nAn assignment to `{name}` in an enclosing \
+                 scope could run before this call and change what it does."
             ),
             Annotation {
                 range: *overwrite_range,

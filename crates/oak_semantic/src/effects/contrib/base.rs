@@ -1,8 +1,10 @@
 mod bquote;
+mod c;
 mod library;
 mod substitute;
 
 use bquote::BquoteHandler;
+use c::CHandler;
 use library::LibraryHandler;
 use substitute::SubstituteHandler;
 
@@ -40,9 +42,7 @@ pub(crate) static ENTRIES: &[Entry] = &[
         function: "bquote",
         effects: EffectsHandlers {
             arguments: Some(&BquoteHandler),
-            attach: None,
-            source: None,
-            assign: None,
+            ..EffectsHandlers::EMPTY
         },
     },
     // `substitute` quotes `expr` too, but replaces the symbols its environment
@@ -52,9 +52,7 @@ pub(crate) static ENTRIES: &[Entry] = &[
         function: "substitute",
         effects: EffectsHandlers {
             arguments: Some(&SubstituteHandler),
-            attach: None,
-            source: None,
-            assign: None,
+            ..EffectsHandlers::EMPTY
         },
     },
     // base attach. `library`/`require` share `LibraryHandler` (below).
@@ -77,6 +75,13 @@ pub(crate) static ENTRIES: &[Entry] = &[
         "value",
         ["assign.env"]
     ),
+    Entry {
+        function: "c",
+        effects: EffectsHandlers {
+            value: Some(&CHandler),
+            ..EffectsHandlers::EMPTY
+        },
+    },
 ];
 
 /// Build the attach [`Entry`] for a base function served by [`LibraryHandler`].
@@ -84,10 +89,8 @@ const fn attach_entry(function: &'static str) -> Entry {
     Entry {
         function,
         effects: EffectsHandlers {
-            arguments: None,
             attach: Some(&LibraryHandler),
-            source: None,
-            assign: None,
+            ..EffectsHandlers::EMPTY
         },
     }
 }
