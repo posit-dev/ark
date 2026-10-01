@@ -77,7 +77,7 @@ pub(crate) static COLLATION_HANDLER: CollationHandler = CollationHandler;
 impl EffectHandler for CollationHandler {
     type Output = Vec<SourcePath>;
 
-    fn resolve(&self, _call: &RCall, _ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
+    fn resolve(&self, _call: &RCall, _ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
         Some(vec![
             SourcePath {
                 path: "a.R".into(),
@@ -99,7 +99,7 @@ pub(crate) struct MultiAssignHandler;
 pub(crate) static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
 
 impl AssignHandler for MultiAssignHandler {
-    fn resolve(&self, site: EffectSite, _ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, _ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Call(call) = site else {
             return None;
         };

@@ -161,7 +161,7 @@ struct ScanState {
     // call's range, in attach order. Unlike `attached_so_far`, this is never
     // dropped or truncated at a branch or loop join. Used to probe whether an
     // effect decision based on the linear view is ambiguous across paths
-    // (`record_conditional_attach_ambiguity()`).
+    // (`conditional_attach_candidates()`).
     attached_anywhere: Vec<(String, TextRange)>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.

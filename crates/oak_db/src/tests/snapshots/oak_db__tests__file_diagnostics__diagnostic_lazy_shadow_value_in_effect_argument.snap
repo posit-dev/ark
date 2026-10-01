@@ -1,0 +1,12 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"a.R\", source, file.diagnostics(&db))"
+---
+info[ambiguous-effect]: Ambiguous reading of `c()`.
+                        An assignment to `c` in an enclosing scope could run before this call and change what it does.
+ --> a.R:1:24
+  |
+1 | f <- function() source(c("helpers.R"))
+  |                        ^^^^^^^^^^^^^^
+2 | c <- identity
+  | - could run before the call

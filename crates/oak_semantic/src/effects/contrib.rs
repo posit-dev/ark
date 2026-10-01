@@ -41,9 +41,7 @@ macro_rules! nse {
                         },
                     }),+],
                 }),
-                attach: None,
-                source: None,
-                assign: None,
+                ..$crate::effects::EffectsHandlers::EMPTY
             },
         }
     };
@@ -66,9 +64,7 @@ macro_rules! quoted {
                         effect: $crate::effects::ArgumentEffect::Quote,
                     }),+],
                 }),
-                attach: None,
-                source: None,
-                assign: None,
+                ..$crate::effects::EffectsHandlers::EMPTY
             },
         }
     };
@@ -94,15 +90,13 @@ macro_rules! source {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
                 source: Some(&$crate::effects::SourceAnnotation {
                     formals: &[$($formal),+],
                     path: $path,
                     target: $target,
                     default_path: $default,
                 }),
-                assign: None,
+                ..$crate::effects::EffectsHandlers::EMPTY
             },
         }
     };
@@ -121,15 +115,13 @@ macro_rules! assign {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
                 assign: Some(&$crate::effects::AssignAnnotation {
                     formals: &[$($formal),+],
                     name: $name,
                     value: $value,
                     target_env: &[$($target_env),*],
                 }),
+                ..$crate::effects::EffectsHandlers::EMPTY
             },
         }
     };
@@ -145,10 +137,8 @@ macro_rules! assign_op {
         $crate::effects::contrib::Entry {
             function: $func,
             effects: $crate::effects::EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
                 assign: Some(&$crate::effects::BindingOperatorHandler { target: $target }),
+                ..$crate::effects::EffectsHandlers::EMPTY
             },
         }
     };

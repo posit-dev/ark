@@ -21,7 +21,7 @@ pub(crate) struct BquoteHandler;
 impl EffectHandler for BquoteHandler {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let formals: Formals = &["expr", "where", "splice"];
         let bound = ctx.bind_arguments(call, formals);
 

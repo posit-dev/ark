@@ -16,7 +16,7 @@ pub(crate) struct LibraryHandler;
 impl EffectHandler for LibraryHandler {
     type Output = String;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<String> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<String> {
         let formals: Formals = &["package", "help", "pos", "lib.loc", "character.only"];
         let bound = ctx.bind_arguments(call, formals);
 

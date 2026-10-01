@@ -8,6 +8,7 @@ use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
 use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
+use biome_rowan::TextRange;
 // Re-exported so consumers building an `AssignBinding` (custom `AssignHandler`s)
 // can name the `name_expr` field's type without depending on oak_core directly.
 pub use oak_core::range::RangedAstPtr;
@@ -15,12 +16,16 @@ use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use rustc_hash::FxHashMap;
 
+use crate::semantic_index::AmbiguityReason;
 use crate::semantic_index::EvalEnv;
 use crate::semantic_index::EvalTiming;
 
 /// Per-package tables of which functions carry effects. Private data behind the
 /// `lookup`/`annotates` query API below.
 mod contrib;
+mod value;
+
+pub use value::StaticValue;
 
 /// Registry entries keyed by function name so they can be queried by `lookup()`
 /// (package plus function) and `annotates()` (function only) probe on. Entries
@@ -82,6 +87,52 @@ pub struct EffectsHandlers {
     pub attach: Option<&'static dyn EffectHandler<Output = String>>,
     pub source: Option<&'static dyn EffectHandler<Output = Vec<SourcePath>>>,
     pub assign: Option<&'static dyn AssignHandler>,
+    /// Evaluates pure calls such as `c()` only when an effect argument needs
+    /// their static value. This handler does not itself produce an effect.
+    pub value: Option<&'static dyn EffectHandler<Output = StaticValue>>,
+}
+
+/// Handler lookup and the search-path uncertainty visible at the call site.
+/// Conditional attaches are ordered most recent first so each consumer can
+/// select the first package providing the handler it needs.
+pub struct ResolvedEffectsHandlers {
+    pub handlers: Option<EffectsHandlers>,
+    pub lazy_shadow: Option<TextRange>,
+    pub conditional_attaches: Vec<ConditionalAttachCandidate>,
+}
+
+pub struct ConditionalAttachCandidate {
+    pub handlers: EffectsHandlers,
+    pub package: String,
+    pub attach_range: TextRange,
+}
+
+impl ResolvedEffectsHandlers {
+    pub fn certain(handlers: Option<EffectsHandlers>) -> Self {
+        Self {
+            handlers,
+            lazy_shadow: None,
+            conditional_attaches: Vec::new(),
+        }
+    }
+}
+
+impl EffectsHandlers {
+    pub const EMPTY: EffectsHandlers = EffectsHandlers {
+        arguments: None,
+        attach: None,
+        source: None,
+        assign: None,
+        value: None,
+    };
+
+    /// Excludes value-only handlers so a pure call is not treated as an effect.
+    pub fn has_effects(&self) -> bool {
+        self.arguments.is_some() ||
+            self.attach.is_some() ||
+            self.source.is_some() ||
+            self.assign.is_some()
+    }
 }
 
 /// Look up the effect handlers of a `(package, function)` pair.
@@ -113,15 +164,13 @@ pub fn source_dir_idiom(name: &str) -> Option<&'static EffectsHandlers> {
         return None;
     }
     Some(&EffectsHandlers {
-        arguments: None,
-        attach: None,
         source: Some(&SourceAnnotation {
             formals: &["path"],
             path: "path",
             target: SourceTarget::Dir(DirWalk::Shallow),
             default_path: None,
         }),
-        assign: None,
+        ..EffectsHandlers::EMPTY
     })
 }
 
@@ -139,7 +188,7 @@ pub trait EffectHandler: std::fmt::Debug + Sync {
     ///
     /// `ctx` provides semantic resolution, e.g. resolve an argument to a
     /// statically known string or boolean.
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Self::Output>;
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<Self::Output>;
 }
 
 /// Where an effect is invoked. Most effects are only ever calls but an Assign
@@ -158,7 +207,7 @@ pub enum EffectSite<'a> {
 /// Contributed statically like [`EffectHandler`], so it's `Sync` for the
 /// registry `static`s.
 pub trait AssignHandler: std::fmt::Debug + Sync {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>>;
+    fn resolve(&self, site: EffectSite, ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>>;
 }
 
 /// Scope state a handler needs that the call syntax alone can't answer, backed
@@ -178,6 +227,12 @@ pub trait ScopeContext {
     /// substitutes nothing in the global environment, so a handler falls back to
     /// a plain quote there.
     fn is_global(&self) -> bool;
+
+    /// Use live bindings and the search path for nested calls, so a local
+    /// definition can shadow a registered value handler.
+    fn resolve_callee(&mut self, call: &RCall) -> ResolvedEffectsHandlers;
+
+    fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason);
 }
 
 /// Whether an assign effect reads its target before writing it.
@@ -194,35 +249,29 @@ pub enum TargetAccess {
 ///
 /// Allows querying the properties or static values of arguments, and the
 /// binding state of the surrounding scope.
-#[derive(Default)]
+///
+/// The scope is required rather than optional. Evaluation outside a scan
+/// needs an explicit [`ScopeContext`] that states its resolution assumptions,
+/// instead of an implicit fallback to the base registry.
 pub struct CallContext<'a> {
-    scope: Option<&'a dyn ScopeContext>,
+    scope: &'a mut dyn ScopeContext,
 }
 
 impl<'a> CallContext<'a> {
-    /// A context backed by the builder's scope state, for handlers that query
-    /// bindings (`substitute`).
-    pub fn with_bindings(bindings: &'a dyn ScopeContext) -> Self {
-        Self {
-            scope: Some(bindings),
-        }
+    pub fn new(scope: &'a mut dyn ScopeContext) -> Self {
+        Self { scope }
     }
 
     /// Whether `name` is bound in the current scope (see
-    /// [`ScopeQuery::is_bound`]). Without a bindings backing (a [`Default`]
-    /// context) we can't tell, so we answer "unbound", the choice that leaves a
-    /// symbol quoted rather than treating it as a use.
+    /// [`ScopeContext::is_bound`]).
     pub fn is_bound(&self, name: &str, inherits: bool) -> bool {
-        self.scope
-            .is_some_and(|scope| scope.is_bound(name, inherits))
+        self.scope.is_bound(name, inherits)
     }
 
     /// Whether the current scope is the global (file) scope (see
-    /// [`ScopeQuery::is_global_scope`]). Without a bindings backing (a
-    /// [`Default`] context) we assume global, so `substitute` degrades to a
-    /// plain quote (its no-substitution behaviour).
+    /// [`ScopeContext::is_global`]).
     pub fn current_scope_is_global(&self) -> bool {
-        self.scope.is_none_or(|scope| scope.is_global())
+        self.scope.is_global()
     }
 
     /// Match `call` arguments to `formals`, returning a formal index for each
@@ -287,14 +336,61 @@ impl<'a> CallContext<'a> {
         }
     }
 
-    /// Statically evaluate an argument's value expression to a string. `None`
-    /// when it's dynamic.
-    pub fn resolve_static_string(&self, value: &AnyRExpression) -> Option<String> {
+    /// Recognize string literals, `NULL`, and calls with a registered value
+    /// handler. Other expressions are not evaluated or coerced.
+    pub fn resolve_static_value(&mut self, value: &AnyRExpression) -> Option<StaticValue> {
         match value {
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
-            // Static resolution of expressions is not implemented yet
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+                Some(StaticValue::Character(vec![s.string_text()?]))
+            },
+            AnyRExpression::RNullExpression(_) => Some(StaticValue::Null),
+            AnyRExpression::RCall(call) => {
+                let resolved = self.scope.resolve_callee(call);
+                self.report_static_value_ambiguity(call, &resolved);
+                resolved.handlers?.value?.resolve(call, self)
+            },
             _ => None,
         }
+    }
+
+    fn report_static_value_ambiguity(&mut self, call: &RCall, resolved: &ResolvedEffectsHandlers) {
+        let reason = match resolved.handlers.as_ref() {
+            Some(handlers) if handlers.value.is_some() => {
+                let Some(overwrite_range) = resolved.lazy_shadow else {
+                    return;
+                };
+                AmbiguityReason::LazyShadow { overwrite_range }
+            },
+            Some(_) => return,
+            None => {
+                let Some(candidate) = resolved
+                    .conditional_attaches
+                    .iter()
+                    .find(|candidate| candidate.handlers.value.is_some())
+                else {
+                    return;
+                };
+                AmbiguityReason::ConditionalAttach {
+                    package: candidate.package.clone(),
+                    attach_range: candidate.attach_range,
+                }
+            },
+        };
+        self.scope.record_callee_ambiguity(call, reason);
+    }
+
+    /// Require a character vector rather than treating `NULL` as an empty one.
+    pub fn resolve_static_character(&mut self, value: &AnyRExpression) -> Option<Vec<String>> {
+        self.resolve_static_value(value)?.into_character()
+    }
+
+    /// Require exactly one character element for a scalar argument.
+    pub fn resolve_static_string(&mut self, value: &AnyRExpression) -> Option<String> {
+        let mut elements = self.resolve_static_character(value)?;
+        if elements.len() != 1 {
+            return None;
+        }
+        elements.pop()
     }
 
     /// Read a quoted name argument. E.g. the LHS of an Assign operator.
@@ -415,7 +511,7 @@ impl ArgumentEffect {
 impl EffectHandler for ArgumentsAnnotation {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let bound = ctx.bind_arguments(call, self.formals);
         Some(
             bound
@@ -476,7 +572,7 @@ pub struct SourceAnnotation {
 impl EffectHandler for SourceAnnotation {
     type Output = Vec<SourcePath>;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
         let bound = ctx.bind_arguments(call, self.formals);
 
         if let Some(local) = bound.get("local") {
@@ -488,16 +584,26 @@ impl EffectHandler for SourceAnnotation {
             }
         }
 
-        let path = match bound.get(self.path) {
+        let paths = match bound.get(self.path) {
             // An explicit dynamic path suppresses the default.
-            Some(value) => ctx.resolve_static_string(value)?,
-            None => self.default_path?.to_string(),
+            Some(value) => ctx.resolve_static_character(value)?,
+            None => vec![self.default_path?.to_string()],
         };
 
-        Some(vec![SourcePath {
-            path,
-            target: self.target,
-        }])
+        // `source()` errors on a path vector unless it has exactly one element.
+        if self.target == SourceTarget::File && paths.len() != 1 {
+            return None;
+        }
+
+        Some(
+            paths
+                .into_iter()
+                .map(|path| SourcePath {
+                    path,
+                    target: self.target,
+                })
+                .collect(),
+        )
     }
 }
 
@@ -517,7 +623,7 @@ pub struct AssignAnnotation {
 }
 
 impl AssignHandler for AssignAnnotation {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Call(call) = site else {
             return None;
         };
@@ -553,7 +659,7 @@ pub struct BindingOperatorHandler {
 }
 
 impl AssignHandler for BindingOperatorHandler {
-    fn resolve(&self, site: EffectSite, ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Operator(bin) = site else {
             return None;
         };

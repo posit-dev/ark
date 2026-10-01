@@ -29,6 +29,7 @@ use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
+use crate::effects::ResolvedEffectsHandlers;
 use crate::effects::ScopeContext;
 use crate::effects::SourcePath;
 use crate::effects::SourceTarget;
@@ -942,13 +943,13 @@ pub(super) struct SourcedFile {
     pub(super) resolution: Option<SourceResolution>,
 }
 
-/// Backs a [`CallContext`]'s [`ScopeQuery`] with the builder's live scope
-/// state, so an effect handler (`substitute`) can query bindings during the
-/// scan without reaching into the builder directly.
+/// Backs a [`CallContext`]'s [`ScopeContext`] with live scan state. Resolving
+/// a nested callee may mutate the imports cache, and reporting its uncertainty
+/// records a diagnostic, so this holds the builder mutably.
 ///
 /// [`CallContext`]: crate::effects::CallContext
 pub(super) struct ScanBindings<'a, R: ImportsResolver> {
-    pub(super) builder: &'a SemanticIndexBuilder<R>,
+    pub(super) builder: &'a mut SemanticIndexBuilder<R>,
 }
 
 impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
@@ -964,6 +965,14 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
 
     fn is_global(&self) -> bool {
         self.builder.scan_scope_is_global()
+    }
+
+    fn resolve_callee(&mut self, call: &RCall) -> ResolvedEffectsHandlers {
+        self.builder.resolve_effects_handlers(call)
+    }
+
+    fn record_callee_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
+        self.builder.record_nested_ambiguity(call, reason);
     }
 }
 

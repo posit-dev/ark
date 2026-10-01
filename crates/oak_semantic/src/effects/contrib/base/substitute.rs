@@ -24,7 +24,7 @@ pub(crate) struct SubstituteHandler;
 impl EffectHandler for SubstituteHandler {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let formals: Formals = &["expr", "env"];
         let bound = ctx.bind_arguments(call, formals);
         let expr_pos = bound
