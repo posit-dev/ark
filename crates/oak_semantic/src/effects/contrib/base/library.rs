@@ -1,5 +1,7 @@
 use aether_syntax::RCall;
 
+use crate::effects::resolve_quoted_symbol_or_string;
+use crate::effects::BoundArguments;
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
 use crate::effects::Formals;
@@ -18,7 +20,7 @@ impl EffectHandler for LibraryHandler {
 
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<String> {
         let formals: Formals = &["package", "help", "pos", "lib.loc", "character.only"];
-        let bound = ctx.bind_arguments(call, formals);
+        let bound = BoundArguments::new(call, formals);
 
         let package = bound.get("package")?;
         let character_only = bound
@@ -29,7 +31,7 @@ impl EffectHandler for LibraryHandler {
         if character_only {
             ctx.resolve_static_string(package)
         } else {
-            ctx.resolve_quoted_symbol_or_string(package)
+            resolve_quoted_symbol_or_string(package)
         }
     }
 }

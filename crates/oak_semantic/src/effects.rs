@@ -337,14 +337,7 @@ pub enum TargetAccess {
     ReadWrite,
 }
 
-/// Context for effect handlers.
-///
-/// Allows querying the properties or static values of arguments, and the
-/// binding state of the surrounding scope.
-///
-/// The scope is required rather than optional. Evaluation outside a scan
-/// needs an explicit [`ScopeContext`] that states its resolution assumptions,
-/// instead of an implicit fallback to the base registry.
+/// Scope context for static evaluation and binding queries in effect handlers.
 pub struct CallContext<'a> {
     scope: &'a mut dyn ScopeContext,
 }
@@ -364,68 +357,6 @@ impl<'a> CallContext<'a> {
     /// [`ScopeContext::is_global`]).
     pub fn current_scope_is_global(&self) -> bool {
         self.scope.is_global()
-    }
-
-    /// Match `call` arguments to `formals`, returning a formal index for each
-    /// call argument. Exact named matches consume slots first, then unnamed
-    /// arguments fill unconsumed slots in signature order.
-    fn match_arguments(&self, call: &RCall, formals: Formals) -> Vec<Option<usize>> {
-        let Ok(args) = call.arguments() else {
-            return Vec::new();
-        };
-        let items = args.items();
-
-        let arg_count = items.iter().count();
-        let mut matched: Vec<Option<usize>> = vec![None; arg_count];
-        let mut consumed = vec![false; formals.len()];
-
-        // Named pass
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            if let Some(formal_idx) = match_named(&arg, formals, &consumed) {
-                consumed[formal_idx] = true;
-                matched[i] = Some(formal_idx);
-            }
-        }
-
-        // Positional pass. Only unnamed args reach the match, and none of them
-        // were set by the named pass, so no need to re-check `matched[i]`.
-        let mut next_slot = 0usize;
-        for (i, item) in items.iter().enumerate() {
-            let Ok(arg) = item else { continue };
-            if arg.name_clause().is_some() {
-                continue;
-            }
-            while next_slot < consumed.len() && consumed[next_slot] {
-                next_slot += 1;
-            }
-            let Some(formal_idx) = (next_slot < formals.len()).then_some(next_slot) else {
-                continue;
-            };
-            consumed[formal_idx] = true;
-            matched[i] = Some(formal_idx);
-            next_slot += 1;
-        }
-
-        matched
-    }
-
-    /// Bind `call`'s arguments to `formals`, for handlers that read arguments by
-    /// formal name rather than by call position.
-    pub fn bind_arguments(&self, call: &RCall, formals: Formals) -> BoundArguments {
-        let matched = self.match_arguments(call, formals);
-        let values: Vec<Option<AnyRExpression>> = match call.arguments() {
-            Ok(args) => args
-                .items()
-                .iter()
-                .map(|item| item.ok().and_then(|arg| arg.value()))
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        BoundArguments {
-            formals,
-            bound: matched.into_iter().zip(values).collect(),
-        }
     }
 
     /// Recognize string literals, `NULL`, and calls with a registered value
@@ -461,15 +392,6 @@ impl<'a> CallContext<'a> {
         elements.pop()
     }
 
-    /// Read a quoted name argument. E.g. the LHS of an Assign operator.
-    pub fn resolve_quoted_symbol_or_string(&self, value: &AnyRExpression) -> Option<String> {
-        match value {
-            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
-            _ => None,
-        }
-    }
-
     /// Statically evaluate an argument's value expression to a bool.
     pub fn resolve_static_bool(&self, value: &AnyRExpression) -> Option<bool> {
         match value {
@@ -495,6 +417,22 @@ pub struct BoundArguments {
 }
 
 impl BoundArguments {
+    pub fn new(call: &RCall, formals: Formals) -> Self {
+        let matched = match_arguments(call, formals);
+        let values: Vec<Option<AnyRExpression>> = match call.arguments() {
+            Ok(args) => args
+                .items()
+                .iter()
+                .map(|item| item.ok().and_then(|arg| arg.value()))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        Self {
+            formals,
+            bound: matched.into_iter().zip(values).collect(),
+        }
+    }
+
     /// The expression bound to `formal`. Returns `None` when the call uses the
     /// default or the handler did not declare the formal.
     pub fn get(&self, formal: &str) -> Option<&AnyRExpression> {
@@ -519,6 +457,66 @@ impl BoundArguments {
     pub fn is_empty(&self) -> bool {
         self.bound.is_empty()
     }
+}
+
+/// Match `call` arguments to `formals`, returning a formal index for each
+/// call argument. Exact named matches consume slots first, then unnamed
+/// arguments fill unconsumed slots in signature order.
+fn match_arguments(call: &RCall, formals: Formals) -> Vec<Option<usize>> {
+    let Ok(args) = call.arguments() else {
+        return Vec::new();
+    };
+    let items = args.items();
+
+    let arg_count = items.iter().count();
+    let mut matched: Vec<Option<usize>> = vec![None; arg_count];
+    let mut consumed = vec![false; formals.len()];
+
+    for (i, item) in items.iter().enumerate() {
+        let Ok(arg) = item else { continue };
+        if let Some(formal_idx) = match_named(&arg, formals, &consumed) {
+            consumed[formal_idx] = true;
+            matched[i] = Some(formal_idx);
+        }
+    }
+
+    // Unnamed arguments cannot have a named match, so `matched[i]` needs no check.
+    let mut next_slot = 0usize;
+    for (i, item) in items.iter().enumerate() {
+        let Ok(arg) = item else { continue };
+        if arg.name_clause().is_some() {
+            continue;
+        }
+        while next_slot < consumed.len() && consumed[next_slot] {
+            next_slot += 1;
+        }
+        let Some(formal_idx) = (next_slot < formals.len()).then_some(next_slot) else {
+            continue;
+        };
+        consumed[formal_idx] = true;
+        matched[i] = Some(formal_idx);
+        next_slot += 1;
+    }
+
+    matched
+}
+
+/// Only exact names match. Partial argument matching is not supported.
+///
+/// TODO: Decide whether to support partial matching or rely on linting it.
+fn match_named(arg: &RArgument, formals: Formals, consumed: &[bool]) -> Option<usize> {
+    let clause = arg.name_clause()?;
+    let name = clause.name().ok()?;
+    let name_text = match &name {
+        AnyRArgumentName::RIdentifier(ident) => ident.name_text(),
+        AnyRArgumentName::RStringValue(s) => s.string_text()?,
+        _ => return None,
+    };
+    formals
+        .iter()
+        .enumerate()
+        .find(|(i, formal_name)| !consumed[*i] && **formal_name == name_text.as_str())
+        .map(|(i, _)| i)
 }
 
 /// A call's resolved argument effects: for each argument in call order, the
@@ -579,8 +577,8 @@ impl ArgumentEffect {
 impl EffectHandler for ArgumentsAnnotation {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
-        let bound = ctx.bind_arguments(call, self.formals);
+    fn resolve(&self, call: &RCall, _ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
+        let bound = BoundArguments::new(call, self.formals);
         Some(
             bound
                 .arguments()
@@ -641,7 +639,7 @@ impl EffectHandler for SourceAnnotation {
     type Output = Vec<SourcePath>;
 
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
-        let bound = ctx.bind_arguments(call, self.formals);
+        let bound = BoundArguments::new(call, self.formals);
 
         if let Some(local) = bound.get("local") {
             match local {
@@ -695,7 +693,7 @@ impl AssignHandler for AssignAnnotation {
         let EffectSite::Call(call) = site else {
             return None;
         };
-        let bound = ctx.bind_arguments(call, self.formals);
+        let bound = BoundArguments::new(call, self.formals);
 
         // An explicit target environment binds outside the current scope, which
         // we don't currently support.
@@ -727,14 +725,14 @@ pub struct BindingOperatorHandler {
 }
 
 impl AssignHandler for BindingOperatorHandler {
-    fn resolve(&self, site: EffectSite, ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, _ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Operator(bin) = site else {
             return None;
         };
         let left = bin.left().ok()?;
         let right = bin.right().ok()?;
 
-        let name = ctx.resolve_quoted_symbol_or_string(&left)?;
+        let name = resolve_quoted_symbol_or_string(&left)?;
 
         Some(vec![AssignBinding {
             name,
@@ -745,21 +743,11 @@ impl AssignHandler for BindingOperatorHandler {
     }
 }
 
-/// Match a named argument against `formals`. Returns the index of the matched
-/// formal.
-///
-/// Should we do partial argument matching? Or rely on partial matching being linted?
-fn match_named(arg: &RArgument, formals: Formals, consumed: &[bool]) -> Option<usize> {
-    let clause = arg.name_clause()?;
-    let name = clause.name().ok()?;
-    let name_text = match &name {
-        AnyRArgumentName::RIdentifier(ident) => ident.name_text(),
-        AnyRArgumentName::RStringValue(s) => s.string_text()?,
-        _ => return None,
-    };
-    formals
-        .iter()
-        .enumerate()
-        .find(|(i, formal_name)| !consumed[*i] && **formal_name == name_text.as_str())
-        .map(|(i, _)| i)
+/// Extract a name without evaluating it or looking up identifier bindings.
+pub fn resolve_quoted_symbol_or_string(value: &AnyRExpression) -> Option<String> {
+    match value {
+        AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
+        AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+        _ => None,
+    }
 }

@@ -25,7 +25,7 @@ impl ValueHandler for CHandler {
 
             // `recursive` and `use.names` follow `...` in `c()`'s formals, so
             // only exact names select them. Positional arguments are elements,
-            // unlike the formals handled by `bind_arguments()`.
+            // unlike the formals handled by `BoundArguments::new()`.
             if matches!(
                 argument_name(&arg).as_deref(),
                 Some("recursive" | "use.names")
