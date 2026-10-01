@@ -124,6 +124,25 @@ impl<'db> File {
         Some((name, range, defs))
     }
 
+    /// How the name at `range` is spelled, when `range` is exactly a bare
+    /// identifier or string literal. Computed names return `None` because
+    /// their definition ranges cover expressions, such as `c("x")` in
+    /// `assign(c("x"), 1)`.
+    pub fn name_spelling_at(self, db: &'db dyn Db, range: TextRange) -> Option<NameSpelling> {
+        let root = self.parse(db).syntax();
+        let token = root.token_at_offset(range.start()).right_biased()?;
+        if !is_name_token(&token) || token.text_trimmed_range() != range {
+            return None;
+        }
+        if token.kind() == RSyntaxKind::IDENT {
+            return Some(NameSpelling::Identifier);
+        }
+        match token.text_trimmed().chars().next()? {
+            delimiter @ ('"' | '\'') => Some(NameSpelling::Quoted(delimiter)),
+            _ => Some(NameSpelling::RawString),
+        }
+    }
+
     /// All use-site ranges for `name` in this file, across every scope.
     pub fn uses_of(self, db: &'db dyn Db, name: Name<'db>) -> Vec<TextRange> {
         self.semantic_index(db)
@@ -181,6 +200,17 @@ impl<'db> File {
             })
             .collect()
     }
+}
+
+/// How a single name token is written in the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameSpelling {
+    /// A bare or backticked identifier.
+    Identifier,
+    /// A string literal opened by this quote character.
+    Quoted(char),
+    /// A raw string literal such as `r"(x)"`.
+    RawString,
 }
 
 /// Check whether `token` is the RHS name of an `RExtractExpression`.
