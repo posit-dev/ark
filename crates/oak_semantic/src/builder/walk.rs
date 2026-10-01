@@ -321,26 +321,30 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // them upon leaving the lazy context.
         let attached = self.scan.attached_so_far.len();
 
-        if let Ok(params) = fun.parameters() {
-            // Scan the default values before collecting them. R binds all
-            // formals into the frame at once, so a default sees every parameter
-            // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `bound_so_far`
-            // up front rather than flow-ordered, then scan each default.
-            self.begin_scan();
-            self.scan_parameter_defaults(&params);
+        let params = fun.parameters().ok();
+        let body = fun.body().ok();
 
-            // `walk_parameters` adds the parameter definitions and walks
-            // each default in source order, finding the NSE decisions the scan
-            // above recorded.
-            self.walk_parameters(&params);
+        // Approximate lazy evaluation by assuming all defaults are forced in
+        // parameter order before the body. Keep their flow state so a binding
+        // made on only some paths of a default stays conditional in the body.
+        self.begin_scan();
+        if let Some(params) = &params {
+            self.scan_parameter_defaults(params);
+        }
+        if let Some(body) = &body {
+            self.scan_expression(body);
         }
 
-        if let Ok(body) = fun.body() {
-            self.begin_scan();
-            self.scan_expression(&body);
-            self.scan_deferred_bodies(watermark);
-            self.walk_expression(&body);
+        // Deferred bodies must be scanned before walking the defaults, or
+        // calls such as `library()` inside a default's `on.exit()` body have
+        // no recorded semantic decision for the walk to consume.
+        self.scan_deferred_bodies(watermark);
+
+        if let Some(params) = &params {
+            self.walk_parameters(params);
+        }
+        if let Some(body) = &body {
+            self.walk_expression(body);
         }
 
         // Discard attaches made in the lazy context.

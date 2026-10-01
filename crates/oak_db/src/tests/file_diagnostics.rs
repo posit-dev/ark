@@ -147,6 +147,23 @@ local({
 }
 
 #[test]
+fn test_diagnostic_conditional_shadow_from_parameter_default() {
+    // The body's `local()` is ambiguous because the default binds `local`
+    // only when `cond` is true.
+    let db = TestDb::new();
+    let source = "\
+f <- function(x = if (cond) local <- identity) {
+    local({
+        y <- 1
+    })
+}
+";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
 fn test_diagnostic_conditional_shadow_package_call() {
     // A conditional reassignment of `test_that` earlier in the same eager
     // scope makes the later `test_that(...)` call ambiguous, the same shape

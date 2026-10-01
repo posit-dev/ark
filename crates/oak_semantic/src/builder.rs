@@ -318,18 +318,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Whether `scope` binds `name` anywhere, regardless of flow position.
-    /// `bound_anywhere` records syntactic bindings before the walk reaches
-    /// them. `walked_binding()` adds parameters and `<<-` targets after their
-    /// binding scope has been resolved.
+    /// `bound_anywhere` records syntactic bindings, including parameters,
+    /// before the walk reaches them. `walked_binding()` adds `<<-` targets
+    /// after their binding scope has been resolved.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         self.walked_binding(scope, name).is_some() || self.scan.bound_anywhere[scope].binds(name)
     }
 
-    /// The binding site for every name counted by
-    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere). Prefers the
-    /// scan-collected site in `bound_anywhere`, then falls back to an
-    /// already-walked parameter or `<<-` target. Points the lazy-shadow
-    /// diagnostic at the overwrite.
+    /// Locate the overwrite for a lazy-shadow diagnostic. For names counted
+    /// by [`scope_binds_anywhere()`](Self::scope_binds_anywhere), prefer the
+    /// scan-collected site in `bound_anywhere`, falling back to a `<<-` target
+    /// whose scope the walk has resolved.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
         if let Some(range) = self.scan.bound_anywhere[scope].binding_range(name) {
             return Some(range);
