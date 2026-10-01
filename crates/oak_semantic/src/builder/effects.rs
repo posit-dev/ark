@@ -25,6 +25,8 @@ use crate::effects::Effects;
 use crate::effects::FunctionHandlers;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AmbiguityReason;
+use crate::semantic_index::CalleeDependency;
+use crate::semantic_index::CalleeUsage;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticDiagnostic;
 
@@ -53,7 +55,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .and_then(|handler| handler.resolve(EffectSite::Call(call), &mut ctx));
 
         let callee_imports = ctx.into_callee_imports();
-        self.record_callee_import_ambiguities(callee_imports);
+        self.record_callee_imports(callee_imports);
 
         Some(Effects {
             arguments,
@@ -157,14 +159,25 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         );
     }
 
-    /// Report uncertainty in the nested callees a handler's static evaluation
-    /// consulted.
-    fn record_callee_import_ambiguities(&mut self, callee_imports: Vec<CalleeImport>) {
+    /// Report the immediate ambiguity of the callees a handler's static
+    /// evaluation consulted, and record them as `Value` dependencies for the
+    /// post-index inherited-shadow check.
+    ///
+    /// A record is complete once collected, so it goes straight into the
+    /// index rather than through `CallResolution` to the walk. That keeps
+    /// records whose call the walk never visits after the scan, and records
+    /// of effects that produced nothing: `source(c(path))` consults `c()`
+    /// despite its unknown path.
+    fn record_callee_imports(&mut self, callee_imports: Vec<CalleeImport>) {
         for import in callee_imports {
-            let Some(reason) = import.ambiguity else {
-                continue;
-            };
-            self.record_ambiguity(&import.name, import.call_range, reason);
+            if let Some(reason) = import.ambiguity {
+                self.record_ambiguity(&import.name, import.call_range, reason);
+            }
+            self.callee_dependencies.push(CalleeDependency {
+                name: import.name,
+                range: import.call_range,
+                usage: CalleeUsage::Value,
+            });
         }
     }
 
@@ -222,7 +235,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let assigned = assign.resolve(EffectSite::Operator(bin), &mut ctx);
 
         let callee_imports = ctx.into_callee_imports();
-        self.record_callee_import_ambiguities(callee_imports);
+        self.record_callee_imports(callee_imports);
 
         assigned
     }

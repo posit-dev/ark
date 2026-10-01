@@ -18,6 +18,7 @@ use oak_semantic::effects::SourceTarget;
 use oak_semantic::effects::StaticValue;
 use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::CalleeUsage;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -993,6 +994,62 @@ fn consulted_calls<'a>(
             let start = u32::from(import.call_range.start()) as usize;
             let end = u32::from(import.call_range.end()) as usize;
             (import.name.as_str(), &source[start..end])
+        })
+        .collect()
+}
+
+#[test]
+fn test_callee_dependencies_keep_value_callees_whatever_the_effect() {
+    // `source(c(path))` resolves no path and `assign()` emits no semantic call,
+    // but both consulted `c`. The `source("a.R")` site is an effect dependency,
+    // and `base::source()` can't be shadowed so it records nothing.
+    let source = "source(c(path))\nassign(c(\"x\"), 1)\nsource(\"a.R\")\nbase::source(\"b.R\")\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("c", "c(path)", CalleeUsage::Value),
+        ("c", "c(\"x\")", CalleeUsage::Value),
+        ("source", "source(\"a.R\")", CalleeUsage::Effects),
+    ]);
+}
+
+#[test]
+fn test_callee_dependencies_are_in_source_order() {
+    // The scan records the nested `c` before the walk records the enclosing
+    // `source`, but the enclosing call starts first.
+    let source = "source(c(\"a.R\"))\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("source", "source(c(\"a.R\"))", CalleeUsage::Effects),
+        ("c", "c(\"a.R\")", CalleeUsage::Value),
+    ]);
+}
+
+#[test]
+fn test_callee_dependencies_keep_value_callees_of_deferred_parameter_defaults() {
+    // The `on.exit()` body in the default is scanned after the walk has
+    // already visited the parameters. Its `c` dependency still reaches the
+    // index, even though the `source()` effect itself is lost.
+    let source = "f <- function(x = on.exit(source(c(\"more.R\")))) x\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [(
+        "c",
+        "c(\"more.R\")",
+        CalleeUsage::Value
+    )]);
+}
+
+/// Each dependency's callee name, call text, and usage.
+fn callee_dependencies<'a>(
+    index: &'a SemanticIndex,
+    source: &'a str,
+) -> Vec<(&'a str, &'a str, CalleeUsage)> {
+    index
+        .callee_dependencies()
+        .iter()
+        .map(|dependency| {
+            let start = u32::from(dependency.range().start()) as usize;
+            let end = u32::from(dependency.range().end()) as usize;
+            (dependency.name(), &source[start..end], dependency.usage())
         })
         .collect()
 }

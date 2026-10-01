@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::ptr;
 
+use oak_semantic::effects;
+use oak_semantic::semantic_index::CalleeUsage;
 use oak_semantic::FunctionHandlers;
 use rustc_hash::FxHashSet;
 
@@ -27,7 +29,9 @@ use crate::Name;
 /// We report this ambiguity with a diagnostic.
 ///
 /// A call is ambiguous when any sourcing context resolves it to an effect
-/// different from [`File::standalone_imports()`].
+/// different from [`File::standalone_imports()`]. A callee consulted for its
+/// value, such as `c()` in `source(c("helpers.R"))`, is ambiguous when the
+/// contexts disagree on its value handler.
 pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagnostic> {
     let contexts = file.inherited_imports_by_sourcing_file(db);
     if contexts.is_empty() {
@@ -39,17 +43,21 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
     let mut reported = FxHashSet::default();
     let mut diagnostics = Vec::new();
 
-    for call in file.semantic_index(db).semantic_calls() {
-        let Some(callee) = call.callee() else {
-            continue;
-        };
-        // One `source()` call forwards one `Attach` per package attached in the
-        // target, all sharing its range. Report the site once.
-        if !reported.insert(call.range()) {
+    for dependency in file.semantic_index(db).callee_dependencies() {
+        // Report each site once, even when both attach and source effects record it.
+        if !reported.insert(dependency.range()) {
             continue;
         }
 
+        // No package registers handlers for this name, so no context can
+        // resolve it to one.
+        if !effects::annotates(dependency.name()) {
+            continue;
+        }
+
+        let callee = dependency.name();
         let name = Name::new(db, callee);
+        let usage = dependency.usage();
 
         // A binding defined in this file wins in every context, so its effect
         // cannot differ.
@@ -57,26 +65,50 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
             continue;
         }
 
-        let standalone_effect = resolve_effect(db, &standalone, name.text(db).as_str());
-        let clauses = sourcing_context_conflict_clauses(db, &contexts, standalone_effect, name);
+        let standalone_effect = resolve_usage(db, &standalone, callee, usage);
+        let clauses =
+            sourcing_context_conflict_clauses(db, &contexts, standalone_effect, name, usage);
         if clauses.is_empty() {
             continue;
         }
 
+        let summary = match usage {
+            CalleeUsage::Effects => format!("This `{callee}` call has an ambiguous effect."),
+            CalleeUsage::Value => format!(
+                "This `{callee}()` call resolves differently depending on the sourcing context."
+            ),
+        };
+
         diagnostics.push(Diagnostic::new(
             DiagnosticKind::InheritedShadow,
             format!(
-                "This `{callee}` call has an ambiguous effect.\nIt resolves through {alone} when \
-                 the file is sourced on its own, {clauses}.",
+                "{summary}\nIt resolves through {alone} when the file is sourced on its own, \
+                 {clauses}.",
                 alone = describe_resolution(db, &standalone, name),
                 clauses = join_clauses(&clauses),
             ),
-            call.range(),
+            dependency.range(),
             Vec::new(),
         ));
     }
 
     diagnostics
+}
+
+/// Treat entries without a value handler as `None` for value lookups.
+/// Contexts that both lack a value handler agree for static evaluation,
+/// even if their effect handlers differ.
+fn resolve_usage(
+    db: &dyn Db,
+    layers: &[ImportLayer],
+    name: &str,
+    usage: CalleeUsage,
+) -> Option<&'static FunctionHandlers> {
+    let entry = resolve_effect(db, layers, name);
+    match usage {
+        CalleeUsage::Effects => entry,
+        CalleeUsage::Value => entry.filter(|handlers| handlers.has_value()),
+    }
 }
 
 /// Builds one message clause for each sourcing context whose effect differs from
@@ -89,13 +121,14 @@ fn sourcing_context_conflict_clauses<'db>(
     contexts: &[(File, Vec<ImportLayer>)],
     standalone_effect: Option<&'static FunctionHandlers>,
     name: Name<'db>,
+    usage: CalleeUsage,
 ) -> Vec<String> {
     let callee_text = name.text(db);
     contexts
         .iter()
         .filter(|(_, layers)| {
             !same_effect(
-                resolve_effect(db, layers, callee_text.as_str()),
+                resolve_usage(db, layers, callee_text.as_str(), usage),
                 standalone_effect,
             )
         })
@@ -128,10 +161,10 @@ fn join_clauses(clauses: &[String]) -> String {
 /// The effect registry provides one static [`FunctionHandlers`] per
 /// `(package, function)`, so pointer identity is sufficient.
 ///
-/// TODO(declarations): Only attach and source callees reach this comparison,
-/// and no two packages currently register the same callee. Because of this,
-/// we're missing test coverage. We should complete test coverage once local
-/// declaration of effects lands.
+/// TODO(declarations) Add coverage for comparing distinct registry entries
+/// for the same callee when local effect declarations are supported. The
+/// registry has no duplicate callee names across packages, so attach, source,
+/// and nested value lookups cannot exercise that comparison.
 fn same_effect(
     left: Option<&'static FunctionHandlers>,
     right: Option<&'static FunctionHandlers>,

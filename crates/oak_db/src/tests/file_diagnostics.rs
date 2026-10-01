@@ -711,6 +711,123 @@ fn test_diagnostic_inherited_shadow_for_a_loader_only_sibling_attach() {
     ));
 }
 
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_nested_value_callee() {
+    // Only the nested `c()` call is ambiguous, since `source()` resolves the
+    // same way in both contexts. Standalone analysis infers "more.R" through
+    // base `c()`, but cannot infer a path through `main.R`'s binding of `c`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "source(c(\"more.R\"))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_value_callee_of_a_definition() {
+    // `assign()` produces a definition, not a semantic call, but the bound name
+    // still came from `c()`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"y\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "assign(c(\"x\"), 1)\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_value_callee_that_failed_to_evaluate() {
+    // Report the differing value handlers even though neither context yields
+    // a static path. Standalone analysis uses base `c()` but cannot evaluate
+    // `path`, while `main.R`'s binding of `c` has no value handler.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "source(c(path))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_no_inherited_shadow_for_a_function_local_value_callee() {
+    // The `c` that `source()` consults is the function's own binding in every
+    // context, so `main.R`'s `c` can't change it.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source =
+        "f <- function() {\n  c <- function(...) \"more.R\"\n  source(c(\"more.R\"))\n}\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_no_inherited_shadow_for_a_value_callee_in_ordinary_sourcing() {
+    // Both contexts resolve `c` to base, so the inferred path is the same.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source", "c"]);
+    let root = workspace_root(&db, "w");
+    let main = new_file(&db, "w/main.R", "source(\"helpers.R\")\n");
+    let helpers_source = "source(c(\"more.R\"))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
 /// Register an installed package that really binds and exports `symbols`, so
 /// `Package::resolve` finds them. `install_packages` registers packages with no
 /// files, which makes every `Package` layer inert. Additive across calls, so

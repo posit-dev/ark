@@ -39,6 +39,8 @@ use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AttachRegion;
+use crate::semantic_index::CalleeDependency;
+use crate::semantic_index::CalleeUsage;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -512,8 +514,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: SemanticCallKind::Attach { package, region },
             range,
             scope: self.current_scope,
-            callee: bare_callee_name(call),
         });
+        self.record_effects_callee(call, range);
     }
 
     /// Where the attach of `package` at `offset` holds, as the scan recorded
@@ -547,7 +549,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn walk_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
-        let callee = bare_callee_name(call);
 
         // Read back what the scan cached: the sourced files, each with its
         // resolution. The scan is the single point that extracts the paths and
@@ -556,6 +557,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             Some(resolution) => resolution.source.clone(),
             None => return,
         };
+        self.record_effects_callee(call, range);
 
         // Only a call that runs at load time pins down what the sourced
         // file's top level can see. One inside a function body might never
@@ -583,7 +585,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 kind: SemanticCallKind::Source { path, resolved },
                 range,
                 scope: self.current_scope,
-                callee: callee.clone(),
             });
 
             let Some(resolution) = resolution else {
@@ -622,13 +623,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
                     range,
                     scope: self.current_scope,
-                    // No callee: nothing is written at `range` under this name.
-                    // The `source()` call that forwarded these carries it, so a
-                    // consumer keying on the callee sees the site once.
-                    callee: None,
                 });
             }
         }
+    }
+
+    /// Record the bare callee of an attach or source call. A qualified callee
+    /// like `base::source()` can't be shadowed, so there's nothing to record.
+    fn record_effects_callee(&mut self, call: &aether_syntax::RCall, range: TextRange) {
+        let Some(name) = bare_callee_name(call) else {
+            return;
+        };
+        self.callee_dependencies.push(CalleeDependency {
+            name,
+            range,
+            usage: CalleeUsage::Effects,
+        });
     }
 
     // `assign("x", value)` binds `x` in the current scope, the same as `x <-

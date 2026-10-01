@@ -53,6 +53,7 @@ use smallvec::SmallVec;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::BindingTimelineBuilder;
+use crate::semantic_index::CalleeDependency;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -106,6 +107,10 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // Diagnostics collected during the build and logged on `finish()`. A minimal
     // channel for now, no user-facing surface.
     diagnostics: Vec<SemanticDiagnostic>,
+    // Both passes contribute: the scan records the callees static evaluation
+    // consulted as soon as their handlers finish, and the walk records the
+    // callees of the attach and source calls it emits. Sorted on `finish()`.
+    callee_dependencies: Vec<CalleeDependency>,
     scan: ScanState,
     walk: WalkState,
 }
@@ -222,6 +227,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             scopes,
             current_scope: file_scope,
             diagnostics: Vec::new(),
+            callee_dependencies: Vec::new(),
             resolver,
             scan: ScanState {
                 bound_anywhere,
@@ -374,6 +380,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .map(|b| Arc::new(b.finish()))
             .collect();
 
+        // Value entries arrive in scan order and effect entries in walk order.
+        // Sort into source order so the output doesn't depend on which pass
+        // produced an entry. `sort_by_key()` is stable, so entries sharing a
+        // range keep their recording order.
+        self.callee_dependencies
+            .sort_by_key(|dependency| (dependency.range.start(), dependency.range.end()));
+
         SemanticIndex::new(
             self.scopes,
             symbol_tables,
@@ -382,6 +395,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.walk.enclosing_snapshots,
             self.walk.semantic_calls,
+            self.callee_dependencies,
             self.walk.namespace_accesses,
             self.diagnostics,
             file_final_bindings,
