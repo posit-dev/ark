@@ -182,11 +182,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     fn record_ambiguity(&mut self, name: &str, call_range: TextRange, reason: AmbiguityReason) {
-        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-            name: name.to_string(),
-            call_range,
-            reason,
-        });
+        self.diagnostics
+            .push(SemanticDiagnostic::AmbiguousCalleeResolution {
+                name: name.to_string(),
+                call_range,
+                reason,
+            });
     }
 
     /// Local resolver for declared effects, mirroring the imports resolver's

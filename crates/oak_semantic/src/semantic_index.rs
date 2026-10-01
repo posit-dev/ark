@@ -1183,11 +1183,14 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An effect decision (NSE scope or attach) settled on the eager-linear
-    /// reading even though another reading was possible. `call_range` points at
-    /// the call we decided about, which may or may not have come out effectful;
-    /// `reason` says what made it ambiguous and where the competing site is.
-    AmbiguousEffect {
+    /// A callee resolution settled on the eager-linear reading even though
+    /// another reading was possible. The callee is consulted either for its
+    /// effects (NSE scope or attach) or for its static value (a nested `c()`
+    /// in `source(c("a.R"))`). `call_range` points at the call we decided
+    /// about, which may or may not have come out effectful or statically
+    /// evaluated; `reason` says what made it ambiguous and where the competing
+    /// site is.
+    AmbiguousCalleeResolution {
         name: String,
         call_range: TextRange,
         reason: AmbiguityReason,
@@ -1214,8 +1217,8 @@ pub enum SemanticDiagnostic {
     SourceCycle,
 }
 
-/// Why an [`AmbiguousEffect`](SemanticDiagnostic::AmbiguousEffect) could have
-/// read the other way, and where the competing site is.
+/// Why an [`AmbiguousCalleeResolution`](SemanticDiagnostic::AmbiguousCalleeResolution)
+/// could have read the other way, and where the competing site is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmbiguityReason {
     /// The callee is bound by a lazy-crossed ancestor with undetermined
@@ -1229,10 +1232,10 @@ pub enum AmbiguityReason {
     /// scope shape is condition-dependent. `binding_range` points at the
     /// conditional binding.
     ConditionalShadow { binding_range: TextRange },
-    /// The callee would have been effectful, but the `library()`/`require()`
-    /// that annotates it was attached on only some paths and dropped at a
-    /// branch or loop join, so we read the call as plain. `attach_range` points
-    /// at that conditional attach.
+    /// The callee would have been effectful or statically evaluated, but the
+    /// `library()`/`require()` that annotates it was attached on only some
+    /// paths and dropped at a branch or loop join, so we read the call as
+    /// plain. `attach_range` points at that conditional attach.
     ConditionalAttach {
         package: String,
         attach_range: TextRange,
