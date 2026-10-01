@@ -373,9 +373,10 @@ impl<'a> CallContext<'a> {
     }
 }
 
-/// The initial formal names needed to match the arguments this handler reads.
-/// Include every earlier slot so unnamed arguments bind correctly. Stop before
-/// `...`, because later R formals are matched by name rather than position.
+/// Include formals in signature order through every argument the handler reads,
+/// including earlier slots so unnamed arguments bind correctly. A `"..."` slot
+/// ends positional matching. Remaining unnamed arguments belong to `...`, and
+/// later formals match only by exact name, as in R.
 pub type Formals = &'static [&'static str];
 
 /// A call's arguments indexed by the formals they match.
@@ -387,20 +388,21 @@ pub struct BoundArguments {
 }
 
 impl BoundArguments {
-    pub fn new(call: &RCall, formals: Formals) -> Self {
-        let matched = match_arguments(call, formals);
-        let values: Vec<Option<AnyRExpression>> = match call.arguments() {
-            Ok(args) => args
-                .items()
-                .iter()
-                .map(|item| item.ok().and_then(|arg| arg.value()))
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        Self {
+    /// Returns `None` if multiple named arguments match the same declared formal
+    /// or the call has no argument list. R rejects duplicate matches.
+    pub fn new(call: &RCall, formals: Formals) -> Option<Self> {
+        let matched = match_arguments(call, formals)?;
+        let values: Vec<Option<AnyRExpression>> = call
+            .arguments()
+            .ok()?
+            .items()
+            .iter()
+            .map(|item| item.ok().and_then(|arg| arg.value()))
+            .collect();
+        Some(Self {
             formals,
             bound: matched.into_iter().zip(values).collect(),
-        }
+        })
     }
 
     /// The expression bound to `formal`. Returns `None` when the call uses the
@@ -429,14 +431,15 @@ impl BoundArguments {
     }
 }
 
-/// Match `call` arguments to `formals`, returning a formal index for each
-/// call argument. Exact named matches consume slots first, then unnamed
-/// arguments fill unconsumed slots in signature order.
-fn match_arguments(call: &RCall, formals: Formals) -> Vec<Option<usize>> {
-    let Ok(args) = call.arguments() else {
-        return Vec::new();
-    };
-    let items = args.items();
+/// Exact named matches take priority over positional matches. Unnamed arguments
+/// fill remaining slots in signature order, stopping at `"..."`.
+///
+/// Each result entry is a formal index or `None` for an unmatched argument,
+/// including arguments belonging to `...`. Unmatched names may repeat.
+/// The entire result is `None` if multiple named arguments match the same
+/// declared formal or the call has no argument list.
+fn match_arguments(call: &RCall, formals: Formals) -> Option<Vec<Option<usize>>> {
+    let items = call.arguments().ok()?.items();
 
     let arg_count = items.iter().count();
     let mut matched: Vec<Option<usize>> = vec![None; arg_count];
@@ -444,23 +447,34 @@ fn match_arguments(call: &RCall, formals: Formals) -> Vec<Option<usize>> {
 
     for (i, item) in items.iter().enumerate() {
         let Ok(arg) = item else { continue };
-        if let Some(formal_idx) = match_named(&arg, formals, &consumed) {
-            consumed[formal_idx] = true;
-            matched[i] = Some(formal_idx);
+        let Some(formal_idx) = match_named(&arg, formals) else {
+            continue;
+        };
+        // TODO: Diagnose duplicate formal matches, which R rejects. Handlers
+        // have no diagnostic channel, and `Formals` may omit unread formals,
+        // so a general lint needs the resolved callee's full signature.
+        if consumed[formal_idx] {
+            return None;
         }
+        consumed[formal_idx] = true;
+        matched[i] = Some(formal_idx);
     }
 
     // Unnamed arguments cannot have a named match, so `matched[i]` needs no check.
+    let positional = formals
+        .iter()
+        .position(|formal| *formal == "...")
+        .unwrap_or(formals.len());
     let mut next_slot = 0usize;
     for (i, item) in items.iter().enumerate() {
         let Ok(arg) = item else { continue };
         if arg.name_clause().is_some() {
             continue;
         }
-        while next_slot < consumed.len() && consumed[next_slot] {
+        while next_slot < positional && consumed[next_slot] {
             next_slot += 1;
         }
-        let Some(formal_idx) = (next_slot < formals.len()).then_some(next_slot) else {
+        let Some(formal_idx) = (next_slot < positional).then_some(next_slot) else {
             continue;
         };
         consumed[formal_idx] = true;
@@ -468,13 +482,13 @@ fn match_arguments(call: &RCall, formals: Formals) -> Vec<Option<usize>> {
         next_slot += 1;
     }
 
-    matched
+    Some(matched)
 }
 
 /// Only exact names match. Partial argument matching is not supported.
 ///
 /// TODO: Decide whether to support partial matching or rely on linting it.
-fn match_named(arg: &RArgument, formals: Formals, consumed: &[bool]) -> Option<usize> {
+fn match_named(arg: &RArgument, formals: Formals) -> Option<usize> {
     let clause = arg.name_clause()?;
     let name = clause.name().ok()?;
     let name_text = match &name {
@@ -484,9 +498,7 @@ fn match_named(arg: &RArgument, formals: Formals, consumed: &[bool]) -> Option<u
     };
     formals
         .iter()
-        .enumerate()
-        .find(|(i, formal_name)| !consumed[*i] && **formal_name == name_text.as_str())
-        .map(|(i, _)| i)
+        .position(|formal| *formal != "..." && *formal == name_text.as_str())
 }
 
 /// A call's resolved argument effects: for each argument in call order, the
@@ -548,7 +560,9 @@ impl EffectHandler for ArgumentsAnnotation {
     type Output = ResolvedArgumentEffects;
 
     fn resolve(&self, call: &RCall, _ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
-        let bound = BoundArguments::new(call, self.formals);
+        let Some(bound) = BoundArguments::new(call, self.formals) else {
+            return Some(inert_argument_effects(call));
+        };
         Some(
             bound
                 .arguments()
@@ -562,6 +576,19 @@ impl EffectHandler for ArgumentsAnnotation {
                 .collect(),
         )
     }
+}
+
+/// Effects for a call whose arguments [`BoundArguments::new()`] can't match.
+/// R rejects such a call before evaluating any argument, so every argument
+/// stays inert. Treating them as plain arguments instead would scan bindings
+/// that never happen, such as the `c <- identity` in
+/// `substitute(expr = { c <- identity }, expr = NULL)`.
+pub(crate) fn inert_argument_effects(call: &RCall) -> ResolvedArgumentEffects {
+    let count = match call.arguments() {
+        Ok(args) => args.items().iter().count(),
+        Err(_) => 0,
+    };
+    vec![Some(ResolvedArgumentEffect::Quote { holes: Vec::new() }); count]
 }
 
 /// A path a source call names, and what that path points at.
@@ -609,7 +636,7 @@ impl EffectHandler for SourceAnnotation {
     type Output = Vec<SourcePath>;
 
     fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
-        let bound = BoundArguments::new(call, self.formals);
+        let bound = BoundArguments::new(call, self.formals)?;
 
         // Only a statically known `local` makes the source scope known.
         if let Some(local) = bound.get("local") {
@@ -659,7 +686,7 @@ impl AssignHandler for AssignAnnotation {
         let EffectSite::Call(call) = site else {
             return None;
         };
-        let bound = BoundArguments::new(call, self.formals);
+        let bound = BoundArguments::new(call, self.formals)?;
 
         // An explicit target environment binds outside the current scope, which
         // we don't currently support.

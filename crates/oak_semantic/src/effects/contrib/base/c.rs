@@ -1,11 +1,8 @@
-use aether_syntax::AnyRArgumentName;
-use aether_syntax::RArgument;
 use aether_syntax::RCall;
-use biome_rowan::AstSeparatedList;
-use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 
+use crate::effects::BoundArguments;
 use crate::effects::CallContext;
+use crate::effects::Formals;
 use crate::effects::StaticValue;
 use crate::effects::ValueHandler;
 
@@ -17,28 +14,30 @@ pub(crate) struct CHandler;
 
 impl ValueHandler for CHandler {
     fn evaluate(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<StaticValue> {
+        let formals: Formals = &["...", "recursive", "use.names"];
+        let bound = BoundArguments::new(call, formals)?;
+
         // Distinguish `c()` (which returns `NULL`) from a character vector.
         let mut out: Option<Vec<String>> = None;
 
-        for item in call.arguments().ok()?.items().iter() {
-            let arg = item.ok()?;
+        for (formal, value) in bound.arguments() {
+            // An empty argument such as `c("a", )` or `c("a", recursive = )`
+            // is an error in R.
+            let value = value?;
 
-            // `recursive` and `use.names` follow `...` in `c()`'s formals, so
-            // only exact names select them. Positional arguments are elements,
-            // unlike the formals handled by `BoundArguments::new()`.
-            if matches!(
-                argument_name(&arg).as_deref(),
-                Some("recursive" | "use.names")
-            ) {
-                continue;
-            }
-
-            // A missing argument such as `c("a", )` is an error in R.
-            let value = arg.value()?;
-
-            match ctx.resolve_static_value(&value)? {
-                StaticValue::Null => {},
-                StaticValue::Character(elements) => out.get_or_insert_default().extend(elements),
+            match formal {
+                // Neither option changes character elements, but the call
+                // remains unknown unless each supplied option resolves to a boolean.
+                // This avoids guessing how R handles values such as `NA`.
+                Some("recursive" | "use.names") => {
+                    ctx.resolve_static_bool(value)?;
+                },
+                _ => match ctx.resolve_static_value(value)? {
+                    StaticValue::Null => {},
+                    StaticValue::Character(elements) => {
+                        out.get_or_insert_default().extend(elements)
+                    },
+                },
             }
         }
 
@@ -46,13 +45,5 @@ impl ValueHandler for CHandler {
             Some(elements) => StaticValue::Character(elements),
             None => StaticValue::Null,
         })
-    }
-}
-
-fn argument_name(arg: &RArgument) -> Option<String> {
-    match arg.name_clause()?.name().ok()? {
-        AnyRArgumentName::RIdentifier(ident) => Some(ident.name_text()),
-        AnyRArgumentName::RStringValue(s) => s.string_text(),
-        _ => None,
     }
 }
