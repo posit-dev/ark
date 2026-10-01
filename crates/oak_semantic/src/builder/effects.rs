@@ -15,6 +15,7 @@ use super::SemanticIndexBuilder;
 use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
+use crate::effects::CalleeImport;
 use crate::effects::CalleeOrigin;
 use crate::effects::CalleeResolution;
 use crate::effects::CalleeUncertainty;
@@ -50,6 +51,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let assign = handlers
             .assign
             .and_then(|handler| handler.resolve(EffectSite::Call(call), &mut ctx));
+
+        let callee_imports = ctx.into_callee_imports();
+        self.record_callee_import_ambiguities(callee_imports);
 
         Some(Effects {
             arguments,
@@ -122,7 +126,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // Bail early if it is known that no package annotates this name
         // with effects. This speeds up the common case of no known annotations.
         if !effects::annotates(sym) {
-            return CalleeResolution::settled(CalleeOrigin::SearchPath, None);
+            return CalleeResolution::settled(CalleeOrigin::Import, None);
         }
 
         // Now check imports since the symbol is locally unbound
@@ -139,10 +143,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             None => self.conditional_attach_uncertainty(sym),
         };
 
-        CalleeResolution::new(CalleeOrigin::SearchPath, handlers, uncertainty)
+        CalleeResolution::new(CalleeOrigin::Import, handlers, uncertainty)
     }
 
-    pub(super) fn record_call_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
+    fn record_call_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
         };
@@ -151,6 +155,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             call.syntax().text_trimmed_range(),
             reason,
         );
+    }
+
+    /// Report uncertainty in the nested callees a handler's static evaluation
+    /// consulted.
+    fn record_callee_import_ambiguities(&mut self, callee_imports: Vec<CalleeImport>) {
+        for import in callee_imports {
+            let Some(reason) = import.ambiguity else {
+                continue;
+            };
+            self.record_ambiguity(&import.name, import.call_range, reason);
+        }
     }
 
     fn record_ambiguity(&mut self, name: &str, call_range: TextRange, reason: AmbiguityReason) {
@@ -200,11 +215,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
         let handlers = resolution.handlers?.effects;
 
+        let assign = handlers.assign?;
+
         let mut bindings = ScanBindings { builder: self };
         let mut ctx = CallContext::new(&mut bindings);
-        handlers
-            .assign?
-            .resolve(EffectSite::Operator(bin), &mut ctx)
+        let assigned = assign.resolve(EffectSite::Operator(bin), &mut ctx);
+
+        let callee_imports = ctx.into_callee_imports();
+        self.record_callee_import_ambiguities(callee_imports);
+
+        assigned
     }
 
     /// Detect ambiguities caused by laziness.

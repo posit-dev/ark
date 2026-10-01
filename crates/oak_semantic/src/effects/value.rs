@@ -1,7 +1,3 @@
-use aether_syntax::RCall;
-
-use crate::effects::CallContext;
-
 /// Values recognized by static evaluation of effect arguments. Only character
 /// vectors without missing values and `NULL` are represented.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,12 +15,4 @@ impl StaticValue {
             StaticValue::Null => None,
         }
     }
-}
-
-/// Consulted only when an effect argument needs a pure call's static value.
-/// Implementations must be `Sync` because the registry shares them through
-/// statics.
-pub trait ValueHandler: std::fmt::Debug + Sync {
-    /// Evaluate `call`, or `None` when its value is not statically known.
-    fn evaluate(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<StaticValue>;
 }
