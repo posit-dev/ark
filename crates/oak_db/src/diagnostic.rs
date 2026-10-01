@@ -60,7 +60,7 @@ pub struct Annotation {
 /// experimental status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
-    AmbiguousEffect,
+    AmbiguousCalleeResolution,
     AmbiguousAttachOrder,
     UninstalledPackage,
     SourceCycle,
@@ -71,7 +71,7 @@ impl DiagnosticKind {
     /// The stable string an LSP consumer reports as the diagnostic `code`.
     pub fn as_str(&self) -> &'static str {
         match self {
-            DiagnosticKind::AmbiguousEffect => "ambiguous-effect",
+            DiagnosticKind::AmbiguousCalleeResolution => "ambiguous-callee-resolution",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
             DiagnosticKind::SourceCycle => "source-cycle",
@@ -81,7 +81,7 @@ impl DiagnosticKind {
 
     pub fn severity(&self) -> Severity {
         match self {
-            DiagnosticKind::AmbiguousEffect => Severity::Info,
+            DiagnosticKind::AmbiguousCalleeResolution => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
             DiagnosticKind::SourceCycle => Severity::Warning,
@@ -91,7 +91,7 @@ impl DiagnosticKind {
 
     pub fn is_experimental(&self) -> bool {
         match self {
-            DiagnosticKind::AmbiguousEffect => true,
+            DiagnosticKind::AmbiguousCalleeResolution => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
             DiagnosticKind::UninstalledPackage => true,
             DiagnosticKind::SourceCycle => true,
@@ -119,7 +119,7 @@ pub(crate) fn lower_semantic_diagnostic(
             name,
             call_range,
             reason,
-        } => lower_ambiguous_effect(name, *call_range, reason),
+        } => lower_ambiguous_callee_resolution(name, *call_range, reason),
         SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
             lower_ambiguous_attach_order(packages, *range)
         },
@@ -132,7 +132,7 @@ pub(crate) fn lower_semantic_diagnostic(
 
 /// The primary range is always the call site. The reason's competing site
 /// becomes a single annotation.
-fn lower_ambiguous_effect(
+fn lower_ambiguous_callee_resolution(
     name: &str,
     call_range: TextRange,
     reason: &AmbiguityReason,
@@ -173,9 +173,12 @@ fn lower_ambiguous_effect(
         ),
     };
 
-    Diagnostic::new(DiagnosticKind::AmbiguousEffect, message, call_range, vec![
-        annotation,
-    ])
+    Diagnostic::new(
+        DiagnosticKind::AmbiguousCalleeResolution,
+        message,
+        call_range,
+        vec![annotation],
+    )
 }
 
 /// The primary range covers the `if`. Both arms are inside it, so there is no
