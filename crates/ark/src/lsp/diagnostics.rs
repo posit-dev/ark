@@ -1907,7 +1907,7 @@ foo
     }
 
     #[test]
-    fn test_oak_diagnostics_ambiguous_effect_experimental() {
+    fn test_oak_diagnostics_ambiguous_callee_resolution_experimental() {
         r_task(|| {
             // `local`'s NSE reading could be shadowed by the later
             // `local <- identity` at file scope, with undetermined timing
@@ -1926,7 +1926,7 @@ foo
             assert_eq!(
                 diagnostic.code,
                 Some(lsp_types::NumberOrString::String(
-                    "ambiguous-effect".to_string()
+                    "ambiguous-callee-resolution".to_string()
                 ))
             );
             assert_eq!(diagnostic.range.start, Position::new(0, 16));
@@ -1946,7 +1946,7 @@ foo
     }
 
     #[test]
-    fn test_oak_diagnostics_ambiguous_effect_disabled_by_default() {
+    fn test_oak_diagnostics_ambiguous_callee_resolution_disabled_by_default() {
         r_task(|| {
             let text = "f <- function() local({ x <- 1 })\nlocal <- identity\n";
 

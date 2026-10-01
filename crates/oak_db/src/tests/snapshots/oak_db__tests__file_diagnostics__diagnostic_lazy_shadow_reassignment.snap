@@ -2,8 +2,8 @@
 source: crates/oak_db/src/tests/file_diagnostics.rs
 expression: "render(\"a.R\", source, file.diagnostics(&db))"
 ---
-info[ambiguous-effect]: Ambiguous reading of `local()`.
-                        An assignment to `local` in an enclosing scope could run before this call and change what it does.
+info[ambiguous-callee-resolution]: Ambiguous reading of `local()`.
+                                   An assignment to `local` in an enclosing scope could run before this call and change what it does.
  --> a.R:1:17
   |
 1 | f <- function() local({ x <- 1 })
