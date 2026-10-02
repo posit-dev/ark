@@ -183,7 +183,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         effects
     }
 
-    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+    fn binding_package(&mut self, name: &str, attached: &[String]) -> Option<String> {
         let layers = self.file.cross_file_layers(self.db, CollationView::Eager);
         let own = own_attach_layers(self.db, attached);
 

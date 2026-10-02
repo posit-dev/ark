@@ -998,15 +998,21 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// A locked package target prevents the global fallback and produces a
-    /// diagnostic. The site's attachments include only inherited attachments
-    /// and those earlier in its scan unit. Attachments in other lazy units are
-    /// excluded because their execution order relative to `<<-` is unknown.
+    /// diagnostic. R locks package and imports environments, so a name whose
+    /// first search-path binding comes from a package can't be assigned with
+    /// `<<-`. A spurious `None` from the resolver records a global binding
+    /// that R never creates, while a spurious package reports a locked-binding
+    /// error R never raises.
+    ///
+    /// The site's attachments include only inherited attachments and those
+    /// earlier in its scan unit. Attachments in other lazy units are excluded
+    /// because their execution order relative to `<<-` is unknown.
     fn super_name_is_locked(&mut self, name: &str, range: TextRange) -> bool {
         let attached = attach_search_path(
             &self.scan.attached_inherited,
             self.scan.attached_so_far.packages(),
         );
-        let Some(package) = self.resolver.binds_package_name(name, &attached) else {
+        let Some(package) = self.resolver.binding_package(name, &attached) else {
             return false;
         };
 
