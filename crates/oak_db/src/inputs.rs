@@ -199,9 +199,9 @@ pub struct Notebook {
 
 /// The notebooks currently open in the editor.
 ///
-/// Singleton like [`OrphanRoot`]. Salsa does not garbage-collect inputs, so a
-/// closed notebook's entity leaks. Notebooks are few and small, so this is not
-/// worth a stale bucket.
+/// Salsa does not garbage-collect inputs, so a closed notebook's entity
+/// leaks. Notebooks are few and small, so a stale bucket like [`StaleRoot`]
+/// is not worth it.
 #[salsa::input]
 pub struct OpenNotebooks {
     #[returns(ref)]

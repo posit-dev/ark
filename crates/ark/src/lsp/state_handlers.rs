@@ -449,13 +449,13 @@ pub(crate) fn did_open_notebook(
         .collect::<anyhow::Result<Vec<FilePath>>>()?;
     state.notebooks.insert(path.clone(), cells);
 
-    sync_notebook_cells(state, &path)
+    push_notebook_cells(state, &path)
 }
 
 /// Push the notebook's cell order into oak. Cells the client lists without
 /// syncing their text (for example a markdown cell) are skipped, since oak
 /// only knows cells that are open files.
-fn sync_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
+fn push_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
     let Some(cell_paths) = state.notebooks.get(path) else {
         return Err(anyhow!("Unknown notebook {path}"));
     };
@@ -507,7 +507,7 @@ pub(crate) fn did_change_notebook(
         did_change(params, lsp_state, state)?;
     }
 
-    sync_notebook_cells(state, &path)
+    push_notebook_cells(state, &path)
 }
 
 /// Apply a client cell-array splice to our copy of the notebook's cell list.
