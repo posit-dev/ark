@@ -1195,6 +1195,17 @@ pub enum SemanticDiagnostic {
         call_range: TextRange,
         reason: AmbiguityReason,
     },
+    /// The selected `<<-` target may not exist when the assignment runs. It
+    /// belongs to an ancestor in another execution unit and has not been
+    /// walked at the assignment site. Earlier invocation may search farther
+    /// up the environment chain instead.
+    /// `range` points at the assigned name, and `binding_range` at the selected
+    /// target binding.
+    AmbiguousSuperAssignment {
+        name: String,
+        range: TextRange,
+        binding_range: TextRange,
+    },
     /// Both `if` arms attach the same packages in different orders. The scanner
     /// retains the `else` arm's order in `packages`, but R searches the most recent
     /// attach first, so masked names after the `if` depend on the selected arm.

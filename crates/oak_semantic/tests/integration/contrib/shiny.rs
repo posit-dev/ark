@@ -602,3 +602,36 @@ reactive({
 
     assert!(index.diagnostics().is_empty());
 }
+
+#[test]
+fn test_super_assignment_to_attached_package_name_records_no_target() {
+    // Record no global target because the attached `shiny` package supplies
+    // a locked `reactive` binding. Calling `f()` fails on that binding rather
+    // than creating a global one.
+    let index = index("library(shiny)\nf <- function() reactive <<- identity\n");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(file).get("reactive").is_none());
+    assert_eq!(
+        index.symbols(fun).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_SUPER_BOUND
+    );
+}
+
+#[test]
+fn test_super_assignment_to_unit_attached_package_name_records_no_target() {
+    // Record no target because `library(shiny)` runs before `<<-` in the
+    // same function body. The assignment reaches the attached package's
+    // locked `reactive` binding and fails.
+    let index = index("f <- function() { library(shiny); reactive <<- identity }\n");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(file).get("reactive").is_none());
+    assert_eq!(
+        index.symbols(fun).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_SUPER_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}

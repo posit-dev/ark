@@ -27,6 +27,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 use smallvec::SmallVec;
 
 use super::assignment_name;
+use super::effects::attach_search_path;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -53,6 +54,7 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticCall;
 use crate::semantic_index::SemanticCallKind;
+use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolId;
 use crate::semantic_index::Use;
@@ -854,29 +856,45 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     //
     // R's `<<-` walks up the environment chain from the parent, targeting
     // the first scope where the symbol is already bound. If no binding is
-    // found, R assigns in the global environment. `resolve_super_target()`
-    // approximates this search using lexical scopes within the file.
+    // found, R assigns in the global environment. If the first binding is
+    // locked, the assignment errors instead. `resolve_super_target()`
+    // approximates this search using lexical scopes and package bindings.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
-        let Some(parent) = self.scopes[self.current_scope].parent else {
-            // A top-level `<<-` has no enclosing frame to walk to, so it binds
-            // in the file scope it already sits in. The marker scope and the
-            // binding scope coincide, so record one definition carrying both
-            // flags rather than pushing two coinciding entries.
-            let symbol_id = self.walk.symbol_tables[self.current_scope].intern(
-                name,
-                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
-            );
-            let def_id = self.walk.definitions[self.current_scope].push(Definition {
+        // Start the search outside the execution frame because `<<-` skips
+        // that frame's bindings. `Current + Lazy` bodies such as `on.exit()`
+        // and `on_load()` execute in their owner's frame, not a separate one.
+        let frame = if self.scopes[self.current_scope].kind.owns_bindings() {
+            self.current_scope
+        } else {
+            let Some(owner) = self.enclosing_owner() else {
+                stdext::debug_panic!("`Current + Lazy` scope has no owner");
+                return;
+            };
+            owner
+        };
+
+        let Some(start) = self.scopes[frame].parent else {
+            // At file scope, the assignment site and global fallback share
+            // one definition, carrying both flags. A locked package binding
+            // prevents the global assignment, leaving only the site marker.
+            let locked = self.super_name_is_locked(name);
+            let flags = if locked {
+                SymbolFlags::IS_SUPER_BOUND
+            } else {
+                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
+            };
+            let symbol_id = self.walk.symbol_tables[frame].intern(name, flags);
+            let def_id = self.walk.definitions[frame].push(Definition {
                 symbol: symbol_id,
                 kind,
                 range,
             });
-            self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-            self.walk.use_def_maps[self.current_scope].record_super_definition(symbol_id, def_id);
+            self.walk.use_def_maps[frame].ensure_symbol(symbol_id);
+            self.walk.use_def_maps[frame].record_super_definition(symbol_id, def_id);
             return;
         };
 
-        let target_scope = self.resolve_super_target(name, parent);
+        let target_scope = self.resolve_super_target(name, start, range);
 
         let symbol_id =
             self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
@@ -885,6 +903,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: kind.clone(),
             range,
         });
+
+        // Keep the assignment-site marker even when a locked package binding
+        // prevents the assignment from creating or updating a target.
+        let Some(target_scope) = target_scope else {
+            return;
+        };
 
         let target_symbol =
             self.walk.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
@@ -917,19 +941,81 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // TODO(superassignment) Account for package bindings and runtime call
-    // timing when resolving `<<-` targets. The file-scope fallback can record
-    // a binding that R would not create. If the environment search reaches a
-    // locked binding, such as base's `local`, the assignment errors instead.
+    // Use bindings already walked within the same execution unit (the file
+    // or one lazy body), so later assignments cannot become targets. Across
+    // a lazy boundary, consider bindings anywhere in the ancestor because
+    // invocation can follow its later assignments. Report timing dependence
+    // when the selected binding has not been walked at the assignment site.
     //
-    // Walk order can also miss an enclosing binding created after the closure
-    // definition but before its invocation. R would update that binding rather
-    // than the global environment. The `test_fixme_super_assignment_` tests in
-    // `builder.rs` and `contrib/base.rs` assert these divergences.
-    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
-        self.ancestor_scope_ids(start)
-            .find(|&scope| self.walked_binding(scope, name).is_some())
-            .unwrap_or(ScopeId::from(0))
+    // With no lexical target, known locked package bindings prevent assignment.
+    // Otherwise, the file scope represents R's global fallback.
+    fn resolve_super_target(
+        &mut self,
+        name: &str,
+        start: ScopeId,
+        range: TextRange,
+    ) -> Option<ScopeId> {
+        let site_unit = self.enclosing_lazy_scope(self.current_scope);
+
+        let mut target: Option<ScopeId> = None;
+        let mut timing_dependent = false;
+
+        for ancestor in self.ancestor_scope_ids(start) {
+            let same_unit = self.enclosing_lazy_scope(ancestor) == site_unit;
+            let bound = if same_unit {
+                self.walked_binding(ancestor, name).is_some()
+            } else {
+                self.scope_binds_anywhere(ancestor, name)
+            };
+
+            if !bound {
+                continue;
+            }
+
+            timing_dependent = !same_unit && self.walked_binding(ancestor, name).is_none();
+            target = Some(ancestor);
+            break;
+        }
+
+        let Some(target) = target else {
+            if self.super_name_is_locked(name) {
+                return None;
+            }
+            return Some(ScopeId::from(0));
+        };
+
+        if timing_dependent {
+            if let Some(binding_range) = self.scope_binding_range(target, name) {
+                self.diagnostics
+                    .push(SemanticDiagnostic::AmbiguousSuperAssignment {
+                        name: name.to_string(),
+                        range,
+                        binding_range,
+                    });
+            }
+        }
+        Some(target)
+    }
+
+    /// Check for a package binding treated as a locked `<<-` target. Include
+    /// base, inherited attachments, and attachments earlier in the scan unit.
+    /// Exclude attachments in other lazy units because their execution order
+    /// relative to the assignment is unknown.
+    /// Whether base or a package attached linearly to the site's scan unit
+    /// (inherited, or earlier in the unit) binds the name, so `<<-` onto it
+    /// errors on the locked binding instead of creating a global. Attaches in
+    /// other lazy units are excluded: their order against the site is unknown.
+    /// A locked name reproduces R's runtime error as a diagnostic.
+    /// Whether base or a package attached linearly to the site's scan unit
+    /// (inherited, or earlier in the unit) binds the name, so `<<-` onto it
+    /// errors on the locked binding instead of creating a global. Attaches in
+    /// other lazy units are excluded: their order against the site is unknown.
+    fn super_name_is_locked(&mut self, name: &str) -> bool {
+        let attached = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
+        self.resolver.binds_package_name(name, &attached)
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {

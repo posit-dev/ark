@@ -32,7 +32,7 @@ pub struct SourceResolution {
 ///   for isolated indexing (CLI tools, unit tests).
 /// - `oak_db::SalsaImportsResolver`: salsa-backed lookup against the source graph.
 ///
-/// The trait has four queries:
+/// The builder uses these queries:
 ///
 /// - [`resolve_source`](ImportsResolver::resolve_source) is the bulk
 ///   query, "enumerate every name this `source("path")` brings in," used
@@ -43,6 +43,9 @@ pub struct SourceResolution {
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
 ///   resolves the handlers of a `pkg::fn` or `pkg:::fn` callee against a named
 ///   package.
+/// - [`binds_package_name()`](ImportsResolver::binds_package_name) identifies
+///   package bindings treated as locked targets for `<<-`, preventing the
+///   builder from recording a global binding for a failing assignment.
 /// - [`package_exists`](ImportsResolver::package_exists) tells whether a
 ///   `library()`/`require()` target resolves to an installed package.
 pub trait ImportsResolver {
@@ -76,6 +79,23 @@ pub trait ImportsResolver {
     /// `:::`) to its handlers.
     fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<FunctionHandlers> {
         effects::lookup(package, name).copied()
+    }
+
+    /// Whether base or an attached package binds `name`. The builder treats
+    /// these bindings as locked, so `<<-` records no global target when no
+    /// lexical ancestor binds the name.
+    ///
+    /// The default recognizes only names in the static effects registry. This
+    /// prevents spurious global targets from affecting known callee semantics,
+    /// but unrecognized package names can still produce spurious targets for
+    /// rename and navigation. `oak_db`'s resolver overrides this with real
+    /// NAMESPACE export data.
+    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> bool {
+        attached
+            .iter()
+            .map(String::as_str)
+            .chain(["base"])
+            .any(|package| effects::lookup(package, name).is_some())
     }
 
     /// Whether `package` resolves to an installed package. Defaults to

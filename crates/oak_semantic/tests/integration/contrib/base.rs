@@ -3924,7 +3924,7 @@ f <- function(x = if (cond) local <- identity) {
 // `<<-` to a name that only base binds targets base's locked binding: R
 // signals "cannot change value of locked binding" and binds nothing, so the
 // later call still reaches base `local()`. These tests pin that reading: NSE,
-// with no ambiguity diagnostic.
+// with no diagnostic.
 
 #[test]
 fn test_super_assignment_to_locked_base_name_in_default_keeps_callee() {
@@ -3966,12 +3966,11 @@ f <- function() {
     assert!(index.diagnostics().is_empty());
 }
 
-// The file-scope fallback for `<<-` can produce a false `LazyShadow`
-// diagnostic for base's `local()`. With `local` bound only in base, the
-// assignment would fail on the locked binding rather than shadow it.
-
 #[test]
-fn test_fixme_super_assignment_from_earlier_sibling_reports_impossible_lazy_shadow() {
+fn test_super_assignment_to_locked_name_from_earlier_sibling_keeps_callee() {
+    // Keep base NSE semantics without a shadow diagnostic. With `local`
+    // bound only in base, calling `g()` fails on its locked binding rather
+    // than creating a global binding that could shadow `f()`'s callee.
     let source = "\
 g <- function() local <<- identity
 f <- function() local({ y <- 1 })
@@ -3983,25 +3982,11 @@ f <- function() local({ y <- 1 })
         index.scope(local_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
-
-    // The recorded file binding from `g()` makes `f()`'s `local()` ambiguous
-    // even though calling `g()` would fail rather than create that binding.
-    let diagnostics = index.diagnostics();
-    assert_eq!(diagnostics.len(), 1);
-    assert!(
-        matches!(&diagnostics[0], SemanticDiagnostic::AmbiguousCalleeResolution {
-            name,
-            reason: AmbiguityReason::LazyShadow { .. },
-            ..
-        } if name == "local")
-    );
+    assert!(index.diagnostics().is_empty());
 }
 
 #[test]
-fn test_fixme_super_assignment_lazy_shadow_depends_on_sibling_order() {
-    // No diagnostic is reported because the walk resolves `f()`'s `local()`
-    // before recording `g()`'s file-scope binding. Reversing the sibling
-    // definitions changes the warning, but not the runtime assignment target.
+fn test_super_assignment_to_locked_name_from_later_sibling_keeps_callee() {
     let source = "\
 f <- function() local({ y <- 1 })
 g <- function() local <<- identity
@@ -4014,6 +3999,128 @@ g <- function() local <<- identity
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
     assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_in_eager_nse_body_uses_the_linear_view() {
+    // Update global `x` because the eager `local()` block runs before
+    // `x <- 2` creates a binding in `g()`'s frame.
+    let source = "\
+x <- 0
+g <- function() {
+    local({ x <<- 1 })
+    x <- 2
+}
+";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+    let g = ScopeId::from(1);
+
+    // The `<<-` targets the file scope's `x`.
+    let x_file_defs: Vec<_> = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_file_defs.len(), 2);
+    assert!(matches!(
+        x_file_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_file_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+
+    // `g`'s own `x` is untouched by the `<<-`.
+    let x_g_defs: Vec<_> = index
+        .definitions(g)
+        .iter()
+        .filter(|(_, d)| index.symbols(g).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_g_defs.len(), 1);
+    assert!(matches!(
+        x_g_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_in_on_exit_starts_outside_the_owner_frame() {
+    // Update global `x` even though `g()` has its own binding by exit time.
+    // The `on.exit()` handler runs in `g()`'s frame, and `<<-` starts its
+    // search outside that frame.
+    let source = "\
+x <- 0
+g <- function() {
+    on.exit(x <<- 1)
+    x <- 2
+}
+";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+    let g = ScopeId::from(1);
+
+    // The `<<-` targets the file scope's `x`.
+    let x_file_defs: Vec<_> = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_file_defs.len(), 2);
+    assert!(matches!(
+        x_file_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_file_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+
+    // `g`'s own `x` is untouched by the `<<-`.
+    let x_g_defs: Vec<_> = index
+        .definitions(g)
+        .iter()
+        .filter(|(_, d)| index.symbols(g).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_g_defs.len(), 1);
+    assert!(matches!(
+        x_g_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_in_on_exit_lints_binding_after_the_definition() {
+    // Report that the selected file-scope binding may not exist when the
+    // exit handler runs. `x <- 0` follows `g()`'s definition, and the index
+    // does not establish when `g()` is called.
+    let source = "\
+g <- function() {
+    on.exit(x <<- 1)
+}
+x <- 0
+";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousSuperAssignment {
+            name,
+            binding_range,
+            ..
+        } => {
+            assert_eq!(name, "x");
+            let start = u32::from(binding_range.start()) as usize;
+            assert_eq!(start, source.find("x <- 0").unwrap());
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
 }
 
 #[test]

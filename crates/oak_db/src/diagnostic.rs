@@ -62,6 +62,7 @@ pub struct Annotation {
 pub enum DiagnosticKind {
     AmbiguousCalleeResolution,
     AmbiguousAttachOrder,
+    AmbiguousSuperAssignment,
     UninstalledPackage,
     SourceCycle,
     InheritedShadow,
@@ -73,6 +74,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::AmbiguousCalleeResolution => "ambiguous-callee-resolution",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
+            DiagnosticKind::AmbiguousSuperAssignment => "ambiguous-super-assignment",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
             DiagnosticKind::SourceCycle => "source-cycle",
             DiagnosticKind::InheritedShadow => "inherited-shadow",
@@ -83,6 +85,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::AmbiguousCalleeResolution => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
+            DiagnosticKind::AmbiguousSuperAssignment => Severity::Info,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
             DiagnosticKind::SourceCycle => Severity::Warning,
             DiagnosticKind::InheritedShadow => Severity::Info,
@@ -93,6 +96,7 @@ impl DiagnosticKind {
         match self {
             DiagnosticKind::AmbiguousCalleeResolution => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
+            DiagnosticKind::AmbiguousSuperAssignment => true,
             DiagnosticKind::UninstalledPackage => true,
             DiagnosticKind::SourceCycle => true,
             DiagnosticKind::InheritedShadow => true,
@@ -123,6 +127,11 @@ pub(crate) fn lower_semantic_diagnostic(
         SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
             lower_ambiguous_attach_order(packages, *range)
         },
+        SemanticDiagnostic::AmbiguousSuperAssignment {
+            name,
+            range,
+            binding_range,
+        } => lower_ambiguous_super_assignment(name, *range, *binding_range),
         SemanticDiagnostic::UninstalledPackage { package, range } => {
             lower_uninstalled_package(package, *range)
         },
@@ -178,6 +187,27 @@ fn lower_ambiguous_callee_resolution(
         message,
         call_range,
         vec![annotation],
+    )
+}
+
+/// Annotate the selected target binding because it may not exist when the
+/// assignment runs. The primary range points at the assigned name.
+fn lower_ambiguous_super_assignment(
+    name: &str,
+    range: TextRange,
+    binding_range: TextRange,
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::AmbiguousSuperAssignment,
+        format!(
+            "Ambiguous target of `{name} <<-`.\nAn assignment to `{name}` in an enclosing scope \
+             could be absent when this closure runs, changing what `{name} <<-` updates."
+        ),
+        range,
+        vec![Annotation {
+            range: binding_range,
+            message: format!("This binding may not exist when `{name} <<-` runs"),
+        }],
     )
 }
 

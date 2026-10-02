@@ -182,6 +182,23 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         effects
     }
 
+    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> bool {
+        // Real export data for attached packages. Base isn't a package in the
+        // graph and we don't carry its export list, so the registry stands in
+        // for it (exact for the annotated names whose phantom target could
+        // feed a diagnostic).
+        attached
+            .iter()
+            .filter_map(|package| self.db.package_by_name(package))
+            .any(|package| {
+                matches!(
+                    package_binding(self.db, package, name),
+                    PackageBinding::Effect(_) | PackageBinding::Shadow
+                )
+            }) ||
+            effects::lookup("base", name).is_some()
+    }
+
     fn package_exists(&mut self, package: &str) -> bool {
         self.db.package_by_name(package).is_some()
     }
