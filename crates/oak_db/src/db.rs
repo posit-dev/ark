@@ -397,6 +397,12 @@ fn root_package_index(db: &dyn SourceDb, root: Root) -> FxHashMap<String, Packag
     map
 }
 
+/// Unchanged notebook membership stops cell-index invalidation from propagating
+/// to a file's downstream queries, such as [`File::cross_file_layers()`]. Salsa
+/// backdates this query when its result is unchanged. Cell reorders still
+/// invalidate [`crate::load_context`] through its direct read of
+/// [`Notebook::cells()`].
+#[salsa::tracked(returns(copy))]
 pub(crate) fn notebook_by_cell(db: &dyn SourceDb, file: File) -> Option<Notebook> {
     notebook_cell_index(db).get(&file).copied()
 }
