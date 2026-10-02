@@ -161,7 +161,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                             Some((name, range)) if !is_super_assignment(bin) => {
                                 self.record_binding(name, range);
                             },
-                            Some(_) => {},
+                            Some((name, range)) => self.scan_super_binding_package(&name, range),
                             // Complex target (`x$foo <- v`): no binding, but the
                             // target may hold NSE calls.
                             None => self.scan_expression(&target),
@@ -742,6 +742,24 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 .or_default()
                 .assign
                 .push(binding);
+        }
+    }
+
+    /// Record which package binds a `<<-` target, for the walk's locked
+    /// check. Use the site's linear attach context: inherited attaches plus
+    /// those earlier in this scan unit. Attaches in other lazy units are
+    /// excluded because their execution order relative to `<<-` is unknown.
+    ///
+    /// This runs for every `<<-`, even though the walk only consults the
+    /// answer when no lexical target is found. Which ancestor binding is the
+    /// target is only decided in the walk.
+    fn scan_super_binding_package(&mut self, name: &str, range: TextRange) {
+        let attached = attach_search_path(
+            &self.scan.attached_inherited,
+            self.scan.attached_so_far.packages(),
+        );
+        if let Some(package) = self.resolver.binding_package(name, &attached) {
+            self.scan.super_binding_packages.insert(range, package);
         }
     }
 

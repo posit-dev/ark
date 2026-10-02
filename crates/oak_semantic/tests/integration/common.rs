@@ -38,6 +38,13 @@ pub(crate) fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIn
     build_with(source, TestImportsResolver::with_attached(packages))
 }
 
+pub(crate) fn index_with_base_exporting_local(source: &str) -> SemanticIndex {
+    build_with(
+        source,
+        TestImportsResolver::with_base().with_exports("base", &["local"]),
+    )
+}
+
 /// Build with an arbitrary resolver, for cases the helpers above don't cover.
 pub(crate) fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
