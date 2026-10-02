@@ -493,6 +493,10 @@ pub(crate) fn did_change_notebook(
         for text_document in structure.did_close.into_iter().flatten() {
             did_close(DidCloseTextDocumentParams { text_document }, state)?;
         }
+
+        // Cell membership and the set of synced buffers only change here, so
+        // text-only edits skip the oak update entirely.
+        push_notebook_cells(state, &path)?;
     }
 
     for content in cells.text_content.into_iter().flatten() {
@@ -503,7 +507,7 @@ pub(crate) fn did_change_notebook(
         did_change(params, lsp_state, state)?;
     }
 
-    push_notebook_cells(state, &path)
+    Ok(())
 }
 
 fn apply_cell_splice(
