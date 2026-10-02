@@ -185,10 +185,9 @@ impl StaleRoot {
 /// notifications. Also covers Quarto and R Markdown documents, which Positron
 /// presents as notebooks.
 ///
-/// `cells` holds the notebook's R code cells in document order. Each cell is
-/// an ordinary editor `File` placed by `upsert_editor`, like any other buffer.
-/// The notebook only records which cells run together and in what order, which
-/// [`crate::load_context`] needs so that a cell sees the cells above it.
+/// Each R cell is an ordinary editor [`File`]. The `cells` list records
+/// document order, not execution history. [`crate::load_context`] uses that
+/// order to determine cross-cell visibility.
 #[salsa::input(debug)]
 pub struct Notebook {
     #[returns(ref)]
@@ -199,9 +198,9 @@ pub struct Notebook {
 
 /// The notebooks currently open in the editor.
 ///
-/// Salsa does not garbage-collect inputs, so a closed notebook's entity
-/// leaks. Notebooks are few and small, so a stale bucket like [`StaleRoot`]
-/// is not worth it.
+/// Closed [`Notebook`] inputs remain allocated because Salsa does not
+/// garbage-collect inputs. Unlike [`StaleRoot`], this list has no reuse pool,
+/// so reopening a notebook allocates a new input.
 #[salsa::input]
 pub struct OpenNotebooks {
     #[returns(ref)]

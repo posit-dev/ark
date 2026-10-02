@@ -17,9 +17,8 @@ use crate::WorkspaceRoots;
 
 /// Concrete Salsa database.
 ///
-/// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot` /
-/// `StaleRoot` / `OpenNotebooks` inputs and lazy-initialises them on first
-/// access.
+/// Singleton inputs are initialised on first access and shared across
+/// database snapshots.
 #[salsa::db]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,

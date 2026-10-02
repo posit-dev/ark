@@ -11,8 +11,6 @@ use crate::File;
 use crate::FileRevision;
 use crate::Notebook;
 
-/// Open a notebook whose R cells hold `sources`, in order. Returns the notebook
-/// and its cells.
 fn open_notebook(db: &mut TestDb, sources: &[&str]) -> (Notebook, Vec<File>) {
     let cells: Vec<File> = sources
         .iter()
@@ -37,7 +35,6 @@ fn open_notebook(db: &mut TestDb, sources: &[&str]) -> (Notebook, Vec<File>) {
     (notebook, cells)
 }
 
-/// Byte offset of the last occurrence of `needle` in `cell`.
 fn last_offset(db: &TestDb, cell: File, needle: &str) -> TextSize {
     TextSize::from(cell.source_text(db).rfind(needle).unwrap() as u32)
 }
@@ -91,8 +88,6 @@ fn test_notebook_library_in_earlier_cell_attaches_for_later_cell() {
     install_packages(&mut db, &["base", "dplyr"]);
     let (_, cells) = open_notebook(&mut db, &["library(dplyr)\n", "mutate\n"]);
 
-    // Same layer order as a package collation: the earlier cell, then its
-    // attaches, then the default search path.
     assert_eq!(shape(&db, cells[1].imports(&db)), vec![
         "File(nb.ipynb)".to_string(),
         "Package(dplyr)".to_string(),
@@ -107,7 +102,6 @@ fn test_notebook_reorder_changes_visibility() {
     let use_offset = last_offset(&db, cells[0], "y");
     assert!(cells[0].resolve_at(&db, use_offset).is_empty());
 
-    // Moving the definition above the use, as a `didChange` splice would.
     notebook.set_cells(&mut db).to(vec![cells[1], cells[0]]);
 
     let defs = cells[0].resolve_at(&db, use_offset);

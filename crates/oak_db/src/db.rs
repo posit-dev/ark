@@ -397,13 +397,13 @@ fn root_package_index(db: &dyn SourceDb, root: Root) -> FxHashMap<String, Packag
     map
 }
 
-/// The open notebook that holds `file` as a cell, if any.
 pub(crate) fn notebook_by_cell(db: &dyn SourceDb, file: File) -> Option<Notebook> {
     notebook_cell_index(db).get(&file).copied()
 }
 
-/// Cell -> notebook index over every open notebook. Rebuilt when any
-/// notebook's cell list changes. Notebooks are few, so one flat map is enough.
+/// Invalidated when the open-notebook list or any open notebook's cell list
+/// changes. Cell text edits do not invalidate this index because it reads
+/// membership, not source text.
 #[salsa::tracked(returns(ref))]
 fn notebook_cell_index(db: &dyn SourceDb) -> FxHashMap<File, Notebook> {
     let mut map = FxHashMap::default();

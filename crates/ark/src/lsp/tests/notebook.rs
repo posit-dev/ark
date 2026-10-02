@@ -56,8 +56,8 @@ fn cell_item(handle: usize, text: &str) -> TextDocumentItem {
     }
 }
 
-/// Open a notebook whose cells are `cells` (all listed in the notebook) and
-/// whose text documents are `texts` (the cells the client syncs).
+/// `cells` may include handles absent from `texts` to model listed cells
+/// whose text the client does not sync.
 fn open(state: &mut WorldState, cells: &[usize], texts: &[(usize, &str)]) {
     let params = DidOpenNotebookDocumentParams {
         notebook_document: NotebookDocument {
@@ -75,7 +75,6 @@ fn open(state: &mut WorldState, cells: &[usize], texts: &[(usize, &str)]) {
     did_open_notebook(params, state).unwrap();
 }
 
-/// The URI Go to Definition lands on from `(line, character)` in `cell`, if any.
 fn definition_uri(state: &WorldState, cell: usize, line: u32, character: u32) -> Option<Uri> {
     let params = GotoDefinitionParams {
         text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -107,8 +106,8 @@ fn test_notebook_did_open_resolves_across_cells() {
 
 #[test]
 fn test_notebook_did_open_skips_cells_without_text_documents() {
-    // A Python chunk (handle 1) sits between two R chunks. The client lists
-    // only synced cells, but guard against a listed cell with no text.
+    // Handle 1 has no synced text. Listed but unsynced cells must not prevent
+    // resolution between the surrounding R cells.
     let mut state = WorldState::default();
     open(&mut state, &[0, 1, 2], &[(0, "x <- 1\n"), (2, "x\n")]);
 
@@ -177,7 +176,6 @@ fn test_notebook_did_change_splice_inserts_cell() {
     open(&mut state, &[1], &[(1, "y\n")]);
     assert_eq!(definition_uri(&state, 1, 0, 0), None);
 
-    // Insert a new cell above the use that defines the name.
     change(&mut state, splice(0, 0, &[(5, "y <- 1\n")])).unwrap();
 
     assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(5)));

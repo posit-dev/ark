@@ -118,14 +118,14 @@ pub trait DbScan: Db + DbInputs {
     fn close_editor(&mut self, path: &FilePath);
 
     /// Record the notebook at `path` with its R code cells in document order.
-    /// Each cell must already be an editor buffer from [`Self::upsert_editor`].
+    /// Each cell must already be an editor buffer from [`Self::upsert_editor()`].
     ///
-    /// Reuses the `Notebook` entity when `path` is already open, so a
+    /// Reuses the [`Notebook`] entity when `path` is already open, so a
     /// structural edit only updates the cell list.
     fn set_notebook_cells(&mut self, path: FilePath, cells: Vec<File>) -> Notebook;
 
-    /// Forget the notebook at `path`, so its cells stop seeing each other.
-    /// Closing the cell buffers is left to [`Self::close_editor`].
+    /// Removes notebook-based cross-cell visibility without closing the cell
+    /// buffers. Close those separately with [`Self::close_editor()`].
     fn close_notebook(&mut self, path: &FilePath);
 
     /// Set `package`'s `files` / `scripts` to the `.R` files found directly

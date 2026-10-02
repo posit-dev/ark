@@ -138,10 +138,9 @@ pub(crate) fn initialize(
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
             )),
-            // Claim R cells of Jupyter notebooks and of the notebooks Positron
-            // builds for Quarto and R Markdown documents. The client then sends
-            // them through `notebookDocument/*`, which carries cell order, and
-            // stops sending `textDocument/did*` for them.
+            // Notebook sync supplies cell order and replaces `textDocument/did*`
+            // notifications for selected R cells. Positron also exposes Quarto
+            // and R Markdown documents as `quarto-cells` notebooks.
             notebook_document_sync: Some(OneOf::Left(NotebookDocumentSyncOptions {
                 notebook_selector: vec![r_cells_of("jupyter-notebook"), r_cells_of("quarto-cells")],
                 save: None,
@@ -205,7 +204,6 @@ pub(crate) fn initialize(
     Ok(result)
 }
 
-/// Selects the R cells of notebooks of type `notebook_type`.
 fn r_cells_of(notebook_type: &str) -> NotebookSelector {
     NotebookSelector::ByNotebook {
         notebook: Notebook::String(notebook_type.to_string()),
@@ -452,9 +450,8 @@ pub(crate) fn did_open_notebook(
     push_notebook_cells(state, &path)
 }
 
-/// Push the notebook's cell order into oak. Cells the client lists without
-/// syncing their text (for example a markdown cell) are skipped, since oak
-/// only knows cells that are open files.
+/// Excludes cells without synced text, such as Markdown cells, because only
+/// entries in `open_files` have a [`File`] to register with oak.
 fn push_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
     let Some(cell_paths) = state.notebooks.get(path) else {
         return Err(anyhow!("Unknown notebook {path}"));
@@ -477,14 +474,13 @@ pub(crate) fn did_change_notebook(
 ) -> anyhow::Result<()> {
     let path = params.notebook_document.uri.to_document_path()?;
 
-    // The client sends cell edits to every server whose notebook selector
-    // matches, without applying `filterCells`. Ignore notebooks we never opened.
+    // Ignore unopened notebooks because the client sends edits to every
+    // matching server even when `filterCells()` excluded the notebook on open.
     if !state.notebooks.contains_key(&path) {
         log::trace!("Ignoring change to notebook {path}, which is not open");
         return Ok(());
     }
 
-    // A metadata-only change leaves cells and their order alone.
     let Some(cells) = params.change.cells else {
         return Ok(());
     };
@@ -510,7 +506,6 @@ pub(crate) fn did_change_notebook(
     push_notebook_cells(state, &path)
 }
 
-/// Apply a client cell-array splice to our copy of the notebook's cell list.
 fn apply_cell_splice(
     state: &mut WorldState,
     path: &FilePath,
@@ -552,9 +547,9 @@ pub(crate) fn did_close_notebook(
     let known_cells = state.notebooks.remove(&path).unwrap_or_default();
     state.db_mut().close_notebook(&path);
 
-    // The client lists only the cells still in the notebook. When the user
-    // deletes the last R cell, the client closes the notebook and the deleted
-    // cell is missing from the list. Close every cell we know too, once each.
+    // Include remembered cells because deleting the last R cell closes the
+    // notebook, but the client's close notification omits that deleted cell.
+    // Checking `open_files` below prevents closing a cell twice.
     let mut cells = params
         .cell_text_documents
         .iter()
