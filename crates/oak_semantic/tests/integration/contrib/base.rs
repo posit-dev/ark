@@ -2989,6 +2989,32 @@ local({
 }
 
 #[test]
+fn test_nse_assign_is_too_late_for_its_own_arguments() {
+    // The argument's `local()` still resolves to base `local()` because
+    // `assign()` has not yet created the binding that would shadow it.
+    let index = index_with_base(
+        "\
+assign(\"local\", local({
+    x <- 1
+}))
+",
+    );
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_assign_shadows_base_callee_in_lazy_body() {
     // The file-scope `assign("local", ...)` must be visible to the lazy shadow
     // check when `f`'s deferred body resolves `local`. The file scan completes

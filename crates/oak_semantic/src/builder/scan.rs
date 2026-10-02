@@ -397,14 +397,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Scan a call for effects (NSE scopes, attaches, sources, assigns) and
     /// record its decisions for the walk to reuse. The callee is resolved once
     /// through [`resolve_effects`].
-    ///
-    /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
-    /// `Current + Eager` transparently, `Nested + Eager` by descending into the
-    /// body and staging the names it binds. A `Current + Lazy` body (`on_load()`)
-    /// is queued and scanned at the end of this scan unit's drain, once the
-    /// owner's bindings are complete. A `Nested + Lazy` body (`reactive()`) is
-    /// its own scan unit, deferred to the walk because resolution of effects in
-    /// that lazy scope needs the child's own flow context.
     fn scan_call(&mut self, call: &RCall) {
         let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
             Some(effects) => (
@@ -415,6 +407,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             ),
             None => (None, None, None, None),
         };
+
+        // Eager argument bodies must not see the enclosing call's attach,
+        // source, or assign effects. For example, `local()` in
+        // `assign("local", local({ ... }))` resolves before the new binding.
+        self.scan_call_arguments(call, arg_effects);
 
         if let Some(package) = attach {
             let call_range = call.syntax().text_trimmed_range();
@@ -485,7 +482,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     .push(binding);
             }
         }
+    }
 
+    /// Scan eager arguments now. Defer `Current + Lazy` bodies (`on_load()`)
+    /// until this scan unit's drain, when the owner's bindings are complete.
+    /// Defer `Nested + Lazy` bodies (`reactive()`) to the walk, where each child
+    /// has its own flow context for effect resolution.
+    fn scan_call_arguments(&mut self, call: &RCall, arg_effects: Option<ResolvedArgumentEffects>) {
         let Some(arg_effects) = arg_effects else {
             if let Ok(args) = call.arguments() {
                 for item in args.items().iter() {
