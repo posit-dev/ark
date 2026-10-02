@@ -80,6 +80,7 @@ file_imports.rs: fn File::cross_file_layers(self, db: &dyn Db, view: CollationVi
 file_imports.rs: fn File::imports(self, db: &dyn Db) -> Vec<ImportLayer> [returns(ref)]
 file_imports.rs: fn File::imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> [returns(ref)]
 file_imports.rs: fn File::inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> [returns(ref), cycle_result = inherited_layers_cycle_result]
+file_imports.rs: fn File::loader_fallback(self, db: &dyn Db) -> Vec<ImportLayer> [returns(ref)]
 file_resolve.rs: fn File::resolve(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> [returns(clone)]
 file_resolve.rs: fn File::resolve_export(self, db: &'db dyn Db, name: Name<'db>) -> Vec<Definition<'db>> [returns(clone)]
 file_source_site.rs: fn File::source_sites(self, db: &dyn Db) -> Vec<SourceSite> [returns(ref)]

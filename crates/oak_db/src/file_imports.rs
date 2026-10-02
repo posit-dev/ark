@@ -13,6 +13,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::directory::files_in_directory;
 use crate::load_context::load_context;
+use crate::load_context::EnvironmentChain;
 use crate::load_context::LoadContext;
 use crate::load_context::LoadKind;
 use crate::load_context::SearchPathTail;
@@ -30,7 +31,7 @@ use crate::SourceDb;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportLayer {
     /// A file whose top level has fully run by the time this layer is read: a
-    /// collation predecessor, or a sourcing file seen from a lazy context.
+    /// loader environment member, or a sourcing file seen from a lazy context.
     /// Names are resolved through `file.exports(db)`.
     File(File),
     /// A file that sources the one being resolved, seen as of its `source()`
@@ -51,8 +52,8 @@ pub enum ImportLayer {
 
 /// Cross-file layers visible while a file loads.
 ///
-/// `enclosing` contains definitions and NAMESPACE imports reached through the
-/// environment chain. `attaches` holds inherited and loader attaches. `tail` is
+/// `enclosing` contains definitions and NAMESPACE imports in lookup order.
+/// `attaches` holds inherited and loader attaches. `tail` is
 /// the search-path suffix R searches last.
 ///
 /// Keep `tail` unexpanded until [`Self::lookup_order`]. Materializing a sourced
@@ -75,19 +76,44 @@ pub(crate) struct CrossFileLayers {
     pub recovered_source_cycle: bool,
 }
 
-/// A file's loader layers and the position of its own top-level bindings.
+/// Loader environments retain the current file's execution position without
+/// reading its semantic index. Its definitions are supplied by the resolver;
+/// import projections omit it to prevent recursive own-index demands.
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub(crate) struct FileLoadLayers {
+    pub environments: EnvironmentChain,
+    pub current_file: File,
     pub layers: CrossFileLayers,
-    /// Leading layers that load after this file into the same environment.
-    /// Keep the boundary in the tracked result: moving the file can change
-    /// precedence without changing the sibling list.
-    later_sibling_count: usize,
 }
 
 impl FileLoadLayers {
-    pub(crate) fn later_sibling_layers(&self) -> &[ImportLayer] {
-        &self.layers.enclosing[..self.later_sibling_count]
+    fn definition_layers(&self) -> impl Iterator<Item = ImportLayer> + '_ {
+        self.environments
+            .lookup_files()
+            .filter(|file| *file != self.current_file)
+            .map(ImportLayer::File)
+            .chain(self.layers.enclosing.iter().cloned())
+    }
+
+    fn import_layers(&self) -> CrossFileLayers {
+        CrossFileLayers {
+            enclosing: self.definition_layers().collect(),
+            attaches: self.layers.attaches.clone(),
+            tail: self.layers.tail,
+            recovered_source_cycle: false,
+        }
+    }
+
+    pub(crate) fn lookup_order<'a>(
+        &'a self,
+        db: &'a dyn SourceDb,
+        own: &'a [ImportLayer],
+    ) -> impl Iterator<Item = ImportLayer> + 'a {
+        self.environments
+            .lookup_files()
+            .filter(|file| *file != self.current_file)
+            .map(ImportLayer::File)
+            .chain(self.layers.lookup_order(db, own))
     }
 }
 
@@ -337,14 +363,10 @@ impl File {
 
     /// The file's own layers and the layers it inherits from the files that
     /// source it, flattened into one lookup order.
-    fn resolution_layers<'db>(
-        self,
-        db: &'db dyn Db,
-        view: CollationView,
-    ) -> Cow<'db, CrossFileLayers> {
+    fn resolution_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers {
         let inherited = self.inherited_layers(db, view);
         if inherited.is_empty() {
-            return Cow::Borrowed(&self.cross_file_layers(db, view).layers);
+            return self.cross_file_layers(db, view).import_layers();
         }
 
         let mut enclosing = Vec::new();
@@ -356,17 +378,37 @@ impl File {
 
         // `LoadKind::Namespace` excludes source-site inheritance, leaving only
         // contexts with the default session search path.
-        Cow::Owned(CrossFileLayers {
+        CrossFileLayers {
             enclosing,
             attaches,
             tail: SearchPathTail::Default,
             recovered_source_cycle: false,
-        })
+        }
     }
 
-    /// The lookup-ordered layers this file's lazy / end-of-file view sees: the
-    /// file's own [`File::cross_file_layers`], then one alternative per file
-    /// that sources it (see [`File::inherited_layers`]).
+    /// Namespace imports, own attaches, loader attaches, and the search-path
+    /// tail, without environment file contributions or sourcing alternatives.
+    ///
+    /// Tracked so the `no_eq` semantic index read by `attach_layers()` cannot
+    /// invalidate `resolve()` when the resulting fallback layers are unchanged.
+    #[salsa::tracked(returns(ref))]
+    pub(crate) fn loader_fallback(self, db: &dyn Db) -> Vec<ImportLayer> {
+        self.loader_fallback_in(db, ImportView::DEFERRED)
+    }
+
+    /// Position-specific loader fallback, without a per-offset tracked cache.
+    pub(crate) fn loader_fallback_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
+        self.loader_fallback_in(db, ImportView::at(self.semantic_index(db), &offset))
+    }
+
+    fn loader_fallback_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
+        let layers = &self.cross_file_layers(db, view.collation).layers;
+        let own = self.attach_layers(db, view.attaches);
+        layers.lookup_order(db, &own).collect()
+    }
+
+    /// One lookup-ordered alternative per file that sources this file (see
+    /// [`File::inherited_layers`]), excluding the loader's own environment.
     ///
     /// The alternatives are resolved independently, not as a priority order.
     /// Symbols resolve in each and are returned as a union of results.
@@ -396,10 +438,14 @@ impl File {
         db: &dyn Db,
         view: ImportView<'_>,
     ) -> Vec<Vec<ImportLayer>> {
+        let inherited = self.inherited_layers(db, view.collation);
+        if inherited.is_empty() {
+            return Vec::new();
+        }
         let own = self.attach_layers(db, view.attaches);
-        self.layers_by_sourcing_file(db, view.collation)
-            .into_iter()
-            .map(|layers| layers.lookup_order(db, &own).collect())
+        inherited
+            .iter()
+            .map(|site| site.layers.lookup_order(db, &own).collect())
             .collect()
     }
 
@@ -421,12 +467,16 @@ impl File {
     }
 
     /// The file's own layers, plus one alternative per file that sources it.
-    fn layers_by_sourcing_file(self, db: &dyn Db, view: CollationView) -> Vec<&CrossFileLayers> {
-        let mut alternatives = vec![&self.cross_file_layers(db, view).layers];
+    fn layers_by_sourcing_file<'db>(
+        self,
+        db: &'db dyn Db,
+        view: CollationView,
+    ) -> Vec<Cow<'db, CrossFileLayers>> {
+        let mut alternatives = vec![Cow::Owned(self.cross_file_layers(db, view).import_layers())];
         alternatives.extend(
             self.inherited_layers(db, view)
                 .iter()
-                .map(|site| &site.layers),
+                .map(|site| Cow::Borrowed(&site.layers)),
         );
         alternatives
     }
@@ -460,7 +510,6 @@ impl File {
     pub(crate) fn standalone_imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         let own = self.attach_layers(db, AttachView::Anywhere);
         self.cross_file_layers(db, CollationView::Deferred)
-            .layers
             .lookup_order(db, &own)
             .collect()
     }
@@ -504,11 +553,16 @@ impl File {
     #[salsa::tracked(returns(ref), cycle_result = cross_file_layers_cycle_result)]
     pub(crate) fn cross_file_layers(self, db: &dyn Db, view: CollationView) -> FileLoadLayers {
         let context = load_context(db, self, view);
-        let mut file_layers = lower_load_context(db, &context);
+        let mut file_layers = lower_load_context(db, self, &context);
         // Deferred successors should outrank this file's own attaches. Keeping
         // them below only loses names shadowed by a package a successor reattaches.
+        let visible_files: Vec<File> = context
+            .environments
+            .lookup_files()
+            .filter(|member| *member != self)
+            .collect();
         let layers = &mut file_layers.layers;
-        let mut attaches = predecessor_attach_layers(db, &context.visible_files);
+        let mut attaches = predecessor_attach_layers(db, &visible_files);
         attaches.append(&mut layers.attaches);
         layers.attaches = attaches;
         file_layers
@@ -547,7 +601,7 @@ fn cross_file_layers_fallback(
     file: File,
     view: CollationView,
 ) -> FileLoadLayers {
-    let mut file_layers = lower_load_context(db, &load_context(db, file, view));
+    let mut file_layers = lower_load_context(db, file, &load_context(db, file, view));
     file_layers.layers.recovered_source_cycle = true;
     file_layers
 }
@@ -580,7 +634,7 @@ fn build_inherited_layers(
         CollationView::Eager => source_offsets(db, source_site, file),
     };
 
-    let own_cross = &source_site.cross_file_layers(db, view).layers;
+    let own_cross = source_site.cross_file_layers(db, view);
     let grandparents = source_site.inherited_layers(db, view);
 
     let (own_attach, exports_so_far) = match offsets.as_deref() {
@@ -623,7 +677,7 @@ fn build_inherited_layers(
     };
 
     enclosing.push(source_layer);
-    enclosing.extend(own_cross.enclosing.iter().cloned());
+    enclosing.extend(own_cross.definition_layers());
     enclosing.extend(
         grandparents
             .iter()
@@ -636,14 +690,14 @@ fn build_inherited_layers(
             .iter()
             .flat_map(|site| site.layers.attaches.iter().cloned()),
     );
-    attaches.extend(own_cross.attaches.iter().cloned());
+    attaches.extend(own_cross.layers.attaches.iter().cloned());
 
     InheritedLayers {
         file: source_site,
         layers: CrossFileLayers {
             enclosing,
             attaches,
-            tail: own_cross.tail,
+            tail: own_cross.layers.tail,
             recovered_source_cycle: false,
         },
     }
@@ -709,20 +763,19 @@ fn loaded_before(db: &dyn Db, source_file: File, file: File, offsets: &[TextSize
 /// and NAMESPACE imports rank above the file's attaches, and loader-provided
 /// search-path layers rank below them. Predecessor attaches are added only by
 /// the normal query, because reading them can re-enter semantic analysis.
-pub(crate) fn lower_load_context(db: &dyn SourceDb, context: &LoadContext) -> FileLoadLayers {
+pub(crate) fn lower_load_context(
+    db: &dyn SourceDb,
+    file: File,
+    context: &LoadContext,
+) -> FileLoadLayers {
     let LoadContext {
         kind,
-        visible_files,
-        later_sibling_count,
+        environments,
         implicit_attaches,
         loader: _,
     } = context;
 
-    let mut enclosing: Vec<ImportLayer> = visible_files
-        .iter()
-        .copied()
-        .map(ImportLayer::File)
-        .collect();
+    let mut enclosing = Vec::new();
     if let LoadKind::Namespace(package) = kind {
         let namespace = package.namespace(db);
         extend_with_namespace_imports(*package, namespace, &mut enclosing);
@@ -735,13 +788,14 @@ pub(crate) fn lower_load_context(db: &dyn SourceDb, context: &LoadContext) -> Fi
         .collect();
 
     FileLoadLayers {
+        environments: environments.clone(),
+        current_file: file,
         layers: CrossFileLayers {
             enclosing,
             attaches,
             tail: kind.search_path_tail(),
             recovered_source_cycle: false,
         },
-        later_sibling_count: *later_sibling_count,
     }
 }
 

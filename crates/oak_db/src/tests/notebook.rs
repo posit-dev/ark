@@ -105,6 +105,48 @@ fn test_notebook_library_in_earlier_cell_attaches_for_later_cell() {
 }
 
 #[test]
+fn test_notebook_loader_fallback_excludes_cells_and_narrows_own_attaches() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr", "rlang"]);
+    let (_, cells) = open_notebook(&mut db, &[
+        "library(dplyr)\n",
+        "before\nlibrary(rlang)\nafter\n",
+    ]);
+    let cell = cells[1];
+    let before = cell.loader_fallback_at(&db, last_offset(&db, cell, "before"));
+    assert_eq!(shape(&db, &before), vec!["Package(dplyr)", "Package(base)"]);
+    let after = cell.loader_fallback_at(&db, last_offset(&db, cell, "after"));
+    assert_eq!(shape(&db, &after), vec![
+        "Package(rlang)",
+        "Package(dplyr)",
+        "Package(base)"
+    ]);
+    assert_eq!(cell.loader_fallback(&db), &after);
+    assert!(cell.imports_by_sourcing_file(&db).is_empty());
+    assert!(cell
+        .imports_by_sourcing_file_at(&db, last_offset(&db, cell, "after"))
+        .is_empty());
+}
+
+#[test]
+fn test_notebook_loader_fallback_backdates_resolution_after_position_edit() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base", "dplyr"]);
+    let (_, cells) = open_notebook(&mut db, &["library(dplyr)\nf <- function() missing\n"]);
+    let cell = cells[0];
+    assert!(cell.resolve(&db, Name::new(&db, "missing")).is_empty());
+    let fallback_runs = db.executions("loader_fallback");
+    let resolve_runs = db.executions("resolve_(");
+
+    cell.set_source_text_override(&mut db).to(Some(
+        "\n\nlibrary(dplyr)\nf <- function() missing\n".to_string(),
+    ));
+    assert!(cell.resolve(&db, Name::new(&db, "missing")).is_empty());
+    assert_eq!(db.executions("loader_fallback"), fallback_runs + 1);
+    assert_eq!(db.executions("resolve_("), resolve_runs);
+}
+
+#[test]
 fn test_notebook_reorder_changes_visibility() {
     let mut db = TestDb::new();
     let (notebook, cells) = open_notebook(&mut db, &["y\n", "y <- 1\n"]);
@@ -354,7 +396,7 @@ fn test_notebook_reorder_updates_deferred_shadowing() {
     assert_eq!(defs[0].file(&db), cells[1]);
 
     // Moving this cell changes precedence without changing its sibling list.
-    // The cached successor count must change so its own binding now wins.
+    // Its position in the cached environment sequence must change too.
     notebook.set_cells(&mut db).to(vec![cells[1], cells[0]]);
     let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
     assert_eq!(defs.len(), 1);
@@ -370,8 +412,8 @@ fn test_notebook_reorder_updates_tracked_resolve() {
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), cells[1]);
 
-    // The sibling list is unchanged. The changed successor count must
-    // invalidate `resolve()` so this cell's own binding now wins.
+    // The sibling list is unchanged. The cell's changed position in the
+    // environment sequence must invalidate `resolve()` so its own binding wins.
     notebook.set_cells(&mut db).to(vec![cells[1], cells[0]]);
     let defs = cells[0].resolve(&db, Name::new(&db, "x"));
     assert_eq!(defs.len(), 1);

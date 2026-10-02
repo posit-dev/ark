@@ -122,6 +122,35 @@ fn test_deferred_successor_and_inherited_converge_and_dedupe() {
 }
 
 #[test]
+fn test_shiny_environment_chain_keeps_entry_bindings_out_of_parents() {
+    let mut db = TestDb::new();
+    let (_, files) = script_workspace(&mut db, &[
+        (
+            "ws/app.R",
+            "shinyApp(ui, server)\nif (entry) x <- 3\nentry_only <- 1\nf <- function() x\n",
+        ),
+        ("ws/global.R", "x <- 0\ng <- function() entry_only\n"),
+        (
+            "ws/R/a.R",
+            "if (first) x <- 1\nh <- function() entry_only\n",
+        ),
+        ("ws/R/b.R", "if (second) x <- 2\n"),
+    ]);
+    let entry = files[0];
+    let defs = entry.resolve_at(&db, last_offset(&db, entry, "x"));
+    assert_eq!(
+        defs.iter().map(|def| def.file(&db)).collect::<Vec<_>>(),
+        vec![entry, files[3], files[2], files[1]]
+    );
+    assert_eq!(entry.resolve(&db, Name::new(&db, "x")), defs);
+    for parent in [files[1], files[2]] {
+        assert!(parent
+            .resolve_at(&db, last_offset(&db, parent, "entry_only"))
+            .is_empty());
+    }
+}
+
+#[test]
 fn test_shiny_entry_sees_global_then_the_autoloaded_directory() {
     let mut db = TestDb::new();
     install_packages(&mut db, &["base", "shiny"]);

@@ -13,7 +13,7 @@
 //! [`SalsaImportsResolver`]: crate::imports::SalsaImportsResolver
 
 use crate::file_imports::CollationView;
-use crate::file_imports::CrossFileLayers;
+use crate::file_imports::FileLoadLayers;
 use crate::Db;
 use crate::File;
 use crate::FileExports;
@@ -46,7 +46,7 @@ impl<'db> ResolverDb<'db> {
             .collect()
     }
 
-    pub(crate) fn cross_file_layers(self, file: File, view: CollationView) -> &'db CrossFileLayers {
-        &file.cross_file_layers(self.db, view).layers
+    pub(crate) fn cross_file_layers(self, file: File, view: CollationView) -> &'db FileLoadLayers {
+        file.cross_file_layers(self.db, view)
     }
 }

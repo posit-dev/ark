@@ -27,16 +27,16 @@ impl<'db> File {
     /// to the EOF state of the file.
     ///
     /// Lookup order:
-    /// 1. Later cells or collation siblings in the same environment, in reverse
-    ///    load order. This view assumes loading has finished, so their bindings
-    ///    shadow this file's top level.
-    /// 2. **`exports()` chain**: file-top-level locals plus
-    ///    `source()`-forwarded entries. `ExportEntry::Import` is chased
-    ///    through `exports(target)` until it lands on a `Local`. Cycles in
-    ///    `source()` resolve to empty exports via `exports`'s `cycle_result`.
-    /// 3. **`imports_by_sourcing_file()` walk**: the file's own context plus
-    ///    one per file that sources it, each checked in priority order and the
-    ///    results unioned across contexts. `File` siblings are checked via their
+    /// 1. Loader environments, child before parent, with each environment's
+    ///    files in reverse load order. This file contributes its `exports()`
+    ///    at its load position, including `source()`-forwarded entries.
+    ///    Cycles in `source()` resolve to empty exports via `exports`'s `cycle_result`.
+    /// 2. **`loader_fallback()`**: namespace imports, visible attaches, and the
+    ///    search-path tail when the loader environments do not definitely bind
+    ///    the name.
+    /// 3. **`imports_by_sourcing_file()` walk**: one alternative per file that
+    ///    sources it, each checked in priority order and the results unioned
+    ///    across contexts. `File` siblings are checked via their
     ///    exports chain only (not their full `resolve`), to avoid the cycle
     ///    that recursing would create. `Package` and `From` layers call
     ///    [`Package::resolve`] with `Exported` visibility.
@@ -62,27 +62,31 @@ impl<'db> File {
         // not the `no_eq` semantic index, so position-only edits can backdate
         // this query.
         let mut definitions = Vec::new();
-        let later_bound = resolve_import_layers(
+        let own_bound = self.export_is_bound(db, name);
+        let own = self.resolve_export(db, name);
+        let environment_bound = resolve_environments(
             db,
-            self.cross_file_layers(db, CollationView::Deferred)
-                .later_sibling_layers(),
+            self,
+            CollationView::Deferred,
             name,
+            &own,
+            own_bound,
             &mut definitions,
         );
-        if !later_bound {
-            extend_definitions(&mut definitions, self.resolve_export(db, name));
-        }
-        if self.export_is_bound(db, name) {
+        if environment_bound && own_bound {
             return definitions;
         }
-
-        let contexts = self.imports_by_sourcing_file(db);
-        resolve_per_sourcing_file(
-            db,
-            &contexts[usize::from(later_bound)..],
-            name,
-            &mut definitions,
-        );
+        if !environment_bound {
+            resolve_import_layers(db, self.loader_fallback(db), name, &mut definitions);
+        }
+        if !own_bound {
+            resolve_per_sourcing_file(
+                db,
+                self.imports_by_sourcing_file(db),
+                name,
+                &mut definitions,
+            );
+        }
         definitions
     }
 
@@ -129,38 +133,40 @@ impl<'db> File {
             .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
             .collect();
 
-        let later_bound = if !globals.is_empty() && !index.scope_is_eager(use_scope) {
-            resolve_import_layers(
-                db,
-                self.cross_file_layers(db, CollationView::Deferred)
-                    .later_sibling_layers(),
-                name,
-                &mut definitions,
-            )
-        } else {
-            false
-        };
-        if !later_bound {
-            extend_definitions(
-                &mut definitions,
-                globals
-                    .into_iter()
-                    .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id)),
-            );
-        }
-        if index.use_is_bound(use_scope, use_id) {
+        let own_bound = index.use_is_bound(use_scope, use_id);
+        if own_bound && globals.is_empty() {
             return definitions;
         }
-
-        // A definite successor ends lookup only in the loader's environment.
-        // Alternative sourcing environments still contribute on unbound paths.
-        let contexts = self.imports_by_sourcing_file_at(db, offset);
-        resolve_per_sourcing_file(
-            db,
-            &contexts[usize::from(later_bound)..],
-            name,
-            &mut definitions,
-        );
+        let view = if index.scope_is_eager(use_scope) {
+            CollationView::Eager
+        } else {
+            CollationView::Deferred
+        };
+        let own: Vec<_> = globals
+            .into_iter()
+            .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
+            .collect();
+        let environment_bound =
+            resolve_environments(db, self, view, name, &own, own_bound, &mut definitions);
+        if environment_bound && own_bound {
+            return definitions;
+        }
+        if !environment_bound {
+            resolve_import_layers(
+                db,
+                &self.loader_fallback_at(db, offset),
+                name,
+                &mut definitions,
+            );
+        }
+        if !own_bound {
+            resolve_per_sourcing_file(
+                db,
+                &self.imports_by_sourcing_file_at(db, offset),
+                name,
+                &mut definitions,
+            );
+        }
         definitions
     }
 
@@ -269,6 +275,32 @@ impl<'db> File {
             }
         }
     }
+}
+
+/// Walk loader environments without resolving the current file recursively.
+/// Its contribution comes from the caller's position-specific reaching
+/// definitions or EOF exports, not from a full-file lookup.
+fn resolve_environments<'db>(
+    db: &'db dyn Db,
+    file: File,
+    view: CollationView,
+    name: Name<'db>,
+    own: &[Definition<'db>],
+    own_bound: bool,
+    definitions: &mut Vec<Definition<'db>>,
+) -> bool {
+    let layers = file.cross_file_layers(db, view);
+    for member in layers.environments.lookup_files() {
+        if member == layers.current_file {
+            extend_definitions(definitions, own.iter().copied());
+            if own_bound {
+                return true;
+            }
+        } else if resolve_import_layers(db, &[ImportLayer::File(member)], name, definitions) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Resolve `name` against a single import layer, returning every definition it

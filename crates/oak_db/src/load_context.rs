@@ -22,17 +22,7 @@ use crate::SourceDb;
 pub(crate) struct LoadContext {
     pub kind: LoadKind,
 
-    /// Visible files in lookup order, highest priority first, excluding the
-    /// file itself.
-    pub visible_files: Vec<File>,
-
-    /// Number of leading `visible_files` that load after this file into the
-    /// same environment. Deferred lookup assumes loading has finished, so
-    /// these bindings shadow this file's top level, which shadows the rest.
-    /// Files in parent environments, such as Shiny's `global.R` or a test's
-    /// package namespace, rank below this file regardless of load order and
-    /// do not count toward this prefix.
-    pub later_sibling_count: usize,
+    pub environments: EnvironmentChain,
 
     /// Packages attached by the loader, omitting packages unavailable in every
     /// root during lowering.
@@ -41,6 +31,28 @@ pub(crate) struct LoadContext {
     /// Which loader produced this context. Resolution ignores it; diagnostics
     /// use it to name what already loads the file.
     pub loader: Option<LoaderInfo>,
+}
+
+/// Environments in child-to-parent lookup order.
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub(crate) struct EnvironmentChain(pub Vec<LoadEnvironment>);
+
+/// Files writing into one environment, in forward execution order.
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub(crate) struct LoadEnvironment {
+    pub files: Vec<File>,
+}
+
+impl EnvironmentChain {
+    pub(crate) fn own(file: File) -> Self {
+        Self(vec![LoadEnvironment { files: vec![file] }])
+    }
+
+    pub(crate) fn lookup_files(&self) -> impl Iterator<Item = File> + '_ {
+        self.0
+            .iter()
+            .flat_map(|environment| environment.files.iter().rev().copied())
+    }
 }
 
 /// How a loader names itself in user reports. Whichever module recognises the
@@ -127,14 +139,14 @@ pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -
         return context;
     }
 
-    standalone_load_context()
+    standalone_load_context(file)
 }
 
 /// Uses document order to approximate notebook execution order because users
 /// can run cells in any order, which is not known statically. Top-level code
-/// sees preceding cells, while deferred code (function bodies) sees every
-/// other cell. Lookup runs in reverse document order so later bindings shadow
-/// earlier ones.
+/// sees the sequence through its own cell, while deferred code (function bodies)
+/// sees the completed sequence. Lookup runs in reverse document order so later
+/// bindings shadow earlier ones.
 ///
 /// Applies to open Jupyter notebooks and Quarto / R Markdown documents, which
 /// the editor presents as notebooks.
@@ -147,12 +159,11 @@ fn notebook_load_context(
     let cells = notebook.cells(db);
     let prefix_len = cells.iter().position(|cell| *cell == file)?;
 
-    let siblings = visible_siblings(file, cells, view, prefix_len);
+    let environment = load_environment(file, cells, view, prefix_len);
 
     Some(LoadContext {
         kind: LoadKind::Session,
-        later_sibling_count: siblings.later,
-        visible_files: siblings.files,
+        environments: EnvironmentChain(vec![environment]),
         implicit_attaches: Vec::new(),
         loader: Some(NOTEBOOK_LOADER),
     })
@@ -169,34 +180,32 @@ fn package_load_context(db: &dyn SourceDb, file: File, view: CollationView) -> O
 
     let prefix_len = files.iter().position(|sibling| *sibling == file)?;
 
-    let siblings = visible_siblings(file, files, view, prefix_len);
+    let environment = load_environment(file, files, view, prefix_len);
 
     Some(LoadContext {
         kind: LoadKind::Namespace(package),
-        later_sibling_count: siblings.later,
-        visible_files: siblings.files,
+        environments: EnvironmentChain(vec![environment]),
         implicit_attaches: Vec::new(),
         loader: Some(PACKAGE_LOADER),
     })
 }
 
-/// A file nothing else loads. It sees only its own attaches and the search path.
-fn standalone_load_context() -> LoadContext {
+/// A file nothing else loads. Its environment contains only its own bindings.
+fn standalone_load_context(file: File) -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
-        visible_files: Vec::new(),
-        later_sibling_count: 0,
+        environments: EnvironmentChain::own(file),
         implicit_attaches: Vec::new(),
         loader: None,
     }
 }
 
-/// The `R/`-directory collation members visible to `file`, in LIFO order.
-pub(crate) fn collation_visible_files(
+/// The `R/`-directory environment sequence visible to `file`.
+pub(crate) fn collation_environment(
     db: &dyn SourceDb,
     file: File,
     view: CollationView,
-) -> VisibleSiblings {
+) -> LoadEnvironment {
     let files = file.collation_siblings(db);
 
     // Locate present files by identity because `A.R` and `a.R` share a sort
@@ -210,48 +219,25 @@ pub(crate) fn collation_visible_files(
         },
     };
 
-    visible_siblings(file, files, view, prefix_len)
-}
-
-/// Siblings of `file` sharing its target environment, in reverse load order.
-///
-/// `files` excludes `file` to prevent `resolve()` from cycling through its
-/// semantic index. `later` counts the leading entries that load after `file`.
-/// Deferred lookup places the file's top-level bindings after that prefix
-/// and before its predecessors. `Eager` includes only predecessors, so its
-/// count is zero.
-pub(crate) struct VisibleSiblings {
-    pub files: Vec<File>,
-    pub later: usize,
+    load_environment(file, files, view, prefix_len)
 }
 
 /// `prefix_len` is the file's position in runtime load order, or its insertion
-/// position if the scanner has not placed it in `collation` yet. For an absent
-/// file, deferred lookup counts every member at or after `prefix_len` as later.
-pub(crate) fn visible_siblings(
+/// position if the scanner has not placed it in `collation` yet. Including the
+/// file itself preserves its contribution's position in tracked equality.
+pub(crate) fn load_environment(
     file: File,
     collation: &[File],
     view: CollationView,
     prefix_len: usize,
-) -> VisibleSiblings {
-    match view {
-        CollationView::Eager => VisibleSiblings {
-            files: collation[..prefix_len].iter().rev().copied().collect(),
-            later: 0,
-        },
-        CollationView::Deferred => {
-            let present = collation.get(prefix_len) == Some(&file);
-            VisibleSiblings {
-                later: collation.len() - prefix_len - usize::from(present),
-                files: collation
-                    .iter()
-                    .rev()
-                    .copied()
-                    .filter(|sibling| *sibling != file)
-                    .collect(),
-            }
-        },
+) -> LoadEnvironment {
+    let mut files = collation[..prefix_len].to_vec();
+    files.push(file);
+    if view == CollationView::Deferred {
+        let present = collation.get(prefix_len) == Some(&file);
+        files.extend_from_slice(&collation[prefix_len + usize::from(present)..]);
     }
+    LoadEnvironment { files }
 }
 
 /// Whether `file` sits directly in an `R/` directory, which Shiny autoloads
