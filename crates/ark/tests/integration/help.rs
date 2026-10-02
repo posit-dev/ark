@@ -171,6 +171,72 @@ fn test_help_search_comm() {
 }
 
 #[test]
+fn test_help_search_query_edge_cases() {
+    let r_help = TestRHelp::new();
+    for query in [
+        "[.data.frame",
+        "c(",
+        "^lm$",
+        "regresion",
+        "zzzz_ark_no_help_match",
+    ] {
+        r_help.test_search(query, "help-search-edge-case");
+    }
+    let topics = r_help.get_topics("[.data.frame", 50, "help-literal-topics");
+    assert_eq!(topics[0].label, "[.data.frame");
+    assert_eq!(topics[0].topic, "base::[.data.frame");
+
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    # Invalid regexps fall back to literal matching, with no warning escaping.
+    old <- options(warn = 2)
+    on.exit(options(old))
+    for (query in c("[.data.frame", "c(", "\\", "[.^$|?*+(){}\\")) {
+        results <- .ps.help.searchResults(query)
+        stopifnot(inherits(results, "hsearch"))
+        stopifnot(grepl(results$pattern, query))
+        stopifnot(identical(results$type, "regexp"))
+    }
+    results <- .ps.help.searchResults("[.data.frame")
+    stopifnot(any(results$matches[, "Entry"] == "[.data.frame"))
+    stopifnot(identical(
+        results,
+        utils::help.search("\\[\\.data\\.frame", package = NULL)
+    ))
+    stopifnot(identical(
+        .ps.help.searchResults("c("),
+        utils::help.search("c\\(", package = NULL)
+    ))
+
+    # Valid regexps, native fuzzy matching, and no-match results are unchanged.
+    for (query in c("^lm$", "regresion", "zzzz_ark_no_help_match")) {
+        stopifnot(identical(
+            .ps.help.searchResults(query),
+            utils::help.search(query, package = NULL)
+        ))
+    }
+    stopifnot(identical(.ps.help.searchResults("regresion")$type, "fuzzy"))
+    stopifnot(nrow(.ps.help.searchResults("^lm$")$matches) > 0L)
+    stopifnot(nrow(.ps.help.searchResults("zzzz_ark_no_help_match")$matches) == 0L)
+
+    # Unrelated native search errors must still reach the caller.
+    old_types <- options(help.search.types = "invalid-type")
+    on.exit(options(old_types), add = TRUE)
+    stopifnot(inherits(try(.ps.help.searchResults("[.data.frame"), silent = TRUE), "try-error"))
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
+    }));
+}
+
+#[test]
 fn test_custom_help_handlers() {
     let r_help = TestRHelp::new();
 
@@ -344,7 +410,7 @@ fn test_help_search_navigation_correlation() {
             "jsonrpc": "2.0",
             "id": "help-search-request",
             "method": "search_help",
-            "params": { "query": "linear model", "search_id": "ui-search" }
+            "params": { "query": "[.data.frame", "search_id": "ui-search" }
         }),
     });
     frontend.recv_iopub_busy();
