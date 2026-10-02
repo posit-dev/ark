@@ -1,8 +1,8 @@
 //! Surgical single-file updates from file-watcher events.
 //!
 //!
-//! Dispatch (DESCRIPTION rescan vs surgical add/remove, plus mid-scan
-//! buffering) lives on [`crate::ScanScheduler`]. This module just exposes
+//! Dispatch (`DESCRIPTION`, `.Rprofile`, and `.Renviron` rescans vs surgical
+//! add/remove, plus mid-scan buffering) lives on [`crate::ScanScheduler`]. This module just exposes
 //! [`add_watched_file`] / [`remove_watched_file`] for the scheduler to call
 //! after it has decided a single event can apply surgically against the live
 //! root.
@@ -28,23 +28,7 @@ use crate::packages::is_r_file;
 use crate::packages::read_description_name;
 use crate::packages::PackagePlacement;
 
-/// Driver-neutral file event. Drivers (the LSP, tests, ...) translate
-/// their native event type into this shape.
-#[derive(Clone, Debug)]
-pub struct FileEvent {
-    pub kind: FileEventKind,
-    pub path: FilePath,
-}
-
-/// Mirrors the three states an OS file watcher reports.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FileEventKind {
-    Created,
-    Changed,
-    Deleted,
-}
-
-/// React to a Created or Changed event on an R file. Idempotent: if a `File`
+/// Sync a watched R file that exists on disk. Idempotent: if a `File`
 /// already exists at this URL, its contents are updated and its placement is
 /// left alone. If not, the URL is classified against the current workspace
 /// roots and the new file lands in the right container: `pkg.files` for
@@ -75,8 +59,8 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
     }
 
     let Some(placement) = classify(db, fs_path) else {
-        // Either the URL falls outside every workspace, or it lives
-        // inside a package subdir we don't track (tests/, inst/, ...).
+        // The URL isn't an R file, falls outside every workspace, or lives
+        // in a package subdir we don't track (e.g. nested under `R/`).
         return;
     };
 
@@ -108,7 +92,7 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
     }
 }
 
-/// React to a Deleted event. Unlinks the file from whichever container
+/// Sync a watched path that no longer exists on disk. Unlinks the file from whichever container
 /// holds it so [`oak_db::Db::file_by_path`] stops returning it. The
 /// `File` entity itself stays in the salsa graph (salsa doesn't
 /// support deleting inputs), but with no container references nothing

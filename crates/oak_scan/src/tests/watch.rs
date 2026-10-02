@@ -13,8 +13,6 @@ use oak_db::SourceDb;
 
 use crate::scheduler::drain_scheduler;
 use crate::DbScan;
-use crate::FileEvent;
-use crate::FileEventKind;
 use crate::ScanRequest;
 use crate::ScanScheduler;
 
@@ -40,35 +38,23 @@ fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &H
 
 /// Sync helper: dispatch watcher events through the scheduler and
 /// drive it to quiescence.
-fn apply_watcher_events(db: &mut OakDatabase, events: Vec<FileEvent>, skip: &HashSet<FilePath>) {
+fn apply_watcher_events(db: &mut OakDatabase, paths: Vec<FilePath>, skip: &HashSet<FilePath>) {
     let mut scheduler = ScanScheduler::new();
-    let reqs = scheduler.apply_watcher_events(db, events, skip);
+    let reqs = scheduler.apply_watcher_events(db, paths, skip);
     drain_scheduler(db, &mut scheduler, reqs, skip);
 }
 
-/// Sync helper: synthesize a single Changed watcher event. The
-/// scheduler reads contents from disk, so callers must write the
-/// expected content to disk before calling.
+/// Sync helper: report `path` to the watcher. The scheduler reads contents
+/// from disk, so callers must write the expected content to disk before
+/// calling.
 fn add_watched_file(db: &mut OakDatabase, path: FilePath) {
-    apply_watcher_events(
-        db,
-        vec![FileEvent {
-            kind: FileEventKind::Changed,
-            path,
-        }],
-        &HashSet::new(),
-    );
+    apply_watcher_events(db, vec![path], &HashSet::new());
 }
 
+/// Sync helper: report `path` to the watcher. The scheduler checks the disk,
+/// so callers must delete the file before calling.
 fn remove_watched_file(db: &mut OakDatabase, path: FilePath) {
-    apply_watcher_events(
-        db,
-        vec![FileEvent {
-            kind: FileEventKind::Deleted,
-            path,
-        }],
-        &HashSet::new(),
-    );
+    apply_watcher_events(db, vec![path], &HashSet::new());
 }
 
 /// The global salsa revision. Bumps once per input setter that actually
@@ -209,6 +195,7 @@ fn test_remove_watched_file_from_pkg_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
+    fs::remove_file(&path).unwrap();
     let path = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, path.clone());
 
@@ -272,6 +259,7 @@ fn test_remove_watched_file_from_package() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("pkg/R/a.R");
+    fs::remove_file(&path).unwrap();
     let path = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, path.clone());
 
@@ -289,6 +277,7 @@ fn test_remove_watched_file_from_workspace_scripts() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
 
     let path = tmp.path().join("a.R");
+    fs::remove_file(&path).unwrap();
     let path = FilePath::from_path_buf(path.clone()).unwrap();
     remove_watched_file(&mut db, path.clone());
 
@@ -397,11 +386,8 @@ fn test_rescan_workspace_root_demotes_removed_description() {
     assert_eq!(root.scripts(&db).len(), 1);
 }
 
-fn file_event(path: &Path, kind: FileEventKind) -> FileEvent {
-    FileEvent {
-        path: FilePath::from_path_buf(path.to_path_buf()).unwrap(),
-        kind,
-    }
+fn watched_path(path: &Path) -> FilePath {
+    FilePath::from_path_buf(path.to_path_buf()).unwrap()
 }
 
 #[test]
@@ -419,10 +405,7 @@ fn test_apply_watcher_events_routes_description_to_rescan() {
     .unwrap();
     apply_watcher_events(
         &mut db,
-        vec![file_event(
-            &tmp.path().join("pkg/DESCRIPTION"),
-            FileEventKind::Created,
-        )],
+        vec![watched_path(&tmp.path().join("pkg/DESCRIPTION"))],
         &HashSet::new(),
     );
 
@@ -444,8 +427,8 @@ fn test_apply_watcher_events_dedupes_descriptions_per_root() {
     apply_watcher_events(
         &mut db,
         vec![
-            file_event(&tmp.path().join("pkg1/DESCRIPTION"), FileEventKind::Changed),
-            file_event(&tmp.path().join("pkg2/DESCRIPTION"), FileEventKind::Changed),
+            watched_path(&tmp.path().join("pkg1/DESCRIPTION")),
+            watched_path(&tmp.path().join("pkg2/DESCRIPTION")),
         ],
         &HashSet::new(),
     );
@@ -462,11 +445,7 @@ fn test_apply_watcher_events_routes_r_file_to_add() {
 
     let path = tmp.path().join("new.R");
     fs::write(&path, "x <- 1\n").unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![file_event(&path, FileEventKind::Created)],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![watched_path(&path)], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.scripts(&db).len(), 1);
@@ -481,11 +460,8 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
 
     let fs_path = tmp.path().join("a.R");
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![file_event(&fs_path, FileEventKind::Deleted)],
-        &HashSet::new(),
-    );
+    fs::remove_file(&fs_path).unwrap();
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
@@ -508,11 +484,7 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
     skip.insert(path.clone());
 
     fs::write(&fs_path, "disk_v3\n").unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![file_event(&fs_path, FileEventKind::Changed)],
-        &skip,
-    );
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &skip);
 
     let file = db.file_by_path(&path).unwrap();
     assert_eq!(file.source_text(&db), "editor_v2\n");
@@ -539,11 +511,7 @@ fn test_apply_watcher_events_skip_set_does_not_block_description() {
     let mut skip = HashSet::new();
     skip.insert(desc_path);
 
-    apply_watcher_events(
-        &mut db,
-        vec![file_event(&desc_fs_path, FileEventKind::Created)],
-        &skip,
-    );
+    apply_watcher_events(&mut db, vec![watched_path(&desc_fs_path)], &skip);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 1);
@@ -570,10 +538,7 @@ fn test_apply_watcher_events_description_outside_any_workspace_is_noop() {
 
     apply_watcher_events(
         &mut db,
-        vec![file_event(
-            &outside.path().join("DESCRIPTION"),
-            FileEventKind::Created,
-        )],
+        vec![watched_path(&outside.path().join("DESCRIPTION"))],
         &HashSet::new(),
     );
 
@@ -594,11 +559,7 @@ fn test_apply_watcher_events_ignores_non_r_files() {
     let fs_path = tmp.path().join("notes.txt");
     fs::write(&fs_path, "not R\n").unwrap();
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![file_event(&fs_path, FileEventKind::Created)],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
 
     assert!(db.file_by_path(&path).is_none());
     let root = db.workspace_roots().roots(&db)[0];
@@ -624,10 +585,7 @@ fn test_apply_watcher_events_tolerates_non_package_description() {
     .unwrap();
     apply_watcher_events(
         &mut db,
-        vec![file_event(
-            &tmp.path().join("not-a-pkg/DESCRIPTION"),
-            FileEventKind::Created,
-        )],
+        vec![watched_path(&tmp.path().join("not-a-pkg/DESCRIPTION"))],
         &HashSet::new(),
     );
 
@@ -690,8 +648,8 @@ fn test_rescan_refreshes_revision_of_known_file() {
 
 #[test]
 fn test_watcher_reblip_same_mtime_does_not_bump_salsa_revision() {
-    // Watchers coalesce and re-emit events, so one save can deliver a Changed
-    // event whose re-stat matches the mtime we already stored.
+    // Watchers coalesce and re-emit events, so one save can deliver a
+    // notification whose re-stat matches the mtime we already stored.
     // `add_watched_file` guards the `File::revision` write against that, so a
     // duplicate event leaves the revision (and thus `source_text`) alone.
     let tmp = tempfile::tempdir().unwrap();

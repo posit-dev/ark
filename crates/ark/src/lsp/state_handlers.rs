@@ -13,8 +13,6 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::File;
 use oak_scan::DbScan;
-use oak_scan::FileEvent;
-use oak_scan::FileEventKind;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionOptions;
@@ -31,7 +29,6 @@ use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
 use tower_lsp_server::ls_types::ExecuteCommandOptions;
-use tower_lsp_server::ls_types::FileChangeType;
 use tower_lsp_server::ls_types::FileSystemWatcher;
 use tower_lsp_server::ls_types::FoldingRangeProviderCapability;
 use tower_lsp_server::ls_types::FormattingOptions;
@@ -589,33 +586,21 @@ pub(crate) fn did_change_watched_files(
     // for those URLs. Their content comes from `did_open` / `did_change`.
     let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
-    let events: Vec<FileEvent> = params
+    // The change type is dropped: the scheduler reconciles each path against
+    // the disk when it applies.
+    let paths: Vec<FilePath> = params
         .changes
         .iter()
-        .filter_map(|change| {
-            Some(FileEvent {
-                path: change.uri.to_document_path().log_err()?,
-                kind: file_event_kind(change.typ)?,
-            })
-        })
+        .filter_map(|change| change.uri.to_document_path().log_err())
         .collect();
 
     let requests =
         lsp_state
             .oak_scheduler
-            .apply_watcher_events(state.db_mut(), events, &editor_owned);
+            .apply_watcher_events(state.db_mut(), paths, &editor_owned);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     Ok(())
-}
-
-fn file_event_kind(kind: FileChangeType) -> Option<FileEventKind> {
-    match kind {
-        FileChangeType::CREATED => Some(FileEventKind::Created),
-        FileChangeType::CHANGED => Some(FileEventKind::Changed),
-        FileChangeType::DELETED => Some(FileEventKind::Deleted),
-        _ => None,
-    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
