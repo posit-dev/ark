@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -527,6 +528,172 @@ fn test_r_file_event_waits_for_every_containing_root_scan() {
         assert_eq!(inner.packages(&db)[0].files(&db).len(), 2);
         assert_eq!(outer.packages(&db)[0].files(&db).len(), 2);
     }
+}
+
+#[test]
+fn test_overlapping_rescans_preserve_watcher_event_order() -> io::Result<()> {
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let (tmp, _, _) = nested_roots(&mut db, &mut scheduler, false);
+    let outer_dir = tmp.path().join("outer");
+    let inner_dir = outer_dir.join("inner");
+    let script = inner_dir.join("script.R");
+    fs::write(&script, "x <- 1\n")?;
+    let sentinel = inner_dir.join(".Rprofile");
+    fs::write(&sentinel, "")?;
+    let requests = scheduler.apply_watcher_events(
+        &mut db,
+        vec![event(FileEventKind::Created, &sentinel)],
+        &HashSet::new(),
+    );
+    assert_eq!(requests.len(), 2);
+    let mut results: Vec<_> = requests.into_iter().map(|request| request.run()).collect();
+    let outer_result = results.remove(0);
+    let inner_result = results.remove(0);
+
+    fs::remove_file(&script)?;
+    assert!(scheduler
+        .apply_watcher_events(
+            &mut db,
+            vec![event(FileEventKind::Deleted, &script)],
+            &HashSet::new(),
+        )
+        .is_empty());
+    assert!(scheduler
+        .apply_scan_completed(&mut db, outer_result, &HashSet::new())
+        .is_empty());
+
+    // Only the outer root rescans; its snapshot predates the recreation.
+    let outer_sentinel = outer_dir.join(".Rprofile");
+    fs::write(&outer_sentinel, "")?;
+    let mut requests = scheduler.apply_watcher_events(
+        &mut db,
+        vec![event(FileEventKind::Created, &outer_sentinel)],
+        &HashSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    let outer_result = requests.remove(0).run();
+    fs::write(&script, "x <- 2\n")?;
+    assert!(scheduler
+        .apply_watcher_events(
+            &mut db,
+            vec![event(FileEventKind::Created, &script)],
+            &HashSet::new(),
+        )
+        .is_empty());
+    assert!(scheduler
+        .apply_scan_completed(&mut db, inner_result, &HashSet::new())
+        .is_empty());
+    assert!(scheduler
+        .apply_scan_completed(&mut db, outer_result, &HashSet::new())
+        .is_empty());
+
+    assert!(!scheduler.has_pending_scans());
+    let path = event(FileEventKind::Created, &script).path;
+    assert!(db.file_by_path(&path).is_some());
+    Ok(())
+}
+
+#[test]
+fn test_removing_blocking_root_preserves_events_for_surviving_root() -> io::Result<()> {
+    for inner_pending in [false, true] {
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let (tmp, _, inner) = nested_roots(&mut db, &mut scheduler, false);
+        let outer_dir = tmp.path().join("outer");
+        let inner_dir = outer_dir.join("inner");
+        let sentinel_dir = if inner_pending {
+            &inner_dir
+        } else {
+            &outer_dir
+        };
+        let sentinel = sentinel_dir.join(".Rprofile");
+        fs::write(&sentinel, "")?;
+        let requests = scheduler.apply_watcher_events(
+            &mut db,
+            vec![event(FileEventKind::Created, &sentinel)],
+            &HashSet::new(),
+        );
+        assert_eq!(requests.len(), if inner_pending { 2 } else { 1 });
+        let results: Vec<_> = requests.into_iter().map(|request| request.run()).collect();
+        let script = inner_dir.join("new.R");
+        fs::write(&script, "x <- 1\n")?;
+        let path = event(FileEventKind::Created, &script).path;
+        assert!(scheduler
+            .apply_watcher_events(
+                &mut db,
+                vec![event(FileEventKind::Created, &script)],
+                &HashSet::new(),
+            )
+            .is_empty());
+        assert!(db.file_by_path(&path).is_none());
+
+        assert!(scheduler
+            .set_workspace_paths(&mut db, &[inner_dir], &HashSet::new())
+            .is_empty());
+        assert_eq!(db.file_by_path(&path).is_some(), !inner_pending);
+        for result in results {
+            assert!(scheduler
+                .apply_scan_completed(&mut db, result, &HashSet::new())
+                .is_empty());
+        }
+        assert!(!scheduler.has_pending_scans());
+        assert_eq!(inner.scripts(&db).len(), 1);
+        assert_eq!(inner.scripts(&db)[0].path(&db), &path);
+        assert!(db.file_by_path(&path).is_some());
+    }
+    Ok(())
+}
+
+#[test]
+fn test_blocked_events_do_not_delay_unrelated_roots() -> io::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let blocked_dir = tmp.path().join("blocked");
+    let ready_dir = tmp.path().join("ready");
+    fs::create_dir_all(&blocked_dir)?;
+    fs::create_dir_all(&ready_dir)?;
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    scan_workspace(&mut db, &mut scheduler, &[
+        blocked_dir.clone(),
+        ready_dir.clone(),
+    ]);
+    let sentinel = blocked_dir.join(".Rprofile");
+    fs::write(&sentinel, "")?;
+    let mut requests = scheduler.apply_watcher_events(
+        &mut db,
+        vec![event(FileEventKind::Created, &sentinel)],
+        &HashSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    let result = requests.remove(0).run();
+    let blocked_script = blocked_dir.join("new.R");
+    let ready_script = ready_dir.join("new.R");
+    fs::write(&blocked_script, "x <- 1\n")?;
+    fs::write(&ready_script, "y <- 1\n")?;
+    assert!(scheduler
+        .apply_watcher_events(
+            &mut db,
+            vec![
+                event(FileEventKind::Created, &blocked_script),
+                event(FileEventKind::Created, &ready_script),
+            ],
+            &HashSet::new(),
+        )
+        .is_empty());
+    let blocked_path = event(FileEventKind::Created, &blocked_script).path;
+    let ready_path = event(FileEventKind::Created, &ready_script).path;
+    assert!(db.file_by_path(&blocked_path).is_none());
+    assert!(db.file_by_path(&ready_path).is_some());
+    assert!(scheduler.has_pending_scans());
+
+    assert!(scheduler
+        .apply_scan_completed(&mut db, result, &HashSet::new())
+        .is_empty());
+    assert!(db.file_by_path(&blocked_path).is_some());
+    assert!(db.file_by_path(&ready_path).is_some());
+    assert!(!scheduler.has_pending_scans());
+    Ok(())
 }
 
 #[test]

@@ -32,12 +32,11 @@
 //!   scan's `upsert_root_file` then resurrects it from stale, restoring
 //!   the disk contents the scanner read.
 //!
-//! - **Watcher events during scan.** R-file events for a pending root
-//!   get buffered here and replayed after the scan applies. DESCRIPTION
-//!   events flip the root into [`ScanState::ScanningWithRescanQueued`]
-//!   so a follow-up scan kicks off after the current one finishes, the
-//!   buffered events ride along until the root is finally idle, then
-//!   drain in one batch.
+//! - **Watcher events during scan.** R-file events stay in arrival order
+//!   until every containing root is idle. Events for unrelated idle roots
+//!   can apply without waiting. Discovery events queue follow-up scans via
+//!   [`ScanState::ScanningWithRescanQueued`], keeping affected events buffered
+//!   until those scans finish.
 //!
 //! - **Stale results.** If the workspace folder is removed while its
 //!   scan is in flight, the result arrives carrying a `Root` that's no
@@ -172,7 +171,7 @@ enum ScanState {
 #[derive(Debug, Default)]
 pub struct ScanScheduler {
     state: HashMap<Root, ScanState>,
-    buffered: HashMap<Root, Vec<FileEvent>>,
+    buffered: Vec<FileEvent>,
 }
 
 impl ScanScheduler {
@@ -220,7 +219,6 @@ impl ScanScheduler {
             if !new_paths.contains(old_path) {
                 old_root.set_stale(db, Some(editor_owned));
                 self.state.remove(&old_root);
-                self.buffered.remove(&old_root);
             }
         }
 
@@ -251,6 +249,7 @@ impl ScanScheduler {
         if db.workspace_roots().roots(db) != &new_roots {
             db.workspace_roots().set_roots(db).to(new_roots);
         }
+        self.drain_buffered(db, editor_owned);
 
         requests
     }
@@ -302,41 +301,14 @@ impl ScanScheduler {
             }
         }
 
-        // Pass 2: R-file events.
-        for event in events {
-            let Some(path) = event.path.as_path().map(Utf8Path::to_path_buf) else {
-                continue;
-            };
-            if triggers_rescan(&path) {
-                continue;
-            }
-            if skip.contains(&event.path) {
-                continue;
-            }
-
-            // Wait for every containing root's scan because nested roots share
-            // `Package` and `File` entities that older results can overwrite.
-            // Replay through `apply_watcher_events()` re-buffers the event if
-            // another containing root still has a pending scan.
-            let pending_root = roots
-                .iter()
-                .filter(|(root_path, _)| path.starts_with(root_path))
-                .map(|(_, root)| *root)
-                .find(|root| self.state.contains_key(root));
-
-            match pending_root {
-                Some(root) => {
-                    self.buffered.entry(root).or_default().push(event);
-                },
-
-                None => match event.kind {
-                    FileEventKind::Created | FileEventKind::Changed => {
-                        add_watched_file(db, event.path)
-                    },
-                    FileEventKind::Deleted => remove_watched_file(db, event.path),
-                },
-            }
-        }
+        self.buffered.extend(events.into_iter().filter(|event| {
+            event
+                .path
+                .as_path()
+                .is_some_and(|path| !triggers_rescan(path)) &&
+                !skip.contains(&event.path)
+        }));
+        self.drain_buffered(db, skip);
 
         requests
     }
@@ -348,8 +320,8 @@ impl ScanScheduler {
     /// flight). Otherwise updates the root's packages and scripts, then handles
     /// the post-apply state:
     ///
-    /// - `Scanning`: state cleared, buffered events drained through
-    ///   `apply_watcher_events()` (which may itself return new requests).
+    /// - `Scanning`: state cleared, buffered events applied if no other
+    ///   containing root has a pending scan.
     /// - `ScanningWithRescanQueued`: fresh `ScanRequest` returned, state stays
     ///   `Scanning`, buffer preserved for the next round.
     /// - Untracked (`None`): unexpected, since dispatch always marks the root
@@ -364,17 +336,16 @@ impl ScanScheduler {
 
         let live = db.workspace_roots().roots(db).contains(&root);
         if !live {
-            // Workspace folder removed while we were scanning. Drop the
-            // result and any buffered events for this root.
+            // Workspace reconciliation already re-evaluated buffered events
+            // against the surviving roots; this result must not touch them.
             self.state.remove(&root);
-            self.buffered.remove(&root);
             return Vec::new();
         }
 
         result.apply(db);
 
         let prior = self.state.remove(&root);
-        match prior {
+        let requests = match prior {
             Some(ScanState::ScanningWithRescanQueued) => {
                 // A rescan was queued mid-scan. Resolve its path before
                 // re-marking the root `Scanning`: a path we can't resolve must
@@ -388,39 +359,58 @@ impl ScanScheduler {
                         self.state.insert(root, ScanState::Scanning);
                         vec![ScanRequest { root, path }]
                     },
-                    None => self.drain_buffered(db, root, editor_owned),
+                    None => Vec::new(),
                 }
             },
-            // We're now idle. Drain any buffered events through the normal path.
-            Some(ScanState::Scanning) => self.drain_buffered(db, root, editor_owned),
+            Some(ScanState::Scanning) => Vec::new(),
             None => {
                 // A completion for a root we weren't tracking as scanning.
                 // Every dispatched scan marks its root `Scanning`, so reaching
                 // here means our state diverged from the in-flight work. The
-                // result is already applied. Since buffered events only
-                // accumulate against a tracked root, there's nothing to drain.
+                // result is already applied.
                 log::warn!(
                     "Applied a `ScanCompleted` for an untracked root: {path:?}",
                     path = root.path(db)
                 );
                 Vec::new()
             },
-        }
+        };
+        self.drain_buffered(db, editor_owned);
+        requests
     }
 
-    /// Replay the watcher events buffered for `root` while its scan was in
-    /// flight, now that the root is idle. Routes them through
-    /// [`Self::apply_watcher_events`], which may itself return fresh requests.
-    fn drain_buffered<DB: Db + DbInputs>(
-        &mut self,
-        db: &mut DB,
-        root: Root,
-        editor_owned: &HashSet<FilePath>,
-    ) -> Vec<ScanRequest> {
-        match self.buffered.remove(&root) {
-            Some(buffered) => self.apply_watcher_events(db, buffered, editor_owned),
-            None => Vec::new(),
-        }
+    fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
+        let roots = workspace_root_paths(db);
+        self.buffered.retain(|event| {
+            if editor_owned.contains(&event.path) {
+                return false;
+            }
+            let Some(path) = event.path.as_path() else {
+                return false;
+            };
+            let mut containing_roots = roots
+                .iter()
+                .filter(|(root_path, _)| path.starts_with(root_path))
+                .peekable();
+            if containing_roots.peek().is_none() {
+                return false;
+            }
+
+            // Nested roots share entities, so every containing scan must finish
+            // before an event can apply. Events for the same path share blockers;
+            // retaining their arrival order lets unrelated idle roots progress
+            // without reversing a deletion and subsequent creation.
+            if containing_roots.any(|(_, root)| self.state.contains_key(root)) {
+                return true;
+            }
+            match event.kind {
+                FileEventKind::Created | FileEventKind::Changed => {
+                    add_watched_file(db, event.path.clone())
+                },
+                FileEventKind::Deleted => remove_watched_file(db, event.path.clone()),
+            }
+            false
+        });
     }
 
     fn request_rescan<DB: Db + DbInputs>(
