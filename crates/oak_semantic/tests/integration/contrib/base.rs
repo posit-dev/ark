@@ -3966,6 +3966,56 @@ f <- function() {
     assert!(index.diagnostics().is_empty());
 }
 
+// The file-scope fallback for `<<-` can produce a false `LazyShadow`
+// diagnostic for base's `local()`. With `local` bound only in base, the
+// assignment would fail on the locked binding rather than shadow it.
+
+#[test]
+fn test_fixme_super_assignment_from_earlier_sibling_reports_impossible_lazy_shadow() {
+    let source = "\
+g <- function() local <<- identity
+f <- function() local({ y <- 1 })
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(3);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+
+    // The recorded file binding from `g()` makes `f()`'s `local()` ambiguous
+    // even though calling `g()` would fail rather than create that binding.
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert!(
+        matches!(&diagnostics[0], SemanticDiagnostic::AmbiguousCalleeResolution {
+            name,
+            reason: AmbiguityReason::LazyShadow { .. },
+            ..
+        } if name == "local")
+    );
+}
+
+#[test]
+fn test_fixme_super_assignment_lazy_shadow_depends_on_sibling_order() {
+    // No diagnostic is reported because the walk resolves `f()`'s `local()`
+    // before recording `g()`'s file-scope binding. Reversing the sibling
+    // definitions changes the warning, but not the runtime assignment target.
+    let source = "\
+f <- function() local({ y <- 1 })
+g <- function() local <<- identity
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
 #[test]
 fn test_parameter_shadows_body_callee() {
     let index = index_with_base("f <- function(local) local({ y <- 1 })\n");

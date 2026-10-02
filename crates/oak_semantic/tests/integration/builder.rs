@@ -773,6 +773,61 @@ fn test_super_assignment_nested_skips_super_bound_scope() {
     assert_eq!(x_inner.flags(), SymbolFlags::IS_SUPER_BOUND);
 }
 
+// These tests assert where `resolve_super_target()` diverges from R's
+// environment search. Lexical walk order misses package bindings and enclosing
+// bindings created between a closure's definition and invocation. Resolving
+// these cases requires distinguishing mutable bindings, locked bindings that
+// reject assignment, and absent names that cause a global binding to be created.
+
+#[test]
+fn test_fixme_super_assignment_to_package_only_name_records_phantom_file_binding() {
+    // The walk records a file-scope definition because it cannot see package
+    // bindings. With `local` bound only in base, calling `f()` instead raises
+    // "cannot change value of locked binding" and creates no global binding.
+    let index = index("f <- function() local <<- identity\n");
+    let file = ScopeId::from(0);
+
+    let local_file = index.symbols(file).get("local").unwrap();
+    assert_eq!(local_file.flags(), SymbolFlags::IS_BOUND);
+
+    let local_defs: Vec<_> = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "local")
+        .collect();
+    assert_eq!(local_defs.len(), 1);
+    assert!(matches!(
+        local_defs[0].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+}
+
+#[test]
+fn test_fixme_super_assignment_target_ignores_later_enclosing_binding() {
+    // The walk targets the file scope because it reaches `h()`'s body before
+    // `local <- 1`. At runtime, `h()` runs after that assignment, so `<<-`
+    // updates `local` in `g()`'s frame.
+    let index = index("g <- function() { h <- function() local <<- identity; local <- 1; h() }\n");
+    let file = ScopeId::from(0);
+    let g = ScopeId::from(1);
+
+    let local_file = index.symbols(file).get("local").unwrap();
+    assert_eq!(local_file.flags(), SymbolFlags::IS_BOUND);
+
+    // The index omits the superassignment to `g()`'s `local` binding even
+    // though that binding is the runtime target.
+    let local_g_defs: Vec<_> = index
+        .definitions(g)
+        .iter()
+        .filter(|(_, d)| index.symbols(g).symbol(d.symbol()).name() == "local")
+        .collect();
+    assert_eq!(local_g_defs.len(), 1);
+    assert!(matches!(
+        local_g_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+}
+
 #[test]
 fn test_super_assignment_coexists_with_use_in_ancestors() {
     // `<<-` in inner function walks up from outer, finds `x` bound in file

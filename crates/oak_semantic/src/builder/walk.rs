@@ -854,7 +854,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     //
     // R's `<<-` walks up the environment chain from the parent, targeting
     // the first scope where the symbol is already bound. If no binding is
-    // found, it assigns in the global (file) scope.
+    // found, R assigns in the global environment. `resolve_super_target()`
+    // approximates this search using lexical scopes within the file.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
         let Some(parent) = self.scopes[self.current_scope].parent else {
             // A top-level `<<-` has no enclosing frame to walk to, so it binds
@@ -916,8 +917,15 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // R's `<<-` targets the first ancestor with an `IS_BOUND` binding. Without
-    // one, it assigns in the global, file scope.
+    // TODO(superassignment) Account for package bindings and runtime call
+    // timing when resolving `<<-` targets. The file-scope fallback can record
+    // a binding that R would not create. If the environment search reaches a
+    // locked binding, such as base's `local`, the assignment errors instead.
+    //
+    // Walk order can also miss an enclosing binding created after the closure
+    // definition but before its invocation. R would update that binding rather
+    // than the global environment. The `test_fixme_super_assignment_` tests in
+    // `builder.rs` and `contrib/base.rs` assert these divergences.
     fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
         self.ancestor_scope_ids(start)
             .find(|&scope| self.walked_binding(scope, name).is_some())
