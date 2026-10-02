@@ -11,6 +11,7 @@ use crate::FileRevision;
 use crate::OakDatabase;
 use crate::Package;
 use crate::Root;
+use crate::SourceDb;
 
 fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));

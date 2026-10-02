@@ -81,7 +81,7 @@ fn test_root_dispatches_through_library_package_when_set() {
     db.library_roots().set_roots(&mut db).to(vec![pkg_root]);
 
     // File created with package back-pointer set. `root()` dispatches
-    // through `Db::root_by_package` rather than falling back to the URL-
+    // through `SourceDb::root_by_package` rather than falling back to the URL-
     // prefix walk against workspace roots.
     let file = File::new(
         &db,
