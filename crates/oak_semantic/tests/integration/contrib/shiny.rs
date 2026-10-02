@@ -644,6 +644,59 @@ fn test_super_assignment_to_unit_attached_package_name_records_no_target() {
     assert_locked_reactive_diagnostic(&index);
 }
 
+#[test]
+fn test_super_assignment_before_unit_attach_targets_global() {
+    // `library(shiny)` runs after `<<-` in the same body. The first call finds
+    // no `reactive` and assigns the global. Later calls find that global
+    // binding before `package:shiny`, so no call fails.
+    let index = index_with_shiny_exporting_reactive(
+        "f <- function() { reactive <<- identity; library(shiny) }\n",
+    );
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(file).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert_eq!(
+        index.symbols(fun).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_SUPER_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_top_level_super_assignment_before_attach_targets_global() {
+    let index = index_with_shiny_exporting_reactive("reactive <<- identity\nlibrary(shiny)\n");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_eager_nse_super_assignment_before_attach_targets_global() {
+    // `local()` runs its body at the call site, before the later attach.
+    let index =
+        index_with_shiny_exporting_reactive("local({ reactive <<- identity })\nlibrary(shiny)\n");
+    let file = ScopeId::from(0);
+    let nse = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(file).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert_eq!(
+        index.symbols(nse).get("reactive").unwrap().flags(),
+        SymbolFlags::IS_SUPER_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
 fn index_with_shiny_exporting_reactive(source: &str) -> SemanticIndex {
     build_with(
         source,
