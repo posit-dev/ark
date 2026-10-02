@@ -4,9 +4,12 @@ use oak_semantic::semantic_index::EvalTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticDiagnostic;
+use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 
+use crate::common::build_with;
 use crate::common::index_with_base as index;
+use crate::resolvers::TestImportsResolver;
 
 #[test]
 fn test_nse_attach_enables_lazy_scope() {
@@ -608,7 +611,9 @@ fn test_super_assignment_to_attached_package_name_records_no_target() {
     // Record no global target because the attached `shiny` package supplies
     // a locked `reactive` binding. Calling `f()` fails on that binding rather
     // than creating a global one.
-    let index = index("library(shiny)\nf <- function() reactive <<- identity\n");
+    let index = index_with_shiny_exporting_reactive(
+        "library(shiny)\nf <- function() reactive <<- identity\n",
+    );
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
@@ -617,6 +622,7 @@ fn test_super_assignment_to_attached_package_name_records_no_target() {
         index.symbols(fun).get("reactive").unwrap().flags(),
         SymbolFlags::IS_SUPER_BOUND
     );
+    assert_locked_reactive_diagnostic(&index);
 }
 
 #[test]
@@ -624,7 +630,9 @@ fn test_super_assignment_to_unit_attached_package_name_records_no_target() {
     // Record no target because `library(shiny)` runs before `<<-` in the
     // same function body. The assignment reaches the attached package's
     // locked `reactive` binding and fails.
-    let index = index("f <- function() { library(shiny); reactive <<- identity }\n");
+    let index = index_with_shiny_exporting_reactive(
+        "f <- function() { library(shiny); reactive <<- identity }\n",
+    );
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
@@ -633,5 +641,21 @@ fn test_super_assignment_to_unit_attached_package_name_records_no_target() {
         index.symbols(fun).get("reactive").unwrap().flags(),
         SymbolFlags::IS_SUPER_BOUND
     );
-    assert!(index.diagnostics().is_empty());
+    assert_locked_reactive_diagnostic(&index);
+}
+
+fn index_with_shiny_exporting_reactive(source: &str) -> SemanticIndex {
+    build_with(
+        source,
+        TestImportsResolver::with_base().with_exports("shiny", &["reactive"]),
+    )
+}
+
+fn assert_locked_reactive_diagnostic(index: &SemanticIndex) {
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "reactive" && package == "shiny"
+    ));
 }

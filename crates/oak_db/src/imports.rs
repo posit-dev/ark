@@ -18,6 +18,7 @@ use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
 use crate::Db;
 use crate::File;
+use crate::Name;
 use crate::Package;
 use crate::RootKind;
 
@@ -182,21 +183,16 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         effects
     }
 
-    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> bool {
-        // Real export data for attached packages. Base isn't a package in the
-        // graph and we don't carry its export list, so the registry stands in
-        // for it (exact for the annotated names whose phantom target could
-        // feed a diagnostic).
-        attached
-            .iter()
-            .filter_map(|package| self.db.package_by_name(package))
-            .any(|package| {
-                matches!(
-                    package_binding(self.db, package, name),
-                    PackageBinding::Effect(_) | PackageBinding::Shadow
-                )
-            }) ||
-            effects::lookup("base", name).is_some()
+    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+        let layers = self.file.cross_file_layers(self.db, CollationView::Eager);
+        let own = own_attach_layers(self.db, attached);
+
+        for layer in layers.lookup_order(self.db, &own) {
+            if let ControlFlow::Break(package) = self.layer_lock(&layer, name) {
+                return package;
+            }
+        }
+        None
     }
 
     fn package_exists(&mut self, package: &str) -> bool {
@@ -250,11 +246,7 @@ impl<'db> SalsaImportsResolver<'db> {
         // `attached` is the builder's flow-ordered set (latest last), so
         // eager/lazy flow-sensitivity is already applied; reverse it to LIFO so
         // a later attach shadows an earlier one.
-        let own: Vec<ImportLayer> = attached
-            .iter()
-            .rev()
-            .filter_map(|package| self.db.package_by_name(package).map(ImportLayer::Package))
-            .collect();
+        let own = own_attach_layers(self.db, attached);
 
         for layer in layers.lookup_order(self.db, &own) {
             if let ControlFlow::Break(effect) = layer_effect(self.db, &layer, name) {
@@ -269,6 +261,86 @@ impl<'db> SalsaImportsResolver<'db> {
         // above already handled before falling through.
         effects::lookup("base", name).copied()
     }
+
+    /// `Break(Some(package))` when `layer` holds a locked binding of `name`
+    /// supplied by `package`, `Break(None)` when it holds an assignable one,
+    /// or `Continue` when it doesn't bind `name` at all.
+    ///
+    /// File bindings are treated as assignable so `.onLoad()` can use `<<-`
+    /// before the namespace is sealed. This misses runtime errors from bodies
+    /// called after sealing. Script bindings live in the global environment
+    /// and are not locked by package loading.
+    ///
+    /// FIXME A sibling file binding can hide a locked package target from
+    /// top-level `<<-`. R skips the environment executing the assignment,
+    /// including sibling bindings that share it, but `File` layers do not
+    /// identify environments. Shiny's `R/` files share one environment, whereas
+    /// `global.R` runs in an enclosing environment and must remain searchable.
+    fn layer_lock(&self, layer: &ImportLayer, name: &str) -> ControlFlow<Option<String>> {
+        match layer {
+            ImportLayer::File(file) => match file.exports(self.db).get(name).is_some() {
+                true => ControlFlow::Break(None),
+                false => ControlFlow::Continue(()),
+            },
+            ImportLayer::SourcingFile {
+                file,
+                exports_so_far,
+            } => {
+                let binds =
+                    exports_so_far.contains(name) && file.exports(self.db).get(name).is_some();
+                match binds {
+                    true => ControlFlow::Break(None),
+                    false => ControlFlow::Continue(()),
+                }
+            },
+            // Imports environments are locked. Attribute the error to the
+            // source package so the diagnostic identifies where `name` comes from.
+            ImportLayer::From(importer) => match importer.imported_from(self.db).get(name) {
+                Some(source) => ControlFlow::Break(Some(source.to_string())),
+                None => ControlFlow::Continue(()),
+            },
+            // Skip `base` for its own files to avoid a query cycle.
+            // `base_binds()` reads their exports, which need the semantic index
+            // being built. Since `base` is last in lookup order, no target remains.
+            ImportLayer::Package(package) if package.name(self.db) == "base" => {
+                let binds = self.file.package(self.db) != Some(*package) &&
+                    *base_binds(self.db, *package, Name::new(self.db, name));
+                match binds {
+                    true => ControlFlow::Break(Some(package.name(self.db).to_string())),
+                    false => ControlFlow::Continue(()),
+                }
+            },
+            ImportLayer::Package(package) => {
+                match package.namespace(self.db).exports.contains_str(name) {
+                    true => ControlFlow::Break(Some(package.name(self.db).to_string())),
+                    false => ControlFlow::Continue(()),
+                }
+            },
+        }
+    }
+}
+
+/// Later attachments shadow earlier ones. The builder supplies runtime order
+/// (latest last), while layer lookup needs the most recent attachment first.
+fn own_attach_layers(db: &dyn Db, attached: &[String]) -> Vec<ImportLayer> {
+    attached
+        .iter()
+        .rev()
+        .filter_map(|package| db.package_by_name(package).map(ImportLayer::Package))
+        .collect()
+}
+
+/// Base has no `NAMESPACE`, so top-level file bindings stand in for exports.
+/// This misses primitives such as `sum()`, which have no R-level definition.
+///
+/// Salsa caches the scan per package and name, invalidating it when the file
+/// list or an export set read by the query changes.
+#[salsa::tracked]
+fn base_binds<'db>(db: &'db dyn Db, base: Package, name: Name<'db>) -> bool {
+    let name = name.text(db).as_str();
+    base.files(db)
+        .iter()
+        .any(|file| file.exports(db).get(name).is_some())
 }
 
 /// Resolves a bare `name` call to its NSE effect through `layers`.

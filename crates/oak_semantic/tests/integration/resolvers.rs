@@ -27,6 +27,9 @@ pub struct TestImportsResolver {
     /// Directory listings keyed by path and walk mode, so a handler that asks
     /// for the wrong `DirWalk` gets no files rather than a silent match.
     source_dirs: HashMap<(String, DirWalk), Vec<SourceResolution>>,
+    /// Explicit exports keep locked-binding checks independent of the effects
+    /// registry, which describes call semantics rather than binding existence.
+    exports: HashMap<String, Vec<String>>,
 }
 
 impl TestImportsResolver {
@@ -47,7 +50,18 @@ impl TestImportsResolver {
             consultations: Rc::new(Cell::new(0)),
             sources: HashMap::new(),
             source_dirs: HashMap::new(),
+            exports: HashMap::new(),
         }
+    }
+
+    /// Declare that `package` exports `names`, making them locked `<<-`
+    /// targets when `package` is on the search path.
+    pub fn with_exports(mut self, package: &str, names: &[&str]) -> Self {
+        self.exports.insert(
+            package.to_string(),
+            names.iter().map(|name| name.to_string()).collect(),
+        );
+        self
     }
 
     /// Register a sourced file at `path` exporting `names`, so `resolve_source`
@@ -97,6 +111,19 @@ impl ImportsResolver for TestImportsResolver {
             .rev()
             .chain(self.always_attached.iter())
             .find_map(|pkg| effects::lookup(pkg, name).copied())
+    }
+
+    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+        attached
+            .iter()
+            .rev()
+            .chain(self.always_attached.iter())
+            .find(|pkg| {
+                self.exports
+                    .get(*pkg)
+                    .is_some_and(|names| names.iter().any(|export| export == name))
+            })
+            .cloned()
     }
 }
 

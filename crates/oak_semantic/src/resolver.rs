@@ -43,9 +43,9 @@ pub struct SourceResolution {
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
 ///   resolves the handlers of a `pkg::fn` or `pkg:::fn` callee against a named
 ///   package.
-/// - [`binds_package_name()`](ImportsResolver::binds_package_name) identifies
-///   package bindings treated as locked targets for `<<-`, preventing the
-///   builder from recording a global binding for a failing assignment.
+/// - [`binds_package_name()`](ImportsResolver::binds_package_name) names the
+///   package when `name` resolves to a locked package binding on the search
+///   path.
 /// - [`package_exists`](ImportsResolver::package_exists) tells whether a
 ///   `library()`/`require()` target resolves to an installed package.
 pub trait ImportsResolver {
@@ -81,21 +81,16 @@ pub trait ImportsResolver {
         effects::lookup(package, name).copied()
     }
 
-    /// Whether base or an attached package binds `name`. The builder treats
-    /// these bindings as locked, so `<<-` records no global target when no
-    /// lexical ancestor binds the name.
+    /// The package supplying `name` when its first cross-file binding on the
+    /// search path is in a locked package environment. `attached` is as for
+    /// [`resolve_effects`](ImportsResolver::resolve_effects).
     ///
-    /// The default recognizes only names in the static effects registry. This
-    /// prevents spurious global targets from affecting known callee semantics,
-    /// but unrecognized package names can still produce spurious targets for
-    /// rename and navigation. `oak_db`'s resolver overrides this with real
-    /// NAMESPACE export data.
-    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> bool {
-        attached
-            .iter()
-            .map(String::as_str)
-            .chain(["base"])
-            .any(|package| effects::lookup(package, name).is_some())
+    /// Defaults to `None`, making no claim without export data. A spurious
+    /// `None` records a global binding that R never creates, while a spurious
+    /// package reports a locked-binding error R never raises.
+    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+        let _ = (name, attached);
+        None
     }
 
     /// Whether `package` resolves to an installed package. Defaults to
@@ -135,5 +130,16 @@ mod tests {
         assert!(resolver.resolve_source("relative.R").is_none());
         assert!(resolver.resolve_source("/abs/path.R").is_none());
         assert!(resolver.resolve_source("../../up.R").is_none());
+    }
+
+    #[test]
+    fn test_noop_imports_resolver_binds_no_package_name() {
+        // Without export data, no `<<-` target is reported as locked, even for
+        // base names.
+        let mut resolver = NoopImportsResolver;
+        assert!(resolver.binds_package_name("local", &[]).is_none());
+        assert!(resolver
+            .binds_package_name("runApp", &["shiny".to_string()])
+            .is_none());
     }
 }
