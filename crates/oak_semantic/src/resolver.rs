@@ -43,8 +43,8 @@ pub struct SourceResolution {
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
 ///   resolves the handlers of a `pkg::fn` or `pkg:::fn` callee against a named
 ///   package.
-/// - [`binds_package_name()`](ImportsResolver::binds_package_name) names the
-///   package when `name` resolves to a locked package binding on the search
+/// - [`binding_package()`](ImportsResolver::binding_package) names the
+///   package supplying the first cross-file binding of a name on the search
 ///   path.
 /// - [`package_exists`](ImportsResolver::package_exists) tells whether a
 ///   `library()`/`require()` target resolves to an installed package.
@@ -81,14 +81,14 @@ pub trait ImportsResolver {
         effects::lookup(package, name).copied()
     }
 
-    /// The package supplying `name` when its first cross-file binding on the
-    /// search path is in a locked package environment. `attached` is as for
+    /// The package supplying the first cross-file binding of `name` on the
+    /// search path. For a name imported through NAMESPACE `importFrom`, this
+    /// is the package it's imported from. `None` when a file binding comes
+    /// first or nothing binds `name`. `attached` is as for
     /// [`resolve_effects`](ImportsResolver::resolve_effects).
     ///
-    /// Defaults to `None`, making no claim without export data. A spurious
-    /// `None` records a global binding that R never creates, while a spurious
-    /// package reports a locked-binding error R never raises.
-    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+    /// Defaults to `None`, making no claim without export data.
+    fn binding_package(&mut self, name: &str, attached: &[String]) -> Option<String> {
         let _ = (name, attached);
         None
     }
@@ -133,13 +133,13 @@ mod tests {
     }
 
     #[test]
-    fn test_noop_imports_resolver_binds_no_package_name() {
+    fn test_noop_imports_resolver_has_no_binding_package() {
         // Without export data, no `<<-` target is reported as locked, even for
         // base names.
         let mut resolver = NoopImportsResolver;
-        assert!(resolver.binds_package_name("local", &[]).is_none());
+        assert!(resolver.binding_package("local", &[]).is_none());
         assert!(resolver
-            .binds_package_name("runApp", &["shiny".to_string()])
+            .binding_package("runApp", &["shiny".to_string()])
             .is_none());
     }
 }

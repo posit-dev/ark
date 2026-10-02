@@ -113,7 +113,7 @@ impl ImportsResolver for TestImportsResolver {
             .find_map(|pkg| effects::lookup(pkg, name).copied())
     }
 
-    fn binds_package_name(&mut self, name: &str, attached: &[String]) -> Option<String> {
+    fn binding_package(&mut self, name: &str, attached: &[String]) -> Option<String> {
         attached
             .iter()
             .rev()
