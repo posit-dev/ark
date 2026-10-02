@@ -15,4 +15,5 @@ mod inputs;
 mod package_resolve;
 mod resolver;
 mod test_db;
+mod tidy;
 mod workspace;

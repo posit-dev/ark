@@ -1,0 +1,17 @@
+---
+source: crates/oak_scan/src/tests/tidy.rs
+description: "Updating this snapshot means the Salsa query surface changed. Before accepting it, review the changed query by following `doc/oak/salsa.md`."
+expression: "oak_tidy::salsa_inventory(&source_dir)"
+---
+== inputs ==
+
+== interned ==
+
+== tracked structs ==
+
+== tracked queries ==
+lookup.rs: fn root_package_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, Package> [returns(ref)]
+stale.rs: fn stale_package_path_index(db: &dyn Db) -> FxHashMap<FilePath, Package> [returns(ref)]
+stale.rs: fn stale_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> [returns(ref)]
+
+== cycle recovery ==

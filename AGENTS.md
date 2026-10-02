@@ -181,6 +181,14 @@ Some of the files below `crates/amalthea/src/comm/` are automatically generated 
 Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
 If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
 
+## Salsa queries
+
+Changes to Salsa queries may require cycle handling and an updated `salsa_inventory` snapshot. Follow `doc/oak/salsa.md` when changing a tracked query or code reachable from one.
+
+## Markdown
+
+Do not hard-wrap Markdown source. Keep each paragraph and list item on one line, and let the editor wrap it visually.
+
 ## Coding Style
 
 - Do not use `bail!`. Instead use an explicit `return Err(anyhow!(...))`.
