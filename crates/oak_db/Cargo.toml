@@ -35,6 +35,7 @@ url.workspace = true
 
 [dev-dependencies]
 annotate-snippets.workspace = true
+anyhow.workspace = true
 insta.workspace = true
 oak_semantic = { workspace = true, features = ["salsa", "testing"] }
 oak_tidy.workspace = true
