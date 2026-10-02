@@ -81,6 +81,27 @@ library(shiny)
 }
 
 #[test]
+fn test_nse_attach_is_too_late_for_its_own_arguments() {
+    // `reactive()` in `lib.loc` is not recognized as NSE because `library()`
+    // has not yet attached `shiny` when that argument is evaluated.
+    let index = index(
+        "\
+library(shiny, lib.loc = reactive({
+    x <- 1
+}))
+",
+    );
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.attached_packages(), vec!["shiny"]);
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_attach_after_lazy_callee_is_visible() {
     // A callee inside a function runs at an unknown later time, so it sees the
     // end-of-file attach set. `reactive` inside `f` is resolved during the walk,
@@ -387,7 +408,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason:
@@ -428,7 +449,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             reason:
                 AmbiguityReason::ConditionalAttach {
                     package,
@@ -465,7 +486,7 @@ reactive(1)
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason:
@@ -554,7 +575,7 @@ reactive({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             reason: AmbiguityReason::ConditionalAttach { package, .. },
             ..

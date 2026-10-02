@@ -39,6 +39,8 @@ use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AttachRegion;
+use crate::semantic_index::CalleeDependency;
+use crate::semantic_index::CalleeUsage;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -319,26 +321,30 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // them upon leaving the lazy context.
         let attached = self.scan.attached_so_far.len();
 
-        if let Ok(params) = fun.parameters() {
-            // Scan the default values before collecting them. R binds all
-            // formals into the frame at once, so a default sees every parameter
-            // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `bound_so_far`
-            // up front rather than flow-ordered, then scan each default.
-            self.begin_scan();
-            self.scan_parameter_defaults(&params);
+        let params = fun.parameters().ok();
+        let body = fun.body().ok();
 
-            // `walk_parameters` adds the parameter definitions and walks
-            // each default in source order, finding the NSE decisions the scan
-            // above recorded.
-            self.walk_parameters(&params);
+        // Approximate lazy evaluation by assuming all defaults are forced in
+        // parameter order before the body. Keep their flow state so a binding
+        // made on only some paths of a default stays conditional in the body.
+        self.begin_scan();
+        if let Some(params) = &params {
+            self.scan_parameter_defaults(params);
+        }
+        if let Some(body) = &body {
+            self.scan_expression(body);
         }
 
-        if let Ok(body) = fun.body() {
-            self.begin_scan();
-            self.scan_expression(&body);
-            self.scan_deferred_bodies(watermark);
-            self.walk_expression(&body);
+        // Deferred bodies must be scanned before walking the defaults, or
+        // calls such as `library()` inside a default's `on.exit()` body have
+        // no recorded semantic decision for the walk to consume.
+        self.scan_deferred_bodies(watermark);
+
+        if let Some(params) = &params {
+            self.walk_parameters(params);
+        }
+        if let Some(body) = &body {
+            self.walk_expression(body);
         }
 
         // Discard attaches made in the lazy context.
@@ -512,8 +518,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: SemanticCallKind::Attach { package, region },
             range,
             scope: self.current_scope,
-            callee: bare_callee_name(call),
         });
+        self.record_effects_callee(call, range);
     }
 
     /// Where the attach of `package` at `offset` holds, as the scan recorded
@@ -547,7 +553,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn walk_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
-        let callee = bare_callee_name(call);
 
         // Read back what the scan cached: the sourced files, each with its
         // resolution. The scan is the single point that extracts the paths and
@@ -556,6 +561,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             Some(resolution) => resolution.source.clone(),
             None => return,
         };
+        self.record_effects_callee(call, range);
 
         // Only a call that runs at load time pins down what the sourced
         // file's top level can see. One inside a function body might never
@@ -583,7 +589,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 kind: SemanticCallKind::Source { path, resolved },
                 range,
                 scope: self.current_scope,
-                callee: callee.clone(),
             });
 
             let Some(resolution) = resolution else {
@@ -622,13 +627,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
                     range,
                     scope: self.current_scope,
-                    // No callee: nothing is written at `range` under this name.
-                    // The `source()` call that forwarded these carries it, so a
-                    // consumer keying on the callee sees the site once.
-                    callee: None,
                 });
             }
         }
+    }
+
+    /// Record the bare callee of an attach or source call. A qualified callee
+    /// like `base::source()` can't be shadowed, so there's nothing to record.
+    fn record_effects_callee(&mut self, call: &aether_syntax::RCall, range: TextRange) {
+        let Some(name) = bare_callee_name(call) else {
+            return;
+        };
+        self.callee_dependencies.push(CalleeDependency {
+            name,
+            range,
+            usage: CalleeUsage::Effects,
+        });
     }
 
     // `assign("x", value)` binds `x` in the current scope, the same as `x <-
@@ -1017,10 +1031,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 }
 
-/// The callee of `call` when it's written as a bare identifier. `None` for
-/// anything else, including a `pkg::fn` callee: `::` names the package outright,
-/// so no binding can shadow it. Mirrors the two cases
-/// `resolve_effects_handlers` recognizes.
+/// Only bare callees can be shadowed by bindings. Qualified callees such as
+/// `pkg::fn` name the package explicitly and are excluded.
 fn bare_callee_name(call: &RCall) -> Option<String> {
     match call.function().ok()? {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text().to_string()),

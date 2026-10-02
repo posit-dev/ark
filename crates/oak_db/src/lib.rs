@@ -42,6 +42,7 @@ pub use file_revision::FileRevision;
 pub use file_source_site::SourceSite;
 pub use identifier::Identifier;
 pub use identifier::MemberKind;
+pub use identifier::NameSpelling;
 pub use identifier::NamespaceVisibility;
 pub use inputs::LibraryRoots;
 pub use inputs::LiveRoot;

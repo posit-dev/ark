@@ -1628,3 +1628,37 @@ fn test_tar_source_recurses_into_subdirectories() {
     names.sort();
     assert_eq!(names, vec!["a_val", "fit_val"]);
 }
+
+#[test]
+fn test_tar_source_c_of_script_and_directory() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["targets"]);
+    let root = workspace_root(&db, "ws");
+    let pipeline = File::new(
+        &db,
+        file_path("ws/_targets.R"),
+        FileRevision::zero(),
+        Some("library(targets)\ntar_source(c(\"packages.R\", \"R\"))\n".to_string()),
+        None,
+    );
+    let packages = File::new(
+        &db,
+        file_path("ws/packages.R"),
+        FileRevision::zero(),
+        Some("packages_val <- 1\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![pipeline, packages, a]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let mut names: Vec<&str> = pipeline.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "packages_val"]);
+}

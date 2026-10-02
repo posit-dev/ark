@@ -237,7 +237,7 @@ rlang::on_load({ local <- identity })
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             reason: AmbiguityReason::LazyShadow { .. },
             ..

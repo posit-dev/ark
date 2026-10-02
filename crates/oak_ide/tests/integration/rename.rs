@@ -176,6 +176,86 @@ fn test_rename_assign_call_keeps_quotes() {
 }
 
 #[test]
+fn test_rename_refuses_computed_assign_name() {
+    // Replacing the computed name `c("x")` with `y` would make `assign()`
+    // look up a variable rather than bind the literal name `y`.
+    let mut db = OakDatabase::new();
+    let source = "assign(c(\"x\"), 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let use_start = source.rfind('x').unwrap() as u32;
+    let err = rename(&db, file, offset(use_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_rename_refuses_computed_assign_name_in_another_file() {
+    // Renaming only the sourcing script would leave its uses pointing to a
+    // name that the sourced file does not bind.
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "assign(c(\"x\"), 1)\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nx\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, script]);
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let err = rename(&db, script, offset(use_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_prepare_rename_refuses_computed_assign_name() {
+    // Refused up front, so the client doesn't ask for a new name that
+    // `rename()` would then reject.
+    let mut db = OakDatabase::new();
+    let source = "assign(c(\"x\"), 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let use_start = source.rfind('x').unwrap() as u32;
+    let err = prepare_rename(&db, file, offset(use_start)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_prepare_rename_refuses_computed_assign_name_in_another_file() {
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "assign(c(\"x\"), 1)\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nx\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, script]);
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let err = prepare_rename(&db, script, offset(use_start)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_rename_refuses_raw_string_name() {
+    // A raw string is a single string token, but rendering it as a bare
+    // identifier would turn the name into a variable lookup.
+    let mut db = OakDatabase::new();
+    let source = "assign(r\"(x)\", 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let def_start = source.find('r').unwrap() as u32;
+    let err = rename(&db, file, offset(def_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a raw string (`r\"(x)\"`)."
+    );
+}
+
+#[test]
 fn test_rename_string_def_preserves_single_quote_delimiter() {
     // The rendered string reuses the site's own delimiter.
     let mut db = OakDatabase::new();

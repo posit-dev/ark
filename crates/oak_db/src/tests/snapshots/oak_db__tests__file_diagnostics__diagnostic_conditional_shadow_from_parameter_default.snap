@@ -4,11 +4,11 @@ expression: "render(\"a.R\", source, file.diagnostics(&db))"
 ---
 info[ambiguous-callee-resolution]: Ambiguous reading of effectful `local()`.
                                    A conditional assignment could shadow `local` on some paths and change its effect.
- --> a.R:3:5
+ --> a.R:2:5
   |
-2 |       if (cond) local <- identity
-  |                 ----- conditional assignment to `local`
-3 | /     local({
-4 | |         y <- 1
-5 | |     })
+1 |   f <- function(x = if (cond) local <- identity) {
+  |                               ----- conditional assignment to `local`
+2 | /     local({
+3 | |         y <- 1
+4 | |     })
   | |______^

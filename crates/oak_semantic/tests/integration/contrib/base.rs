@@ -1,13 +1,24 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
+use aether_syntax::AnyRExpression;
+use aether_syntax::RCall;
 use biome_rowan::AstNode;
+use biome_rowan::AstNodeList;
+use oak_core::syntax_ext::RIdentifierExt;
 use oak_semantic::build_index;
 use oak_semantic::effects;
+use oak_semantic::effects::CallContext;
+use oak_semantic::effects::CalleeImport;
+use oak_semantic::effects::CalleeOrigin;
+use oak_semantic::effects::CalleeResolution;
 use oak_semantic::effects::DirWalk;
+use oak_semantic::effects::ScopeContext;
 use oak_semantic::effects::SourceAnnotation;
 use oak_semantic::effects::SourceTarget;
+use oak_semantic::effects::StaticValue;
 use oak_semantic::semantic_index::AmbiguityReason;
 use oak_semantic::semantic_index::AttachRegion;
+use oak_semantic::semantic_index::CalleeUsage;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::EvalEnv;
@@ -20,6 +31,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
 use oak_semantic::EffectsHandlers;
+use oak_semantic::FunctionHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
@@ -69,7 +81,7 @@ impl ImportsResolver for ConstResolver {
         Some(self.0.clone())
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         // `source()` recognition runs on the resolve path, so a source-only
         // resolver still has to resolve base effects for `source` to be seen.
         effects::lookup("base", name).copied()
@@ -84,7 +96,7 @@ impl ImportsResolver for MapResolver {
         self.0.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         effects::lookup("base", name).copied()
     }
 }
@@ -118,14 +130,12 @@ impl ImportsResolver for MultiFileResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "source" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 source: Some(&COLLATION_HANDLER),
-                assign: None,
-            });
+                ..EffectsHandlers::EMPTY
+            }));
         }
         effects::lookup("base", name).copied()
     }
@@ -146,14 +156,12 @@ impl ImportsResolver for PositionResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "source" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 source: Some(&SOURCE_PATH_SECOND),
-                assign: None,
-            });
+                ..EffectsHandlers::EMPTY
+            }));
         }
         None
     }
@@ -166,14 +174,12 @@ impl ImportsResolver for MultiAssignResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         if name == "assign" {
-            return Some(EffectsHandlers {
-                arguments: None,
-                attach: None,
-                source: None,
+            return Some(FunctionHandlers::with_effects(EffectsHandlers {
                 assign: Some(&MULTI_ASSIGN_HANDLER),
-            });
+                ..EffectsHandlers::EMPTY
+            }));
         }
         None
     }
@@ -329,6 +335,59 @@ fn test_substitute_leaves_free_symbol_quoted() {
             .union(SymbolFlags::IS_USED)
             .union(SymbolFlags::IS_PARAMETER)
     );
+}
+
+#[test]
+fn test_substitute_repeated_named_argument_is_inert() {
+    // R rejects the duplicate `expr` before evaluating either argument, so the
+    // assignment never runs and `c` stays base `c()`.
+    let source = "substitute(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_bquote_repeated_named_argument_is_inert() {
+    let source = "bquote(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_local_repeated_named_argument_is_inert() {
+    // Declared argument effects take the same fallback: no NSE scope is pushed
+    // and nothing in the arguments binds.
+    let source = "local(expr = { c <- identity }, expr = NULL)\nsource(c(\"helpers.R\"))";
+    let index = index_with_base(source);
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.scope_ids().count(), 1);
+    assert_eq!(
+        index.symbols(file).get("c").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
 }
 
 #[test]
@@ -583,6 +642,13 @@ fn test_directive_character_only_string() {
 }
 
 #[test]
+fn test_directive_repeated_named_argument_not_attached() {
+    // R errors when several named arguments match the same formal.
+    let index = index_with_base("library(dplyr, character.only = FALSE, character.only = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
 fn test_directive_character_only_identifier_not_attached() {
     // With `character.only = TRUE` the package argument is a variable to resolve,
     // not a symbol. We can't chase it statically, so nothing is attached, rather
@@ -718,6 +784,423 @@ fn test_source_call_shadowed_by_local_binding_not_recognized() {
     // sees the local binding first.
     let index = index_with_base("source <- function(...) {}\nsource(\"helpers.R\")");
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_path_records_path() {
+    let index = index_with_base("source(c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_qualified_c_path_records_path() {
+    let index = index_with_base("source(base::c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_concatenates_nested_and_null_elements() {
+    let index = index_with_base("source(c(NULL, c(c(\"helpers.R\")), c()))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_options_are_not_elements() {
+    let index = index_with_base("source(c(\"helpers.R\", use.names = FALSE, recursive = TRUE))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_repeated_named_argument_ignored() {
+    // R errors when several named arguments match the same formal.
+    let index = index_with_base("source(\"helpers.R\", local = FALSE, local = FALSE)");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_repeated_element_names_are_elements() {
+    // Names that match no formal go to `...`, where they may repeat.
+    let index = index_with_base("source(c(a = \"helpers.R\", a = NULL))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_unnamed_options_are_elements() {
+    // `recursive` and `use.names` follow `...`, so positional arguments never
+    // fill them. `TRUE` is an element here, and not a character one.
+    let index = index_with_base("source(c(\"helpers.R\", TRUE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_repeated_option_ignored() {
+    // R errors when a formal is matched by several arguments.
+    let index = index_with_base("source(c(\"helpers.R\", recursive = TRUE, recursive = FALSE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = TRUE, use.names = TRUE))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_missing_option_value_ignored() {
+    let index = index_with_base("source(c(\"helpers.R\", recursive = ))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = ))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_dynamic_option_value_ignored() {
+    let index = index_with_base("source(c(\"helpers.R\", recursive = flag))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+
+    let index = index_with_base("source(c(\"helpers.R\", use.names = NA))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_options_named_by_strings_are_options() {
+    let index =
+        index_with_base("source(c(\"helpers.R\", \"recursive\" = TRUE, `use.names` = FALSE))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_named_element_is_an_element() {
+    let index = index_with_base("source(c(file = \"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    }]);
+}
+
+#[test]
+fn test_source_call_c_of_several_paths_ignored() {
+    // `source()` errors when its path is a character vector with multiple values.
+    let index = index_with_base("source(c(\"a.R\", \"b.R\"))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_null_ignored() {
+    let index = index_with_base("source(c())");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_dynamic_element_ignored() {
+    let index = index_with_base("source(c(path))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_non_character_element_ignored() {
+    // `c()` coerces `1` to `"1"`, which static evaluation does not model.
+    let index = index_with_base("source(c(\"helpers.R\", 1))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_c_shadowed_by_local_binding_ignored() {
+    let index = index_with_base("c <- function(...) \"other.R\"\nsource(c(\"helpers.R\"))");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_c_lazily_shadowed_in_source_path_is_linted() {
+    let source = "f <- function() source(c(\"helpers.R\"))\nc <- identity\n";
+    let index = index_with_base(source);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
+            name,
+            call_range,
+            reason: AmbiguityReason::LazyShadow { overwrite_range },
+        } => {
+            assert_eq!(name, "c");
+
+            let call_start = u32::from(call_range.start()) as usize;
+            let call_end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[call_start..call_end], "c(\"helpers.R\")");
+
+            let overwrite_start = u32::from(overwrite_range.start()) as usize;
+            let overwrite_end = u32::from(overwrite_range.end()) as usize;
+            assert_eq!(&source[overwrite_start..overwrite_end], "c");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_c_lazily_shadowed_in_unresolvable_source_path_is_linted() {
+    let index = index_with_base("f <- function() source(c(path))\nc <- identity\n");
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert!(
+        matches!(diagnostics[0], SemanticDiagnostic::AmbiguousCalleeResolution {
+        ref name,
+        reason: AmbiguityReason::LazyShadow { .. },
+        ..
+    } if name == "c")
+    );
+}
+
+#[test]
+fn test_c_lazily_shadowed_outside_effect_is_not_linted() {
+    let index = index_with_base("f <- function() c(\"helpers.R\")\nc <- identity\n");
+    assert_eq!(index.diagnostics(), []);
+}
+
+struct ConditionalValueResolver;
+
+impl ImportsResolver for ConditionalValueResolver {
+    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
+        None
+    }
+
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
+        if name == "c" {
+            return match attached.last().map(String::as_str) {
+                Some("testthat") => Some(FunctionHandlers::with_effects(EffectsHandlers::EMPTY)),
+                Some("shiny") => effects::lookup("base", "c").copied(),
+                _ => None,
+            };
+        }
+        effects::lookup("base", name).copied()
+    }
+}
+
+#[test]
+fn test_conditional_value_attach_skips_newer_candidate_without_value() {
+    let source = "if (a) library(shiny)\nif (b) library(testthat)\nsource(c(\"helpers.R\"))\n";
+    let index = build_with(source, ConditionalValueResolver);
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
+            name,
+            reason:
+                AmbiguityReason::ConditionalAttach {
+                    package,
+                    attach_range,
+                },
+            ..
+        } => {
+            assert_eq!(name, "c");
+            assert_eq!(package, "shiny");
+            let start = u32::from(attach_range.start()) as usize;
+            let end = u32::from(attach_range.end()) as usize;
+            assert_eq!(&source[start..end], "library(shiny)");
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_assign_c_name_records_binding() {
+    let index = index_with_base("assign(c(\"x\"), 1)");
+    let file = ScopeId::from(0);
+    assert!(index
+        .symbols(file)
+        .get("x")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+}
+
+/// A context outside the scan, resolving every bare callee through base.
+struct BaseOnlyScope;
+
+impl ScopeContext for BaseOnlyScope {
+    fn is_bound(&self, _name: &str, _inherits: bool) -> bool {
+        false
+    }
+
+    fn is_global(&self) -> bool {
+        true
+    }
+
+    fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
+        let handlers = match call.function() {
+            Ok(AnyRExpression::RIdentifier(ident)) => {
+                effects::lookup("base", &ident.name_text()).copied()
+            },
+            _ => None,
+        };
+        CalleeResolution::settled(CalleeOrigin::Import, handlers)
+    }
+}
+
+#[test]
+fn test_static_value_with_explicit_scope_context() {
+    let parsed = parse("c(\"a\", c(NULL, \"b\"))", RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+    assert_eq!(
+        ctx.resolve_static_value(&expr),
+        Some(StaticValue::Character(vec![
+            "a".to_string(),
+            "b".to_string()
+        ]))
+    );
+}
+
+#[test]
+fn test_static_value_records_callee_imports() {
+    let source = "c(\"a\", paste0(\"b\"))";
+    let parsed = parse(source, RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+
+    // `paste0()` has no value handler, so the outer `c()` is unknown, but the
+    // result still depends on both imported lookups.
+    assert_eq!(ctx.resolve_static_value(&expr), None);
+
+    let callee_imports = ctx.into_callee_imports();
+    assert_eq!(consulted_calls(&callee_imports, source), [
+        ("c", "c(\"a\", paste0(\"b\"))"),
+        ("paste0", "paste0(\"b\")"),
+    ]);
+}
+
+#[test]
+fn test_static_value_records_each_call_site_once() {
+    let source = "c(\"a\", c(\"b\"))";
+    let parsed = parse(source, RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = BaseOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+
+    // As when several handlers evaluate the same argument
+    ctx.resolve_static_value(&expr);
+    ctx.resolve_static_value(&expr);
+
+    let callee_imports = ctx.into_callee_imports();
+    assert_eq!(consulted_calls(&callee_imports, source), [
+        ("c", "c(\"a\", c(\"b\"))"),
+        ("c", "c(\"b\")")
+    ]);
+}
+
+/// Each imported callee's name and call text.
+fn consulted_calls<'a>(
+    callee_imports: &'a [CalleeImport],
+    source: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    callee_imports
+        .iter()
+        .map(|import| {
+            let start = u32::from(import.call_range.start()) as usize;
+            let end = u32::from(import.call_range.end()) as usize;
+            (import.name.as_str(), &source[start..end])
+        })
+        .collect()
+}
+
+#[test]
+fn test_callee_dependencies_keep_value_callees_whatever_the_effect() {
+    // `source(c(path))` resolves no path and `assign()` emits no semantic call,
+    // but both consulted `c`. The `source("a.R")` site is an effect dependency,
+    // and `base::source()` can't be shadowed so it records nothing.
+    let source = "source(c(path))\nassign(c(\"x\"), 1)\nsource(\"a.R\")\nbase::source(\"b.R\")\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("c", "c(path)", CalleeUsage::Value),
+        ("c", "c(\"x\")", CalleeUsage::Value),
+        ("source", "source(\"a.R\")", CalleeUsage::Effects),
+    ]);
+}
+
+#[test]
+fn test_callee_dependencies_are_in_source_order() {
+    // The scan records the nested `c` before the walk records the enclosing
+    // `source`, but the enclosing call starts first.
+    let source = "source(c(\"a.R\"))\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("source", "source(c(\"a.R\"))", CalleeUsage::Effects),
+        ("c", "c(\"a.R\")", CalleeUsage::Value),
+    ]);
+}
+
+#[test]
+fn test_callee_dependencies_keep_value_callees_of_deferred_parameter_defaults() {
+    // Deferring `source()` through `on.exit()` must not hide its effect
+    // dependency or the nested `c()` value dependency.
+    let source = "f <- function(x = on.exit(source(c(\"more.R\")))) x\n";
+    let index = index_with_base(source);
+    assert_eq!(callee_dependencies(&index, source), [
+        ("source", "source(c(\"more.R\"))", CalleeUsage::Effects),
+        ("c", "c(\"more.R\")", CalleeUsage::Value),
+    ]);
+}
+
+/// Each dependency's callee name, call text, and usage.
+fn callee_dependencies<'a>(
+    index: &'a SemanticIndex,
+    source: &'a str,
+) -> Vec<(&'a str, &'a str, CalleeUsage)> {
+    index
+        .callee_dependencies()
+        .iter()
+        .map(|dependency| {
+            let start = u32::from(dependency.range().start()) as usize;
+            let end = u32::from(dependency.range().end()) as usize;
+            (dependency.name(), &source[start..end], dependency.usage())
+        })
+        .collect()
+}
+
+/// A context outside the scan where every bare callee is a local binding
+/// without handlers, as with a function-local `c <- ...`.
+struct LocalOnlyScope;
+
+impl ScopeContext for LocalOnlyScope {
+    fn is_bound(&self, _name: &str, _inherits: bool) -> bool {
+        true
+    }
+
+    fn is_global(&self) -> bool {
+        false
+    }
+
+    fn resolve_callee(&mut self, _call: &RCall) -> CalleeResolution {
+        CalleeResolution::settled(CalleeOrigin::Local, None)
+    }
+}
+
+#[test]
+fn test_static_value_skips_local_callees() {
+    let parsed = parse("c(\"a\")", RParserOptions::default());
+    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let mut scope = LocalOnlyScope;
+    let mut ctx = CallContext::new(&mut scope);
+    assert_eq!(ctx.resolve_static_value(&expr), None);
+    assert!(ctx.into_callee_imports().is_empty());
 }
 
 #[test]
@@ -1600,7 +2083,7 @@ y
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -1671,7 +2154,7 @@ f <- function() local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason: AmbiguityReason::LazyShadow { overwrite_range },
@@ -1722,7 +2205,7 @@ local({
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -1772,7 +2255,7 @@ with(d, {
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason: AmbiguityReason::ConditionalShadow { .. },
@@ -2506,6 +2989,32 @@ local({
 }
 
 #[test]
+fn test_nse_assign_is_too_late_for_its_own_arguments() {
+    // The argument's `local()` still resolves to base `local()` because
+    // `assign()` has not yet created the binding that would shadow it.
+    let index = index_with_base(
+        "\
+assign(\"local\", local({
+    x <- 1
+}))
+",
+    );
+    let file = ScopeId::from(0);
+    let local_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.symbols(file).get("x").is_none());
+    assert_eq!(
+        index.symbols(local_scope).get("x").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+}
+
+#[test]
 fn test_nse_assign_shadows_base_callee_in_lazy_body() {
     // The file-scope `assign("local", ...)` must be visible to the lazy shadow
     // check when `f`'s deferred body resolves `local`. The file scan completes
@@ -2584,7 +3093,7 @@ local <- identity
     let diagnostics = index.diagnostics();
     assert_eq!(diagnostics.len(), 1);
     match &diagnostics[0] {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason: AmbiguityReason::LazyShadow { overwrite_range },
@@ -3223,4 +3732,248 @@ f <- function() {
     assert_eq!(enclosing_scope, f_scope);
     assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
     assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_nse_on_exit_in_parameter_default_records_attach() {
+    let index = index_with_base("f <- function(x = on.exit(library(dplyr))) x\n");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into(),
+        region: AttachRegion::Unconditional,
+    }]);
+}
+
+#[test]
+fn test_nse_on_exit_in_parameter_default_records_source() {
+    let index = index_with_base("f <- function(x = on.exit(source(\"a.R\"))) x\n");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "a.R".into(),
+        resolved: None,
+    }]);
+}
+
+// These tests assert where `scan_parameter_defaults()` differs from R's lazy
+// default forcing without reporting a diagnostic. The scan assumes defaults
+// are forced at entry in declaration order. R forces them on first use,
+// possibly in another order or not at all.
+
+#[test]
+fn test_approximation_default_binding_shadows_body_callee() {
+    // The scan resolves `local()` to `identity()` and creates no NSE scope
+    // because it treats `x`'s default as forced at entry. R never forces `x`
+    // in this body, so `local()` retains base NSE semantics.
+    let source = "\
+f <- function(x = (local <- identity)) {
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_default_attach_is_visible_to_body() {
+    // The scan gives `reactive()` shiny's NSE semantics because it treats
+    // `x`'s default as forced at entry. R never forces `x` in this body, so
+    // the default does not attach `shiny`. Runtime resolution of `reactive()`
+    // depends on the existing environment.
+    let source = "\
+f <- function(x = library(shiny)) {
+    reactive({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let reactive_scope = ScopeId::from(2);
+
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "shiny".into(),
+        region: AttachRegion::Unconditional,
+    }]);
+    assert_eq!(
+        index.scope(reactive_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Lazy)
+    );
+    assert_eq!(
+        index.symbols(reactive_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_default_callee_resolves_before_body_bindings() {
+    // The scan gives the default's `local()` base NSE semantics because it
+    // resolves the call before the body binding. At runtime, the body binds
+    // `local` to `identity()` before forcing `x`.
+    let source = "\
+f <- function(x = local({ y <- 1 })) {
+    local <- identity
+    x
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    // `local` also has `IS_USED` because the default calls it before the scan
+    // reaches the body binding.
+    assert!(index
+        .symbols(f_scope)
+        .get("local")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_approximation_defaults_scan_in_declaration_order() {
+    // The scan gives `x`'s `local()` base NSE semantics because declaration
+    // order puts it before `z`'s binding. At runtime, the body forces `z`
+    // before `x`, so the call resolves to `identity()`.
+    let source = "\
+f <- function(x = local({ y <- 1 }), z = (local <- identity)) {
+    z
+    x
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    // `local` also has `IS_USED` because the scan reaches `x`'s call before
+    // the binding in `z`'s default.
+    assert!(index
+        .symbols(f_scope)
+        .get("local")
+        .unwrap()
+        .flags()
+        .contains(SymbolFlags::IS_BOUND));
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_parameter_default_conditional_binding_stays_conditional_in_body() {
+    // The body's `local()` retains base NSE semantics but gets an ambiguity
+    // diagnostic because the default binds `local` only when `cond` is true.
+    let source = "\
+f <- function(x = if (cond) local <- identity) {
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let f_scope = ScopeId::from(1);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert_eq!(
+        index.symbols(local_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+    assert!(index.symbols(f_scope).get("y").is_none());
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
+            name,
+            call_range,
+            reason: AmbiguityReason::ConditionalShadow { binding_range },
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(call_range.start()) as usize;
+            let end = u32::from(call_range.end()) as usize;
+            assert_eq!(&source[start..end], "local({\n        y <- 1\n    })");
+
+            let start = u32::from(binding_range.start()) as usize;
+            assert_eq!(start, source.find("local").unwrap());
+            assert_eq!(u32::from(binding_range.len()), 5);
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+// `<<-` to a name that only base binds targets base's locked binding: R
+// signals "cannot change value of locked binding" and binds nothing, so the
+// later call still reaches base `local()`. These tests pin that reading: NSE,
+// with no ambiguity diagnostic.
+
+#[test]
+fn test_super_assignment_to_locked_base_name_in_default_keeps_callee() {
+    let source = "\
+f <- function(x = (local <<- identity)) {
+    x
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_to_locked_base_name_in_body_keeps_callee() {
+    let source = "\
+f <- function() {
+    local <<- identity
+    local({
+        y <- 1
+    })
+}
+";
+    let index = index_with_base(source);
+    let local_scope = ScopeId::from(2);
+
+    assert_eq!(
+        index.scope(local_scope).kind(),
+        ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
+    );
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_parameter_shadows_body_callee() {
+    let index = index_with_base("f <- function(local) local({ y <- 1 })\n");
+    let f_scope = ScopeId::from(1);
+
+    assert_eq!(index.scope_ids().count(), 2);
+    assert_eq!(
+        index.symbols(f_scope).get("y").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
 }
