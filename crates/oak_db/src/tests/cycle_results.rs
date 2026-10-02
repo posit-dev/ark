@@ -15,11 +15,11 @@ use biome_rowan::TextSize;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::test_path::file_path;
+use crate::test_path::path_name;
 use crate::tests::file_imports::install_packages;
 use crate::tests::file_imports::shape;
-use crate::tests::test_db::file_path;
 use crate::tests::test_db::make_package;
-use crate::tests::test_db::path_name;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;

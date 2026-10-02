@@ -7,7 +7,7 @@
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::TestDb;
 use crate::File;
 use crate::FileRevision;

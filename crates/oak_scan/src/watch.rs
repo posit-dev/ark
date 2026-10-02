@@ -9,10 +9,12 @@
 
 use aether_path::FilePath;
 use camino::Utf8Path;
+use oak_db::classify_in_package;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::Package;
+use oak_db::PackagePlacement;
 use oak_db::Root;
 use salsa::Setter;
 
@@ -22,11 +24,9 @@ use crate::inputs::upsert_root_file;
 use crate::inputs::with_cow_filter;
 use crate::inputs::with_cow_push;
 use crate::inputs::FileEntry;
-use crate::packages::classify_in_package;
 use crate::packages::file_revision;
 use crate::packages::is_r_file;
 use crate::packages::read_description_name;
-use crate::packages::PackagePlacement;
 
 /// Driver-neutral file event. Drivers (the LSP, tests, ...) translate
 /// their native event type into this shape.

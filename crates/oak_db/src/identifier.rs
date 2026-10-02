@@ -48,6 +48,7 @@ pub enum MemberKind {
 
 /// R's `::` vs `:::` distinction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum NamespaceVisibility {
     Exported,
     Internal,

@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use aether_path::FilePath;
 use filetime::FileTime;
 use ignore::WalkBuilder;
+use oak_db::classify_in_package;
 use oak_db::FileRevision;
+use oak_db::PackagePlacement;
 use oak_package_metadata::description::Description;
 use stdext::result::ResultExt;
 
@@ -90,35 +92,6 @@ pub(crate) fn read_package_metadata(package_dir: &Path) -> Option<PackageEntry> 
 
 pub(crate) fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
-}
-
-/// Where an R file inside a package directory belongs.
-///
-/// `R/*.R` (direct children of `R/`) are the package's loadable namespace.
-/// Files nested deeper under `R/` are skipped: R loads `R/` as a flat
-/// directory, so `R/sub/foo.R` isn't part of the namespace and nothing else
-/// reads it. Everything else under the package (tests/, inst/, vignettes/,
-/// data-raw/, ...) is a script: analysed but not loaded.
-///
-/// This is the single definition of the rule. The bulk scanner
-/// ([`read_workspace_package()`]) and the file watcher (`crate::watch::classify()`)
-/// both route through it so the two can't drift on where a file lands.
-#[derive(Debug, PartialEq)]
-pub(crate) enum PackagePlacement {
-    File,
-    Script,
-    Skip,
-}
-
-pub(crate) fn classify_in_package(package_dir: &Path, path: &Path) -> PackagePlacement {
-    let r_dir = package_dir.join("R");
-    if path.parent() == Some(r_dir.as_path()) {
-        PackagePlacement::File
-    } else if path.starts_with(&r_dir) {
-        PackagePlacement::Skip
-    } else {
-        PackagePlacement::Script
-    }
 }
 
 /// Read just the package name from `package_dir/DESCRIPTION`. Cheaper than
@@ -446,43 +419,4 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 /// hardcoded exclusion list.
 fn workspace_walker(root: &Path) -> ignore::Walk {
     WalkBuilder::new(root).build()
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::classify_in_package;
-    use super::PackagePlacement;
-
-    #[test]
-    fn classify_in_package_rule() {
-        let pkg = Path::new("/ws/pkg");
-
-        // Direct children of `R/` are the loadable namespace.
-        assert_eq!(
-            classify_in_package(pkg, Path::new("/ws/pkg/R/a.R")),
-            PackagePlacement::File
-        );
-
-        // Nested under `R/` is excluded: R loads `R/` flat.
-        assert_eq!(
-            classify_in_package(pkg, Path::new("/ws/pkg/R/sub/b.R")),
-            PackagePlacement::Skip
-        );
-
-        // Everything else under the package is a script.
-        assert_eq!(
-            classify_in_package(pkg, Path::new("/ws/pkg/tests/testthat/test-a.R")),
-            PackagePlacement::Script
-        );
-        assert_eq!(
-            classify_in_package(pkg, Path::new("/ws/pkg/inst/foo.R")),
-            PackagePlacement::Script
-        );
-        assert_eq!(
-            classify_in_package(pkg, Path::new("/ws/pkg/data-raw/prep.R")),
-            PackagePlacement::Script
-        );
-    }
 }

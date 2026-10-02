@@ -1,5 +1,7 @@
 pub mod builder;
 pub mod effects;
+#[cfg(feature = "testing")]
+pub mod fuzz;
 pub mod resolver;
 pub mod semantic_index;
 pub mod use_def_map;
