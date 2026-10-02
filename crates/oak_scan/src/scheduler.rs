@@ -32,11 +32,11 @@
 //!   scan's `upsert_root_file` then resurrects it from stale, restoring
 //!   the disk contents the scanner read.
 //!
-//! - **Watcher events during scan.** R-file events stay in arrival order
-//!   until every containing root is idle. Events for unrelated idle roots
-//!   can apply without waiting. Discovery events queue follow-up scans via
-//!   [`ScanState::ScanningWithRescanQueued`], keeping affected events buffered
-//!   until those scans finish.
+//! - **Watcher events during scan.** R-file paths stay buffered until every
+//!   containing root is idle, then are reconciled against the disk. Paths
+//!   under unrelated idle roots apply without waiting. Discovery events queue
+//!   follow-up scans via [`ScanState::ScanningWithRescanQueued`], keeping
+//!   affected paths buffered until those scans finish.
 //!
 //! - **Stale results.** If the workspace folder is removed while its
 //!   scan is in flight, the result arrives carrying a `Root` that's no
@@ -51,6 +51,8 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fs;
+use std::io;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
@@ -72,8 +74,6 @@ use crate::packages::scan_workspace_scripts;
 use crate::packages::PackageEntry;
 use crate::watch::add_watched_file;
 use crate::watch::remove_watched_file;
-use crate::watch::FileEvent;
-use crate::watch::FileEventKind;
 
 /// One scan unit the caller should dispatch.
 ///
@@ -165,13 +165,16 @@ enum ScanState {
 
 /// Coordinator for asynchronous workspace scanning.
 ///
-/// Tracks which roots have a scan in flight, buffers R-file watcher
-/// events for those roots, and coalesces follow-up scan requests. See
-/// the module docs for the race-handling design.
+/// Tracks which roots have a scan in flight, buffers the paths of R-file
+/// watcher events for those roots, and coalesces follow-up scan requests.
+/// See the module docs for the race-handling design.
 #[derive(Debug, Default)]
 pub struct ScanScheduler {
     state: HashMap<Root, ScanState>,
-    buffered: Vec<FileEvent>,
+    /// Unique paths in arrival order. A `HashSet` would drain in hash order,
+    /// and `add_watched_file()` appends new files to `pkg.files` (load order)
+    /// and `root.scripts` in drain order.
+    buffered: Vec<FilePath>,
 }
 
 impl ScanScheduler {
@@ -254,21 +257,25 @@ impl ScanScheduler {
         requests
     }
 
-    /// Apply a batch of file-watcher events.
+    /// Apply a batch of file-watcher events, given as the paths they report.
     ///
-    /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` events rescan every
+    /// The kind of change (created, changed, deleted) isn't needed: each path
+    /// is reconciled against the disk when it applies, which also absorbs
+    /// events that are coalesced, duplicated, or out of date by then.
+    ///
+    /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` paths rescan every
     /// containing root, even for paths in `skip`. Idle roots return a
     /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
     /// `apply_scan_completed()` to start.
     ///
-    /// R-file events in `skip` defer to editor buffers. Other R-file events
-    /// apply directly only when no containing root has a pending scan.
-    /// Otherwise they are buffered and replayed until all containing roots
-    /// finish scanning, so older scan results cannot overwrite their effects.
+    /// R-file paths apply directly only when no containing root has a pending
+    /// scan. Otherwise they are buffered until all containing roots finish
+    /// scanning, so older scan results cannot overwrite their effects. Paths
+    /// in `skip` at that point defer to editor buffers and are dropped.
     pub fn apply_watcher_events<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
-        events: Vec<FileEvent>,
+        paths: Vec<FilePath>,
         skip: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let roots = workspace_root_paths(db);
@@ -282,15 +289,15 @@ impl ScanScheduler {
         // Ignore `skip` here because discovery depends on disk state even
         // when the editor owns a file's contents.
         let mut rescan_roots: Vec<Root> = Vec::new();
-        for event in &events {
-            let Some(path) = event.path.as_path() else {
+        for path in &paths {
+            let Some(fs_path) = path.as_path() else {
                 continue;
             };
-            if !triggers_rescan(path) {
+            if !triggers_rescan(fs_path) {
                 continue;
             }
             for (root_path, root) in &roots {
-                if path.starts_with(root_path) && !rescan_roots.contains(root) {
+                if fs_path.starts_with(root_path) && !rescan_roots.contains(root) {
                     rescan_roots.push(*root);
                 }
             }
@@ -301,13 +308,15 @@ impl ScanScheduler {
             }
         }
 
-        self.buffered.extend(events.into_iter().filter(|event| {
-            event
-                .path
-                .as_path()
-                .is_some_and(|path| !triggers_rescan(path)) &&
-                !skip.contains(&event.path)
-        }));
+        for path in paths {
+            let Some(fs_path) = path.as_path() else {
+                continue;
+            };
+            if triggers_rescan(fs_path) || self.buffered.contains(&path) {
+                continue;
+            }
+            self.buffered.push(path);
+        }
         self.drain_buffered(db, skip);
 
         requests
@@ -379,35 +388,50 @@ impl ScanScheduler {
         requests
     }
 
+    /// Apply buffered paths whose containing roots are all idle.
+    ///
+    /// Each path is reconciled against the disk: added or refreshed if it is a
+    /// file, removed if it is missing or not a file. Repeated events for one
+    /// path collapse into its current state, so they need no replay in order.
+    ///
+    /// Editor ownership is checked only once a path is unblocked. A blocked
+    /// path must survive a buffer that opens and closes before its scan
+    /// completes, otherwise the scan's older listing would win.
     fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
         let roots = workspace_root_paths(db);
-        self.buffered.retain(|event| {
-            if editor_owned.contains(&event.path) {
-                return false;
-            }
-            let Some(path) = event.path.as_path() else {
+        self.buffered.retain(|path| {
+            let Some(fs_path) = path.as_path() else {
                 return false;
             };
-            let mut containing_roots = roots
+            let containing_roots: Vec<&Root> = roots
                 .iter()
-                .filter(|(root_path, _)| path.starts_with(root_path))
-                .peekable();
-            if containing_roots.peek().is_none() {
+                .filter(|(root_path, _)| fs_path.starts_with(root_path))
+                .map(|(_, root)| root)
+                .collect();
+            if containing_roots.is_empty() {
                 return false;
             }
 
             // Nested roots share entities, so every containing scan must finish
-            // before an event can apply. Events for the same path share blockers;
-            // retaining their arrival order lets unrelated idle roots progress
-            // without reversing a deletion and subsequent creation.
-            if containing_roots.any(|(_, root)| self.state.contains_key(root)) {
+            // before a path can apply.
+            if containing_roots
+                .iter()
+                .any(|root| self.state.contains_key(*root))
+            {
                 return true;
             }
-            match event.kind {
-                FileEventKind::Created | FileEventKind::Changed => {
-                    add_watched_file(db, event.path.clone())
+            if editor_owned.contains(path) {
+                return false;
+            }
+            match fs::metadata(fs_path) {
+                Ok(metadata) if metadata.is_file() => add_watched_file(db, path.clone()),
+                Ok(_) => remove_watched_file(db, path.clone()),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    remove_watched_file(db, path.clone())
                 },
-                FileEventKind::Deleted => remove_watched_file(db, event.path.clone()),
+                // Other errors (e.g. permissions) don't prove the file is gone,
+                // so keep the current registration rather than unlinking it.
+                Err(err) => log::warn!("Can't read metadata of watched path {fs_path}: {err:?}"),
             }
             false
         });
