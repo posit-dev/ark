@@ -754,6 +754,31 @@ fn test_diagnostic_inherited_shadow_for_a_nested_value_callee() {
 }
 
 #[test]
+fn test_diagnostic_inherited_shadow_for_an_effect_callee_also_consulted_for_its_value() {
+    // Evaluating the `assign()` name makes `c()` consult `source` for a value
+    // handler, which neither context has, so the value usage agrees. The
+    // effect usage of the same call differs, and must still be reported.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "source <- function(...) NULL\nbase::source(\"helpers.R\")\n",
+    );
+    let helpers_source = "assign(c(source(\"more.R\")), 1)\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
 fn test_diagnostic_inherited_shadow_for_a_value_callee_of_a_definition() {
     // `assign()` produces a definition, not a semantic call, but the bound name
     // still came from `c()`.
