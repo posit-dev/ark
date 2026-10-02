@@ -8,6 +8,7 @@ use crate::db::root_by_file;
 use crate::diagnostic::lower_semantic_diagnostic;
 use crate::diagnostic::Diagnostic;
 use crate::file_diagnostics::inherited_shadow_diagnostics;
+use crate::file_imports::CollationView;
 use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -271,12 +272,26 @@ impl File {
     /// `attached_packages()` and friends this query can't backdate.
     #[salsa::tracked(returns(ref))]
     pub fn diagnostics(self, db: &dyn Db) -> Vec<Diagnostic> {
-        let mut diagnostics: Vec<Diagnostic> = self
-            .semantic_index(db)
-            .diagnostics()
+        let semantic_diagnostics = self.semantic_index(db).diagnostics();
+        let mut diagnostics: Vec<Diagnostic> = semantic_diagnostics
             .iter()
             .map(|diagnostic| lower_semantic_diagnostic(db, self, diagnostic))
             .collect();
+
+        // `cross_file_layers()` records cycle recovery on its result because it cannot
+        // emit a `SemanticDiagnostic`. Report that recovery here unless
+        // `semantic_index()` already reported the same load cycle through its own
+        // recovery handler.
+        if !semantic_diagnostics.contains(&SemanticDiagnostic::SourceCycle) &&
+            self.cross_file_layers(db, CollationView::Eager)
+                .recovered_source_cycle
+        {
+            diagnostics.push(lower_semantic_diagnostic(
+                db,
+                self,
+                &SemanticDiagnostic::SourceCycle,
+            ));
+        }
 
         diagnostics.extend(inherited_shadow_diagnostics(db, self));
         diagnostics

@@ -67,7 +67,7 @@ file.rs: fn File::source_text(self, db: &dyn Db) -> String [returns(ref), lru = 
 file.rs: fn File::used_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref)]
 file_exports.rs: fn File::exports(self, db: &dyn Db) -> FileExports [returns(ref), cycle_result = exports_cycle_result]
 file_imports.rs: fn File::collation_siblings(self, db: &dyn Db) -> Vec<File> [returns(ref)]
-file_imports.rs: fn File::cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers [returns(ref)]
+file_imports.rs: fn File::cross_file_layers(self, db: &dyn Db, view: CollationView) -> CrossFileLayers [returns(ref), cycle_result = cross_file_layers_cycle_result]
 file_imports.rs: fn File::imports(self, db: &dyn Db) -> Vec<ImportLayer> [returns(ref)]
 file_imports.rs: fn File::imports_by_sourcing_file(self, db: &dyn Db) -> Vec<Vec<ImportLayer>> [returns(ref)]
 file_imports.rs: fn File::inherited_layers(self, db: &dyn Db, view: CollationView) -> Vec<InheritedLayers> [returns(ref), cycle_result = inherited_layers_cycle_result]
@@ -100,5 +100,6 @@ file.rs: File::attached_packages -> attached_packages_cycle_result
 file.rs: File::attached_packages_anywhere -> attached_packages_cycle_result
 file.rs: File::semantic_index -> semantic_index_cycle_result
 file_exports.rs: File::exports -> exports_cycle_result
+file_imports.rs: File::cross_file_layers -> cross_file_layers_cycle_result
 file_imports.rs: File::inherited_layers -> inherited_layers_cycle_result
 package_resolve.rs: Package::resolve -> resolve_cycle_result
