@@ -64,13 +64,30 @@ help <- function(topic, package = NULL) {
 #' @export
 .ps.help.searchHelp <- function(query) {
     .ps.help.searchIndex()
-    results <- utils::help.search(query, package = NULL)
+    results <- .ps.help.searchResults(query)
 
     if (!in_ark_tests()) {
         print(results)
     }
 
     TRUE
+}
+
+# Keep native regexp and fuzzy matching for valid patterns, but treat incomplete
+# regexps (including R aliases such as `[.data.frame`) as literal text. Validate
+# separately so an unrelated help.search() error is not mistaken for a bad query.
+.ps.help.searchResults <- function(query) {
+    valid <- suppressWarnings(tryCatch(
+        {
+            grepl(query, "", ignore.case = TRUE)
+            TRUE
+        },
+        error = function(err) FALSE
+    ))
+    if (!valid) {
+        query <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", query)
+    }
+    utils::help.search(query, package = NULL)
 }
 
 # Cache sorted aliases, rebuilding native R's search database when library metadata
