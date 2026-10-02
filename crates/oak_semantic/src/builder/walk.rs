@@ -27,7 +27,6 @@ use oak_core::syntax_ext::RIdentifierExt;
 use smallvec::SmallVec;
 
 use super::assignment_name;
-use super::effects::attach_search_path;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -1004,15 +1003,10 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// that R never creates, while a spurious package reports a locked-binding
     /// error R never raises.
     ///
-    /// The site's attachments include only inherited attachments and those
-    /// earlier in its scan unit. Attachments in other lazy units are excluded
-    /// because their execution order relative to `<<-` is unknown.
+    /// The scan recorded the package at the site (`scan_super_binding_package()`),
+    /// since by now `attached_so_far` also holds attaches made later in the unit.
     fn super_name_is_locked(&mut self, name: &str, range: TextRange) -> bool {
-        let attached = attach_search_path(
-            &self.scan.attached_inherited,
-            self.scan.attached_so_far.packages(),
-        );
-        let Some(package) = self.resolver.binding_package(name, &attached) else {
+        let Some(package) = self.scan.super_binding_packages.remove(&range) else {
             return false;
         };
 
