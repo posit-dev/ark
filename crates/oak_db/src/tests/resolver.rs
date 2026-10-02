@@ -863,11 +863,8 @@ fn test_closure_capture_with_source_after_function() {
 
 #[test]
 fn test_source_anchors_relative_to_workspace_root() {
-    // Calling file sits in a subdir of the workspace. `source("b.R")`
-    // anchors against the workspace root, not against the calling
-    // file's directory: the target is `proj/b.R`, not `proj/sub/b.R`.
-    // Matches R's `getwd()` semantics under RStudio / Positron, where
-    // the project root is the working directory.
+    // With no enclosing environment directory, assume a session started at
+    // the workspace root. `source("b.R")` targets `proj/b.R`, not `proj/sub/b.R`.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "proj");
     let a = File::new(
@@ -916,6 +913,104 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
 
     let index = a.semantic_index(&db);
     assert!(index.exports().contains_key("x"));
+}
+
+/// Distinct function names in the two `utils.R` files identify which anchor
+/// resolved the source path. The caller supplies any environment directories.
+fn setup_subproject(db: &mut TestDb, script: &str) -> (Root, File) {
+    let root = workspace_root(db, "proj");
+    let top = make_script(db, "proj/utils.R", "top_fn <- function() 1\n");
+    let sub = make_script(db, "proj/sub/utils.R", "sub_fn <- function() 1\n");
+    let script = make_script(db, "proj/sub/script.R", script);
+    root.set_scripts(db).to(vec![top, sub, script]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    (root, script)
+}
+
+#[test]
+fn test_source_anchors_at_environment_dir() {
+    // Starting the session in `proj/sub` makes `../utils.R` target `proj/utils.R`.
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"../utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_in_environment_dir_does_not_fall_back_to_workspace_root() {
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_in_environment_dir_misses_workspace_root_paths() {
+    // `sub/utils.R` written against the workspace root doesn't resolve from
+    // the environment directory `proj/sub` (it would be `proj/sub/sub/utils.R`).
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"sub/utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(!index.exports().contains_key("sub_fn"));
+}
+
+#[test]
+fn test_source_anchors_at_nearest_environment_dir() {
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj"), file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_anchor_follows_environment_dir_changes() {
+    // Changing `environment_dirs` must invalidate the cached `semantic_index()`
+    // even though the source text is unchanged.
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    assert!(script.semantic_index(&db).exports().contains_key("top_fn"));
+
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+
+    root.set_environment_dirs(&mut db).to(vec![]);
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("top_fn"));
+    assert!(!index.exports().contains_key("sub_fn"));
+}
+
+#[test]
+fn test_source_dir_anchors_at_environment_dir() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "proj");
+    let main = make_script(&mut db, "proj/sub/main.R", "sourceDir(\"R\")\n");
+    let top = make_script(&mut db, "proj/R/top.R", "top_fn <- function() 1\n");
+    let sub = make_script(&mut db, "proj/sub/R/sub.R", "sub_fn <- function() 1\n");
+    root.set_scripts(&mut db).to(vec![main, top, sub]);
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = main.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
 }
 
 #[test]

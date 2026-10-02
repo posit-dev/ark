@@ -55,6 +55,10 @@ pub(super) fn completions_from_string_file_path(
     log::trace!("Normalized path: {}", path.display());
 
     // if this path doesn't have a root, add it on
+    //
+    // TODO: Align `source()` completions with `oak_db`'s `anchor_dir()`.
+    // Using the session's working directory can suggest paths that oak cannot
+    // resolve from the file's environment directory or workspace root.
     if !path.has_root() {
         let root = current_dir()?;
         path = root.join(path);

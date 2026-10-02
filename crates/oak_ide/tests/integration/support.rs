@@ -79,7 +79,7 @@ pub fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
         "file:///project/R/"
     };
     let url = FilePath::from_url(&Url::parse(raw).unwrap());
-    let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
+    let root = Root::new(db, url, RootKind::Workspace, files, vec![], vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
 
@@ -170,9 +170,14 @@ fn install_pkg(
         })
         .collect();
     pkg.set_files(db).to(files.clone());
-    let root = Root::new(db, FilePath::from_url(&root_url), kind, Vec::new(), vec![
-        pkg,
-    ]);
+    let root = Root::new(
+        db,
+        FilePath::from_url(&root_url),
+        kind,
+        Vec::new(),
+        vec![pkg],
+        Vec::new(),
+    );
     match kind {
         // Append rather than replace, so a test can install several library
         // packages into the database.

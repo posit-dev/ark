@@ -405,7 +405,14 @@ fn file_path(s: &str) -> FilePath {
 }
 
 fn empty_library_root(db: &OakDatabase, path: &str) -> Root {
-    Root::new(db, file_path(path), RootKind::Library, vec![], vec![])
+    Root::new(
+        db,
+        file_path(path),
+        RootKind::Library,
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 /// Stash `pkg` in `root.packages` and register `root` on
