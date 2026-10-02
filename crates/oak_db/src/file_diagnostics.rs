@@ -44,8 +44,12 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
     let mut diagnostics = Vec::new();
 
     for dependency in file.semantic_index(db).callee_dependencies() {
-        // Report each site once, even when both attach and source effects record it.
-        if !reported.insert(dependency.range()) {
+        // Report each site once, even when both attach and source effects
+        // record it. A site is only marked once it conflicts: the `source` in
+        // `assign(c(source("a.R")), 1)` is also a `Value` dependency of `c()`,
+        // and its value usage can agree across contexts while its effect
+        // usage doesn't.
+        if reported.contains(&dependency.range()) {
             continue;
         }
 
@@ -71,6 +75,7 @@ pub(crate) fn inherited_shadow_diagnostics(db: &dyn Db, file: File) -> Vec<Diagn
         if clauses.is_empty() {
             continue;
         }
+        reported.insert(dependency.range());
 
         let summary = match usage {
             CalleeUsage::Effects => format!("This `{callee}` call has an ambiguous effect."),
