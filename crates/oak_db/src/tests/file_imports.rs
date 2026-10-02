@@ -1128,8 +1128,12 @@ fn test_cold_entry_to_cross_file_layers_recovers() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let layers = files[1].cross_file_layers(&db, CollationView::Eager);
-    assert_eq!(shape(&db, &layers.enclosing), vec!["File(a.R)".to_string()]);
-    assert_eq!(shape(&db, &layers.attaches), Vec::<String>::new());
+    let loaded_files: Vec<ImportLayer> = layers
+        .lookup_order(&db, &[])
+        .filter(|layer| matches!(layer, ImportLayer::File(_)))
+        .collect();
+    assert_eq!(shape(&db, &loaded_files), vec!["File(a.R)".to_string()]);
+    assert_eq!(shape(&db, &layers.layers.attaches), Vec::<String>::new());
 
     let diagnostics = files[1].diagnostics(&db);
     assert_eq!(diagnostics.len(), 1);
@@ -1181,9 +1185,8 @@ fn test_source_cycle_keeps_shiny_autoload_visible() {
 
     assert_eq!(a.sourced_by(&db), &Vec::<File>::new());
 
-    let contexts = a.imports_by_sourcing_file(&db);
-    assert_eq!(contexts.len(), 1);
-    assert_eq!(shape(&db, &contexts[0]), vec![
+    assert!(a.imports_by_sourcing_file(&db).is_empty());
+    assert_eq!(shape(&db, &a.standalone_imports(&db)), vec![
         "File(c.R)".to_string(),
         "File(b.R)".to_string(),
         "Package(shiny)".to_string(),

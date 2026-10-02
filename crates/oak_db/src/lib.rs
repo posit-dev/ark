@@ -49,6 +49,8 @@ pub use identifier::MemberKind;
 pub use identifier::NamespaceVisibility;
 pub use inputs::LibraryRoots;
 pub use inputs::LiveRoot;
+pub use inputs::Notebook;
+pub use inputs::OpenNotebooks;
 pub use inputs::OrphanRoot;
 pub use inputs::Root;
 pub use inputs::RootKind;

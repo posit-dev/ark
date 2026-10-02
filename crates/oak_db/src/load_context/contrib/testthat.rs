@@ -3,8 +3,10 @@ use std::borrow::Cow;
 use camino::Utf8Path;
 
 use crate::file_imports::CollationView;
-use crate::load_context::visible_siblings;
+use crate::load_context::load_environment;
+use crate::load_context::EnvironmentChain;
 use crate::load_context::LoadContext;
+use crate::load_context::LoadEnvironment;
 use crate::load_context::LoadKind;
 use crate::load_context::LoaderInfo;
 use crate::File;
@@ -40,20 +42,25 @@ pub(crate) fn load_context(
         .collect();
     support.sort_by_cached_key(|script| testthat_support_key(*script, db));
 
-    // Test files run after every support file, so they use the full support prefix.
-    let prefix_len = support
-        .iter()
-        .position(|script| *script == file)
-        .unwrap_or(support.len());
-    let mut visible_files = visible_siblings(file, &support, view, prefix_len);
+    let mut environments = match support.iter().position(|script| *script == file) {
+        Some(position) => EnvironmentChain(vec![load_environment(file, &support, view, position)]),
+        None => {
+            let mut chain = EnvironmentChain::own(file);
+            chain.0.push(LoadEnvironment { files: support });
+            chain
+        },
+    };
 
-    // Package files load before helpers and are reversed so later collation
-    // bindings win.
-    visible_files.extend(package.files(db).iter().rev().copied());
+    // The test environment shadows the package namespace regardless of load
+    // order. Within the namespace, reverse collation order gives later files
+    // priority.
+    environments.0.push(LoadEnvironment {
+        files: package.files(db).to_vec(),
+    });
 
     Some(LoadContext {
         kind: LoadKind::Namespace(package),
-        visible_files,
+        environments,
         implicit_attaches: vec!["testthat"],
         loader: Some(LOADER),
     })

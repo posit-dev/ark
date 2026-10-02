@@ -8,9 +8,11 @@ use camino::Utf8Path;
 
 use crate::directory::files_in_directory;
 use crate::file_imports::CollationView;
-use crate::load_context::collation_visible_files;
+use crate::load_context::collation_environment;
 use crate::load_context::in_r_directory;
+use crate::load_context::EnvironmentChain;
 use crate::load_context::LoadContext;
+use crate::load_context::LoadEnvironment;
 use crate::load_context::LoadKind;
 use crate::load_context::LoaderInfo;
 use crate::File;
@@ -35,10 +37,10 @@ pub(crate) fn load_context(
         return Some(autoload_context(db, file, view, autoload));
     }
     if let Some(autoload) = shiny_autoload(db, file).as_deref() {
-        return Some(entry_context(file, autoload));
+        return Some(entry_context(db, file, autoload));
     }
     // `global.R` runs first in the global environment, so it cannot see app bindings.
-    is_shiny_global_file(file, db).then(global_context)
+    is_shiny_global_file(file, db).then(|| global_context(file))
 }
 
 /// An `R/` file `loadSupport()` sources: the plain `R/` collation, plus
@@ -49,15 +51,17 @@ fn autoload_context(
     view: CollationView,
     autoload: &[File],
 ) -> LoadContext {
-    let mut visible_files = collation_visible_files(db, file, view);
+    let environment = collation_environment(db, file, view);
 
-    // `global.R` loads before `R/` into its parent environment, so every sibling
-    // shadows it.
-    visible_files.extend(autoload);
+    // `global.R` binds in the parent environment, so `R/` bindings shadow it
+    // regardless of their relative load positions.
+    let environments = EnvironmentChain(vec![environment, LoadEnvironment {
+        files: autoload.to_vec(),
+    }]);
 
     LoadContext {
         kind: LoadKind::Session,
-        visible_files,
+        environments,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
@@ -65,26 +69,34 @@ fn autoload_context(
 
 /// A Shiny entry point after `loadSupport()` evaluates `global.R` and adjacent
 /// `R/` files. It sees the full support set because it is not a collation member.
-fn entry_context(file: File, autoload: &[File]) -> LoadContext {
+fn entry_context(db: &dyn SourceDb, file: File, autoload: &[File]) -> LoadContext {
+    let mut environments = EnvironmentChain::own(file);
+    environments.0.push(LoadEnvironment {
+        files: autoload
+            .iter()
+            .copied()
+            .filter(|support| in_r_directory(*support, db))
+            .collect(),
+    });
+    environments.0.push(LoadEnvironment {
+        files: autoload
+            .iter()
+            .copied()
+            .filter(|support| !in_r_directory(*support, db))
+            .collect(),
+    });
     LoadContext {
         kind: LoadKind::Session,
-        // `R/` bindings shadow `global.R` through reverse load order and the
-        // child environment created by `loadSupport()`.
-        visible_files: autoload
-            .iter()
-            .rev()
-            .copied()
-            .filter(|support| *support != file)
-            .collect(),
+        environments,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
 }
 
-fn global_context() -> LoadContext {
+fn global_context(file: File) -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
-        visible_files: Vec::new(),
+        environments: EnvironmentChain::own(file),
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }

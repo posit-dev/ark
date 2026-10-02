@@ -24,6 +24,23 @@ fn test_lsp_init() {
     assert!(lsp.server_capabilities().completion_provider.is_some());
 }
 
+#[test]
+fn test_lsp_declares_notebook_sync_for_r_cells() {
+    let frontend = DummyArkFrontend::lock();
+    let lsp = frontend.start_lsp();
+
+    let sync = serde_json::to_value(&lsp.server_capabilities().notebook_document_sync).unwrap();
+    assert_eq!(
+        sync,
+        json!({
+            "notebookSelector": [
+                { "notebook": "jupyter-notebook", "cells": [{ "language": "r" }] },
+                { "notebook": "quarto-cells", "cells": [{ "language": "r" }] },
+            ]
+        })
+    );
+}
+
 // An abrupt client disconnect must not panic the `ark-lsp` thread.
 #[test]
 fn test_lsp_survives_abrupt_disconnect() {

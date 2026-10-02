@@ -180,3 +180,35 @@ impl StaleRoot {
         Self::new(db, HashSet::new(), vec![])
     }
 }
+
+/// A notebook whose cells the editor syncs through `notebookDocument/*`
+/// notifications. Also covers Quarto and R Markdown documents, which Positron
+/// presents as notebooks.
+///
+/// Each R cell is an ordinary editor [`File`]. The `cells` list records
+/// document order, not execution history. [`crate::load_context`] uses that
+/// order to determine cross-cell visibility.
+#[salsa::input(debug)]
+pub struct Notebook {
+    #[returns(ref)]
+    pub path: FilePath,
+    #[returns(ref)]
+    pub cells: Vec<File>,
+}
+
+/// The notebooks currently open in the editor.
+///
+/// Closed [`Notebook`] inputs remain allocated because Salsa does not
+/// garbage-collect inputs. Unlike [`StaleRoot`], this list has no reuse pool,
+/// so reopening a notebook allocates a new input.
+#[salsa::input]
+pub struct OpenNotebooks {
+    #[returns(ref)]
+    pub notebooks: Vec<Notebook>,
+}
+
+impl OpenNotebooks {
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![])
+    }
+}

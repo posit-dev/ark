@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::File;
 use oak_scan::DbScan;
 use oak_scan::FileEvent;
 use oak_scan::FileEventKind;
@@ -19,11 +20,14 @@ use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionOptions;
 use tower_lsp_server::ls_types::CompletionOptionsCompletionItem;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
 use tower_lsp_server::ls_types::ExecuteCommandOptions;
@@ -36,6 +40,11 @@ use tower_lsp_server::ls_types::HoverProviderCapability;
 use tower_lsp_server::ls_types::ImplementationProviderCapability;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializeResult;
+use tower_lsp_server::ls_types::Notebook;
+use tower_lsp_server::ls_types::NotebookCellArrayChange;
+use tower_lsp_server::ls_types::NotebookCellSelector;
+use tower_lsp_server::ls_types::NotebookDocumentSyncOptions;
+use tower_lsp_server::ls_types::NotebookSelector;
 use tower_lsp_server::ls_types::OneOf;
 use tower_lsp_server::ls_types::Registration;
 use tower_lsp_server::ls_types::RenameOptions;
@@ -43,6 +52,7 @@ use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
 use tower_lsp_server::ls_types::ServerCapabilities;
 use tower_lsp_server::ls_types::ServerInfo;
 use tower_lsp_server::ls_types::SignatureHelpOptions;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentSyncCapability;
 use tower_lsp_server::ls_types::TextDocumentSyncKind;
 use tower_lsp_server::ls_types::Uri;
@@ -128,6 +138,13 @@ pub(crate) fn initialize(
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
             )),
+            // Notebook sync supplies cell order and replaces `textDocument/did*`
+            // notifications for selected R cells. Positron also exposes Quarto
+            // and R Markdown documents as `quarto-cells` notebooks.
+            notebook_document_sync: Some(OneOf::Left(NotebookDocumentSyncOptions {
+                notebook_selector: vec![r_cells_of("jupyter-notebook"), r_cells_of("quarto-cells")],
+                save: None,
+            })),
             selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
             hover_provider: Some(HoverProviderCapability::from(true)),
             completion_provider: Some(CompletionOptions {
@@ -185,6 +202,15 @@ pub(crate) fn initialize(
     };
 
     Ok(result)
+}
+
+fn r_cells_of(notebook_type: &str) -> NotebookSelector {
+    NotebookSelector::ByNotebook {
+        notebook: Notebook::String(notebook_type.to_string()),
+        cells: Some(vec![NotebookCellSelector {
+            language: String::from("r"),
+        }]),
+    }
 }
 
 /// Resolve the effective workspace folders from `InitializeParams`.
@@ -399,6 +425,151 @@ pub(crate) fn did_close(
         "did_close(): closed document with URI: '{}'.",
         wire_uri.as_str()
     );
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_open_notebook(
+    params: DidOpenNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    for text_document in params.cell_text_documents {
+        did_open(DidOpenTextDocumentParams { text_document }, state)?;
+    }
+
+    let path = params.notebook_document.uri.to_document_path()?;
+    let cells = params
+        .notebook_document
+        .cells
+        .iter()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    state.notebooks.insert(path.clone(), cells);
+
+    push_notebook_cells(state, &path)
+}
+
+/// Excludes cells without synced text, such as Markdown cells, because only
+/// entries in `open_files` have a [`File`] to register with oak.
+fn push_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
+    let Some(cell_paths) = state.notebooks.get(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+    let cells: Vec<File> = cell_paths
+        .iter()
+        .filter_map(|cell| state.open_files.get(cell))
+        .map(|open_file| open_file.file())
+        .collect();
+
+    state.db_mut().set_notebook_cells(path.clone(), cells);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_notebook(
+    params: DidChangeNotebookDocumentParams,
+    lsp_state: &mut LspState,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // Ignore unopened notebooks because the client sends edits to every
+    // matching server even when `filterCells()` excluded the notebook on open.
+    if !state.notebooks.contains_key(&path) {
+        log::trace!("Ignoring change to notebook {path}, which is not open");
+        return Ok(());
+    }
+
+    let Some(cells) = params.change.cells else {
+        return Ok(());
+    };
+
+    if let Some(structure) = cells.structure {
+        for text_document in structure.did_open.into_iter().flatten() {
+            did_open(DidOpenTextDocumentParams { text_document }, state)?;
+        }
+        apply_cell_splice(state, &path, &structure.array)?;
+        for text_document in structure.did_close.into_iter().flatten() {
+            did_close(DidCloseTextDocumentParams { text_document }, state)?;
+        }
+
+        // Cell membership and the set of synced buffers only change here, so
+        // text-only edits skip the oak update entirely.
+        push_notebook_cells(state, &path)?;
+    }
+
+    for content in cells.text_content.into_iter().flatten() {
+        let params = DidChangeTextDocumentParams {
+            text_document: content.document,
+            content_changes: content.changes,
+        };
+        did_change(params, lsp_state, state)?;
+    }
+
+    Ok(())
+}
+
+fn apply_cell_splice(
+    state: &mut WorldState,
+    path: &FilePath,
+    array: &NotebookCellArrayChange,
+) -> anyhow::Result<()> {
+    let inserted = array
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+
+    let Some(cells) = state.notebooks.get_mut(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+
+    let start = array.start as usize;
+    let end = start + array.delete_count as usize;
+    if end > cells.len() {
+        return Err(anyhow!(
+            "Cell splice {start}..{end} is out of range for notebook {path} with {len} cells",
+            len = cells.len()
+        ));
+    }
+
+    cells.splice(start..end, inserted);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_close_notebook(
+    params: DidCloseNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // Forget the order before closing the cells, so no query sees a notebook
+    // that lists closed cells.
+    let known_cells = state.notebooks.remove(&path).unwrap_or_default();
+    state.db_mut().close_notebook(&path);
+
+    // Include remembered cells because deleting the last R cell closes the
+    // notebook, but the client's close notification omits that deleted cell.
+    // Checking `open_files` below prevents closing a cell twice.
+    let mut cells = params
+        .cell_text_documents
+        .iter()
+        .map(|text_document| text_document.uri.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    cells.extend(known_cells);
+
+    for cell in cells {
+        let Some(open_file) = state.open_files.get(&cell) else {
+            continue;
+        };
+        let text_document = TextDocumentIdentifier {
+            uri: open_file.wire_uri().clone(),
+        };
+        did_close(DidCloseTextDocumentParams { text_document }, state)?;
+    }
 
     Ok(())
 }

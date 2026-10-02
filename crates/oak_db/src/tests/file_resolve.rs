@@ -764,6 +764,23 @@ fn test_resolve_collated_sequential_redef_resolves_to_last() {
 }
 
 #[test]
+fn test_resolve_later_collation_sibling_shadows_own_top_level() {
+    // `resolve()` assumes package loading has finished, so `b.R`'s later
+    // namespace binding shadows `a.R`'s, as in a function-body `resolve_at()`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "ws");
+    let (pkg, files) = make_package(&mut db, "pkg", Namespace::default(), &[
+        ("ws/pkg/R/a.R", "x <- 1\n"),
+        ("ws/pkg/R/b.R", "x <- 2\n"),
+    ]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let def = resolve_one(&db, files[0], "x");
+    assert_eq!(def.file(&db), files[1]);
+}
+
+#[test]
 fn test_resolve_finds_definition_through_sibling_library_attach() {
     // `a.R` does `library(dep)`; by the time the rest of the package loads, dep
     // is on the search path, so `b.R`'s unbound `dep_fn` resolves to dep's

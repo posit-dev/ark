@@ -287,6 +287,7 @@ impl File {
         // recovery handler.
         if !semantic_diagnostics.contains(&SemanticDiagnostic::SourceCycle) &&
             self.cross_file_layers(db, CollationView::Eager)
+                .layers
                 .recovered_source_cycle
         {
             diagnostics.push(lower_semantic_diagnostic(

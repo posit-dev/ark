@@ -6,6 +6,7 @@ use crate::recovery::record;
 use crate::recovery::Recovery;
 use crate::Db;
 use crate::File;
+use crate::Name;
 
 /// Names bound at top-level in a file.
 ///
@@ -100,6 +101,14 @@ impl File {
         }
 
         FileExports { entries }
+    }
+
+    /// Keep binding certainty separate from definition identity so changing a
+    /// conditional assignment to an unconditional one invalidates resolution
+    /// even when `exports()` and `resolve_export()` are unchanged.
+    #[salsa::tracked(returns(copy))]
+    pub(crate) fn export_is_bound(self, db: &dyn Db, name: Name<'_>) -> bool {
+        self.semantic_index(db).export_is_bound(name.text(db))
     }
 }
 

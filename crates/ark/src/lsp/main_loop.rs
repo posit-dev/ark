@@ -574,6 +574,15 @@ impl GlobalState {
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.world)?;
                         },
+                        LspNotification::DidOpenNotebookDocument(params) => {
+                            state_handlers::did_open_notebook(params, &mut self.world)?;
+                        },
+                        LspNotification::DidChangeNotebookDocument(params) => {
+                            state_handlers::did_change_notebook(params, &mut self.lsp_state, &mut self.world)?;
+                        },
+                        LspNotification::DidCloseNotebookDocument(params) => {
+                            state_handlers::did_close_notebook(params, &mut self.world)?;
+                        },
 
                         #[cfg(feature = "testing")]
                         LspNotification::TestPanic => {
