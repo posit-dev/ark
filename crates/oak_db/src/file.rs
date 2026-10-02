@@ -12,6 +12,8 @@ use crate::file_imports::CollationView;
 use crate::file_revision::report_untracked_if_zero;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::Db;
 use crate::FileRevision;
 use crate::Name;
@@ -211,10 +213,12 @@ impl File {
     /// dependency discovery, where a package attached only inside a function
     /// still counts as a dependency.
     ///
-    /// This query is not currently below a cycle path because neither
-    /// `semantic_index()` nor `cross_file_layers()` reads it. We recover from
-    /// cycles defensively.
-    #[salsa::tracked(returns(ref), cycle_result = attached_packages_cycle_result)]
+    /// Defensive fallback. [`Self::semantic_index`] and [`Self::cross_file_layers`]
+    /// do not read this query, so it cannot currently be Salsa's repeated key.
+    /// If a future dependency re-enters it,
+    /// [`attached_packages_anywhere_cycle_result`] returns no packages rather
+    /// than panicking.
+    #[salsa::tracked(returns(ref), cycle_result = attached_packages_anywhere_cycle_result)]
     pub fn attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
             .attached_packages_anywhere()
@@ -372,9 +376,26 @@ fn build_semantic_index_inner(file: File, db: &dyn Db) -> SemanticIndex {
 
 fn attached_packages_cycle_result<'db>(
     db: &'db dyn Db,
-    _id: salsa::Id,
+    id: salsa::Id,
     file: File,
 ) -> Vec<Name<'db>> {
+    record(db, Recovery::AttachedPackages(file));
+    attached_packages_fallback(db, id, file)
+}
+
+fn attached_packages_anywhere_cycle_result<'db>(
+    db: &'db dyn Db,
+    id: salsa::Id,
+    file: File,
+) -> Vec<Name<'db>> {
+    record(db, Recovery::AttachedPackagesAnywhere(file));
+    attached_packages_fallback(db, id, file)
+}
+
+/// Return no attaches. [`File::semantic_index`] recovery rebuilds with
+/// `NoopImportsResolver`, which emits [`SemanticDiagnostic::SourceCycle`] and
+/// also reports no attaches.
+fn attached_packages_fallback<'db>(db: &'db dyn Db, _id: salsa::Id, file: File) -> Vec<Name<'db>> {
     log::warn!(
         "Cyclic attaches detected at {}. Reporting no attached packages.",
         file.path(db),
@@ -383,6 +404,7 @@ fn attached_packages_cycle_result<'db>(
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
+    record(db, Recovery::SemanticIndex(file));
     log::warn!(
         "Cyclic `source()` detected at {}. Rebuilding without cross-file resolution.",
         file.path(db),

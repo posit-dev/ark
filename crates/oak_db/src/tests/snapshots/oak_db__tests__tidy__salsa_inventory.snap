@@ -56,7 +56,7 @@ db.rs: fn workspace_root_files(db: &dyn Db) -> Vec<File> [returns(ref)]
 db.rs: fn workspace_scripts(db: &dyn Db) -> Vec<File> [returns(ref)]
 definition.rs: fn File::definitions(self, db: &'db dyn Db) -> Definitions<'db> [returns(ref)]
 file.rs: fn File::attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref), cycle_result = attached_packages_cycle_result]
-file.rs: fn File::attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref), cycle_result = attached_packages_cycle_result]
+file.rs: fn File::attached_packages_anywhere(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref), cycle_result = attached_packages_anywhere_cycle_result]
 file.rs: fn File::diagnostics(self, db: &dyn Db) -> Vec<Diagnostic> [returns(ref)]
 file.rs: fn File::line_index(self, db: &dyn Db) -> biome_line_index::LineIndex [returns(ref)]
 file.rs: fn File::namespace_accessed_packages(self, db: &dyn Db) -> Vec<Name<'_>> [returns(ref)]
@@ -97,7 +97,7 @@ workspace.rs: fn default_search_path_packages(db: &dyn Db) -> Vec<Package> [retu
 
 == cycle recovery ==
 file.rs: File::attached_packages -> attached_packages_cycle_result
-file.rs: File::attached_packages_anywhere -> attached_packages_cycle_result
+file.rs: File::attached_packages_anywhere -> attached_packages_anywhere_cycle_result
 file.rs: File::semantic_index -> semantic_index_cycle_result
 file_exports.rs: File::exports -> exports_cycle_result
 file_imports.rs: File::cross_file_layers -> cross_file_layers_cycle_result

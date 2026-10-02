@@ -1,4 +1,5 @@
 mod contrib;
+mod cycle_results;
 mod db;
 mod diagnostic_render;
 mod file;
@@ -13,7 +14,8 @@ mod file_source_site;
 mod identifier;
 mod inputs;
 mod package_resolve;
+mod recovery;
 mod resolver;
-mod test_db;
+pub(crate) mod test_db;
 mod tidy;
 mod workspace;

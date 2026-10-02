@@ -2,6 +2,8 @@ use aether_path::FilePath;
 use oak_semantic::semantic_index::DefinitionKind;
 use rustc_hash::FxHashMap;
 
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::Db;
 use crate::File;
 
@@ -101,6 +103,7 @@ impl File {
     }
 }
 
-fn exports_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> FileExports {
+fn exports_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> FileExports {
+    record(db, Recovery::Exports(file));
     FileExports::default()
 }
