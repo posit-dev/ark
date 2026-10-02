@@ -8,6 +8,7 @@ pub(crate) mod contrib;
 
 use camino::Utf8Path;
 
+use crate::db::notebook_by_cell;
 use crate::directory::collation_basename_key;
 use crate::file_imports::CollationView;
 use crate::File;
@@ -48,6 +49,11 @@ pub(crate) struct LoaderInfo {
 const PACKAGE_LOADER: LoaderInfo = LoaderInfo {
     name: "The package",
     loads: "its `R/` files in collation order",
+};
+
+const NOTEBOOK_LOADER: LoaderInfo = LoaderInfo {
+    name: "This notebook",
+    loads: "its cells in document order",
 };
 
 /// The loader that owns `file`, if one does. Reads only paths and source text,
@@ -97,7 +103,7 @@ pub(crate) enum SearchPathTail {
 /// precedes package loading, and package ownership precedes directory
 /// conventions.
 pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -> LoadContext {
-    if let Some(context) = contrib::notebook::load_context(db, file, view) {
+    if let Some(context) = notebook_load_context(db, file, view) {
         return context;
     }
     if let Some(context) = contrib::testthat::load_context(db, file, view) {
@@ -114,6 +120,31 @@ pub(crate) fn load_context(db: &dyn SourceDb, file: File, view: CollationView) -
     }
 
     standalone_load_context()
+}
+
+/// Uses document order to approximate notebook execution order because users
+/// can run cells in any order, which is not known statically. Top-level code
+/// sees preceding cells, while deferred code (function bodies) sees every
+/// other cell. Lookup runs in reverse document order so later bindings shadow
+/// earlier ones.
+///
+/// Applies to open Jupyter notebooks and Quarto / R Markdown documents, which
+/// the editor presents as notebooks.
+fn notebook_load_context(
+    db: &dyn SourceDb,
+    file: File,
+    view: CollationView,
+) -> Option<LoadContext> {
+    let notebook = notebook_by_cell(db, file)?;
+    let cells = notebook.cells(db);
+    let prefix_len = cells.iter().position(|cell| *cell == file)?;
+
+    Some(LoadContext {
+        kind: LoadKind::Session,
+        visible_files: visible_siblings(file, cells, view, prefix_len),
+        implicit_attaches: Vec::new(),
+        loader: Some(NOTEBOOK_LOADER),
+    })
 }
 
 /// A loadable `R/` file of a package, one of the files in `package.files()`.

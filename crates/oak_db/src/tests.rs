@@ -14,6 +14,7 @@ mod file_root;
 mod file_source_site;
 mod identifier;
 mod inputs;
+mod notebook;
 mod package_resolve;
 mod recovery;
 mod resolver;
