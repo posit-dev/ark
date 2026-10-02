@@ -1,3 +1,4 @@
+use biome_rowan::TextSize;
 use salsa::Setter;
 
 use crate::tests::file_imports::install_packages;
@@ -8,6 +9,7 @@ use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
+use crate::Name;
 use crate::Package;
 
 fn script_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (crate::Root, Vec<File>) {
@@ -27,6 +29,96 @@ fn script_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (crate::Root, 
     root.set_scripts(db).to(files.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
     (root, files)
+}
+
+fn last_offset(db: &TestDb, file: File, needle: &str) -> TextSize {
+    TextSize::from(file.source_text(db).rfind(needle).unwrap() as u32)
+}
+
+#[test]
+fn test_case_folded_collation_tie_locates_self_exactly() {
+    // `A.R` and `a.R` share a case-folded key but retain distinct positions
+    // in listing order. A key-based lookup miscounts their successors and
+    // can produce a prefix longer than the sibling layer list.
+    let mut db = TestDb::new();
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/R/A.R", "x <- 2\ng <- function() x\n"),
+        ("ws/R/a.R", "x <- 1\nf <- function() x\n"),
+    ]);
+    let big_a = files[1];
+    let small_a = files[2];
+
+    let defs = small_a.resolve_at(&db, last_offset(&db, small_a, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), small_a);
+
+    let defs = big_a.resolve_at(&db, last_offset(&db, big_a, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), small_a);
+}
+
+#[test]
+fn test_deferred_successor_hit_still_unions_inherited_contexts() {
+    // Both `b.R` and `main.R` contribute because `a.R` binds `x` only
+    // conditionally. `b.R` wins in the Shiny environment, while `main.R`'s
+    // assignment after `source()` wins in the alternative sourcing environment.
+    let mut db = TestDb::new();
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/R/a.R", "if (cond) x <- 1\nf <- function() x\n"),
+        ("ws/R/b.R", "x <- 2\n"),
+        ("ws/main.R", "source(\"R/a.R\")\nx <- 3\n"),
+    ]);
+    let a = files[1];
+    let b = files[2];
+    let main = files[3];
+
+    let defs = a.resolve_at(&db, last_offset(&db, a, "x"));
+
+    assert_eq!(defs.len(), 2);
+    assert_eq!(defs[0].file(&db), b);
+    assert_eq!(defs[1].file(&db), main);
+    assert_eq!(a.resolve(&db, Name::new(&db, "x")), defs);
+}
+
+#[test]
+fn test_conditional_successors_keep_parent_and_inherited_candidates() {
+    let mut db = TestDb::new();
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/global.R", "x <- 0\n"),
+        ("ws/R/a.R", "if (own) x <- 1\nf <- function() x\n"),
+        ("ws/R/b.R", "if (later) x <- 2\n"),
+        ("ws/main.R", "source(\"R/a.R\")\nx <- 3\n"),
+    ]);
+    let a = files[2];
+    let defs = a.resolve_at(&db, last_offset(&db, a, "x"));
+    let resolved_files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+
+    assert_eq!(resolved_files, vec![files[3], a, files[1], files[4]]);
+    assert_eq!(a.resolve(&db, Name::new(&db, "x")), defs);
+}
+
+#[test]
+fn test_deferred_successor_and_inherited_converge_and_dedupe() {
+    // The successor and the inherited context both reach `shared.R`'s `x`
+    // through different forwards. The converging definition is reported once.
+    let mut db = TestDb::new();
+    let (_, files) = script_workspace(&mut db, &[
+        ("ws/app.R", "shinyApp(ui, server)\n"),
+        ("ws/R/a.R", "if (cond) x <- 1\nf <- function() x\n"),
+        ("ws/R/b.R", "source(\"shared.R\")\n"),
+        ("ws/shared.R", "x <- 2\n"),
+        ("ws/main.R", "source(\"R/a.R\")\nsource(\"shared.R\")\n"),
+    ]);
+    let a = files[1];
+    let shared = files[3];
+
+    let defs = a.resolve_at(&db, last_offset(&db, a, "x"));
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), shared);
 }
 
 #[test]

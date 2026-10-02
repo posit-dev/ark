@@ -870,7 +870,7 @@ fn test_cross_file_layers_never_carries_inherited_layers() {
 
     // The scan side has `File` layers but never a `SourcingFile`, either view.
     for view in [CollationView::Eager, CollationView::Deferred] {
-        let scan_side = helpers.cross_file_layers(&db, view);
+        let scan_side = &helpers.cross_file_layers(&db, view).layers;
         assert!(scan_side
             .lookup_order(&db, &[])
             .any(|layer| matches!(layer, ImportLayer::File(file) if file == sibling)));
@@ -1127,7 +1127,7 @@ fn test_cold_entry_to_cross_file_layers_recovers() {
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    let layers = files[1].cross_file_layers(&db, CollationView::Eager);
+    let layers = &files[1].cross_file_layers(&db, CollationView::Eager).layers;
     assert_eq!(shape(&db, &layers.enclosing), vec!["File(a.R)".to_string()]);
     assert_eq!(shape(&db, &layers.attaches), Vec::<String>::new());
 

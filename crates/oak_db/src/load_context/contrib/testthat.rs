@@ -45,15 +45,19 @@ pub(crate) fn load_context(
         .iter()
         .position(|script| *script == file)
         .unwrap_or(support.len());
-    let mut visible_files = visible_siblings(file, &support, view, prefix_len);
+    let mut siblings = visible_siblings(file, &support, view, prefix_len);
 
-    // Package files load before helpers and are reversed so later collation
-    // bindings win.
-    visible_files.extend(package.files(db).iter().rev().copied());
+    // The test environment shadows the package namespace regardless of load
+    // order. Within the namespace, reverse collation order gives later files
+    // priority.
+    siblings
+        .files
+        .extend(package.files(db).iter().rev().copied());
 
     Some(LoadContext {
         kind: LoadKind::Namespace(package),
-        visible_files,
+        later_sibling_count: siblings.later,
+        visible_files: siblings.files,
         implicit_attaches: vec!["testthat"],
         loader: Some(LOADER),
     })

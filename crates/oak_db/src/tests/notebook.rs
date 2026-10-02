@@ -10,6 +10,7 @@ use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
+use crate::Name;
 use crate::Notebook;
 
 fn open_notebook(db: &mut TestDb, sources: &[&str]) -> (Notebook, Vec<File>) {
@@ -140,6 +141,263 @@ fn test_cell_outside_any_notebook_sees_no_other_cell() {
     let defs = cells[1].resolve_at(&db, last_offset(&db, cells[1], "x"));
 
     assert!(defs.is_empty());
+}
+
+#[test]
+fn test_notebook_function_body_sees_later_cell_over_own_cell() {
+    // Both cells' top levels write into the notebook environment in document
+    // order, so `x <- 2` overwrites `x <- 1` and `f()` sees the overwrite.
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &["x <- 1\nf <- function() x\n", "x <- 2\n"]);
+
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+}
+
+#[test]
+fn test_notebook_conditional_successor_keeps_own_binding() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "if (flag) x <- 2\n",
+    ]);
+
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[0]]);
+}
+
+#[test]
+fn test_notebook_multiple_conditional_successors_keep_own_binding() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "if (first) x <- 2\n",
+        "if (second) x <- 3\n",
+    ]);
+
+    assert_notebook_x_resolution(&db, cells[0], &[cells[2], cells[1], cells[0]]);
+}
+
+#[test]
+fn test_notebook_conditional_successor_stops_at_definite_successor() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "x <- 2\n",
+        "if (flag) x <- 3\n",
+    ]);
+
+    assert_notebook_x_resolution(&db, cells[0], &[cells[2], cells[1]]);
+}
+
+#[test]
+fn test_notebook_successor_bound_on_both_arms_shadows_own_binding() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "if (flag) x <- 2 else x <- 3\n",
+    ]);
+
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[1]]);
+}
+
+#[test]
+fn test_notebook_conditional_successor_falls_back_without_own_binding() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\n",
+        "f <- function() x\n",
+        "if (flag) x <- 2\n",
+    ]);
+
+    assert_notebook_x_resolution(&db, cells[1], &[cells[2], cells[0]]);
+}
+
+#[test]
+fn test_notebook_conditional_predecessor_keeps_earlier_binding() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &["x <- 1\n", "if (flag) x <- 2\n", "x\n"]);
+
+    assert_notebook_x_resolution(&db, cells[2], &[cells[1], cells[0]]);
+}
+
+#[test]
+fn test_notebook_successor_boundness_edit_updates_resolution() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "if (flag) x <- 2\n",
+    ]);
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[0]]);
+
+    cells[1]
+        .set_source_text_override(&mut db)
+        .to(Some("x <- 2\n".to_string()));
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1]]);
+
+    cells[1]
+        .set_source_text_override(&mut db)
+        .to(Some("if (flag) x <- 2\n".to_string()));
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[0]]);
+}
+
+#[test]
+fn test_notebook_conditional_successor_edit_backdates_resolution() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &[
+        "x <- 1\nf <- function() x\n",
+        "if (flag) x <- 2\n",
+    ]);
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[0]]);
+
+    cells[1]
+        .set_source_text_override(&mut db)
+        .to(Some("\n\nif (flag) x <- 2\n".to_string()));
+    assert_notebook_x_resolution(&db, cells[0], &[cells[1], cells[0]]);
+    assert_eq!(db.executions("resolve_("), 1);
+}
+
+fn assert_notebook_x_resolution(db: &TestDb, cell: File, expected: &[File]) {
+    let at_use = cell.resolve_at(db, last_offset(db, cell, "x"));
+    let at_eof = cell.resolve(db, Name::new(db, "x"));
+    assert_eq!(at_use, at_eof);
+    let files: Vec<File> = at_use.iter().map(|def| def.file(db)).collect();
+    assert_eq!(files, expected);
+}
+
+#[test]
+fn test_notebook_function_body_keeps_conditional_local_and_later_cell() {
+    // The conditional local takes precedence when `flag` is true. Otherwise,
+    // lookup reaches the notebook environment, where the later cell has
+    // overwritten this cell's top-level binding.
+    let mut db = TestDb::new();
+    let own = "x <- 1\nf <- function(flag) {\n  if (flag) x <- 10\n  x\n}\n";
+    let (_, cells) = open_notebook(&mut db, &[own, "x <- 2\n"]);
+
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+
+    assert_eq!(defs.len(), 2);
+    assert_eq!(defs[0].file(&db), cells[0]);
+    let local_offset = own.find("x <- 10").unwrap();
+    assert_eq!(
+        usize::from(defs[0].name_range(&db).unwrap().start()),
+        local_offset
+    );
+    assert_eq!(defs[1].file(&db), cells[1]);
+}
+
+#[test]
+fn test_notebook_nested_closure_keeps_enclosing_function_binding() {
+    // `g()` captures `f()`'s local `x`, which shadows the notebook environment
+    // even when a later cell writes to it.
+    let mut db = TestDb::new();
+    let own = "x <- 1\nf <- function() {\n  x <- 10\n  g <- function() x\n}\n";
+    let (_, cells) = open_notebook(&mut db, &[own, "x <- 2\n"]);
+
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[0]);
+    let local_offset = own.find("x <- 10").unwrap();
+    assert_eq!(
+        usize::from(defs[0].name_range(&db).unwrap().start()),
+        local_offset
+    );
+}
+
+#[test]
+fn test_notebook_top_level_use_keeps_own_cell_over_later_cell() {
+    // A top-level use runs while its own cell executes, before the later cell.
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &["x <- 1\nx\n", "x <- 2\n"]);
+
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[0]);
+}
+
+#[test]
+fn test_notebook_function_body_keeps_own_cell_over_earlier_cell() {
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &["x <- 1\n", "x <- 2\nf <- function() x\n"]);
+
+    let defs = cells[1].resolve_at(&db, last_offset(&db, cells[1], "x"));
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+}
+
+#[test]
+fn test_notebook_conditional_own_cell_falls_back_to_earlier_cell() {
+    // `if (cond) x <- 2` may not run, so the earlier cell's binding remains a
+    // candidate below it.
+    let mut db = TestDb::new();
+    let own = "if (cond) x <- 2\nf <- function() x\n";
+    let (_, cells) = open_notebook(&mut db, &["x <- 1\n", own]);
+
+    let defs = cells[1].resolve_at(&db, last_offset(&db, cells[1], "x"));
+
+    assert_eq!(defs.len(), 2);
+    assert_eq!(defs[0].file(&db), cells[1]);
+    assert_eq!(defs[1].file(&db), cells[0]);
+}
+
+#[test]
+fn test_notebook_reorder_updates_deferred_shadowing() {
+    let mut db = TestDb::new();
+    let (notebook, cells) = open_notebook(&mut db, &["x <- 0\nf <- function() x\n", "x <- 1\n"]);
+
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+
+    // Moving this cell changes precedence without changing its sibling list.
+    // The cached successor count must change so its own binding now wins.
+    notebook.set_cells(&mut db).to(vec![cells[1], cells[0]]);
+    let defs = cells[0].resolve_at(&db, last_offset(&db, cells[0], "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[0]);
+}
+
+#[test]
+fn test_notebook_reorder_updates_tracked_resolve() {
+    let mut db = TestDb::new();
+    let (notebook, cells) = open_notebook(&mut db, &["x <- 0\n", "x <- 1\n"]);
+
+    let defs = cells[0].resolve(&db, Name::new(&db, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+
+    // The sibling list is unchanged. The changed successor count must
+    // invalidate `resolve()` so this cell's own binding now wins.
+    notebook.set_cells(&mut db).to(vec![cells[1], cells[0]]);
+    let defs = cells[0].resolve(&db, Name::new(&db, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[0]);
+}
+
+#[test]
+fn test_notebook_successor_edit_backdates_tracked_resolve() {
+    // A position-only edit preserves `Definition` identity, so `resolve()`
+    // should stay cached even though the successor's source text changes.
+    let mut db = TestDb::new();
+    let (_, cells) = open_notebook(&mut db, &["f <- function() x\n", "x <- 1\n"]);
+
+    let defs = cells[0].resolve(&db, Name::new(&db, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+
+    cells[1]
+        .set_source_text_override(&mut db)
+        .to(Some("\n\nx <- 1\n".to_string()));
+
+    let defs = cells[0].resolve(&db, Name::new(&db, "x"));
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), cells[1]);
+    // Match `resolve_(` to exclude executions of `resolve_export()`.
+    assert_eq!(db.executions("resolve_("), 1);
 }
 
 #[test]

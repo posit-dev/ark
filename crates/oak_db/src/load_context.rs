@@ -26,6 +26,14 @@ pub(crate) struct LoadContext {
     /// file itself.
     pub visible_files: Vec<File>,
 
+    /// Number of leading `visible_files` that load after this file into the
+    /// same environment. Deferred lookup assumes loading has finished, so
+    /// these bindings shadow this file's top level, which shadows the rest.
+    /// Files in parent environments, such as Shiny's `global.R` or a test's
+    /// package namespace, rank below this file regardless of load order and
+    /// do not count toward this prefix.
+    pub later_sibling_count: usize,
+
     /// Packages attached by the loader, omitting packages unavailable in every
     /// root during lowering.
     pub implicit_attaches: Vec<&'static str>,
@@ -139,9 +147,12 @@ fn notebook_load_context(
     let cells = notebook.cells(db);
     let prefix_len = cells.iter().position(|cell| *cell == file)?;
 
+    let siblings = visible_siblings(file, cells, view, prefix_len);
+
     Some(LoadContext {
         kind: LoadKind::Session,
-        visible_files: visible_siblings(file, cells, view, prefix_len),
+        later_sibling_count: siblings.later,
+        visible_files: siblings.files,
         implicit_attaches: Vec::new(),
         loader: Some(NOTEBOOK_LOADER),
     })
@@ -158,9 +169,12 @@ fn package_load_context(db: &dyn SourceDb, file: File, view: CollationView) -> O
 
     let prefix_len = files.iter().position(|sibling| *sibling == file)?;
 
+    let siblings = visible_siblings(file, files, view, prefix_len);
+
     Some(LoadContext {
         kind: LoadKind::Namespace(package),
-        visible_files: visible_siblings(file, files, view, prefix_len),
+        later_sibling_count: siblings.later,
+        visible_files: siblings.files,
         implicit_attaches: Vec::new(),
         loader: Some(PACKAGE_LOADER),
     })
@@ -171,6 +185,7 @@ fn standalone_load_context() -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
         visible_files: Vec::new(),
+        later_sibling_count: 0,
         implicit_attaches: Vec::new(),
         loader: None,
     }
@@ -181,35 +196,61 @@ pub(crate) fn collation_visible_files(
     db: &dyn SourceDb,
     file: File,
     view: CollationView,
-) -> Vec<File> {
+) -> VisibleSiblings {
     let files = file.collation_siblings(db);
 
-    // Before scanning moves `file` out of `OrphanRoot`, it is absent from this
-    // list. Its sort key still locates the files loaded before it.
-    let own_key = collation_basename_key(file, db);
-    let prefix_len =
-        files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key);
+    // Locate present files by identity because `A.R` and `a.R` share a sort
+    // key but occupy distinct load positions. The key estimates the position
+    // only for an orphan file the scanner has not placed yet.
+    let prefix_len = match files.iter().position(|sibling| *sibling == file) {
+        Some(position) => position,
+        None => {
+            let own_key = collation_basename_key(file, db);
+            files.partition_point(|sibling| collation_basename_key(*sibling, db) < own_key)
+        },
+    };
 
     visible_siblings(file, files, view, prefix_len)
 }
 
-/// Siblings visible to `file`, in reverse load order so later bindings shadow
-/// earlier ones. Excludes `file` to prevent `resolve()` from cycling through its
-/// semantic index. `Eager` keeps only its predecessors.
+/// Siblings of `file` sharing its target environment, in reverse load order.
+///
+/// `files` excludes `file` to prevent `resolve()` from cycling through its
+/// semantic index. `later` counts the leading entries that load after `file`.
+/// Deferred lookup places the file's top-level bindings after that prefix
+/// and before its predecessors. `Eager` includes only predecessors, so its
+/// count is zero.
+pub(crate) struct VisibleSiblings {
+    pub files: Vec<File>,
+    pub later: usize,
+}
+
+/// `prefix_len` is the file's position in runtime load order, or its insertion
+/// position if the scanner has not placed it in `collation` yet. For an absent
+/// file, deferred lookup counts every member at or after `prefix_len` as later.
 pub(crate) fn visible_siblings(
     file: File,
     collation: &[File],
     view: CollationView,
     prefix_len: usize,
-) -> Vec<File> {
+) -> VisibleSiblings {
     match view {
-        CollationView::Eager => collation[..prefix_len].iter().rev().copied().collect(),
-        CollationView::Deferred => collation
-            .iter()
-            .rev()
-            .copied()
-            .filter(|sibling| *sibling != file)
-            .collect(),
+        CollationView::Eager => VisibleSiblings {
+            files: collation[..prefix_len].iter().rev().copied().collect(),
+            later: 0,
+        },
+        CollationView::Deferred => {
+            let present = collation.get(prefix_len) == Some(&file);
+            VisibleSiblings {
+                later: collation.len() - prefix_len - usize::from(present),
+                files: collation
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|sibling| *sibling != file)
+                    .collect(),
+            }
+        },
     }
 }
 

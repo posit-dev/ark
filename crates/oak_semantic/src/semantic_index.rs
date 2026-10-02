@@ -311,6 +311,14 @@ impl SemanticIndex {
         exports
     }
 
+    /// Whether every path through the file leaves `name` bound at top level.
+    pub fn export_is_bound(&self, name: &str) -> bool {
+        self.symbol_tables[ScopeId::from(0)]
+            .id(name)
+            .and_then(|symbol_id| self.final_bindings.get(symbol_id))
+            .is_some_and(|bindings| !bindings.may_be_unbound())
+    }
+
     /// Returns file-scope definitions bound to `name` without building
     /// [`Self::exports()`].
     pub fn export(&self, name: &str) -> impl Iterator<Item = (DefinitionId, &Definition)> {

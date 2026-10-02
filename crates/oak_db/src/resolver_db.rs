@@ -47,6 +47,6 @@ impl<'db> ResolverDb<'db> {
     }
 
     pub(crate) fn cross_file_layers(self, file: File, view: CollationView) -> &'db CrossFileLayers {
-        file.cross_file_layers(self.db, view)
+        &file.cross_file_layers(self.db, view).layers
     }
 }

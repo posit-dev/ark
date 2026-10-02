@@ -49,15 +49,16 @@ fn autoload_context(
     view: CollationView,
     autoload: &[File],
 ) -> LoadContext {
-    let mut visible_files = collation_visible_files(db, file, view);
+    let mut siblings = collation_visible_files(db, file, view);
 
-    // `global.R` loads before `R/` into its parent environment, so every sibling
-    // shadows it.
-    visible_files.extend(autoload);
+    // `global.R` binds in the parent environment, so `R/` bindings shadow it
+    // regardless of their relative load positions.
+    siblings.files.extend(autoload);
 
     LoadContext {
         kind: LoadKind::Session,
-        visible_files,
+        later_sibling_count: siblings.later,
+        visible_files: siblings.files,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
@@ -68,14 +69,16 @@ fn autoload_context(
 fn entry_context(file: File, autoload: &[File]) -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
-        // `R/` bindings shadow `global.R` through reverse load order and the
-        // child environment created by `loadSupport()`.
+        // `R/` bindings shadow `global.R` through the child environment created
+        // by `loadSupport()`. Reverse load order gives later support files
+        // priority, but all load before the entry point's top-level bindings.
         visible_files: autoload
             .iter()
             .rev()
             .copied()
             .filter(|support| *support != file)
             .collect(),
+        later_sibling_count: 0,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
@@ -85,6 +88,7 @@ fn global_context() -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
         visible_files: Vec::new(),
+        later_sibling_count: 0,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
