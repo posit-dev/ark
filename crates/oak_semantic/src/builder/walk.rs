@@ -877,7 +877,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // At file scope, the assignment site and global fallback share
             // one definition, carrying both flags. A locked package binding
             // prevents the global assignment, leaving only the site marker.
-            let locked = self.super_name_is_locked(name);
+            let locked = self.super_name_is_locked(name, range);
             let flags = if locked {
                 SymbolFlags::IS_SUPER_BOUND
             } else {
@@ -978,7 +978,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let Some(target) = target else {
-            if self.super_name_is_locked(name) {
+            if self.super_name_is_locked(name, range) {
                 return None;
             }
             return Some(ScopeId::from(0));
@@ -997,25 +997,26 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         Some(target)
     }
 
-    /// Check for a package binding treated as a locked `<<-` target. Include
-    /// base, inherited attachments, and attachments earlier in the scan unit.
-    /// Exclude attachments in other lazy units because their execution order
-    /// relative to the assignment is unknown.
-    /// Whether base or a package attached linearly to the site's scan unit
-    /// (inherited, or earlier in the unit) binds the name, so `<<-` onto it
-    /// errors on the locked binding instead of creating a global. Attaches in
-    /// other lazy units are excluded: their order against the site is unknown.
-    /// A locked name reproduces R's runtime error as a diagnostic.
-    /// Whether base or a package attached linearly to the site's scan unit
-    /// (inherited, or earlier in the unit) binds the name, so `<<-` onto it
-    /// errors on the locked binding instead of creating a global. Attaches in
-    /// other lazy units are excluded: their order against the site is unknown.
-    fn super_name_is_locked(&mut self, name: &str) -> bool {
+    /// A locked package target prevents the global fallback and produces a
+    /// diagnostic. The site's attachments include only inherited attachments
+    /// and those earlier in its scan unit. Attachments in other lazy units are
+    /// excluded because their execution order relative to `<<-` is unknown.
+    fn super_name_is_locked(&mut self, name: &str, range: TextRange) -> bool {
         let attached = attach_search_path(
             &self.scan.attached_inherited,
             self.scan.attached_so_far.packages(),
         );
-        self.resolver.binds_package_name(name, &attached)
+        let Some(package) = self.resolver.binds_package_name(name, &attached) else {
+            return false;
+        };
+
+        self.diagnostics
+            .push(SemanticDiagnostic::LockedSuperAssignment {
+                name: name.to_string(),
+                package,
+                range,
+            });
+        true
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {

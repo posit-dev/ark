@@ -10,6 +10,7 @@ use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
 
 use crate::common::index;
+use crate::common::index_with_base_exporting_local;
 
 /// Project each access into a comparable tuple via the public accessors.
 fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
@@ -779,7 +780,7 @@ fn test_super_assignment_to_locked_package_name_records_no_target() {
     // Retain the assignment site without a target definition. With `local`
     // bound only in base, calling `f()` raises "cannot change value of locked
     // binding" rather than creating a global binding.
-    let index = index("f <- function() local <<- identity\n");
+    let index = index_with_base_exporting_local("f <- function() local <<- identity\n");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
@@ -792,6 +793,25 @@ fn test_super_assignment_to_locked_package_name_records_no_target() {
         index.definitions(fun)[DefinitionId::from(0)].kind(),
         DefinitionKind::SuperAssignment(_)
     ));
+
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "local" && package == "base"
+    ));
+}
+
+#[test]
+fn test_super_assignment_without_export_data_keeps_file_fallback() {
+    // Without a resolver that knows base's exports, `local` is not known to
+    // be locked, so the file scope stands in for the global target.
+    let index = index("f <- function() local <<- identity\n");
+    let file = ScopeId::from(0);
+
+    let local = index.symbols(file).get("local").unwrap();
+    assert_eq!(local.flags(), SymbolFlags::IS_BOUND);
+    assert!(index.diagnostics().is_empty());
 }
 
 #[test]
@@ -858,12 +878,18 @@ fn test_super_assignment_targets_later_enclosing_binding() {
 fn test_super_assignment_to_locked_package_name_at_file_scope_records_marker_only() {
     // Top-level `<<-` searches outside the global environment. With `local`
     // bound only in base, the locked binding prevents a global assignment.
-    let index = index("local <<- identity\n");
+    let index = index_with_base_exporting_local("local <<- identity\n");
     let file = ScopeId::from(0);
 
     let local = index.symbols(file).get("local").unwrap();
     assert_eq!(local.flags(), SymbolFlags::IS_SUPER_BOUND);
-    assert!(index.diagnostics().is_empty());
+
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "local" && package == "base"
+    ));
 }
 
 #[test]

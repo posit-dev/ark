@@ -39,6 +39,7 @@ use url::Url;
 
 use crate::common::index;
 use crate::common::index_with_base;
+use crate::common::index_with_base_exporting_local;
 use crate::common::only_assign_def;
 use crate::common::semantic_call_kinds;
 use crate::common::COLLATION_HANDLER;
@@ -3924,7 +3925,7 @@ f <- function(x = if (cond) local <- identity) {
 // `<<-` to a name that only base binds targets base's locked binding: R
 // signals "cannot change value of locked binding" and binds nothing, so the
 // later call still reaches base `local()`. These tests pin that reading: NSE,
-// with no diagnostic.
+// with a locked-binding diagnostic at the assignment.
 
 #[test]
 fn test_super_assignment_to_locked_base_name_in_default_keeps_callee() {
@@ -3936,14 +3937,14 @@ f <- function(x = (local <<- identity)) {
     })
 }
 ";
-    let index = index_with_base(source);
+    let index = index_with_base_exporting_local(source);
     let local_scope = ScopeId::from(2);
 
     assert_eq!(
         index.scope(local_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
-    assert!(index.diagnostics().is_empty());
+    assert_locked_local_diagnostic(&index);
 }
 
 #[test]
@@ -3956,14 +3957,14 @@ f <- function() {
     })
 }
 ";
-    let index = index_with_base(source);
+    let index = index_with_base_exporting_local(source);
     let local_scope = ScopeId::from(2);
 
     assert_eq!(
         index.scope(local_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
-    assert!(index.diagnostics().is_empty());
+    assert_locked_local_diagnostic(&index);
 }
 
 #[test]
@@ -3975,14 +3976,14 @@ fn test_super_assignment_to_locked_name_from_earlier_sibling_keeps_callee() {
 g <- function() local <<- identity
 f <- function() local({ y <- 1 })
 ";
-    let index = index_with_base(source);
+    let index = index_with_base_exporting_local(source);
     let local_scope = ScopeId::from(3);
 
     assert_eq!(
         index.scope(local_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
-    assert!(index.diagnostics().is_empty());
+    assert_locked_local_diagnostic(&index);
 }
 
 #[test]
@@ -3991,14 +3992,23 @@ fn test_super_assignment_to_locked_name_from_later_sibling_keeps_callee() {
 f <- function() local({ y <- 1 })
 g <- function() local <<- identity
 ";
-    let index = index_with_base(source);
+    let index = index_with_base_exporting_local(source);
     let local_scope = ScopeId::from(2);
 
     assert_eq!(
         index.scope(local_scope).kind(),
         ScopeKind::Nse(EvalEnv::Nested, EvalTiming::Eager)
     );
-    assert!(index.diagnostics().is_empty());
+    assert_locked_local_diagnostic(&index);
+}
+
+fn assert_locked_local_diagnostic(index: &SemanticIndex) {
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "local" && package == "base"
+    ));
 }
 
 #[test]

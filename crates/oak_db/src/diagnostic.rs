@@ -63,6 +63,7 @@ pub enum DiagnosticKind {
     AmbiguousCalleeResolution,
     AmbiguousAttachOrder,
     AmbiguousSuperAssignment,
+    LockedSuperAssignment,
     UninstalledPackage,
     SourceCycle,
     InheritedShadow,
@@ -75,6 +76,7 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousCalleeResolution => "ambiguous-callee-resolution",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
             DiagnosticKind::AmbiguousSuperAssignment => "ambiguous-super-assignment",
+            DiagnosticKind::LockedSuperAssignment => "locked-super-assignment",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
             DiagnosticKind::SourceCycle => "source-cycle",
             DiagnosticKind::InheritedShadow => "inherited-shadow",
@@ -86,6 +88,7 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousCalleeResolution => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
             DiagnosticKind::AmbiguousSuperAssignment => Severity::Info,
+            DiagnosticKind::LockedSuperAssignment => Severity::Warning,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
             DiagnosticKind::SourceCycle => Severity::Warning,
             DiagnosticKind::InheritedShadow => Severity::Info,
@@ -97,6 +100,7 @@ impl DiagnosticKind {
             DiagnosticKind::AmbiguousCalleeResolution => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
             DiagnosticKind::AmbiguousSuperAssignment => true,
+            DiagnosticKind::LockedSuperAssignment => true,
             DiagnosticKind::UninstalledPackage => true,
             DiagnosticKind::SourceCycle => true,
             DiagnosticKind::InheritedShadow => true,
@@ -132,6 +136,11 @@ pub(crate) fn lower_semantic_diagnostic(
             range,
             binding_range,
         } => lower_ambiguous_super_assignment(name, *range, *binding_range),
+        SemanticDiagnostic::LockedSuperAssignment {
+            name,
+            package,
+            range,
+        } => lower_locked_super_assignment(name, package, *range),
         SemanticDiagnostic::UninstalledPackage { package, range } => {
             lower_uninstalled_package(package, *range)
         },
@@ -208,6 +217,15 @@ fn lower_ambiguous_super_assignment(
             range: binding_range,
             message: format!("This binding may not exist when `{name} <<-` runs"),
         }],
+    )
+}
+
+fn lower_locked_super_assignment(name: &str, package: &str, range: TextRange) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::LockedSuperAssignment,
+        format!("Cannot change value of locked binding for `{name}` in package `{package}`."),
+        range,
+        Vec::new(),
     )
 }
 
