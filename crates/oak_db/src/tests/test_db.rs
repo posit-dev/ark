@@ -183,12 +183,26 @@ pub(crate) fn path_name(path: &FilePath) -> String {
 /// call allocates a new salsa entity; tests that need to assert on
 /// root identity should retain the returned value.
 pub(super) fn workspace_root(db: &impl Db, path: &str) -> Root {
-    Root::new(db, file_path(path), RootKind::Workspace, vec![], vec![])
+    Root::new(
+        db,
+        file_path(path),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 /// Build a fresh empty `RootKind::Library` `Root` at `path`.
 pub(super) fn library_root(db: &impl Db, path: &str) -> Root {
-    Root::new(db, file_path(path), RootKind::Library, vec![], vec![])
+    Root::new(
+        db,
+        file_path(path),
+        RootKind::Library,
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 /// Build a package `pkg_name` with the given namespace and `R/` files (each

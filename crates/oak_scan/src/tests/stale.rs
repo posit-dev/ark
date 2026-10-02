@@ -26,7 +26,14 @@ fn file_path(s: &str) -> FilePath {
 #[test]
 fn test_set_stale_routes_editor_owned_to_orphan() {
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let file = File::new(
         &db,
         file_path("/proj/foo.R"),
@@ -49,7 +56,14 @@ fn test_set_stale_routes_editor_owned_to_orphan() {
 #[test]
 fn test_set_stale_routes_non_editor_owned_to_stale() {
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let file = File::new(
         &db,
         file_path("/proj/foo.R"),
@@ -72,7 +86,14 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
     // file loses its package association when it lands in orphan.
     // The package itself goes to stale.
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let pkg = Package::new(
         &db,
         file_path("/proj/DESCRIPTION"),
@@ -109,7 +130,14 @@ fn test_set_stale_routes_pkg_scripts_to_stale() {
     // A non-editor-owned file in `pkg.scripts` (e.g. tests/test-foo.R)
     // should go to stale on root eviction, alongside the package itself.
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let pkg = Package::new(
         &db,
         file_path("/proj/DESCRIPTION"),
@@ -145,7 +173,14 @@ fn test_set_stale_routes_editor_owned_pkg_scripts_to_orphan() {
     // in orphan, with its package backpointer cleared so analysis treats
     // it as a standalone script while the workspace is gone.
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let pkg = Package::new(
         &db,
         file_path("/proj/DESCRIPTION"),
@@ -218,7 +253,14 @@ fn test_close_editor_is_noop_for_file_in_live_root() {
     // The editor's release doesn't disturb the scanner's classification.
     // A file inside a live root's `packages` / `scripts` stays put.
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let path = file_path("/proj/foo.R");
     let file = File::new(
         &db,
@@ -245,7 +287,14 @@ fn test_close_editor_clears_override_for_live_root_file() {
     // synthetic path has no file on disk, so the source goes empty. Placement
     // is untouched, the file stays in the root's scripts.
     let mut db = OakDatabase::new();
-    let root = Root::new(&db, file_path("/proj"), RootKind::Workspace, vec![], vec![]);
+    let root = Root::new(
+        &db,
+        file_path("/proj"),
+        RootKind::Workspace,
+        vec![],
+        vec![],
+        vec![],
+    );
     let url = file_path("/proj/foo.R");
     let file = File::new(
         &db,

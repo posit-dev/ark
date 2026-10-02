@@ -214,9 +214,9 @@ pub(crate) async fn handle_initialized(
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
-    // Watch R files and DESCRIPTION. We get notified on any disk change;
-    // the handler skips editor-owned URLs since those are tracked via
-    // `textDocument/did*` instead.
+    // Editor-owned R files are tracked via `textDocument/did*`, so the handler
+    // skips their disk events. `DESCRIPTION` and environment sentinels still
+    // trigger rescans even when open in the editor.
     let watchers = vec![
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
@@ -224,6 +224,10 @@ pub(crate) async fn handle_initialized(
         },
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/{.Rprofile,.Renviron}".to_string()),
             kind: None,
         },
     ];

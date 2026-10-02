@@ -66,6 +66,8 @@ use salsa::Setter;
 
 use crate::inputs::FileEntry;
 use crate::inputs::RootExt;
+use crate::packages::is_environment_sentinel;
+use crate::packages::scan_workspace_environment_dirs;
 use crate::packages::scan_workspace_packages;
 use crate::packages::scan_workspace_scripts;
 use crate::packages::PackageEntry;
@@ -93,10 +95,12 @@ impl ScanRequest {
     pub fn run(self) -> ScanCompleted {
         let packages = scan_workspace_packages(self.path.as_std_path());
         let scripts = scan_workspace_scripts(self.path.as_std_path());
+        let environment_dirs = scan_workspace_environment_dirs(self.path.as_std_path());
         ScanCompleted {
             root: self.root,
             packages,
             scripts,
+            environment_dirs,
         }
     }
 }
@@ -108,22 +112,21 @@ pub struct ScanCompleted {
     root: Root,
     packages: Vec<PackageEntry>,
     scripts: Vec<FileEntry>,
+    environment_dirs: Vec<FilePath>,
 }
 
 impl ScanCompleted {
     /// Push the scan's output into salsa inputs for `self.root`.
     ///
-    /// Atomic full-replacement of the root's packages and scripts.
-    /// Existing `File` and `Package` entities are reused by URL where
-    /// possible (see [`RootExt::set_package`] /
-    /// [`RootExt::set_workspace_scripts`]), so a rescan that doesn't
-    /// actually change anything is a no-op as far as downstream salsa
-    /// caches are concerned.
+    /// Unchanged rescans preserve downstream Salsa caches by reusing `File`
+    /// and `Package` entities and writing inputs only when they differ. See
+    /// [`RootExt::set_package()`] and [`RootExt::set_workspace_scripts()`].
     fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
         let ScanCompleted {
             root,
             packages,
             scripts,
+            environment_dirs,
         } = self;
 
         let package_entities: Vec<Package> = packages
@@ -149,6 +152,9 @@ impl ScanCompleted {
             root.set_packages(db).to(package_entities);
         }
         root.set_workspace_scripts(db, scripts);
+        if root.environment_dirs(db) != &environment_dirs {
+            root.set_environment_dirs(db).to(environment_dirs);
+        }
     }
 }
 
@@ -224,7 +230,14 @@ impl ScanScheduler {
             let root = match old.get(&path) {
                 Some(&r) => r,
                 None => {
-                    let root = Root::new(db, path, RootKind::Workspace, Vec::new(), Vec::new());
+                    let root = Root::new(
+                        db,
+                        path,
+                        RootKind::Workspace,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
                     self.state.insert(root, ScanState::Scanning);
                     requests.push(ScanRequest {
                         root,
@@ -244,19 +257,15 @@ impl ScanScheduler {
 
     /// Apply a batch of file-watcher events.
     ///
-    /// Per-event routing:
-    /// - `DESCRIPTION` events trigger a rescan of the containing root.
-    ///   If the root is idle, it transitions to `Scanning` and a
-    ///   [`ScanRequest`] is returned. If it's already pending, it
-    ///   transitions to `ScanningWithRescanQueued` and the queued
-    ///   scan kicks off when `apply_scan_completed()` runs.
-    /// - R-file events for an idle root apply surgically (the watcher's
-    ///   single-file fast path).
-    /// - R-file events for a pending root are buffered and replayed
-    ///   after the scan applies, so they don't get dropped against an
-    ///   empty `Root`.
-    /// - URLs in `skip` are left alone, letting drivers defer to an
-    ///   in-memory source of truth (e.g. the editor's open buffers).
+    /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` events rescan every
+    /// containing root, even for paths in `skip`. Idle roots return a
+    /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
+    /// `apply_scan_completed()` to start.
+    ///
+    /// R-file events in `skip` defer to editor buffers. Other R-file events
+    /// apply directly only when no containing root has a pending scan.
+    /// Otherwise they are buffered and replayed until all containing roots
+    /// finish scanning, so older scan results cannot overwrite their effects.
     pub fn apply_watcher_events<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
@@ -266,26 +275,28 @@ impl ScanScheduler {
         let roots = workspace_root_paths(db);
         let mut requests = Vec::new();
 
-        // Pass 1: DESCRIPTION events. Mark each affected root as needing a
-        // rescan before any R-file event runs, so an R-file event in the
-        // same batch correctly sees the root as pending and buffers
-        // instead of applying surgically against a transient world.
-        let mut description_roots: HashSet<Root> = HashSet::new();
+        // Request rescans before handling R-file events in the same batch,
+        // so those events buffer instead of being overwritten by scan results.
+        //
+        // Rescan every containing root because nested roots keep separate
+        // `packages` and `environment_dirs` lists for overlapping paths.
+        // Ignore `skip` here because discovery depends on disk state even
+        // when the editor owns a file's contents.
+        let mut rescan_roots: Vec<Root> = Vec::new();
         for event in &events {
-            let Some(path) = event.path.as_path().map(Utf8Path::to_path_buf) else {
+            let Some(path) = event.path.as_path() else {
                 continue;
             };
-            if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
-                if let Some(root) = roots
-                    .iter()
-                    .find(|(root_path, _)| path.starts_with(root_path))
-                    .map(|(_, root)| *root)
-                {
-                    description_roots.insert(root);
+            if !triggers_rescan(path) {
+                continue;
+            }
+            for (root_path, root) in &roots {
+                if path.starts_with(root_path) && !rescan_roots.contains(root) {
+                    rescan_roots.push(*root);
                 }
             }
         }
-        for root in description_roots {
+        for root in rescan_roots {
             if let Some(req) = self.request_rescan(db, root) {
                 requests.push(req);
             }
@@ -296,25 +307,29 @@ impl ScanScheduler {
             let Some(path) = event.path.as_path().map(Utf8Path::to_path_buf) else {
                 continue;
             };
-            if path.file_name().is_some_and(|name| name == "DESCRIPTION") {
+            if triggers_rescan(&path) {
                 continue;
             }
             if skip.contains(&event.path) {
                 continue;
             }
 
-            let root = roots
+            // Wait for every containing root's scan because nested roots share
+            // `Package` and `File` entities that older results can overwrite.
+            // Replay through `apply_watcher_events()` re-buffers the event if
+            // another containing root still has a pending scan.
+            let pending_root = roots
                 .iter()
-                .find(|(root_path, _)| path.starts_with(root_path))
-                .map(|(_, root)| *root);
+                .filter(|(root_path, _)| path.starts_with(root_path))
+                .map(|(_, root)| *root)
+                .find(|root| self.state.contains_key(root));
 
-            match root {
-                Some(root) if self.state.contains_key(&root) => {
+            match pending_root {
+                Some(root) => {
                     self.buffered.entry(root).or_default().push(event);
                 },
-                // No in-flight scan for this root: apply the event directly,
-                // the watcher's single-file fast path.
-                _ => match event.kind {
+
+                None => match event.kind {
                     FileEventKind::Created | FileEventKind::Changed => {
                         add_watched_file(db, event.path)
                     },
@@ -453,6 +468,13 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
     }
 }
 
+/// These files affect package or environment discovery, which the single-file
+/// watcher path cannot recompute.
+fn triggers_rescan(path: &Utf8Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "DESCRIPTION" || is_environment_sentinel(name))
+}
+
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
     db.workspace_roots()
         .roots(db)
@@ -483,7 +505,14 @@ mod tests {
     fn test_unresolvable_rescan_path_does_not_strand_root_scanning() {
         let mut db = OakDatabase::new();
         let path = FilePath::parse("untitled:Untitled-1").unwrap();
-        let root = Root::new(&db, path, RootKind::Workspace, Vec::new(), Vec::new());
+        let root = Root::new(
+            &db,
+            path,
+            RootKind::Workspace,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
         db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
         let mut scheduler = ScanScheduler::new();
@@ -495,6 +524,7 @@ mod tests {
             root,
             packages: Vec::new(),
             scripts: Vec::new(),
+            environment_dirs: Vec::new(),
         };
         let requests = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
 

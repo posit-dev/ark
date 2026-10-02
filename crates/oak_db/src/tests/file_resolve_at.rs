@@ -442,6 +442,7 @@ fn install_package(
         kind,
         vec![],
         vec![],
+        vec![],
     );
     let namespace = Namespace {
         exports: SortedVec::from_vec(exports.iter().map(|s| s.to_string()).collect()),
