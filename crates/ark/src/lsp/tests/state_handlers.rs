@@ -296,6 +296,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
 
     let path = tmp.path().join("a.R");
     let file_path = FilePath::from_path_buf(path.clone()).unwrap();
+    fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
         changes: vec![event(&path, FileChangeType::DELETED)],
     };

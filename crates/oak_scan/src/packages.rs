@@ -340,6 +340,40 @@ pub(crate) fn scan_workspace_scripts(root: &Path) -> Vec<FileEntry> {
     collect_scripts(root, &package_dirs)
 }
 
+/// File names used to identify [`oak_db::Root::environment_dirs()`].
+const ENVIRONMENT_SENTINELS: [&str; 2] = [".Rprofile", ".Renviron"];
+
+pub(crate) fn is_environment_sentinel(file_name: &str) -> bool {
+    ENVIRONMENT_SENTINELS.contains(&file_name)
+}
+
+/// Find environment directories without traversing hidden or ignored directories.
+///
+/// Probe visited directories for `.Rprofile` and `.Renviron` because the walker
+/// excludes these hidden files. Disabling that filter would also traverse
+/// `.git/` and other hidden directories.
+pub(crate) fn scan_workspace_environment_dirs(root: &Path) -> Vec<FilePath> {
+    let mut dirs: Vec<PathBuf> = workspace_walker(root)
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_dir())
+        })
+        .map(|entry| entry.into_path())
+        .filter(|dir| {
+            ENVIRONMENT_SENTINELS
+                .iter()
+                .any(|sentinel| dir.join(sentinel).is_file())
+        })
+        .collect();
+    dirs.sort();
+
+    dirs.into_iter()
+        .filter_map(FilePath::from_path_buf)
+        .collect()
+}
+
 /// Keep the first occurrence of each `Package:` name, dropping duplicates with
 /// a warn log naming both directories.
 ///

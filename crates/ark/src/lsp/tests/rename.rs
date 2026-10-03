@@ -170,6 +170,7 @@ fn test_rename_cross_file_via_source() {
         RootKind::Workspace,
         vec![file1, file2],
         vec![],
+        vec![],
     );
     state
         .db()

@@ -486,3 +486,51 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         None
     );
 }
+
+/// `.Rprofile` makes `subproject/` the assumed session directory, so
+/// `source("../utils.R")` must resolve from there, not the workspace root.
+#[tokio::test]
+async fn test_goto_definition_through_source_from_environment_dir() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::new()));
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(OakDatabase::new()),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let subproject = workspace.path().join("subproject");
+    std::fs::create_dir_all(&subproject).unwrap();
+    std::fs::write(subproject.join(".Rprofile"), "").unwrap();
+    write_sources(workspace.path(), &[("utils.R", "helper <- function() 1\n")]);
+    write_sources(&subproject, &[(
+        "script.R",
+        "source(\"../utils.R\")\nhelper()\n",
+    )]);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    let world = state.world();
+    let utils_path = FilePath::from_path_buf(workspace.path().join("utils.R")).unwrap();
+    let utils_file = world.db().file_by_path(&utils_path).unwrap();
+    let script_uri: Uri = Url::from_file_path(subproject.join("script.R"))
+        .unwrap()
+        .to_uri()
+        .unwrap();
+
+    assert_matches!(
+        goto_definition(make_params(&script_uri, 1, 0), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_uri(utils_file).unwrap());
+            assert_eq!(links[0].target_range, range((0, 0), (0, 6)));
+        }
+    );
+}

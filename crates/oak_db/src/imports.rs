@@ -356,21 +356,37 @@ fn package_binding(db: &dyn SourceDb, package: Package, name: &str) -> PackageBi
 
 /// Anchor directory for relative `source("path")` arguments.
 ///
-/// Workspace root if the file is under one, else the file's parent directory. R
-/// resolves `source("foo.R")` against `getwd()`, and IDEs (RStudio, Positron)
-/// `setwd()` to the project root, so workspace-root anchoring typically matches
-/// the runtime behaviour.
+/// Use the nearest enclosing environment directory within the workspace root,
+/// or the workspace root if there is none. R resolves relative paths against
+/// `getwd()`, so this assumes a session started in that directory to load its
+/// `.Rprofile` or `.Renviron`. See [`Root::environment_dirs()`](crate::Root::environment_dirs).
+///
+/// Do not retry missing paths against the workspace root. That would resolve
+/// code intended for a different working directory and environment.
+/// Outside a workspace root, use the file's parent directory.
 fn anchor_dir(db: &dyn SourceDb, file: File) -> Option<Utf8PathBuf> {
-    if let Some(root) = file
+    let file_path = file.path(db).as_path()?;
+
+    let Some(root) = file
         .root(db)
         .filter(|root| root.kind(db) == RootKind::Workspace)
-    {
-        // Workspace roots are file URLs by construction.
-        return root.path(db).as_path().map(Utf8Path::to_path_buf);
+    else {
+        return Some(file_path.parent()?.to_path_buf());
+    };
+
+    // `environment_dirs` is sorted, so the last enclosing directory is the
+    // nearest one.
+    let environment_dir = root
+        .environment_dirs(db)
+        .iter()
+        .filter_map(FilePath::as_path)
+        .rfind(|dir| file_path.starts_with(dir));
+    if let Some(dir) = environment_dir {
+        return Some(dir.to_path_buf());
     }
 
-    let parent = file.path(db).as_path()?.parent()?;
-    Some(parent.to_path_buf())
+    // Workspace roots are file URLs by construction.
+    root.path(db).as_path().map(Utf8Path::to_path_buf)
 }
 
 /// Resolve `path` (the literal `source("path")` argument) against the anchor
