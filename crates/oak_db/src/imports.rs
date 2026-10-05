@@ -14,6 +14,8 @@ use crate::directory::files_in_directory;
 use crate::directory::files_in_directory_recursive;
 use crate::file_imports::CollationView;
 use crate::file_imports::ImportLayer;
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::resolver_db::ResolverDb;
 use crate::Db;
 use crate::File;
@@ -297,12 +299,33 @@ fn own_attach_layers(db: &dyn SourceDb, attached: &[String]) -> Vec<ImportLayer>
 ///
 /// Salsa caches the scan per package and name, invalidating it when the file
 /// list or an export set read by the query changes.
-#[salsa::tracked]
+///
+/// A base file that `source()`s a non-base file can re-enter this query with
+/// the same key: `base_binds()` reads `exports()` of the base file, whose index
+/// reads the sourced file's index, whose `<<-` on `name` calls `base_binds()`
+/// again. `cycle_result` treats the repeated key as unbound.
+#[salsa::tracked(cycle_result = base_binds_cycle_result)]
 pub(crate) fn base_binds<'db>(db: &'db dyn Db, base: Package, name: Name<'db>) -> bool {
     let name = name.text(db).as_str();
     base.files(db)
         .iter()
         .any(|file| file.exports(db).get(name).is_some())
+}
+
+/// Report no base binding when `base_binds()` is Salsa's repeated key, so the
+/// `<<-` is not linted as targeting a locked binding.
+///
+/// This handler returns a `bool` and cannot emit a diagnostic. The cycle is
+/// reported to the user as `SourceCycle` by the `semantic_index()` recoveries
+/// that fire on the files forming it.
+fn base_binds_cycle_result<'db>(
+    db: &'db dyn Db,
+    _id: salsa::Id,
+    base: Package,
+    name: Name<'db>,
+) -> bool {
+    record(db, Recovery::BaseBinds(base, name));
+    false
 }
 
 /// Resolves a bare `name` call to its NSE effect through `layers`.

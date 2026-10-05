@@ -34,6 +34,7 @@ pub(crate) enum Recovery<'db> {
     InheritedLayers(File, CollationView),
     CrossFileLayers(File, CollationView),
     PackageResolve(Package, Name<'db>, NamespaceVisibility),
+    BaseBinds(Package, Name<'db>),
 }
 
 #[cfg(any(test, feature = "fuzz"))]
@@ -83,5 +84,12 @@ fn render(db: &dyn Db, recovery: Recovery<'_>) -> String {
             package.name(db),
             name.text(db).as_str(),
         ),
+        Recovery::BaseBinds(package, name) => {
+            format!(
+                "base_binds({}, {})",
+                package.name(db),
+                name.text(db).as_str()
+            )
+        },
     }
 }

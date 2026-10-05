@@ -1,7 +1,7 @@
 //! Restricts the recursive queries available during resolution.
 //!
 //! Source operations use [`SourceDb`] directly. This wrapper exposes only the
-//! three recursive queries needed by [`SalsaImportsResolver`], each backed by
+//! four recursive queries needed by [`SalsaImportsResolver`], each backed by
 //! a `cycle_result` handler. Their bodies still require the full [`Db`].
 //!
 //! The raw database is private, so callers cannot bypass these forwarding
