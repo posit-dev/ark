@@ -58,6 +58,7 @@ use std::path::PathBuf;
 use aether_path::FilePath;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use indexmap::IndexSet;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::Package;
@@ -174,7 +175,7 @@ pub struct ScanScheduler {
     /// Unique paths in arrival order. A `HashSet` would drain in hash order,
     /// and `add_watched_file()` appends new files to `pkg.files` (load order)
     /// and `root.scripts` in drain order.
-    buffered: Vec<FilePath>,
+    buffered: IndexSet<FilePath>,
 }
 
 impl ScanScheduler {
@@ -312,10 +313,10 @@ impl ScanScheduler {
             let Some(fs_path) = path.as_path() else {
                 continue;
             };
-            if triggers_rescan(fs_path) || self.buffered.contains(&path) {
+            if triggers_rescan(fs_path) {
                 continue;
             }
-            self.buffered.push(path);
+            self.buffered.insert(path);
         }
         self.drain_buffered(db, skip);
 
