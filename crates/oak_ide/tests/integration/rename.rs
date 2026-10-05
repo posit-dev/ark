@@ -1,4 +1,7 @@
 //! Rename at the ide layer.
+//!
+//! The notebook section pins which cells a rename edits, since that is
+//! user-visible behavior that the Positron e2e tests rely on.
 
 use aether_path::FilePath;
 use oak_db::DbInputs;
@@ -18,6 +21,7 @@ use crate::support::edit_ranges;
 use crate::support::install_library_package;
 use crate::support::install_workspace_package;
 use crate::support::offset;
+use crate::support::open_notebook;
 use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
@@ -361,6 +365,36 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
     assert_eq!(edit_pairs(&result), vec![
         (script, range(use_start, use_start + 3)),
         (pkg_file, range(0, 3)),
+    ]);
+}
+
+// --- rename: notebooks ---
+
+#[test]
+fn test_notebook_rename_edits_across_cells() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "helper <- function() 1\n",
+        "helper()\n",
+    ]);
+
+    let targets = rename(&db, cells[1], offset(0), "util").unwrap();
+    // Cell 1 (cursor's file) first, then cell 0.
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[1], range(0, 6)),
+        (cells[0], range(0, 6)),
+    ]);
+}
+
+#[test]
+fn test_notebook_rename_respects_shadowing_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n", "x <- 2\n", "x\n"]);
+
+    let targets = rename(&db, cells[0], offset(0), "y").unwrap();
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[0], range(0, 1)),
+        (cells[1], range(0, 1)),
     ]);
 }
 
