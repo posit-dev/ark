@@ -85,6 +85,10 @@ pub struct SemanticIndex {
     // attachments or `source()` injections.
     semantic_calls: Vec<SemanticCall>,
 
+    // Imported callees whose resolution influenced effect recognition or
+    // static evaluation, including lookups that found no applicable handler.
+    callee_dependencies: Vec<CalleeDependency>,
+
     // Namespace accesses recorded during indexing, i.e. `package::symbol` or
     // `package:::symbol`
     namespace_accesses: Vec<NamespaceAccess>,
@@ -230,6 +234,7 @@ impl SemanticIndex {
             SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>,
         >,
         semantic_calls: Vec<SemanticCall>,
+        callee_dependencies: Vec<CalleeDependency>,
         namespace_accesses: Vec<NamespaceAccess>,
         diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
@@ -245,6 +250,7 @@ impl SemanticIndex {
             use_def_maps,
             enclosing_snapshots,
             semantic_calls,
+            callee_dependencies,
             namespace_accesses,
             diagnostics,
             final_bindings,
@@ -395,6 +401,13 @@ impl SemanticIndex {
     /// during indexing.
     pub fn semantic_calls(&self) -> &[SemanticCall] {
         &self.semantic_calls
+    }
+
+    /// Imported callees whose resolution influenced effect recognition or
+    /// static evaluation, in source order: by range start, then range end. A
+    /// call site can appear more than once.
+    pub fn callee_dependencies(&self) -> &[CalleeDependency] {
+        &self.callee_dependencies
     }
 
     /// Namespace accesses recorded during indexing, i.e. `package::symbol` or
@@ -1019,7 +1032,6 @@ pub struct SemanticCall {
     pub(crate) kind: SemanticCallKind,
     pub(crate) range: TextRange,
     pub(crate) scope: ScopeId,
-    pub(crate) callee: Option<String>,
 }
 
 /// Where an attach is known to hold.
@@ -1085,14 +1097,43 @@ impl SemanticCall {
         self.range.start()
     }
 
-    /// The callee as written, when it was a bare identifier. `None` for a
-    /// qualified callee like `base::source()`, which no binding can shadow.
-    pub fn callee(&self) -> Option<&str> {
-        self.callee.as_deref()
-    }
-
     pub fn scope(&self) -> ScopeId {
         self.scope
+    }
+}
+
+/// An imported bare callee whose resolution informed an indexing decision.
+/// Sourcing files can supply different imports, so inherited-shadow checks
+/// resolve `name` in each sourcing context and compare the handlers used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalleeDependency {
+    pub(crate) name: String,
+    pub(crate) range: TextRange,
+    pub(crate) usage: CalleeUsage,
+}
+
+/// Which part of the callee's handlers the indexing decision used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalleeUsage {
+    /// The call's own effects, for an attach or source call.
+    Effects,
+    /// The callee's value handler, consulted to statically evaluate an
+    /// argument of an effect call (`c()` in `source(c("a.R"))`).
+    Value,
+}
+
+impl CalleeDependency {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The whole call's trimmed range.
+    pub fn range(&self) -> TextRange {
+        self.range
+    }
+
+    pub fn usage(&self) -> CalleeUsage {
+        self.usage
     }
 }
 
@@ -1150,11 +1191,14 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An effect decision (NSE scope or attach) settled on the eager-linear
-    /// reading even though another reading was possible. `call_range` points at
-    /// the call we decided about, which may or may not have come out effectful;
-    /// `reason` says what made it ambiguous and where the competing site is.
-    AmbiguousEffect {
+    /// A callee resolution settled on the eager-linear reading even though
+    /// another reading was possible. The callee is consulted either for its
+    /// effects (NSE scope or attach) or for its static value (a nested `c()`
+    /// in `source(c("a.R"))`). `call_range` points at the call we decided
+    /// about, which may or may not have come out effectful or statically
+    /// evaluated; `reason` says what made it ambiguous and where the competing
+    /// site is.
+    AmbiguousCalleeResolution {
         name: String,
         call_range: TextRange,
         reason: AmbiguityReason,
@@ -1181,8 +1225,8 @@ pub enum SemanticDiagnostic {
     SourceCycle,
 }
 
-/// Why an [`AmbiguousEffect`](SemanticDiagnostic::AmbiguousEffect) could have
-/// read the other way, and where the competing site is.
+/// Why an [`AmbiguousCalleeResolution`](SemanticDiagnostic::AmbiguousCalleeResolution)
+/// could have read the other way, and where the competing site is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmbiguityReason {
     /// The callee is bound by a lazy-crossed ancestor with undetermined
@@ -1196,10 +1240,10 @@ pub enum AmbiguityReason {
     /// scope shape is condition-dependent. `binding_range` points at the
     /// conditional binding.
     ConditionalShadow { binding_range: TextRange },
-    /// The callee would have been effectful, but the `library()`/`require()`
-    /// that annotates it was attached on only some paths and dropped at a
-    /// branch or loop join, so we read the call as plain. `attach_range` points
-    /// at that conditional attach.
+    /// The callee would have been effectful or statically evaluated, but the
+    /// `library()`/`require()` that annotates it was attached on only some
+    /// paths and dropped at a branch or loop join, so we read the call as
+    /// plain. `attach_range` points at that conditional attach.
     ConditionalAttach {
         package: String,
         attach_range: TextRange,

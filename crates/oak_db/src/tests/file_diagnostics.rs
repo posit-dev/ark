@@ -147,6 +147,23 @@ local({
 }
 
 #[test]
+fn test_diagnostic_conditional_shadow_from_parameter_default() {
+    // The body's `local()` is ambiguous because the default binds `local`
+    // only when `cond` is true.
+    let db = TestDb::new();
+    let source = "\
+f <- function(x = if (cond) local <- identity) {
+    local({
+        y <- 1
+    })
+}
+";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
 fn test_diagnostic_conditional_shadow_package_call() {
     // A conditional reassignment of `test_that` earlier in the same eager
     // scope makes the later `test_that(...)` call ambiguous, the same shape
@@ -190,12 +207,12 @@ with(d, {
 #[test]
 fn test_diagnostic_gap_lazy_sibling_attach() {
     // Known gap, silent. `g`'s `library(shiny)` never runs, since nothing
-    // calls `g`. Even if it did, `record_conditional_attach_ambiguity()`'s
+    // calls `g`. Even if it did, `conditional_attach_uncertainty()`'s
     // call-site probe only sees attaches reachable from its own scan, so it
     // can't tell that `f`'s `reactive()` might one day run after `g`.
     // Catching this needs a whole-file post-pass over lazy contexts, not a
     // call-site probe (see the doc comment on
-    // `record_conditional_attach_ambiguity()` in
+    // `conditional_attach_uncertainty()` in
     // `crates/oak_semantic/src/builder/effects.rs`).
     let mut db = TestDb::new();
     install_packages(&mut db, &["shiny"]);
@@ -272,6 +289,18 @@ fn test_diagnostic_lazy_shadow_reassignment() {
     let source = "\
 f <- function() local({ x <- 1 })
 local <- identity
+";
+    let file = new_file(&db, "a.R", source);
+
+    insta::assert_snapshot!(render("a.R", source, file.diagnostics(&db)));
+}
+
+#[test]
+fn test_diagnostic_lazy_shadow_value_in_effect_argument() {
+    let db = TestDb::new();
+    let source = "\
+f <- function() source(c(\"helpers.R\"))
+c <- identity
 ";
     let file = new_file(&db, "a.R", source);
 
@@ -694,6 +723,148 @@ fn test_diagnostic_inherited_shadow_for_a_loader_only_sibling_attach() {
 
     insta::assert_snapshot!(render(
         "w/R/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_nested_value_callee() {
+    // Only the nested `c()` call is ambiguous, since `source()` resolves the
+    // same way in both contexts. Standalone analysis infers "more.R" through
+    // base `c()`, but cannot infer a path through `main.R`'s binding of `c`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "source(c(\"more.R\"))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_an_effect_callee_also_consulted_for_its_value() {
+    // Evaluating the `assign()` name makes `c()` consult `source` for a value
+    // handler, which neither context has, so the value usage agrees. The
+    // effect usage of the same call differs, and must still be reported.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "source <- function(...) NULL\nbase::source(\"helpers.R\")\n",
+    );
+    let helpers_source = "assign(c(source(\"more.R\")), 1)\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_value_callee_of_a_definition() {
+    // `assign()` produces a definition, not a semantic call, but the bound name
+    // still came from `c()`.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"y\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "assign(c(\"x\"), 1)\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_inherited_shadow_for_a_value_callee_that_failed_to_evaluate() {
+    // Report the differing value handlers even though neither context yields
+    // a static path. Standalone analysis uses base `c()` but cannot evaluate
+    // `path`, while `main.R`'s binding of `c` has no value handler.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source = "source(c(path))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    root.set_scripts(&mut db).to(vec![main, helpers]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_no_inherited_shadow_for_a_function_local_value_callee() {
+    // The `c` that `source()` consults is the function's own binding in every
+    // context, so `main.R`'s `c` can't change it.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "w");
+    let main = new_file(
+        &db,
+        "w/main.R",
+        "c <- function(...) \"other.R\"\nsource(\"helpers.R\")\n",
+    );
+    let helpers_source =
+        "f <- function() {\n  c <- function(...) \"more.R\"\n  source(c(\"more.R\"))\n}\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
+        helpers_source,
+        helpers.diagnostics(&db)
+    ));
+}
+
+#[test]
+fn test_diagnostic_no_inherited_shadow_for_a_value_callee_in_ordinary_sourcing() {
+    // Both contexts resolve `c` to base, so the inferred path is the same.
+    let mut db = TestDb::new();
+    install_package_binding(&mut db, "base", &["source", "c"]);
+    let root = workspace_root(&db, "w");
+    let main = new_file(&db, "w/main.R", "source(\"helpers.R\")\n");
+    let helpers_source = "source(c(\"more.R\"))\n";
+    let helpers = new_file(&db, "w/helpers.R", helpers_source);
+    let more = new_file(&db, "w/more.R", "x <- 1\n");
+    root.set_scripts(&mut db).to(vec![main, helpers, more]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    insta::assert_snapshot!(render(
+        "w/helpers.R",
         helpers_source,
         helpers.diagnostics(&db)
     ));

@@ -1,0 +1,10 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/helpers.R\", helpers_source, helpers.diagnostics(&db))"
+---
+info[inherited-shadow]: This `source` call has an ambiguous effect.
+                        It resolves through package `base` when the file is sourced on its own, and to a binding in `main.R` when sourced by `main.R`.
+ --> w/helpers.R:1:10
+  |
+1 | assign(c(source("more.R")), 1)
+  |          ^^^^^^^^^^^^^^^^

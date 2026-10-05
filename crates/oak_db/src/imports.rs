@@ -6,7 +6,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::effects;
 use oak_semantic::effects::DirWalk;
-use oak_semantic::EffectsHandlers;
+use oak_semantic::FunctionHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use rustc_hash::FxHashMap;
@@ -125,15 +125,15 @@ pub(crate) fn source_dir_scripts(
 /// build.
 #[derive(Default)]
 struct EffectsCache {
-    entries: FxHashMap<Vec<String>, FxHashMap<String, Option<EffectsHandlers>>>,
+    entries: FxHashMap<Vec<String>, FxHashMap<String, Option<FunctionHandlers>>>,
 }
 
 impl EffectsCache {
-    fn get(&self, name: &str, attached: &[String]) -> Option<Option<EffectsHandlers>> {
+    fn get(&self, name: &str, attached: &[String]) -> Option<Option<FunctionHandlers>> {
         self.entries.get(attached)?.get(name).copied()
     }
 
-    fn insert(&mut self, name: &str, attached: &[String], effects: Option<EffectsHandlers>) {
+    fn insert(&mut self, name: &str, attached: &[String], effects: Option<FunctionHandlers>) {
         self.entries
             .entry(attached.to_vec())
             .or_default()
@@ -171,7 +171,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect()
     }
 
-    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
         if let Some(effects) = self.cache.get(name, attached) {
             return effects;
         }
@@ -189,7 +189,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
 enum PackageBinding {
     /// Binds `name` to a registry effect. The reference preserves its canonical
     /// identity for comparison.
-    Effect(&'static EffectsHandlers),
+    Effect(&'static FunctionHandlers),
     /// Binds `name` (exports it) but with no known effect, e.g. a plain
     /// exported function. It still shadows any same-named effect deeper on the
     /// search path, so the walk stops here with no effect.
@@ -219,7 +219,11 @@ impl<'db> SalsaImportsResolver<'db> {
     /// TODO(diagnostics): Detect it in the post-index diagnostics query, where
     /// reading a successor's `exports` doesn't cycle. Unlike the ambiguities the
     /// builder records, this one can't be seen from inside the file.
-    fn resolve_effects_uncached(&self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects_uncached(
+        &self,
+        name: &str,
+        attached: &[String],
+    ) -> Option<FunctionHandlers> {
         let layers = self.db.cross_file_layers(self.file, CollationView::Eager);
         let source_db = self.db.as_source_db();
 
@@ -257,7 +261,7 @@ pub(crate) fn resolve_effect(
     db: &dyn Db,
     layers: &[ImportLayer],
     name: &str,
-) -> Option<&'static EffectsHandlers> {
+) -> Option<&'static FunctionHandlers> {
     for layer in layers {
         if let ControlFlow::Break(effect) = layer_effect(ResolverDb::new(db), layer, name) {
             return effect;
@@ -274,7 +278,7 @@ fn layer_effect(
     db: ResolverDb<'_>,
     layer: &ImportLayer,
     name: &str,
-) -> ControlFlow<Option<&'static EffectsHandlers>> {
+) -> ControlFlow<Option<&'static FunctionHandlers>> {
     let source_db = db.as_source_db();
     match layer {
         // A definition shadows any deeper effect. Own-file definitions never

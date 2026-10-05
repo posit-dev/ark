@@ -2,7 +2,7 @@ use url::Url;
 
 use crate::effects;
 use crate::effects::DirWalk;
-use crate::effects::EffectsHandlers;
+use crate::effects::FunctionHandlers;
 
 /// The result of resolving a `source()` call. Returned by
 /// [`ImportsResolver::resolve_source`].
@@ -38,9 +38,11 @@ pub struct SourceResolution {
 ///   query, "enumerate every name this `source("path")` brings in," used
 ///   to inject `DefinitionKind::Import` entries at each source() offset.
 /// - [`resolve_effects`](ImportsResolver::resolve_effects) resolves a bare
-///   callee against imports, e.g. the search path, and returns known effects.
+///   callee against imports, e.g. the search path, and returns its known
+///   handlers (effects and static evaluation).
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
-///   resolves the effects of a `pkg::fn` (or `:::) callee against a named package.
+///   resolves the handlers of a `pkg::fn` or `pkg:::fn` callee against a named
+///   package.
 /// - [`package_exists`](ImportsResolver::package_exists) tells whether a
 ///   `library()`/`require()` target resolves to an installed package.
 pub trait ImportsResolver {
@@ -61,18 +63,18 @@ pub trait ImportsResolver {
         Vec::new()
     }
 
-    /// Resolve a bare callee `name` to its effects. `attached` is the packages
-    /// attached at this point, in flow order. The builder passes it in because
-    /// the resolver can't query our own semantic index without creating a
-    /// cycle.
-    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    /// Resolve a bare callee `name` to its handlers. `attached` lists packages
+    /// in attach order, not lookup priority order. The builder supplies it
+    /// because querying the file's semantic index while building that same
+    /// index would create a cycle.
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
         let _ = (name, attached);
         None
     }
 
     /// Resolve a namespace-qualified callee `pkg::fn` (or equivalently with
-    /// `:::`) to its effects.
-    fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<EffectsHandlers> {
+    /// `:::`) to its handlers.
+    fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<FunctionHandlers> {
         effects::lookup(package, name).copied()
     }
 

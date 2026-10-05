@@ -9,8 +9,6 @@ pub(super) static ENTRIES: &[Entry] = &[
     //
     // Directory paths recurse because `file_list_files()` calls
     // `list.files(recursive = TRUE)`.
-    //
-    // The scanner reads one literal even though `files` is a character vector.
     source!(
         "tar_source",
         ["files"],
