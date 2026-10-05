@@ -363,7 +363,14 @@ impl RObjectExplorer {
             let mut child_path = path.to_vec();
             child_path.push(node.access_key.clone());
 
-            let match_kind = search.match_kind(&node);
+            // A truncated display value is matched on the full value instead.
+            let is_leaf = !node.has_children && !node.is_cycle;
+            let full_value = if is_leaf && node.is_truncated {
+                self.format_text(&child_path).ok()
+            } else {
+                None
+            };
+            let match_kind = search.match_kind(&node, full_value.as_deref());
             let matched = match_kind.is_some();
             if let Some(match_kind) = match_kind {
                 for (ancestor_path, ancestor_node, emitted) in search.pending.iter_mut() {
@@ -524,10 +531,16 @@ struct Search {
 impl Search {
     /// How a node matches the search, if it does. Values match only on
     /// leaves, whose display value is the value rather than a summary.
-    fn match_kind(&self, node: &ObjectNode) -> Option<SearchRowMatchKind> {
+    /// `full_value` replaces the display value when it is given.
+    fn match_kind(
+        &self,
+        node: &ObjectNode,
+        full_value: Option<&str>,
+    ) -> Option<SearchRowMatchKind> {
         let name_match = node.display_name.to_lowercase().contains(&self.needle);
         let is_leaf = !node.has_children && !node.is_cycle;
-        let value_match = is_leaf && node.display_value.to_lowercase().contains(&self.needle);
+        let value = full_value.unwrap_or(&node.display_value);
+        let value_match = is_leaf && value.to_lowercase().contains(&self.needle);
         match (name_match, value_match) {
             (true, true) => Some(SearchRowMatchKind::NameAndValue),
             (true, false) => Some(SearchRowMatchKind::Name),
@@ -1028,6 +1041,19 @@ mod tests {
 
             assert_eq!(search(3, 1000).rows.len(), 3);
             assert!(search(10, 1).truncated);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_search_past_truncated_string() {
+        r_task(|| {
+            let explorer = explorer(r#"list(text = paste0(strrep("x", 2000), "needle"))"#);
+            let result = explorer.search(SearchParams {
+                query: String::from("needle"),
+                max_depth: 10,
+                max_results: 1000,
+            });
+            assert_eq!(result.total_matches, 1);
         })
     }
 
