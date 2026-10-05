@@ -41,7 +41,10 @@ pub fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
 }
 
 pub fn cell_url(notebook: &str, handle: usize) -> Url {
-    Url::parse(&format!("vscode-notebook-cell:/project/R/{notebook}#W{handle}s")).unwrap()
+    Url::parse(&format!(
+        "vscode-notebook-cell:/project/R/{notebook}#W{handle}s"
+    ))
+    .unwrap()
 }
 
 pub fn open_notebook(db: &mut OakDatabase, notebook: &str, sources: &[&str]) -> Vec<File> {
