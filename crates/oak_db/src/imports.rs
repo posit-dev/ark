@@ -207,7 +207,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             {
                 None
             },
-            Some(LayerBinding::Package { package, .. }) => Some(package),
+            Some(LayerBinding::Package { package, .. }) => Some(package.to_string()),
             None => self.base_binding_package(name),
         }
     }
@@ -325,7 +325,7 @@ pub(crate) fn resolve_effect(
 /// builtins remain available when no layer binds `name`, even when base isn't
 /// scanned into a root, because base is present at the bottom of R's search path.
 fn binding_handlers(
-    binding: Option<LayerBinding>,
+    binding: Option<LayerBinding<'_>>,
     name: &str,
 ) -> Option<&'static FunctionHandlers> {
     match binding {
@@ -335,17 +335,21 @@ fn binding_handlers(
     }
 }
 
-enum LayerBinding {
+enum LayerBinding<'db> {
     File,
     /// For `importFrom`, `package` identifies the source package rather than
     /// the importer. `handlers` preserves registry identity for comparison.
     Package {
-        package: String,
+        package: &'db str,
         handlers: Option<&'static FunctionHandlers>,
     },
 }
 
-fn layer_binding(db: ResolverDb<'_>, layer: &ImportLayer, name: &str) -> Option<LayerBinding> {
+fn layer_binding<'db>(
+    db: ResolverDb<'db>,
+    layer: &ImportLayer,
+    name: &str,
+) -> Option<LayerBinding<'db>> {
     let source_db = db.as_source_db();
     match layer {
         // The builder handles own-file definitions before calling the resolver,
@@ -368,7 +372,7 @@ fn layer_binding(db: ResolverDb<'_>, layer: &ImportLayer, name: &str) -> Option<
                 return None;
             }
             Some(LayerBinding::Package {
-                package: package.name(source_db).to_string(),
+                package: package.name(source_db),
                 handlers,
             })
         },
@@ -380,7 +384,7 @@ fn layer_binding(db: ResolverDb<'_>, layer: &ImportLayer, name: &str) -> Option<
                 .package_by_name(source)
                 .and_then(|package| package_handlers(source_db, package, name));
             Some(LayerBinding::Package {
-                package: source.to_string(),
+                package: source,
                 handlers,
             })
         },
