@@ -639,7 +639,7 @@ fn test_notebook_references_span_cells() {
 
     let refs = find_references(&db, cells[0], offset(0), true);
 
-    // Cell URLs sort by handle, so the cells come in document order.
+    // Results sort by URL, which here matches document order.
     assert_eq!(pairs(&refs), vec![
         (cells[0], range(0, 1)),
         (cells[1], range(0, 1)),
@@ -658,6 +658,21 @@ fn test_notebook_references_exclude_use_before_definition() {
     assert_eq!(pairs(&refs), vec![
         (cells[1], range(0, 1)),
         (cells[2], range(0, 1)),
+    ]);
+}
+
+#[test]
+fn test_notebook_references_include_function_body_in_earlier_cell() {
+    // A function body runs after the cells have run, so its use in cell 0
+    // reaches the definition in cell 1.
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["f <- function() x\n", "x <- 1\n"]);
+
+    let refs = find_references(&db, cells[1], offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (cells[1], range(0, 1)),
+        (cells[0], range(16, 17)),
     ]);
 }
 

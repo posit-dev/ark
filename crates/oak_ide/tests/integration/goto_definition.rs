@@ -11,10 +11,10 @@
 //! `file_resolve()` / `package_resolve()` tests, and the use-def logic by `oak_semantic`,
 //! we don't re-test it here.
 //!
-//! The exception is visibility across notebook cells and Quarto chunks. It is
-//! user-visible behavior that the Positron e2e tests rely on, so the main rules
-//! and their negative cases are pinned here too, with notebooks opened through
-//! `DbScan` the way the LSP opens them.
+//! The exception is visibility across notebook cells. It is user-visible
+//! behavior that the Positron e2e tests rely on, so the main rules and their
+//! negative cases are pinned here too, with notebooks opened through `DbScan`
+//! the way the LSP opens them.
 
 use aether_path::FilePath;
 use biome_rowan::TextRange;
