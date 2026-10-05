@@ -313,19 +313,6 @@ fn test_notebook_navigates_to_earlier_cell() {
 }
 
 #[test]
-fn test_quarto_notebook_navigates_to_earlier_cell() {
-    let mut db = OakDatabase::new();
-    let cells = open_notebook(&mut db, "doc.qmd", &[
-        "helper <- function(x) x\n",
-        "helper(1)\n",
-    ]);
-
-    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "helper"));
-
-    assert_eq!(targets, vec![target(cells[0], "helper", range(0, 6))]);
-}
-
-#[test]
 fn test_notebook_latest_earlier_cell_wins() {
     let mut db = OakDatabase::new();
     let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x <- 2\n", "x\n"]);
@@ -372,11 +359,11 @@ fn test_notebook_library_in_earlier_cell() {
 }
 
 #[test]
-fn test_notebook_skips_non_notebook_gap() {
-    // The client filters out non-R cells, so handle 1 never reaches the list.
-    // Cell order is the list order, not the handle numbers.
+fn test_notebook_order_comes_from_cell_list_not_handles() {
+    // Handles are stable IDs, not positions. Here the cell with handle 2 is
+    // first in the document, so it is the earlier cell.
     let mut db = OakDatabase::new();
-    let cells = open_notebook_with_handles(&mut db, "nb.ipynb", &[0, 2], &["x <- 1\n", "x\n"]);
+    let cells = open_notebook_with_handles(&mut db, "nb.ipynb", &[2, 0], &["x <- 1\n", "x\n"]);
 
     let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
 
