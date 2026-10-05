@@ -5,6 +5,7 @@
 //
 //
 
+use std::ops::Range;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -603,9 +604,24 @@ fn has_viewer(value: SEXP) -> bool {
         },
         // The viewer method was found, use its result
         Ok(Some(val)) => val,
-        // No method found, fall back to default logic for data frames/matrices
-        Ok(None) => r_is_data_frame(value) || r_is_matrix(value),
+        // No method found: data frames and matrices open in the Data Explorer,
+        // and other containers with children open in the Object Explorer.
+        Ok(None) => {
+            r_is_data_frame(value) ||
+                r_is_matrix(value) ||
+                (is_explorable(value) && has_children(value))
+        },
     }
+}
+
+/// Whether the Object Explorer can show an object: a list (but not a data
+/// frame or matrix), an environment, an S4 object, a pairlist, or an
+/// expression vector.
+pub(crate) fn is_explorable(value: SEXP) -> bool {
+    if r_is_null(value) || r_is_data_frame(value) || r_is_matrix(value) {
+        return false;
+    }
+    r_is_s4(value) || matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
 }
 
 /// Try to view an object using a custom view method.
@@ -624,7 +640,7 @@ pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
     }
 }
 
-enum EnvironmentVariableNode {
+pub(crate) enum EnvironmentVariableNode {
     Concrete { object: RObject },
     R6Node { object: RObject, name: String },
     Matrixcolumn { object: RObject, index: isize },
@@ -931,8 +947,18 @@ impl PositronVariable {
         }
     }
 
-    pub fn inspect(env: RObject, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
-        let node = Self::resolve_object_from_path(env, path)?;
+    pub fn inspect(env: RObject, path: &[String]) -> anyhow::Result<Vec<Variable>> {
+        Ok(Self::inspect_children(env, path, 0..MAX_DISPLAY_VALUE_ENTRIES)?.0)
+    }
+
+    /// Inspects the children of the object at `path` below `object`, returning
+    /// those in `range` along with the total number of children.
+    pub(crate) fn inspect_children(
+        object: RObject,
+        path: &[String],
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<Variable>, usize)> {
+        let node = Self::resolve_object_from_path(object, path)?;
 
         match node {
             EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
@@ -941,10 +967,10 @@ impl PositronVariable {
                     let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
                     let private = RObject::new(enclos.find("private")?);
 
-                    Ok(Self::inspect_environment(private)?)
+                    Ok(Self::inspect_environment(private, range)?)
                 },
 
-                "<methods>" => Ok(Self::inspect_r6_methods(object)?),
+                "<methods>" => Ok(Self::inspect_r6_methods(object, range)?),
 
                 _ => Err(anyhow!("Unexpected path {:?}", path)),
             },
@@ -952,7 +978,7 @@ impl PositronVariable {
             EnvironmentVariableNode::Concrete { object } => {
                 // First try to dispatch GetChildren method and construct
                 // variables from it.
-                match Self::try_inspect_custom_method(object.sexp) {
+                match Self::try_inspect_custom_method(object.sexp, range.clone()) {
                     Err(err) => log::error!(
                         "Failed to inspect with {}: {err}",
                         ArkGenerics::VariableGetChildren
@@ -962,34 +988,34 @@ impl PositronVariable {
                 }
 
                 if object.is_s4() {
-                    Ok(Self::inspect_s4(object.sexp)?)
+                    Ok(Self::inspect_s4(object.sexp, range)?)
                 } else {
                     match r_typeof(object.sexp) {
-                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp)?),
-                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp)?),
+                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp, range)?),
+                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp, range)?),
                         ENVSXP => {
                             if r_inherits(object.sexp, "R6") {
-                                Ok(Self::inspect_r6(object)?)
+                                Ok(Self::inspect_r6(object, range)?)
                             } else {
-                                Ok(Self::inspect_environment(object)?)
+                                Ok(Self::inspect_environment(object, range)?)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
                             if r_is_matrix(object.sexp) {
-                                Self::inspect_matrix(object.sexp)
+                                Self::inspect_matrix(object.sexp, range)
                             } else {
-                                Ok(Self::inspect_vector(object.sexp)?)
+                                Self::inspect_vector(object.sexp, range)
                             }
                         },
-                        _ => Ok(vec![]),
+                        _ => Ok((vec![], 0)),
                     }
                 }
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Ok(Self::inspect_matrix_column(object.sexp, index)?)
+                Self::inspect_matrix_column(object.sexp, index, range)
             },
-            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
+            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok((vec![], 0)),
         }
     }
 
@@ -1175,7 +1201,7 @@ impl PositronVariable {
         }
     }
 
-    fn get_child_node_at(
+    pub(crate) fn get_child_node_at(
         node: EnvironmentVariableNode,
         path_elt: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
@@ -1225,7 +1251,7 @@ impl PositronVariable {
         }
     }
 
-    fn resolve_object_from_path(
+    pub(crate) fn resolve_object_from_path(
         object: RObject,
         path: &[String],
     ) -> harp::Result<EnvironmentVariableNode> {
@@ -1238,14 +1264,18 @@ impl PositronVariable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_list(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let list = List::new(value)?;
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         let variables: Vec<Variable> = list
             .iter()
             .enumerate()
-            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .skip(range.start)
+            .take(range.len())
             .map(|(i, value)| {
                 let (_, display_name) =
                     truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
@@ -1253,10 +1283,10 @@ impl PositronVariable {
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, list.len()))
     }
 
-    fn inspect_matrix(matrix: SEXP) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_matrix(matrix: SEXP, range: Range<usize>) -> anyhow::Result<(Vec<Variable>, usize)> {
         let matrix = RObject::new(matrix);
         let (_n_row, n_col) = harp::Matrix::dim(matrix.sexp)?;
 
@@ -1276,9 +1306,10 @@ impl PositronVariable {
         };
 
         let formatted = FormattedVector::new(matrix)?;
-        let mut variables = Vec::with_capacity(n_col as usize);
+        let n_col = n_col as usize;
+        let mut variables = Vec::with_capacity(range.len().min(n_col));
 
-        for col in (0..n_col).take(MAX_DISPLAY_VALUE_ENTRIES) {
+        for col in range.start..range.end.min(n_col) {
             // The display value of columns concatenates the column vector values into a
             // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.
             let mut is_truncated = false;
@@ -1314,25 +1345,31 @@ impl PositronVariable {
             ));
         }
 
-        Ok(variables)
+        Ok((variables, n_col))
     }
 
-    fn inspect_matrix_column(matrix: SEXP, index: isize) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_matrix_column(
+        matrix: SEXP,
+        index: isize,
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<Variable>, usize)> {
         let column = harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix)?;
+        let start = range.start;
+        let (variables, total) = Self::inspect_vector(column.sexp, range)?;
 
-        let variables: Vec<Variable> = Self::inspect_vector(column.sexp)?
+        let variables: Vec<Variable> = variables
             .into_iter()
             .enumerate()
             .map(|(row, mut var)| {
-                var.display_name = format!("[{}, {}]", row + 1, index + 1);
+                var.display_name = format!("[{}, {}]", start + row + 1, index + 1);
                 var
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, total))
     }
 
-    fn inspect_vector(vector: SEXP) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_vector(vector: SEXP, range: Range<usize>) -> anyhow::Result<(Vec<Variable>, usize)> {
         let vector = RObject::new(vector);
 
         let r_type = r_typeof(vector.sexp);
@@ -1367,8 +1404,9 @@ impl PositronVariable {
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
         let variables: Vec<Variable> = formatted
-            .iter_take(MAX_DISPLAY_VALUE_ENTRIES)?
+            .iter_take(range.end)?
             .enumerate()
+            .skip(range.start)
             .map(|(i, value)| {
                 let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
                 // Names are arbitrarily set by users, so we add a safeguard to truncate them
@@ -1386,7 +1424,7 @@ impl PositronVariable {
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, r_length(vector.sexp) as usize))
     }
 
     /// Creates an update timestamp for a variable
@@ -1397,7 +1435,10 @@ impl PositronVariable {
             .as_millis() as i64
     }
 
-    fn inspect_pairlist(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_pairlist(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
 
         let mut pairlist = value;
@@ -1406,24 +1447,29 @@ impl PositronVariable {
             while pairlist != R_NilValue {
                 r_assert_type(pairlist, &[LISTSXP])?;
 
-                let tag = TAG(pairlist);
-                let display_name = if r_is_null(tag) {
-                    format!("[[{}]]", i + 1)
-                } else {
-                    String::from(RSymbol::new_unchecked(tag))
-                };
+                if range.contains(&i) {
+                    let tag = TAG(pairlist);
+                    let display_name = if r_is_null(tag) {
+                        format!("[[{}]]", i + 1)
+                    } else {
+                        String::from(RSymbol::new_unchecked(tag))
+                    };
 
-                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
+                    out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
+                }
 
                 pairlist = CDR(pairlist);
                 i += 1;
             }
-        }
 
-        Ok(out)
+            Ok((out, i))
+        }
     }
 
-    fn inspect_r6(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_r6(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
@@ -1496,44 +1542,55 @@ impl PositronVariable {
             });
         }
 
-        Ok(childs)
+        Ok(take_range(childs, range))
     }
 
-    fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> =
+    fn inspect_environment(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
+        let mut bindings: Vec<Binding> =
             Environment::new_filtered(value, EnvironmentFilter::ExcludeHidden)
                 .iter()
                 .filter_map(|b| b.ok())
-                .map(|b| Self::new(&b).var())
                 .collect();
 
-        out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-        Ok(out
-            .get(0..std::cmp::min(out.len(), MAX_DISPLAY_VALUE_ENTRIES))
-            .ok_or(Error::Anyhow(anyhow!("Unexpected environment size?")))?
-            .to_vec())
+        bindings.sort_by_cached_key(|b| b.name.to_string());
+        let (bindings, total) = take_range(bindings, range);
+        Ok((bindings.iter().map(|b| Self::new(b).var()).collect(), total))
     }
 
-    fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_s4(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
 
         unsafe {
             let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
 
             let slot_names = CharacterVector::new_unchecked(slot_names.sexp);
-            let mut iter = slot_names.iter();
-            while let Some(Some(display_name)) = iter.next() {
+            let total = slot_names.len();
+            for display_name in slot_names
+                .iter()
+                .skip(range.start)
+                .take(range.len())
+                .flatten()
+            {
                 let slot_symbol = r_symbol!(display_name);
                 let slot: RObject = harp::try_catch(|| R_do_slot(value, slot_symbol).into())?;
                 let access_key = display_name.clone();
                 out.push(PositronVariable::from(access_key, display_name, slot.sexp).var());
             }
-        }
 
-        Ok(out)
+            Ok((out, total))
+        }
     }
 
-    fn inspect_r6_methods(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_r6_methods(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = Environment::new(value)
             .iter()
             .filter_map(|b| b.ok())
@@ -1547,10 +1604,13 @@ impl PositronVariable {
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
-        Ok(out)
+        Ok(take_range(out, range))
     }
 
-    fn try_inspect_custom_method(value: SEXP) -> anyhow::Result<Option<Vec<Variable>>> {
+    fn try_inspect_custom_method(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> anyhow::Result<Option<(Vec<Variable>, usize)>> {
         let result: Option<RObject> = ArkGenerics::VariableGetChildren
             .try_dispatch(value, vec![])
             .map_err(harp::Error::Anyhow)?;
@@ -1582,6 +1642,8 @@ impl PositronVariable {
                     .iter()
                     .zip(names.iter())
                     .enumerate()
+                    .skip(range.start)
+                    .take(range.len())
                     .map(|(i, (x, name))| {
                         // The acess key is formatted as `custom-{index}-{length(name)}-{name}`
                         // where:
@@ -1605,13 +1667,13 @@ impl PositronVariable {
                     })
                     .collect();
 
-                Ok(Some(variables))
+                Ok(Some((variables, n)))
             },
         }
     }
 }
 
-fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
+pub(crate) fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
     let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
 
     if parsed_access_key.len() != 4 {
@@ -1672,7 +1734,19 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
     }
 }
 
-fn parse_index(x: &str) -> harp::Result<isize> {
+/// Takes the elements of `items` in `range`, returning them with the total
+/// number of items.
+fn take_range<T>(items: Vec<T>, range: Range<usize>) -> (Vec<T>, usize) {
+    let total = items.len();
+    let items = items
+        .into_iter()
+        .skip(range.start)
+        .take(range.len())
+        .collect();
+    (items, total)
+}
+
+pub(crate) fn parse_index(x: &str) -> harp::Result<isize> {
     x.parse::<isize>().map_err(|err| {
         harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
     })

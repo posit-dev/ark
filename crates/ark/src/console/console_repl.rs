@@ -18,6 +18,8 @@ use stdext::DebugRefCell;
 use super::*;
 use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
+use crate::object_explorer::r_object_explorer::is_inline_explorable;
+use crate::object_explorer::r_object_explorer::POSITRON_OBJECT_EXPLORER_MIME;
 use crate::panic;
 use crate::panic::Recovery;
 use crate::r_task::QueuedRTask;
@@ -1334,26 +1336,35 @@ impl Console {
             return data;
         }
 
-        // If this is a data frame, optionally open an inline data explorer
-        // (only in Positron notebook mode)
-        if r_is_data_frame(value.sexp) {
-            let value = value.sexp;
+        // The inline data and object explorers are Positron-specific features
+        // that require comm support. Other Jupyter frontends don't understand
+        // their MIME types, so we gate on the POSITRON env var to avoid
+        // sending them to vanilla Jupyter notebooks.
+        if self.session_mode != SessionMode::Notebook ||
+            std::env::var("POSITRON").as_deref() != Ok("1")
+        {
+            return data;
+        }
 
-            // The inline data explorer is a Positron-specific feature that
-            // requires comm support. Other Jupyter frontends don't understand
-            // this MIME type, so we gate on the POSITRON env var to avoid
-            // sending it to vanilla Jupyter notebooks.
-            if self.session_mode == SessionMode::Notebook &&
-                std::env::var("POSITRON").as_deref() == Ok("1")
-            {
-                match self.open_inline_data_explorer(value) {
-                    Ok(mime_data) => {
-                        data.insert(POSITRON_DATA_EXPLORER_MIME.to_string(), mime_data);
-                    },
-                    Err(err) => {
-                        log::error!("Failed to open inline data explorer: {err:?}");
-                    },
-                }
+        // Open an inline data explorer for a data frame, or an inline object
+        // explorer for nested data.
+        if r_is_data_frame(value.sexp) {
+            match self.open_inline_data_explorer(value.sexp) {
+                Ok(mime_data) => {
+                    data.insert(POSITRON_DATA_EXPLORER_MIME.to_string(), mime_data);
+                },
+                Err(err) => {
+                    log::error!("Failed to open inline data explorer: {err:?}");
+                },
+            }
+        } else if is_inline_explorable(value.sexp) {
+            match self.open_inline_object_explorer(value) {
+                Ok(mime_data) => {
+                    data.insert(POSITRON_OBJECT_EXPLORER_MIME.to_string(), mime_data);
+                },
+                Err(err) => {
+                    log::error!("Failed to open inline object explorer: {err:?}");
+                },
             }
         }
 

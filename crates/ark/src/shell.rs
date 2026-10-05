@@ -47,6 +47,7 @@ use crate::console::SessionMode;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help::r_help::HELP_COMM_NAME;
+use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
 use crate::plots::graphics_device::PLOT_COMM_NAME;
 use crate::r_task;
 use crate::request::KernelRequest;
@@ -267,7 +268,11 @@ impl ShellHandler for Shell {
         originator: Originator,
     ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | HELP_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME |
+            HELP_COMM_NAME |
+            OBJECT_EXPLORER_COMM_NAME |
+            PLOT_COMM_NAME |
+            UI_COMM_NAME => {
                 let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -286,7 +291,11 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | HELP_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME |
+            HELP_COMM_NAME |
+            OBJECT_EXPLORER_COMM_NAME |
+            PLOT_COMM_NAME |
+            UI_COMM_NAME => {
                 let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
