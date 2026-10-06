@@ -648,6 +648,119 @@ fn test_rescan_refreshes_revision_of_known_file() {
 }
 
 #[test]
+fn test_watcher_event_keeps_collate_omitted_file_in_pkg_scripts() {
+    // The scan puts `b.R`, left out of `Collate:`, in `pkg.scripts`. A watcher
+    // event for it must not also list it in `pkg.files`, and deleting it must
+    // unlink it entirely.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("pkg");
+    write_package(&pkg_dir, "pkg", &[("a.R", "x <- 1\n"), ("b.R", "y <- 2\n")]);
+    fs::write(
+        pkg_dir.join("DESCRIPTION"),
+        "Package: pkg\nVersion: 0.0.0\nCollate: a.R\n",
+    )
+    .unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    let b_path = pkg_dir.join("R/b.R");
+    let b = db.file_by_path(&watched_path(&b_path)).unwrap();
+    assert_eq!(pkg.files(&db).len(), 1);
+    assert_eq!(pkg.scripts(&db).as_slice(), &[b]);
+
+    fs::write(&b_path, "y <- 3\n").unwrap();
+    set_file_mtime(&b_path, FileTime::from_unix_time(1_000_000_000, 0)).unwrap();
+    add_watched_file(&mut db, watched_path(&b_path));
+    assert_eq!(pkg.files(&db).len(), 1);
+    assert_eq!(pkg.scripts(&db).as_slice(), &[b]);
+    assert_eq!(b.source_text(&db).as_str(), "y <- 3\n");
+
+    fs::remove_file(&b_path).unwrap();
+    remove_watched_file(&mut db, watched_path(&b_path));
+    assert_eq!(pkg.files(&db).len(), 1);
+    assert!(pkg.scripts(&db).is_empty());
+    assert!(db.file_by_path(&watched_path(&b_path)).is_none());
+}
+
+#[test]
+fn test_watcher_add_lands_in_every_nested_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sub = tmp.path().join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(
+        &mut db,
+        &[tmp.path().to_path_buf(), sub.clone()],
+        &HashSet::new(),
+    );
+
+    let fs_path = sub.join("new.R");
+    fs::write(&fs_path, "x <- 1\n").unwrap();
+    add_watched_file(&mut db, watched_path(&fs_path));
+
+    let file = db.file_by_path(&watched_path(&fs_path)).unwrap();
+    for root in db.workspace_roots().roots(&db).clone() {
+        assert_eq!(root.scripts(&db).as_slice(), &[file]);
+    }
+}
+
+#[test]
+fn test_watcher_add_of_known_file_lists_it_in_missing_nested_root() {
+    // The inner root's scan saw `new.R` but the outer root's didn't. The
+    // `File` already exists, and the event must still list it in the outer root.
+    let tmp = tempfile::tempdir().unwrap();
+    let sub = tmp.path().join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(
+        &mut db,
+        &[tmp.path().to_path_buf(), sub.clone()],
+        &HashSet::new(),
+    );
+    let roots = db.workspace_roots().roots(&db).clone();
+
+    let fs_path = sub.join("new.R");
+    fs::write(&fs_path, "x <- 1\n").unwrap();
+    rescan_workspace_root(&mut db, roots[1]);
+    let file = db.file_by_path(&watched_path(&fs_path)).unwrap();
+    assert!(roots[0].scripts(&db).is_empty());
+
+    add_watched_file(&mut db, watched_path(&fs_path));
+
+    for root in &roots {
+        assert_eq!(root.scripts(&db).as_slice(), &[file]);
+    }
+}
+
+#[test]
+fn test_watcher_remove_unlinks_from_every_nested_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sub = tmp.path().join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let fs_path = sub.join("a.R");
+    fs::write(&fs_path, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(
+        &mut db,
+        &[tmp.path().to_path_buf(), sub.clone()],
+        &HashSet::new(),
+    );
+    let roots = db.workspace_roots().roots(&db).clone();
+    for root in &roots {
+        assert_eq!(root.scripts(&db).len(), 1);
+    }
+
+    fs::remove_file(&fs_path).unwrap();
+    remove_watched_file(&mut db, watched_path(&fs_path));
+
+    for root in &roots {
+        assert!(root.scripts(&db).is_empty());
+    }
+    assert!(db.file_by_path(&watched_path(&fs_path)).is_none());
+}
+
+#[test]
 fn test_watcher_parent_dir_replaced_by_file_unlinks_path() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("sub")).unwrap();

@@ -28,13 +28,17 @@ use crate::packages::file_revision;
 use crate::packages::is_r_file;
 use crate::packages::read_description_name;
 
-/// Sync a watched R file that exists on disk. Idempotent: if a `File`
-/// already exists at this URL, its contents are updated and its placement is
-/// left alone. If not, the URL is classified against the current workspace
-/// roots and the new file lands in the right container: `pkg.files` for
-/// `<pkg>/R/*.R`, `pkg.scripts` for other R files under a package
-/// (tests/, inst/, vignettes/, ...), `root.scripts` for R files outside
-/// every package. Mirrors the placement the bulk scanner would pick.
+/// Sync a watched R file with disk and all containing workspace roots.
+///
+/// New files use the scanner's placement rules within each root, except that
+/// `Collate` is not consulted. A new file directly under a package's `R/`
+/// directory enters `pkg.files` even if `Collate` omits it. A rescan applies
+/// the `Collate` restriction.
+///
+/// Existing files keep their entity, package placement, and editor override.
+/// Their disk revision is refreshed, and missing `root.scripts` memberships
+/// are added. Nested roots share file entities but can have different scan
+/// results, so an existing entity does not imply membership in every root.
 pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
     let Some(fs_path) = path.as_path() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
@@ -43,30 +47,48 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
 
     let revision = file_revision(fs_path.as_std_path());
 
+    // A file can belong to a package in an outer root and to `root.scripts`
+    // in an inner root, where the package directory lies outside the root.
+    let placements: Vec<Placement> = workspace_roots_containing(db, fs_path)
+        .into_iter()
+        .filter_map(|root| classify(db, root, fs_path))
+        .collect();
+
     if let Some(existing) = db.file_by_path(&path) {
-        // Bump the revision and leave any editor override in place: if the
-        // file is open in the editor, the override still wins in
-        // `source_text`, so the on-disk change is ignored until the buffer
-        // closes. Otherwise the bump forces the next `source_text` to re-read.
-        //
-        // Guard the write: watchers coalesce and duplicate events, so one save
-        // can re-stat to the same mtime we already stored. Setting the revision
-        // to that unchanged value would unnecessarily invalidate `source_text`.
+        // Duplicate watcher events can report the same mtime. Avoid invalidating
+        // `source_text()` when the disk revision has not changed.
         if existing.revision(db) != revision {
             existing.set_revision(db).to(revision);
+        }
+        // Preserve the scanner's package placement. `classify()` ignores
+        // `Collate`, so applying its package placement could also add a file
+        // omitted by `Collate` to `pkg.files` when it is already in `pkg.scripts`.
+        // Only `root.scripts` memberships need repair because nested roots share
+        // `Package` entities.
+        for placement in placements {
+            if let Placement::Script(_) = placement {
+                append_to_container(db, existing, placement);
+            }
         }
         return;
     }
 
-    let Some(placement) = classify(db, fs_path) else {
+    if placements.is_empty() {
         // The URL isn't an R file, falls outside every workspace, or lives
         // in a package subdir we don't track (e.g. nested under `R/`).
         return;
-    };
+    }
 
+    // `File` has a single package backpointer. Point it at the package whose
+    // container lists the file, if any, so `remove_watched_file()` finds it.
+    let package = placements
+        .iter()
+        .find_map(|placement| placement.package_backpointer());
     let entry = FileEntry { path, revision };
-    let file = upsert_root_file(db, placement.package_backpointer(), entry);
-    append_to_container(db, file, placement);
+    let file = upsert_root_file(db, package, entry);
+    for placement in placements {
+        append_to_container(db, file, placement);
+    }
 }
 
 /// Append `file` to whichever container `placement` points at, if it
@@ -90,11 +112,14 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
     }
 }
 
-/// Sync a watched path that no longer exists on disk. Unlinks the file from whichever container
-/// holds it so [`oak_db::Db::file_by_path`] stops returning it. The
-/// `File` entity itself stays in the salsa graph (salsa doesn't
-/// support deleting inputs), but with no container references nothing
-/// will reach it.
+/// Unlink a deleted file so [`oak_db::Db::file_by_path()`] no longer finds it.
+///
+/// Package removal relies on the file's package backpointer. Other packages
+/// are not searched. Root script memberships and orphan membership are removed
+/// independently because the same file can appear in multiple roots.
+///
+/// Salsa does not support deleting inputs, so the [`File`] entity remains in
+/// the graph even after its container references are removed.
 pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
     let Some(file) = db.file_by_path(&path) else {
         return;
@@ -102,16 +127,12 @@ pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath
 
     if let Some(pkg) = file.package(db) {
         remove_from_pkg_files(db, pkg, file);
-        return;
     }
-
     for &root in &db.workspace_roots().roots(db).clone() {
         if let Some(scripts) = with_cow_filter(root.scripts(db), file) {
             root.set_scripts(db).to(scripts);
-            return;
         }
     }
-
     remove_from_orphan(db, file);
 }
 
@@ -131,17 +152,16 @@ impl Placement {
     }
 }
 
-/// Classify a file path against the current workspace tree.
+/// Classify a file path against workspace root `root`, which contains it.
 ///
-/// Returns the placement, or `None` if the file falls outside every
-/// workspace or sits in a package subdir we don't track (e.g.
-/// `<pkg>/R/subdir/` nested below the flat namespace).
-fn classify<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Placement> {
+/// Returns the placement, or `None` if the file isn't an R file or sits
+/// in a package subdir we don't track (e.g. `<pkg>/R/subdir/` nested
+/// below the flat namespace).
+fn classify<DB: Db + DbInputs>(db: &DB, root: Root, path: &Utf8Path) -> Option<Placement> {
     if !is_r_file(path.as_std_path()) {
         return None;
     }
 
-    let root = workspace_root_containing(db, path)?;
     let root_path = root.path(db).as_path()?;
 
     // Find the nearest ancestor (within `root_path`) that contains a
@@ -171,13 +191,14 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Placement> {
     }
 }
 
-fn workspace_root_containing<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Root> {
+fn workspace_roots_containing<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Vec<Root> {
     db.workspace_roots()
         .roots(db)
         .iter()
-        .find(|root| match root.path(db).as_path() {
+        .filter(|root| match root.path(db).as_path() {
             Some(root_path) => path.starts_with(root_path),
             None => false,
         })
         .copied()
+        .collect()
 }
