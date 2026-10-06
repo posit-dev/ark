@@ -41,13 +41,25 @@ help <- function(topic, package = NULL) {
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
 #' @export
-.ps.help.showHelpTopic <- function(topic) {
+.ps.help.showHelpTopic <- function(topic, qualified_only = FALSE) {
     info <- split_topic(topic)
     topic <- info$topic
     package <- info$package
 
     # Try to find help on the topic.
-    results <- help(topic, package)
+    if (qualified_only) {
+        if (is.null(package)) {
+            return(FALSE)
+        }
+        # A qualified expression may not be an alias (or name an installed package).
+        # Leave it to the custom handler when literal help cannot be found.
+        results <- tryCatch(
+            suppressWarnings(help(topic, package)),
+            error = function(e) character()
+        )
+    } else {
+        results <- help(topic, package)
+    }
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -178,19 +190,20 @@ help <- function(topic, package = NULL) {
 
 # Resolve the package specifier, if there is one
 split_topic <- function(topic) {
-    # Try `:::` first, as `::` will match both
-    components <- strsplit(topic, ":::")[[1L]]
-    if (length(components) > 1L) {
-        package <- components[[1L]]
-        topic <- components[[2L]]
-        return(list(topic = topic, package = package))
-    }
-
-    components <- strsplit(topic, "::")[[1L]]
-    if (length(components) > 1L) {
-        package <- components[[1L]]
-        topic <- components[[2L]]
-        return(list(topic = topic, package = package))
+    separator <- regexpr("::", topic, fixed = TRUE)[[1L]]
+    if (separator > 1L) {
+        package <- substr(topic, 1L, separator - 1L)
+        alias <- substring(topic, separator + 2L)
+        # Preserve internal `pkg:::name` lookups, but keep literal `:` and `::`
+        # aliases intact in `pkg:::` and `pkg::::`.
+        if (
+            nchar(alias) > 1L &&
+                startsWith(alias, ":") &&
+                !startsWith(alias, "::")
+        ) {
+            alias <- substring(alias, 2L)
+        }
+        return(list(topic = alias, package = package))
     }
 
     list(topic = topic, package = NULL)

@@ -261,6 +261,14 @@ fn test_custom_help_handlers() {
 
     r_help.test_topic("obj$hello", "help-test-id-4");
     assert!(r_task(|| harp::parse_eval_global("called").unwrap().to::<bool>()).unwrap());
+    r_task(|| {
+        harp::parse_eval_global("called <- FALSE").unwrap();
+    });
+    r_help.test_topic(
+        "base::list(hello = obj$hello)$hello",
+        "qualified-expression",
+    );
+    assert!(r_task(|| harp::parse_eval_global("called").unwrap().to::<bool>()).unwrap());
 }
 
 /// End-to-end test that a help URL browsed from R reaches the frontend as a
@@ -477,5 +485,160 @@ local({
 })
 
 "#, ARK_ENVS.positron_ns).unwrap().to::<bool>().unwrap()
+    }));
+}
+
+#[test]
+fn test_help_punctuation_suggestions_open_exact_target() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly("options(ark.testing = FALSE)");
+    let comm_id = open_help_comm(&frontend);
+    // R versions differ in whether `$.data.frame` is documented. Add a fixture
+    // alias to a copied help database so its suggestion always round-trips.
+    frontend.execute_request_invisibly(
+        r#"
+        alias_library <- tempfile("ark-help-aliases-")
+        dir.create(alias_library)
+        alias_package <- file.path(alias_library, "arkhelpaliases")
+        dir.create(alias_package)
+        writeLines(c("Package: arkhelpaliases", "Version: 1.0"),
+            file.path(alias_package, "DESCRIPTION"))
+        stopifnot(all(file.copy(file.path(find.package("base"), c("Meta", "help")),
+            alias_package, recursive = TRUE)))
+        for (extension in c("rdb", "rdx")) {
+            stopifnot(file.rename(
+                file.path(alias_package, "help", paste0("base.", extension)),
+                file.path(alias_package, "help", paste0("arkhelpaliases.", extension))))
+        }
+        metadata <- file.path(alias_package, "Meta", "package.rds")
+        description <- readRDS(metadata)
+        description$DESCRIPTION["Package"] <- "arkhelpaliases"
+        saveRDS(description, metadata)
+        metadata <- file.path(alias_package, "Meta", "hsearch.rds")
+        db <- readRDS(metadata)
+        for (i in seq_along(db)) db[[i]][, "Package"] <- "arkhelpaliases"
+        db[[2L]][db[[2L]][, "Alias"] == "$", "Alias"] <- "$.data.frame"
+        saveRDS(db, metadata)
+        metadata <- file.path(alias_package, "help", "aliases.rds")
+        aliases <- readRDS(metadata)
+        aliases["$.data.frame"] <- "Extract"
+        saveRDS(aliases, metadata)
+        old_alias_paths <- .libPaths()
+        .libPaths(c(alias_library, old_alias_paths))
+    "#,
+    );
+
+    for (package, alias, target) in [
+        ("arkhelpaliases", "$.data.frame", "Extract"),
+        ("base", "$", "Extract"),
+        ("base", "$<-", "Extract"),
+        ("base", "@", "slotOp"),
+        ("base", "@<-", "slotOp"),
+        ("base", ":", "Colon"),
+        ("base", "::", "ns-dblcolon"),
+        ("base", ":::", "ns-dblcolon"),
+        ("methods", "$<-,envRefClass-method", "stdRefClass"),
+        ("methods", "$<-,localRefClass-method", "localRefClass"),
+    ] {
+        // Select the exact suggestion and round-trip it through the Help RPC.
+        frontend.send_shell(CommWireMsg {
+            comm_id: comm_id.clone(),
+            data: serde_json::json!({
+                "jsonrpc": "2.0", "id": "aliases", "method": "get_help_topics",
+                "params": { "query": alias, "limit": 50 }
+            }),
+        });
+        frontend.recv_iopub_busy();
+        let messages = frontend
+            .recv_iopub_interleaved(&[&[IopubExpectation::Idle], &[IopubExpectation::CommMsg]]);
+        let reply = messages
+            .into_iter()
+            .find_map(|message| match message {
+                Message::CommMsg(message) => Some(message.content.data),
+                _ => None,
+            })
+            .unwrap();
+        let suggestions: Vec<HelpTopicSuggestion> =
+            serde_json::from_value(reply["result"].clone()).unwrap();
+        let suggestion = suggestions
+            .iter()
+            .find(|suggestion| {
+                suggestion.label == alias && suggestion.detail.as_deref() == Some(package)
+            })
+            .unwrap();
+        assert_eq!(suggestion.topic, format!("{package}::{alias}"));
+        assert_help_topic_target(&frontend, &comm_id, &suggestion.topic, package, target);
+    }
+    for (topic, target) in [
+        (":", "Colon"),
+        ("::", "ns-dblcolon"),
+        (":::", "ns-dblcolon"),
+    ] {
+        assert_help_topic_target(&frontend, &comm_id, topic, "base", target);
+    }
+    frontend.execute_request_invisibly(
+        ".libPaths(old_alias_paths); unlink(alias_library, recursive = TRUE)",
+    );
+}
+
+fn assert_help_topic_target(
+    frontend: &DummyArkFrontend,
+    comm_id: &str,
+    topic: &str,
+    package: &str,
+    target: &str,
+) {
+    frontend.send_shell(CommWireMsg {
+        comm_id: String::from(comm_id),
+        data: serde_json::json!({
+            "jsonrpc": "2.0", "id": "open-alias", "method": "show_help_topic",
+            "params": { "topic": topic }
+        }),
+    });
+    frontend.recv_iopub_busy();
+    let messages = frontend.recv_iopub_interleaved(&[&[IopubExpectation::Idle], &[
+        IopubExpectation::CommMsg,
+        IopubExpectation::CommMsg,
+    ]]);
+    let comms: Vec<_> = messages
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::CommMsg(message) => Some(message.content),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(comms[0].data["method"], "show_help");
+    let url = comms[0].data["params"]["content"].as_str().unwrap();
+    assert!(url.ends_with(&format!("/library/{package}/html/{target}.html")));
+    assert_eq!(comms[1].data["result"], true);
+}
+
+#[test]
+fn test_help_qualified_topic_splitting() {
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    for (alias in c("$", "$<-", "$.data.frame", "@", "@<-", ":", "::", ":::")) {
+        stopifnot(identical(split_topic(paste0("base::", alias)),
+            list(topic = alias, package = "base")))
+    }
+    for (alias in c(":", "::", ":::")) {
+        stopifnot(identical(split_topic(alias), list(topic = alias, package = NULL)))
+    }
+    stopifnot(identical(split_topic("utils:::find"),
+        list(topic = "find", package = "utils")))
+    stopifnot(identical(split_topic("tensorflow::tf$abs"),
+        list(topic = "tf$abs", package = "tensorflow")))
+    stopifnot(identical(split_topic("obj$hello"),
+        list(topic = "obj$hello", package = NULL)))
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
     }));
 }

@@ -198,6 +198,18 @@ impl RHelp {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
+        // Suggestions contain literal package-qualified aliases, including `$` and
+        // `@`. Prefer their documentation before trying a custom expression handler.
+        if topic.contains("::") &&
+            RFunction::from(".ps.help.showHelpTopic")
+                .add(topic.clone())
+                .param("qualified_only", true)
+                .call()?
+                .to::<bool>()?
+        {
+            return Ok(true);
+        }
+
         let topic = HelpTopic::parse(topic);
 
         let found = match topic {
@@ -311,7 +323,7 @@ enum HelpTopic {
     // no obvious expression syntax — e.g. "abs", "base::abs"
     Simple(String),
     // contains expression syntax — e.g. "tensorflow::tf$abs", "model@coef"
-    // such that there will never exist a help topic with that name
+    // after checking for a literal package-qualified help alias
     Expression(String),
 }
 
