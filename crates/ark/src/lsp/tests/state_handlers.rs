@@ -16,14 +16,21 @@ use oak_db::SourceDb;
 use oak_scan::DbScan;
 use oak_scan::ScanRequest;
 use oak_scan::ScanScheduler;
+use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::FileChangeType;
 use tower_lsp_server::ls_types::FileEvent;
 use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::Range;
+use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentItem;
 use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use url::Url;
@@ -35,10 +42,13 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::WorldState;
+use crate::lsp::state_handlers::did_change;
 use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
+use crate::lsp::state_handlers::did_open;
 use crate::lsp::state_handlers::effective_workspace_paths;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::lsp::traits::url::UriExt;
 use crate::lsp::traits::url::UrlExt;
 
 /// Local sync wrappers around the async-shaped scheduler API. Tests
@@ -671,6 +681,104 @@ fn test_did_close_releases_orphan_file_to_stale() {
     };
     assert_eq!(publication.path, FilePath::from_url(&url));
     assert!(publication.diagnostics.is_empty());
+}
+
+fn rescan_without_open_file(state: &mut WorldState, workspace: &Path, r_path: &Path) -> Uri {
+    let uri = Uri::from_file_path(r_path).unwrap();
+    let params = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "r".to_string(),
+            version: 1,
+            text: "x <- 1\n".to_string(),
+        },
+    };
+    did_open(params, state).unwrap();
+
+    fs::remove_file(r_path).unwrap();
+    let rprofile = workspace.join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![event(&rprofile, FileChangeType::CREATED)],
+    };
+    did_change_watched_files(params, state).unwrap();
+
+    uri
+}
+
+/// The second edit must use the first edit's result as its input. Applying it
+/// to the original text would insert `z` after the space rather than after `yy`.
+fn assert_incremental_edits_apply(state: &mut WorldState, uri: &Uri) {
+    let mut lsp_state = test_lsp_state();
+    let edits = [
+        (
+            Range::new(Position::new(0, 0), Position::new(0, 1)),
+            "yy",
+            "yy <- 1\n",
+        ),
+        (
+            Range::new(Position::new(0, 2), Position::new(0, 2)),
+            "z",
+            "yyz <- 1\n",
+        ),
+    ];
+    for (version, (range, text, expected)) in (2..).zip(edits) {
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(range),
+                range_length: None,
+                text: text.to_string(),
+            }],
+        };
+        did_change(params, &mut lsp_state, state).unwrap();
+
+        let path = uri.to_document_path().unwrap();
+        let file = state.open_file(&path).unwrap().file();
+        assert_eq!(state.db().file_by_path(&path), Some(file));
+        assert_eq!(file.source_text(state.db()), expected);
+    }
+}
+
+/// A rescan must preserve lookup of an open buffer's `File` even when its file
+/// is missing on disk. Otherwise `upsert_editor()` creates a second entity while
+/// `did_change()` continues reading the original entity's text.
+#[test]
+fn test_rescan_keeps_open_script_missing_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r_path = tmp.path().join("a.R");
+    fs::write(&r_path, "x <- 1\n").unwrap();
+    let mut state = workspace_state(tmp.path());
+
+    let uri = rescan_without_open_file(&mut state, tmp.path(), &r_path);
+
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    assert!(root.scripts(state.db()).is_empty());
+    assert_incremental_edits_apply(&mut state, &uri);
+}
+
+#[test]
+fn test_rescan_keeps_open_package_file_missing_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[
+        ("a.R", "x <- 1\n"),
+        ("b.R", "y <- 1\n"),
+    ]);
+    let mut state = workspace_state(tmp.path());
+
+    let r_path = tmp.path().join("pkg/R/a.R");
+    let uri = rescan_without_open_file(&mut state, tmp.path(), &r_path);
+
+    let path = uri.to_document_path().unwrap();
+    let file = state.open_file(&path).unwrap().file();
+    let root = state.db().workspace_roots().roots(state.db())[0];
+    let pkg = root.packages(state.db())[0];
+    assert!(!pkg.files(state.db()).contains(&file));
+    assert_eq!(file.package(state.db()), None);
+    assert_incremental_edits_apply(&mut state, &uri);
 }
 
 /// A console-inputs push carries no oak write, but diagnostics read the console

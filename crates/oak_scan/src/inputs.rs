@@ -488,7 +488,7 @@ pub(crate) fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     }
 }
 
-fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
+pub(crate) fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
     if let Some(files) = with_cow_insert(orphan.files(db), file) {
         orphan.set_files(db).to(files);

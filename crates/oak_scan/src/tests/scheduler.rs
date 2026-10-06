@@ -22,6 +22,7 @@ use oak_db::SourceDb;
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
 use crate::tests::is_case_insensitive;
+use crate::DbScan;
 use crate::ScanScheduler;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
@@ -566,6 +567,173 @@ fn test_editor_owned_sentinel_still_rescans() {
     assert_eq!(requests.len(), 1);
     drain_scheduler(&mut db, &mut scheduler, requests, &skip);
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
+}
+
+// --- Open buffers missing on disk ---
+
+fn rescan_without_open_file(
+    db: &mut OakDatabase,
+    scheduler: &mut ScanScheduler,
+    tmp: &Path,
+    file_path: &Path,
+) -> (oak_db::File, HashSet<FilePath>) {
+    let path = watched_path(file_path);
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+    let editor_owned = HashSet::from([path]);
+
+    fs::remove_file(file_path).unwrap();
+    let rprofile = tmp.join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let requests = scheduler.apply_watcher_events(db, vec![watched_path(&rprofile)], &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(db, scheduler, requests, &editor_owned);
+
+    (file, editor_owned)
+}
+
+#[test]
+fn test_rescan_moves_open_script_missing_on_disk_to_orphan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("a.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let (file, _) = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+    let path = watched_path(&script);
+
+    assert!(root.scripts(&db).is_empty());
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(db.orphan_root().files(&db).contains(&file));
+
+    // `did_change()` passes the updated buffer to `upsert_editor()`, which must
+    // reuse the `File` held by the editor even though it is missing on disk.
+    for contents in ["edited <- 2\n", "edited <- 3\n"] {
+        assert_eq!(db.upsert_editor(path.clone(), contents.to_string()), file);
+        assert_eq!(file.source_text(&db), contents);
+    }
+}
+
+#[test]
+fn test_rescan_moves_open_package_file_missing_on_disk_to_orphan() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[
+        ("a.R", "x <- 1\n"),
+        ("b.R", "y <- 1\n"),
+    ]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let pkg = root.packages(&db)[0];
+
+    let a = tmp.path().join("pkg/R/a.R");
+    let (file, _) = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &a);
+    let path = watched_path(&a);
+
+    assert_eq!(root.packages(&db).clone(), vec![pkg]);
+    assert!(!pkg.files(&db).contains(&file));
+    assert_eq!(file.package(&db), None);
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(db.orphan_root().files(&db).contains(&file));
+
+    for contents in ["edited <- 2\n", "edited <- 3\n"] {
+        assert_eq!(db.upsert_editor(path.clone(), contents.to_string()), file);
+        assert_eq!(file.source_text(&db), contents);
+    }
+}
+
+#[test]
+fn test_rescan_restores_orphaned_open_file_when_it_reappears_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("a.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let (file, editor_owned) =
+        rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+
+    fs::write(&script, "edited <- 1\n").unwrap();
+    let rprofile = tmp.path().join(".Rprofile");
+    fs::remove_file(&rprofile).unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+
+    assert_eq!(root.scripts(&db).clone(), vec![file]);
+    assert!(!db.orphan_root().files(&db).contains(&file));
+}
+
+#[test]
+fn test_description_deletion_keeps_open_package_file_entity() {
+    // Files must retain their `File` identity when `DESCRIPTION` deletion turns
+    // them into workspace scripts, preserving editor references and query caches.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[
+        ("a.R", "x <- 1\n"),
+        ("b.R", "y <- 1\n"),
+    ]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let a = watched_path(&tmp.path().join("pkg/R/a.R"));
+    let b = db
+        .file_by_path(&watched_path(&tmp.path().join("pkg/R/b.R")))
+        .unwrap();
+    let file = db.upsert_editor(a.clone(), "edited <- 1\n".to_string());
+    let editor_owned = HashSet::from([a.clone()]);
+
+    let description = tmp.path().join("pkg/DESCRIPTION");
+    fs::remove_file(&description).unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+
+    assert!(root.packages(&db).is_empty());
+    let scripts: HashSet<_> = root.scripts(&db).iter().copied().collect();
+    assert_eq!(scripts, HashSet::from([file, b]));
+    assert_eq!(db.file_by_path(&a), Some(file));
+    assert_eq!(file.package(&db), None);
+    assert_eq!(file.source_text(&db), "edited <- 1\n");
+    assert!(!db.orphan_root().files(&db).contains(&file));
+}
+
+#[test]
+fn test_nested_root_scan_moves_open_file_missing_on_disk_to_orphan() {
+    // The nested root has no files before its first scan, but the scan updates
+    // the outer root's shared `Package`. Capturing only the nested root's files
+    // would miss the open file removed from that package.
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("pkg");
+    write_package(&pkg_dir, "pkg", &[("a.R", "x <- 1\n"), ("b.R", "y <- 1\n")]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let outer = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let pkg = outer.packages(&db)[0];
+
+    let a = pkg_dir.join("R/a.R");
+    let path = watched_path(&a);
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+    let editor_owned = HashSet::from([path.clone()]);
+    fs::remove_file(&a).unwrap();
+
+    let paths = [tmp.path().to_path_buf(), pkg_dir];
+    let requests = scheduler.set_workspace_paths(&mut db, &paths, &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+
+    let inner = db.workspace_roots().roots(&db)[1];
+    assert_eq!(inner.packages(&db).clone(), vec![pkg]);
+    assert!(!pkg.files(&db).contains(&file));
+    assert_eq!(file.package(&db), None);
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(db.orphan_root().files(&db).contains(&file));
+    assert_eq!(db.upsert_editor(path, "edited <- 2\n".to_string()), file);
 }
 
 /// Return `(tmp, outer_root, inner_root)` regardless of workspace registration order.

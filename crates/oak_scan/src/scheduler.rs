@@ -70,6 +70,7 @@ use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
 
+use crate::inputs::add_to_orphan_files;
 use crate::inputs::FileEntry;
 use crate::inputs::RootExt;
 use crate::packages::is_environment_dir;
@@ -153,10 +154,15 @@ impl ScanCompleted {
             })
             .collect();
 
+        // Preserve dropped packages in `root.packages()` until their files have
+        // been registered as workspace scripts. When `DESCRIPTION` is deleted,
+        // `upsert_root_file()` needs the package to find the existing `File`
+        // entities. Removing it first would create new entities and detach open
+        // buffers from the files found by path lookup.
+        root.set_workspace_scripts(db, scripts);
         if root.packages(db) != &package_entities {
             root.set_packages(db).to(package_entities);
         }
-        root.set_workspace_scripts(db, scripts);
         if root.environment_dirs(db) != &environment_dirs {
             root.set_environment_dirs(db).to(environment_dirs);
         }
@@ -448,7 +454,9 @@ impl ScanScheduler {
             return Vec::new();
         }
 
+        let open_files = open_file_entities(db, editor_owned);
         result.apply(db);
+        orphan_dropped_editor_files(db, open_files);
         self.finish_scan(db, root, editor_owned)
     }
 
@@ -732,6 +740,35 @@ fn root_files<DB: Db + DbInputs>(db: &DB, root: Root) -> Vec<File> {
         files.extend(pkg.scripts(db).iter().copied());
     }
     files
+}
+
+/// Capture editor-owned `File` entities across all live roots before applying
+/// a scan. `set_package()` reuses the entity found by `package_by_path()`, so
+/// scanning one root can remove files from a `Package` shared with another root.
+fn open_file_entities<DB: Db + DbInputs>(db: &DB, editor_owned: &HashSet<FilePath>) -> Vec<File> {
+    editor_owned
+        .iter()
+        .filter_map(|path| db.file_by_path(path))
+        .collect()
+}
+
+/// Keep editor-owned files reachable through [`OrphanRoot`] when a scan removes
+/// them from every live container, as happens when their files are missing on disk.
+/// Otherwise `file_by_path()` would miss an entity still held by the editor, and
+/// `upsert_editor()` would create a second [`File`] for the same buffer.
+///
+/// Files still reachable after the scan retain their container and package,
+/// including entities shared with another root.
+fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, open_files: Vec<File>) {
+    for file in open_files {
+        if db.file_by_path(file.path(db)).is_some() {
+            continue;
+        }
+        if file.package(db).is_some() {
+            file.set_package(db).to(None);
+        }
+        add_to_orphan_files(db, file);
+    }
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
