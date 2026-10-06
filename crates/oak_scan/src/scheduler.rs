@@ -70,8 +70,10 @@ use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
 
-use crate::inputs::add_to_orphan_files;
+use crate::inputs::upsert_package;
+use crate::inputs::upsert_workspace_scripts;
 use crate::inputs::FileEntry;
+use crate::inputs::FileUpserts;
 use crate::inputs::RootExt;
 use crate::packages::is_environment_dir;
 use crate::packages::is_environment_sentinel;
@@ -79,6 +81,7 @@ use crate::packages::scan_workspace_environment_dirs;
 use crate::packages::scan_workspace_packages;
 use crate::packages::scan_workspace_scripts;
 use crate::packages::PackageEntry;
+use crate::stale::remove_all_from_stale_files;
 use crate::watch::add_watched_file;
 use crate::watch::remove_watched_file;
 
@@ -126,7 +129,12 @@ impl ScanCompleted {
     ///
     /// Unchanged rescans preserve downstream Salsa caches by reusing `File`
     /// and `Package` entities and writing inputs only when they differ. See
-    /// [`RootExt::set_package()`] and [`RootExt::set_workspace_scripts()`].
+    /// [`FileUpserts`] for how `File` entities are matched.
+    ///
+    /// A path the scan lists in several containers ends up in the last one
+    /// written: workspace scripts win over package files (the script walk runs
+    /// after the package walk, so it saw the later disk state), and among
+    /// packages the one listed last wins.
     fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
         let ScanCompleted {
             root,
@@ -135,14 +143,21 @@ impl ScanCompleted {
             environment_dirs,
         } = self;
 
+        let entries = packages
+            .iter()
+            .flat_map(|pkg| pkg.files.iter().chain(&pkg.scripts))
+            .chain(&scripts);
+        let mut upserts = FileUpserts::resolve(db, entries);
+
         let package_entities: Vec<Package> = packages
             .into_iter()
             .map(|pkg| {
                 // Workspace packages never have an `INDEX`
                 let index_revision = None;
 
-                root.set_package(
+                upsert_package(
                     db,
+                    &mut upserts,
                     pkg.description_path,
                     pkg.name,
                     pkg.description_revision,
@@ -154,15 +169,12 @@ impl ScanCompleted {
             })
             .collect();
 
-        // Preserve dropped packages in `root.packages()` until their files have
-        // been registered as workspace scripts. When `DESCRIPTION` is deleted,
-        // `upsert_root_file()` needs the package to find the existing `File`
-        // entities. Removing it first would create new entities and detach open
-        // buffers from the files found by path lookup.
-        root.set_workspace_scripts(db, scripts);
         if root.packages(db) != &package_entities {
             root.set_packages(db).to(package_entities);
         }
+        upsert_workspace_scripts(db, &mut upserts, root, scripts);
+        upserts.finish(db);
+
         if root.environment_dirs(db) != &environment_dirs {
             root.set_environment_dirs(db).to(environment_dirs);
         }
@@ -759,16 +771,45 @@ fn open_file_entities<DB: Db + DbInputs>(db: &DB, editor_owned: &HashSet<FilePat
 ///
 /// Files still reachable after the scan retain their container and package,
 /// including entities shared with another root.
+///
+/// A rescued file leaves `StaleRoot` too. It can be in stale while live after
+/// one of two nested roots is evicted, and `upsert_editor()` doesn't remove it
+/// from stale when it finds the live entity.
+///
+/// Every lookup runs before the first write, so the orphan path index isn't
+/// invalidated and rebuilt once per rescued file.
 fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, open_files: Vec<File>) {
+    let mut dropped: HashSet<File> = HashSet::new();
     for file in open_files {
-        if db.file_by_path(file.path(db)).is_some() {
-            continue;
+        match db.file_by_path(file.path(db)) {
+            None => {
+                dropped.insert(file);
+            },
+            Some(current) if current == file => {},
+            Some(_) => {
+                // Orphaning `file` wouldn't help: lookups still resolve the
+                // path to the other entity.
+                log::error!(
+                    "Scan replaced the `File` of an open buffer: {path}",
+                    path = file.path(db)
+                );
+            },
         }
+    }
+    if dropped.is_empty() {
+        return;
+    }
+
+    for &file in &dropped {
         if file.package(db).is_some() {
             file.set_package(db).to(None);
         }
-        add_to_orphan_files(db, file);
     }
+    let orphan = db.orphan_root();
+    let mut orphan_files = orphan.files(db).clone();
+    orphan_files.extend(dropped.iter().copied());
+    orphan.set_files(db).to(orphan_files);
+    remove_all_from_stale_files(db, &dropped);
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
@@ -788,8 +829,10 @@ fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> 
 #[cfg(test)]
 mod tests {
     use oak_db::OakDatabase;
+    use oak_db::SourceDb;
 
     use super::*;
+    use crate::DbScan;
 
     /// A root whose URL has no filesystem path (e.g. an `untitled:` buffer)
     /// can't produce a `ScanRequest`. When such a root is
@@ -826,5 +869,59 @@ mod tests {
 
         assert!(requests.is_empty());
         assert!(!scheduler.has_pending_scans());
+    }
+
+    /// `DESCRIPTION` can disappear between the package walk and the script
+    /// walk of one scan, so both list the same file. The open buffer must keep
+    /// a single `File`, placed as a workspace script. The race can't be timed
+    /// through `ScanRequest::run()`, so we build its result by hand.
+    #[test]
+    fn test_path_listed_as_package_file_and_script_keeps_one_entity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let requests =
+            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        let pkg_dir = tmp.path().join("pkg");
+        fs::create_dir_all(pkg_dir.join("R")).unwrap();
+        fs::write(
+            pkg_dir.join("DESCRIPTION"),
+            "Package: pkg\nVersion: 0.0.0\n",
+        )
+        .unwrap();
+        fs::write(pkg_dir.join("R/a.R"), "x <- 1\n").unwrap();
+        let path = FilePath::from_path_buf(pkg_dir.join("R/a.R")).unwrap();
+        let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+        let editor_owned = HashSet::from([path.clone()]);
+
+        let mut requests = scheduler.apply_watcher_events(
+            &mut db,
+            vec![FilePath::from_path_buf(pkg_dir.join("DESCRIPTION")).unwrap()],
+            &editor_owned,
+        );
+        assert_eq!(requests.len(), 1);
+        let request = requests.remove(0);
+        let packages = scan_workspace_packages(request.path.as_std_path());
+        assert_eq!(packages.len(), 1);
+        let scripts = packages[0].files.clone();
+        let root = request.root;
+        let result = ScanCompleted {
+            root,
+            packages,
+            scripts,
+            environment_dirs: Vec::new(),
+        };
+        let requests = scheduler.apply_scan_completed(&mut db, result, &editor_owned);
+        assert!(requests.is_empty());
+
+        let pkg = root.packages(&db)[0];
+        assert!(pkg.files(&db).is_empty());
+        assert_eq!(root.scripts(&db).clone(), vec![file]);
+        assert_eq!(file.package(&db), None);
+        assert_eq!(db.file_by_path(&path), Some(file));
+        assert_eq!(file.source_text(&db), "edited <- 1\n");
+        assert!(!db.orphan_root().files(&db).contains(&file));
     }
 }

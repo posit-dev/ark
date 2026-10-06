@@ -30,10 +30,12 @@ use oak_db::Notebook;
 use oak_db::Package;
 use oak_db::PackageFiles;
 use oak_db::Root;
+use rustc_hash::FxHashMap;
 use salsa::Setter;
 
 use crate::lookup::package_by_path;
 use crate::packages::read_package_sources;
+use crate::stale::remove_all_from_stale_files;
 use crate::stale::remove_from_stale_files;
 use crate::stale::remove_from_stale_packages;
 use crate::stale::stale_file_by_path;
@@ -236,37 +238,42 @@ impl<DB: Db + DbInputs> DbScan for DB {
 
     fn set_package_sources(&mut self, package: Package, directory: &Path) {
         let (files, scripts) = read_package_sources(directory, package.collation(self).as_deref());
-        set_package_source_entries(self, package, files, scripts);
+        let mut upserts = FileUpserts::resolve(self, files.iter().chain(&scripts));
+        set_package_source_entries(self, &mut upserts, package, files, scripts);
+        upserts.finish(self);
     }
 
     fn set_package_generated_files(&mut self, package: Package, directory: &Path) {
         // Generated bindings must be indexed even though `Collate:` omits them.
         let (generated, _) = read_package_sources(directory, None);
+        let mut upserts = FileUpserts::resolve(self, &generated);
 
         let generated: Vec<File> = generated
             .into_iter()
-            .map(|entry| upsert_root_file(self, Some(package), entry))
+            .map(|entry| upserts.upsert(self, Some(package), entry))
             .collect();
 
         package.set_generated_files(self, generated);
+        upserts.finish(self);
     }
 }
 
 // Avoid invalidating dependent queries when file membership is unchanged.
 fn set_package_source_entries<DB: Db + DbInputs>(
     db: &mut DB,
+    upserts: &mut FileUpserts,
     package: Package,
     files: Vec<FileEntry>,
     scripts: Vec<FileEntry>,
 ) {
     let files: Vec<File> = files
         .into_iter()
-        .map(|entry| upsert_root_file(db, Some(package), entry))
+        .map(|entry| upserts.upsert(db, Some(package), entry))
         .collect();
 
     let scripts: Vec<File> = scripts
         .into_iter()
-        .map(|entry| upsert_root_file(db, Some(package), entry))
+        .map(|entry| upserts.upsert(db, Some(package), entry))
         .collect();
 
     package.set_source_files(db, files);
@@ -339,38 +346,19 @@ impl RootExt for Root {
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package {
-        // `package_by_path()` finds the existing entity whether it's already
-        // in `self.packages` (rescan, common path) or in
-        // `stale_root.packages` (resurrection after a previous eviction).
-        // Either way we reuse the entity and refresh its metadata fields.
-        let pkg = match package_by_path(db, &description_path) {
-            Some(p) => {
-                if p.name(db) != &name {
-                    p.set_name(db).to(name);
-                }
-                if p.description_revision(db) != description_revision {
-                    p.set_description_revision(db).to(description_revision);
-                }
-                if p.namespace_revision(db) != namespace_revision {
-                    p.set_namespace_revision(db).to(namespace_revision);
-                }
-                remove_from_stale_packages(db, p);
-                p
-            },
-            None => Package::new(
-                db,
-                description_path,
-                name,
-                description_revision,
-                namespace_revision,
-                index_revision,
-                None,
-                PackageFiles::default(),
-                Vec::new(),
-            ),
-        };
-
-        set_package_source_entries(db, pkg, files, scripts);
+        let mut upserts = FileUpserts::resolve(db, files.iter().chain(&scripts));
+        let pkg = upsert_package(
+            db,
+            &mut upserts,
+            description_path,
+            name,
+            description_revision,
+            namespace_revision,
+            index_revision,
+            files,
+            scripts,
+        );
+        upserts.finish(db);
         pkg
     }
 
@@ -379,92 +367,224 @@ impl RootExt for Root {
     }
 
     fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>) {
-        let scripts: Vec<File> = files
-            .into_iter()
-            .map(|entry| upsert_root_file(db, None, entry))
-            .collect();
-        if self.scripts(db) != &scripts {
-            self.set_scripts(db).to(scripts);
-        }
+        let mut upserts = FileUpserts::resolve(db, &files);
+        upsert_workspace_scripts(db, &mut upserts, self, files);
+        upserts.finish(db);
     }
 }
 
-/// Upsert a `File` for `entry`, set its `package` backpointer, and clean up
-/// stale references in old containers.
-///
-/// **Caller invariant.** The caller must atomically place the returned `File`
-/// in some `Root` container (`pkg.files` or `root.scripts`) before returning.
-/// Used by the following helpers.
-///
-/// - [`RootExt::set_package`] (both library and workspace scanners)
-/// - [`RootExt::set_workspace_scripts`] (workspace scanner)
-/// - [`DbScan::set_package_sources()`] and [`DbScan::set_package_generated_files()`]
-///   (ingestion of fetched sources and generated files)
-/// - [`watch::add_watched_file`] (watcher dispatch)
-///
-/// The orphan cleanup below relies on this contract. A future caller that
-/// invoked `upsert_root_file()` without then placing the file would leave it
-/// with no container, and `file_by_path()` would return `None`.
+/// [`RootExt::set_package()`] with files resolved through `upserts`, which the
+/// caller finishes once every container is written.
+pub(crate) fn upsert_package<DB: Db + DbInputs>(
+    db: &mut DB,
+    upserts: &mut FileUpserts,
+    description_path: FilePath,
+    name: String,
+    description_revision: FileRevision,
+    namespace_revision: FileRevision,
+    index_revision: Option<FileRevision>,
+    files: Vec<FileEntry>,
+    scripts: Vec<FileEntry>,
+) -> Package {
+    // `package_by_path()` finds the existing entity whether it's already
+    // in a live root's packages (rescan, common path) or in
+    // `stale_root.packages` (resurrection after a previous eviction).
+    // Either way we reuse the entity and refresh its metadata fields.
+    let pkg = match package_by_path(db, &description_path) {
+        Some(p) => {
+            if p.name(db) != &name {
+                p.set_name(db).to(name);
+            }
+            if p.description_revision(db) != description_revision {
+                p.set_description_revision(db).to(description_revision);
+            }
+            if p.namespace_revision(db) != namespace_revision {
+                p.set_namespace_revision(db).to(namespace_revision);
+            }
+            remove_from_stale_packages(db, p);
+            p
+        },
+        None => Package::new(
+            db,
+            description_path,
+            name,
+            description_revision,
+            namespace_revision,
+            index_revision,
+            None,
+            PackageFiles::default(),
+            Vec::new(),
+        ),
+    };
+
+    set_package_source_entries(db, upserts, pkg, files, scripts);
+    pkg
+}
+
+/// [`RootExt::set_workspace_scripts()`] with files resolved through `upserts`,
+/// which the caller finishes once every container is written.
+pub(crate) fn upsert_workspace_scripts<DB: Db + DbInputs>(
+    db: &mut DB,
+    upserts: &mut FileUpserts,
+    root: Root,
+    files: Vec<FileEntry>,
+) {
+    let scripts: Vec<File> = files
+        .into_iter()
+        .map(|entry| upserts.upsert(db, None, entry))
+        .collect();
+    if root.scripts(db) != &scripts {
+        root.set_scripts(db).to(scripts);
+    }
+}
+
+/// Upsert a single `File` for `entry`, for the watcher's
+/// [`watch::add_watched_file`]. See [`FileUpserts`] for the identity rules and
+/// the caller invariant.
 pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     db: &mut DB,
     package: Option<Package>,
     entry: FileEntry,
 ) -> File {
-    if let Some(existing) = db.file_by_path(&entry.path) {
-        // Rescans repair missed watcher events by updating `revision`, which
-        // invalidates disk-backed `source_text()`. An editor override still wins
-        // in `source_text()`, so leave it intact.
-        if existing.revision(db) != entry.revision {
-            existing.set_revision(db).to(entry.revision);
-        }
+    let mut upserts = FileUpserts::resolve(db, [&entry]);
+    let file = upserts.upsert(db, package, entry);
+    upserts.finish(db);
+    file
+}
 
-        // The new container is owned by the caller. What needs active cleanup
-        // is the OLD container:
-        //
-        // - If the package backpointer changed and the old package was Some,
-        //   that package's `files` vec still references this file. Drop it,
-        //   otherwise the old `Package` would carry a stale entry until its
-        //   next wholesale rescan.
-        //
-        // - If the file was in `OrphanRoot.files` (e.g. the editor had it open
-        //   before a scan classified it), drop it. Per the caller invariant
-        //   the file is about to land in a `Root` container, so the orphan
-        //   reference is stale by the time this returns.
-        //
-        // - If the file is also in `StaleRoot.files`, drop it. Evicting one of
-        //   two nested roots moves their shared files to stale while the
-        //   surviving root still lists them.
-        let old_package = existing.package(db);
-        if old_package != package {
-            existing.set_package(db).to(package);
-            if let Some(old_pkg) = old_package {
-                remove_from_pkg_files(db, old_pkg, existing);
+/// Upserts `File` entities for a batch of entries, resolving every existing
+/// entity before the batch writes any container.
+///
+/// Scans write containers one at a time. Looking entities up through
+/// `file_by_path()` in between would make identity depend on write order: a
+/// file moved into a package that isn't yet in `root.packages` can't be found,
+/// and a duplicate `File` gets minted for its path. Each container write also
+/// invalidates the per-root path index, so interleaved lookups would rebuild it
+/// once per file. Resolving up front avoids both. Entities resurrected or
+/// minted during the batch join the map, so a path listed twice resolves to one
+/// entity.
+///
+/// Resolution prefers live entities over stale ones: a file can be both live
+/// and in `StaleRoot` after one of two nested roots is evicted, and the stale
+/// branch would clear its editor override.
+///
+/// **Caller invariant.** The caller must place every returned `File` in some
+/// `Root` container (`pkg.files`, `pkg.scripts` or `root.scripts`) before
+/// calling [`finish()`](Self::finish), which drops them from `OrphanRoot` and
+/// `StaleRoot`. A file left without a container would be unreachable through
+/// `file_by_path()`.
+pub(crate) struct FileUpserts {
+    resolved: FxHashMap<FilePath, Resolved>,
+    leaving_buckets: HashSet<File>,
+}
+
+#[derive(Clone, Copy)]
+enum Resolved {
+    Live(File),
+    Stale(File),
+}
+
+impl FileUpserts {
+    pub(crate) fn resolve<'a, DB: Db + DbInputs>(
+        db: &DB,
+        entries: impl IntoIterator<Item = &'a FileEntry>,
+    ) -> Self {
+        let mut resolved = FxHashMap::default();
+        for entry in entries {
+            if resolved.contains_key(&entry.path) {
+                continue;
             }
+            let file = match db.file_by_path(&entry.path) {
+                Some(file) => Resolved::Live(file),
+                None => match stale_file_by_path(db, &entry.path) {
+                    Some(file) => Resolved::Stale(file),
+                    None => continue,
+                },
+            };
+            resolved.insert(entry.path.clone(), file);
         }
-        remove_from_orphan(db, existing);
-        remove_from_stale_files(db, existing);
-        return existing;
+        Self {
+            resolved,
+            leaving_buckets: HashSet::new(),
+        }
     }
 
-    if let Some(stale) = stale_file_by_path(db, &entry.path) {
-        // Resurrecting an evicted File. A resurrected scanner file is
-        // disk-backed, so clear any stale override and update the revision.
-        // The editor-owned variant lives in `orphan_root` instead; this branch
-        // only sees scanner-discovered files.
-        if stale.revision(db) != entry.revision {
-            stale.set_revision(db).to(entry.revision);
+    /// Upsert a `File` for `entry`, set its `package` backpointer, and drop it
+    /// from its old package.
+    pub(crate) fn upsert<DB: Db + DbInputs>(
+        &mut self,
+        db: &mut DB,
+        package: Option<Package>,
+        entry: FileEntry,
+    ) -> File {
+        match self.resolved.get(&entry.path).copied() {
+            Some(Resolved::Live(existing)) => {
+                // Rescans repair missed watcher events by updating `revision`,
+                // which invalidates disk-backed `source_text()`. An editor
+                // override still wins in `source_text()`, so leave it intact.
+                if existing.revision(db) != entry.revision {
+                    existing.set_revision(db).to(entry.revision);
+                }
+
+                // The new container is owned by the caller. What needs active
+                // cleanup is the OLD container:
+                //
+                // - If the package backpointer changed and the old package was
+                //   Some, that package's containers still reference this file.
+                //   Drop it, otherwise the old `Package` would carry a stale
+                //   entry until its next wholesale rescan.
+                //
+                // - If the file was in `OrphanRoot.files` (e.g. the editor had
+                //   it open before a scan classified it), `finish()` drops it.
+                //   Per the caller invariant the file is about to land in a
+                //   `Root` container.
+                //
+                // - If the file is also in `StaleRoot.files`, `finish()` drops
+                //   it too. Evicting one of two nested roots moves their shared
+                //   files to stale while the surviving root still lists them.
+                let old_package = existing.package(db);
+                if old_package != package {
+                    existing.set_package(db).to(package);
+                    if let Some(old_pkg) = old_package {
+                        remove_from_pkg_files(db, old_pkg, existing);
+                    }
+                }
+                self.leaving_buckets.insert(existing);
+                existing
+            },
+            Some(Resolved::Stale(stale)) => {
+                // Resurrecting an evicted File. A resurrected scanner file is
+                // disk-backed, so clear any stale override and update the
+                // revision. The editor-owned variant lives in `orphan_root`
+                // instead; this branch only sees scanner-discovered files.
+                if stale.revision(db) != entry.revision {
+                    stale.set_revision(db).to(entry.revision);
+                }
+                if stale.source_text_override(db).is_some() {
+                    stale.set_source_text_override(db).to(None);
+                }
+                if stale.package(db) != package {
+                    stale.set_package(db).to(package);
+                }
+                self.resolved.insert(entry.path, Resolved::Live(stale));
+                self.leaving_buckets.insert(stale);
+                stale
+            },
+            None => {
+                let path = entry.path.clone();
+                let file = File::new(db, entry.path, entry.revision, None, package);
+                self.resolved.insert(path, Resolved::Live(file));
+                file
+            },
         }
-        if stale.source_text_override(db).is_some() {
-            stale.set_source_text_override(db).to(None);
-        }
-        if stale.package(db) != package {
-            stale.set_package(db).to(package);
-        }
-        remove_from_stale_files(db, stale);
-        return stale;
     }
 
-    File::new(db, entry.path, entry.revision, None, package)
+    /// Drop every upserted file from `OrphanRoot` and `StaleRoot`, with one
+    /// write per bucket.
+    pub(crate) fn finish<DB: Db + DbInputs>(self, db: &mut DB) {
+        remove_all_from_orphan(db, &self.leaving_buckets);
+        remove_all_from_stale_files(db, &self.leaving_buckets);
+    }
 }
 
 /// Remove `file` from whichever of `pkg.files` / `pkg.scripts` holds it.
@@ -488,7 +608,16 @@ pub(crate) fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     }
 }
 
-pub(crate) fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
+fn remove_all_from_orphan<DB: Db + DbInputs>(db: &mut DB, files: &HashSet<File>) {
+    let orphan = db.orphan_root();
+    if orphan.files(db).is_disjoint(files) {
+        return;
+    }
+    let remaining = orphan.files(db).difference(files).copied().collect();
+    orphan.set_files(db).to(remaining);
+}
+
+fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let orphan = db.orphan_root();
     if let Some(files) = with_cow_insert(orphan.files(db), file) {
         orphan.set_files(db).to(files);

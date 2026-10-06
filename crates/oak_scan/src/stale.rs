@@ -121,6 +121,15 @@ pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File
     }
 }
 
+pub(crate) fn remove_all_from_stale_files<DB: Db + DbInputs>(db: &mut DB, files: &HashSet<File>) {
+    let stale = db.stale_root();
+    if stale.files(db).is_disjoint(files) {
+        return;
+    }
+    let remaining = stale.files(db).difference(files).copied().collect();
+    stale.set_files(db).to(remaining);
+}
+
 pub(crate) fn remove_from_stale_packages<DB: Db + DbInputs>(db: &mut DB, pkg: Package) {
     let stale = db.stale_root();
     if let Some(packages) = with_cow_filter(stale.packages(db), pkg) {

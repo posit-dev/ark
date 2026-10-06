@@ -736,6 +736,100 @@ fn test_nested_root_scan_moves_open_file_missing_on_disk_to_orphan() {
     assert_eq!(db.upsert_editor(path, "edited <- 2\n".to_string()), file);
 }
 
+#[test]
+fn test_parent_description_keeps_open_child_package_file_entity() {
+    // The parent package's walk also lists the child's files as scripts. The
+    // parent is upserted first and takes the open file from the child, so the
+    // child must still find the same `File` when it takes it back.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("child"), "child", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let child = root.packages(&db)[0];
+
+    let path = watched_path(&tmp.path().join("child/R/a.R"));
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+    let editor_owned = HashSet::from([path.clone()]);
+
+    let description = tmp.path().join("DESCRIPTION");
+    fs::write(&description, "Package: parent\nVersion: 0.0.0\n").unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+
+    let packages = root.packages(&db).clone();
+    assert_eq!(packages.len(), 2);
+    assert_eq!(packages[0].name(&db), "parent");
+    assert_eq!(packages[1], child);
+    assert!(packages[0].scripts(&db).is_empty());
+    assert_eq!(child.files(&db), &[file]);
+    assert_eq!(file.package(&db), Some(child));
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert_eq!(file.source_text(&db), "edited <- 1\n");
+}
+
+#[test]
+fn test_rescued_open_file_leaves_stale() {
+    // Removing the outer root moves its scripts to stale, including the one the
+    // inner root still lists. Opening that file finds the live entity and
+    // leaves it in stale. When the inner root's rescan then drops it, the
+    // rescue must take it out of stale.
+    let tmp = tempfile::tempdir().unwrap();
+    let outer = tmp.path().join("outer");
+    let inner = outer.join("inner");
+    fs::create_dir_all(&inner).unwrap();
+    let script = inner.join("s.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    scan_workspace(&mut db, &mut scheduler, &[outer, inner.clone()]);
+
+    let path = watched_path(&script);
+    let requests = scheduler.set_workspace_paths(&mut db, &[inner], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    let file = db.file_by_path(&path).unwrap();
+    assert!(db.stale_root().files(&db).contains(&file));
+
+    assert_eq!(
+        db.upsert_editor(path.clone(), "edited <- 1\n".to_string()),
+        file
+    );
+    let editor_owned = HashSet::from([path.clone()]);
+    fs::remove_file(&script).unwrap();
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(db.orphan_root().files(&db).contains(&file));
+    assert!(!db.stale_root().files(&db).contains(&file));
+}
+
+#[test]
+fn test_noop_rescan_with_open_buffer_does_not_bump_salsa_revision() {
+    // An open buffer adds lookups before and after the scan, but no writes.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    fs::write(tmp.path().join("top.R"), "y <- 2\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()]);
+
+    let mut editor_owned = HashSet::new();
+    for open in ["pkg/R/a.R", "top.R"] {
+        let path = watched_path(&tmp.path().join(open));
+        db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+        editor_owned.insert(path);
+    }
+
+    let before = salsa::plumbing::current_revision(&db);
+    let description = watched_path(&tmp.path().join("pkg/DESCRIPTION"));
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &editor_owned);
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    assert_eq!(salsa::plumbing::current_revision(&db), before);
+}
+
 /// Return `(tmp, outer_root, inner_root)` regardless of workspace registration order.
 fn nested_roots(
     db: &mut OakDatabase,
