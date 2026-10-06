@@ -49,8 +49,11 @@
 //!   first scan's stale result drops on identity check instead of
 //!   clobbering the second scan's empty state.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -68,6 +71,7 @@ use salsa::Setter;
 
 use crate::inputs::FileEntry;
 use crate::inputs::RootExt;
+use crate::packages::is_environment_dir;
 use crate::packages::is_environment_sentinel;
 use crate::packages::scan_workspace_environment_dirs;
 use crate::packages::scan_workspace_packages;
@@ -265,7 +269,9 @@ impl ScanScheduler {
     /// events that are coalesced, duplicated, or out of date by then.
     ///
     /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` paths rescan every
-    /// containing root, even for paths in `skip`. Idle roots return a
+    /// containing root, even for paths in `skip`. Sentinel events that leave
+    /// an idle root's `environment_dirs()` accurate are skipped (see
+    /// [`Self::is_environment_dir_current()`]). Idle roots return a
     /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
     /// `apply_scan_completed()` to start.
     ///
@@ -298,9 +304,13 @@ impl ScanScheduler {
                 continue;
             }
             for (root_path, root) in &roots {
-                if fs_path.starts_with(root_path) && !rescan_roots.contains(root) {
-                    rescan_roots.push(*root);
+                if !fs_path.starts_with(root_path) || rescan_roots.contains(root) {
+                    continue;
                 }
+                if self.is_environment_dir_current(db, *root, fs_path) {
+                    continue;
+                }
+                rescan_roots.push(*root);
             }
         }
         for root in rescan_roots {
@@ -321,6 +331,51 @@ impl ScanScheduler {
         self.drain_buffered(db, skip);
 
         requests
+    }
+
+    /// Whether a sentinel event on `path` leaves environment discovery unchanged.
+    ///
+    /// Its parent must remain in `root.environment_dirs()`, contain a sentinel,
+    /// and be reachable without symlinks below the root. A symlink would exclude
+    /// it from the next scan even if its sentinel still resolves
+    /// (see [`is_walkable_dir()`]).
+    ///
+    /// Only the existence of `.Rprofile` and `.Renviron` affects scans, so
+    /// edits to them are skipped. `DESCRIPTION` always rescans because its
+    /// `Package:` field matters. The check counts every sentinel in the
+    /// directory, so deleting `.Rprofile` next to a `.Renviron` is skipped too.
+    ///
+    /// An unlisted directory without a sentinel isn't treated as current, even
+    /// though it looks consistent. `environment_dirs()` matches paths exactly,
+    /// so a deletion reported under another spelling of a listed directory
+    /// (case or Unicode normalization) would look unlisted and be skipped.
+    ///
+    /// A root with a scan in flight is never current: its `environment_dirs()`
+    /// predates the scan, whose result may disagree with the disk by the time
+    /// it applies.
+    fn is_environment_dir_current<DB: Db + DbInputs>(
+        &self,
+        db: &DB,
+        root: Root,
+        path: &Utf8Path,
+    ) -> bool {
+        if self.state.contains_key(&root) {
+            return false;
+        }
+        if !path.file_name().is_some_and(is_environment_sentinel) {
+            return false;
+        }
+        let Some(dir) = path.parent() else {
+            return false;
+        };
+        let Some(root_path) = root.path(db).as_path() else {
+            return false;
+        };
+        let listed = root
+            .environment_dirs(db)
+            .iter()
+            .any(|env_dir| env_dir.as_path() == Some(dir));
+        listed && is_environment_dir(dir.as_std_path()) && is_walkable_dir(root_path, dir)
     }
 
     /// Apply a [`ScanCompleted`] produced by [`ScanRequest::run`].
@@ -400,6 +455,7 @@ impl ScanScheduler {
     /// completes, otherwise the scan's older listing would win.
     fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
         let roots = workspace_root_paths(db);
+        let mut listings = DirListings::default();
         self.buffered.retain(|path| {
             let Some(fs_path) = path.as_path() else {
                 return false;
@@ -423,7 +479,7 @@ impl ScanScheduler {
             if editor_owned.contains(path) {
                 return false;
             }
-            match is_file_on_disk(root_path, fs_path) {
+            match is_file_on_disk(root_path, fs_path, &mut listings) {
                 Ok(true) => add_watched_file(db, path.clone()),
                 Ok(false) => remove_watched_file(db, path.clone()),
                 // `NotADirectory` means an ancestor was replaced by a regular
@@ -510,7 +566,11 @@ fn triggers_rescan(path: &Utf8Path) -> bool {
 /// would unlink that file. This can retain duplicates, but avoids removing a
 /// file that still exists. The client-supplied spelling of `root_path` itself
 /// is not checked.
-fn is_file_on_disk(root_path: &Utf8Path, fs_path: &Utf8Path) -> io::Result<bool> {
+fn is_file_on_disk(
+    root_path: &Utf8Path,
+    fs_path: &Utf8Path,
+    listings: &mut DirListings,
+) -> io::Result<bool> {
     if !fs::metadata(fs_path)?.is_file() {
         return Ok(false);
     }
@@ -521,24 +581,76 @@ fn is_file_on_disk(root_path: &Utf8Path, fs_path: &Utf8Path) -> io::Result<bool>
     let mut dir = root_path.to_path_buf();
     for component in relative.components() {
         let name = component.as_str();
-        let mut exact = false;
-        let mut case_variant = false;
-        for entry in fs::read_dir(&dir)? {
-            let entry_name = entry?.file_name();
-            if entry_name == name {
-                exact = true;
-                break;
-            }
-            if entry_name.eq_ignore_ascii_case(name) {
-                case_variant = true;
-            }
-        }
-        if case_variant && !exact {
+        let listing = listings.get(&dir)?;
+        let name_os = OsStr::new(name);
+        if listing.folded.contains(&name_os.to_ascii_lowercase()) &&
+            !listing.exact.contains(name_os)
+        {
             return Ok(false);
         }
         dir.push(name);
     }
     Ok(true)
+}
+
+/// Cache directory listings for one [`ScanScheduler::drain_buffered()`] pass.
+///
+/// Reading an N-entry directory for each of N buffered paths would visit N^2
+/// entries on the main loop. Sharing the listing avoids repeated directory
+/// reads, and indexing by ASCII-lowercased name avoids repeated linear searches.
+///
+/// Listings are discarded after the pass. Disk changes during the pass can make
+/// them stale, but subsequent watcher events are checked against fresh listings.
+#[derive(Default)]
+struct DirListings(HashMap<Utf8PathBuf, DirListing>);
+
+/// Entry names of one directory, as stored and ASCII-lowercased.
+struct DirListing {
+    exact: HashSet<OsString>,
+    folded: HashSet<OsString>,
+}
+
+impl DirListings {
+    fn get(&mut self, dir: &Utf8Path) -> io::Result<&DirListing> {
+        match self.0.entry(dir.to_path_buf()) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => Ok(entry.insert(read_listing(dir)?)),
+        }
+    }
+}
+
+fn read_listing(dir: &Utf8Path) -> io::Result<DirListing> {
+    let mut exact = HashSet::new();
+    let mut folded = HashSet::new();
+    for entry in fs::read_dir(dir)? {
+        let entry_name = entry?.file_name();
+        folded.insert(entry_name.to_ascii_lowercase());
+        exact.insert(entry_name);
+    }
+    Ok(DirListing { exact, folded })
+}
+
+/// Whether every component of `dir` below `root_path` is a real directory.
+///
+/// The scan's walker doesn't follow symlinks below the root, so a listed
+/// directory replaced by a symlink (or reached through one) drops out of the
+/// next scan even though `is_environment_dir()` still finds its sentinel
+/// through the link.
+fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path) -> bool {
+    let Ok(relative) = dir.strip_prefix(root_path) else {
+        return false;
+    };
+    let mut current = root_path.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if !metadata.is_dir() {
+            return false;
+        }
+    }
+    true
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {

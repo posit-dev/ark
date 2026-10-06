@@ -320,6 +320,12 @@ pub(crate) fn is_environment_sentinel(file_name: &str) -> bool {
     ENVIRONMENT_SENTINELS.contains(&file_name)
 }
 
+pub(crate) fn is_environment_dir(dir: &Path) -> bool {
+    ENVIRONMENT_SENTINELS
+        .iter()
+        .any(|sentinel| dir.join(sentinel).is_file())
+}
+
 /// Find environment directories without traversing hidden or ignored directories.
 ///
 /// Probe visited directories for `.Rprofile` and `.Renviron` because the walker
@@ -334,11 +340,7 @@ pub(crate) fn scan_workspace_environment_dirs(root: &Path) -> Vec<FilePath> {
                 .is_some_and(|file_type| file_type.is_dir())
         })
         .map(|entry| entry.into_path())
-        .filter(|dir| {
-            ENVIRONMENT_SENTINELS
-                .iter()
-                .any(|sentinel| dir.join(sentinel).is_file())
-        })
+        .filter(|dir| is_environment_dir(dir))
         .collect();
     dirs.sort();
 

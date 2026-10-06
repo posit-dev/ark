@@ -21,6 +21,7 @@ use oak_db::SourceDb;
 
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
+use crate::tests::is_case_insensitive;
 use crate::ScanScheduler;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
@@ -320,8 +321,107 @@ fn test_deleting_one_of_two_sentinels_keeps_environment_dir() {
         vec![watched_path(&dir.join(".Rprofile"))],
         &HashSet::new(),
     );
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    assert!(requests.is_empty());
     assert_eq!(environment_dirs(&db, root), vec![dir.to_path_buf()]);
+}
+
+#[test]
+fn test_sentinel_edit_on_idle_root_skips_rescan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let rprofile = tmp.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    fs::write(&rprofile, "options(foo = 1)\n").unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert!(requests.is_empty());
+    assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
+}
+
+#[test]
+fn test_sentinel_deletion_under_other_case_spelling_rescans() {
+    // The scan lists `Sub`, but the deletion arrives as `sub/.Rprofile`. The
+    // event's directory looks unlisted and sentinel-free, which must not be
+    // mistaken for an up-to-date listing.
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_case_insensitive(tmp.path()) {
+        return;
+    }
+    let sub = tmp.path().join("Sub");
+    fs::create_dir_all(&sub).unwrap();
+    fs::write(sub.join(".Rprofile"), "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    assert_eq!(environment_dirs(&db, root), vec![sub.clone()]);
+
+    fs::remove_file(sub.join(".Rprofile")).unwrap();
+    let rprofile = tmp.path().join("sub/.Rprofile");
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    assert!(environment_dirs(&db, root).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_environment_dir_replaced_by_symlink_rescans() {
+    // The walker doesn't follow symlinks, so `sub` stops being an environment
+    // directory even though its sentinel is still reachable through the link.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let sub = ws.join("sub");
+    let target = tmp.path().join("target");
+    fs::create_dir_all(&sub).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    fs::write(sub.join(".Rprofile"), "").unwrap();
+    fs::write(target.join(".Rprofile"), "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[ws])[0];
+    assert_eq!(environment_dirs(&db, root), vec![sub.clone()]);
+
+    fs::remove_dir_all(&sub).unwrap();
+    std::os::unix::fs::symlink(&target, &sub).unwrap();
+    let requests = scheduler.apply_watcher_events(
+        &mut db,
+        vec![watched_path(&sub.join(".Rprofile"))],
+        &HashSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    assert!(environment_dirs(&db, root).is_empty());
+}
+
+#[test]
+fn test_sentinel_edit_during_scan_queues_rescan() {
+    // `environment_dirs()` matches the disk, but the in-flight scan's result
+    // replaces it, so the event can't be judged against it.
+    let tmp = tempfile::tempdir().unwrap();
+    let rprofile = tmp.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let description = tmp.path().join("DESCRIPTION");
+    fs::write(&description, "Package: pkg\nVersion: 0.0.0\n").unwrap();
+    let mut requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    let request = requests.pop().unwrap();
+
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert!(requests.is_empty());
+
+    let followups = scheduler.apply_scan_completed(&mut db, request.run(), &HashSet::new());
+    assert_eq!(followups.len(), 1);
+    assert_eq!(followups[0].root, root);
 }
 
 #[test]

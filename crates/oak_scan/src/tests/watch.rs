@@ -12,6 +12,7 @@ use oak_db::Root;
 use oak_db::SourceDb;
 
 use crate::scheduler::drain_scheduler;
+use crate::tests::is_case_insensitive;
 use crate::DbScan;
 use crate::ScanRequest;
 use crate::ScanScheduler;
@@ -662,13 +663,6 @@ fn test_watcher_parent_dir_replaced_by_file_unlinks_path() {
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
     assert!(db.file_by_path(&watched_path(&fs_path)).is_none());
-}
-
-fn is_case_insensitive(dir: &Path) -> bool {
-    fs::write(dir.join("probe"), "").unwrap();
-    let insensitive = dir.join("PROBE").exists();
-    fs::remove_file(dir.join("probe")).unwrap();
-    insensitive
 }
 
 #[test]
