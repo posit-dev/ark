@@ -235,9 +235,10 @@ pub(crate) async fn handle_initialized(
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
-    // Editor-owned R files are tracked via `textDocument/did*`, so the handler
-    // skips their disk events. `DESCRIPTION` and environment sentinels still
-    // trigger rescans even when open in the editor.
+    // The contents of editor-owned R files come from `textDocument/did*`. Their
+    // disk events still register files that exist on disk, but never remove
+    // them while open. `DESCRIPTION` and environment sentinels trigger rescans
+    // even when open in the editor.
     let watchers = vec![
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
@@ -576,8 +577,9 @@ pub(crate) fn did_change_watched_files(
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    // Editor owns the contents of files it has open: ignore disk-side events
-    // for those URLs. Their content comes from `did_open` / `did_change`.
+    // Editor owns the contents of files it has open, which come from
+    // `did_open` / `did_change`. Disk events for those URLs can register the
+    // file in its container but never remove it.
     let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
     // The change type is dropped: the scheduler reconciles each path against
