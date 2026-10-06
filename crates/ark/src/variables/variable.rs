@@ -587,7 +587,7 @@ fn has_children(value: SEXP) -> bool {
     }
 }
 
-fn has_viewer(value: SEXP) -> bool {
+fn has_viewer(value: SEXP, has_children: bool) -> bool {
     if r_is_function(value) {
         return true;
     }
@@ -607,9 +607,7 @@ fn has_viewer(value: SEXP) -> bool {
         // No method found: data frames and matrices open in the Data Explorer,
         // and other containers with children open in the Object Explorer.
         Ok(None) => {
-            r_is_data_frame(value) ||
-                r_is_matrix(value) ||
-                (is_explorable(value) && has_children(value))
+            r_is_data_frame(value) || r_is_matrix(value) || (is_explorable(value) && has_children)
         },
     }
 }
@@ -640,6 +638,7 @@ pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum EnvironmentVariableNode {
     Concrete { object: RObject },
     R6Node { object: RObject, name: String },
@@ -692,6 +691,7 @@ impl PositronVariable {
         } = WorkspaceVariableDisplayType::from(x, true);
 
         let kind = Self::variable_kind(x);
+        let has_children = has_children(x);
 
         Self {
             var: Variable {
@@ -703,9 +703,9 @@ impl PositronVariable {
                 kind,
                 length: Self::variable_length(x) as i64,
                 size: 0, // It's up to the caller to set the size.
-                has_children: has_children(x),
+                has_children,
                 is_truncated,
-                has_viewer: has_viewer(x),
+                has_viewer: has_viewer(x, has_children),
                 updated_time: Self::update_timestamp(),
             },
         }
@@ -1404,10 +1404,9 @@ impl PositronVariable {
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
         let variables: Vec<Variable> = formatted
-            .iter_take(range.end)?
-            .enumerate()
-            .skip(range.start)
-            .map(|(i, value)| {
+            .iter_range(range.clone())?
+            .zip(range)
+            .map(|(value, i)| {
                 let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
                 // Names are arbitrarily set by users, so we add a safeguard to truncate them
                 // to avoid massive names that could break communications with the frontend.

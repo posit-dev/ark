@@ -388,9 +388,9 @@ impl RVariables {
             Some(split) => split,
             None => return Err(harp::Error::Anyhow(anyhow!("Can't view an empty path"))),
         };
-        let title = path.last().unwrap_or(name).clone();
         let value = PositronVariable::resolve_data_object(env.clone(), std::slice::from_ref(name))?;
         let accessor = path_accessor(name, value, path_in_binding);
+        let title = accessor.clone().unwrap_or_else(|| name.clone());
         let binding = DataObjectEnvInfo {
             name: name.clone(),
             env,

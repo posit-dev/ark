@@ -24,18 +24,22 @@ use amalthea::comm::object_explorer_comm::SearchRow;
 use amalthea::comm::object_explorer_comm::SearchRowMatchKind;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
+use anyhow::anyhow;
+use harp::environment::Binding;
+use harp::environment::BindingValue;
+use harp::environment::Environment;
+use harp::environment::RObjectValueId;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::r_symbol;
 use harp::utils::r_chr_get_owned_utf8;
+use harp::utils::r_env_is_ns_env;
+use harp::utils::r_env_is_pkg_env;
 use harp::utils::r_inherits;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
-use harp::utils::r_is_promise;
+use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
-use harp::utils::r_promise_is_forced;
-use harp::utils::r_promise_value;
 use harp::utils::r_typeof;
 use libr::*;
 use stdext::unwrap;
@@ -61,6 +65,9 @@ pub const POSITRON_OBJECT_EXPLORER_MIME: &str = "application/vnd.positron.object
 /// The most nodes a search visits before it stops early.
 const SEARCH_NODE_BUDGET: usize = 200_000;
 
+/// The number of children a search fetches at a time.
+const SEARCH_PAGE_SIZE: usize = 1_000;
+
 /// The R backend for Positron's Object Explorer: serves one R object, one
 /// level and one page of children at a time.
 pub struct RObjectExplorer {
@@ -83,6 +90,10 @@ pub struct RObjectExplorer {
 
     /// Whether the explorer is shown inline only, rather than in an editor.
     inline: bool,
+
+    /// The bindings reachable from the explored object if it is an
+    /// environment, to detect changes made in place.
+    fingerprint: Vec<(SEXP, RObjectValueId)>,
 }
 
 impl std::fmt::Debug for RObjectExplorer {
@@ -113,6 +124,7 @@ impl RObjectExplorer {
             Some((binding, path)) => (Some(binding), path),
             None => (None, vec![]),
         };
+        let fingerprint = environment_fingerprint(root.sexp);
         Self {
             title,
             root,
@@ -120,23 +132,8 @@ impl RObjectExplorer {
             binding,
             path_in_binding,
             inline,
+            fingerprint,
         }
-    }
-
-    /// Reads the current value of a binding without forcing promises.
-    /// Returns `None` if the binding is gone or holds an unforced promise.
-    fn binding_value(binding: &DataObjectEnvInfo) -> Option<RObject> {
-        let value = unsafe { Rf_findVarInFrame(binding.env.sexp, r_symbol!(binding.name)) };
-        if value == unsafe { R_UnboundValue } {
-            return None;
-        }
-        if r_is_promise(value) {
-            if !r_promise_is_forced(value) {
-                return None;
-            }
-            return Some(RObject::new(r_promise_value(value)));
-        }
-        Some(RObject::new(value))
     }
 
     /// Checks the binding for a new value. Returns false if the explorer
@@ -146,18 +143,16 @@ impl RObjectExplorer {
             return Ok(true);
         };
 
-        let current = unsafe { Rf_findVarInFrame(binding.env.sexp, r_symbol!(binding.name)) };
-        if current == unsafe { R_UnboundValue } {
+        let env = Environment::new(binding.env.clone());
+        if !env.exists(binding.name.as_str()) {
             return Ok(false);
         }
 
-        // Never force a promise from a comm update; wait for it to be forced.
-        if r_is_promise(current) && !r_promise_is_forced(current) {
-            return Ok(true);
-        }
-
-        let Some(value) = Self::binding_value(binding) else {
-            return Ok(true);
+        // Never run R code from a comm update: unforced promises and active
+        // bindings are left alone.
+        let value = match Binding::new(&env, binding.name.as_str().into())?.value {
+            BindingValue::Standard { object } | BindingValue::Altrep { object, .. } => object,
+            BindingValue::Active { .. } | BindingValue::Promise { .. } => return Ok(true),
         };
         let node = PositronVariable::resolve_object_from_path(value, &self.path_in_binding);
         let Ok(EnvironmentVariableNode::Concrete { object }) = node else {
@@ -167,13 +162,13 @@ impl RObjectExplorer {
             return Ok(false);
         }
 
-        // An environment (including an R6 object) changes in place, so it is
-        // always updated.
-        if object.sexp == self.root.sexp && r_typeof(object.sexp) != ENVSXP {
+        let fingerprint = environment_fingerprint(object.sexp);
+        if object.sexp == self.root.sexp && fingerprint == self.fingerprint {
             return Ok(true);
         }
 
         self.root = object;
+        self.fingerprint = fingerprint;
         ctx.send_event(&ObjectExplorerFrontendEvent::Update);
         Ok(true)
     }
@@ -288,32 +283,12 @@ impl RObjectExplorer {
                     .as_ref()
                     .zip(selector.selector(&var.access_key))
                     .map(|(a, s)| format!("{a}{s}"));
-                let is_cycle = self.is_cycle(path, &var, &environments);
+                let is_cycle = var.has_children && is_cycle(&node, &var, &environments);
                 object_node(var, child_accessor, is_cycle)
             })
             .collect();
 
         Ok((nodes, total))
-    }
-
-    /// Whether a child is an environment that is also one of its ancestors.
-    fn is_cycle(
-        &self,
-        parent_path: &[String],
-        child: &Variable,
-        environments: &HashSet<SEXP>,
-    ) -> bool {
-        if !child.has_children {
-            return false;
-        }
-        let mut path = parent_path.to_vec();
-        path.push(child.access_key.clone());
-        match PositronVariable::resolve_object_from_path(self.root.clone(), &path) {
-            Ok(EnvironmentVariableNode::Concrete { object }) => {
-                r_typeof(object.sexp) == ENVSXP && environments.contains(&object.sexp)
-            },
-            _ => false,
-        }
     }
 
     /// Searches names and leaf values, depth first, returning matches and the
@@ -340,63 +315,73 @@ impl RObjectExplorer {
     /// Visits the children of the object at `path` and their descendants.
     /// Returns true when the search must stop.
     fn search_children(&self, search: &mut Search, path: &[String]) -> bool {
-        let remaining = SEARCH_NODE_BUDGET.saturating_sub(search.visited);
-        let children = match self.children(path, 0..remaining + 1) {
-            Ok((children, _)) => children,
-            Err(err) => {
-                log::warn!("Object explorer search skipped {path:?}: {err}");
-                return false;
-            },
-        };
-
-        for node in children {
-            if search.visited >= SEARCH_NODE_BUDGET || search.matches >= search.max_results {
-                search.truncated = true;
-                return true;
-            }
-            search.visited += 1;
-
-            let mut child_path = path.to_vec();
-            child_path.push(node.access_key.clone());
-
-            // A truncated display value is matched on the full value instead.
-            let is_leaf = !node.has_children && !node.is_cycle;
-            let full_value = if is_leaf && node.is_truncated {
-                self.format_text(&child_path).ok()
-            } else {
-                None
+        let mut start = 0;
+        loop {
+            let (children, total) = match self.children(path, start..start + SEARCH_PAGE_SIZE) {
+                Ok(page) => page,
+                Err(err) => {
+                    log::warn!("Object explorer search skipped {path:?}: {err:?}");
+                    return false;
+                },
             };
-            let match_kind = search.match_kind(&node, full_value.as_deref());
-            let matched = match_kind.is_some();
-            if let Some(match_kind) = match_kind {
-                for (ancestor_path, ancestor_node, emitted) in search.pending.iter_mut() {
-                    if !*emitted {
-                        search.rows.push(SearchRow {
-                            path: ancestor_path.clone(),
-                            node: ancestor_node.clone(),
-                            match_kind: SearchRowMatchKind::Ancestor,
-                        });
-                        *emitted = true;
-                    }
-                }
-                search.rows.push(SearchRow {
-                    path: child_path.clone(),
-                    node: node.clone(),
-                    match_kind,
-                });
-                search.matches += 1;
-            }
-
-            if child_path.len() < search.max_depth && node.has_children {
-                search.pending.push((child_path.clone(), node, matched));
-                let stop = self.search_children(search, &child_path);
-                search.pending.pop();
-                if stop {
+            for node in children {
+                if self.search_node(search, path, node) {
                     return true;
                 }
             }
+            start += SEARCH_PAGE_SIZE;
+            if start >= total {
+                return false;
+            }
+        }
+    }
+
+    /// Visits a child of the object at `path` and its descendants. Returns
+    /// true when the search must stop.
+    fn search_node(&self, search: &mut Search, path: &[String], node: ObjectNode) -> bool {
+        if search.visited >= SEARCH_NODE_BUDGET || search.matches >= search.max_results {
+            search.truncated = true;
+            return true;
+        }
+        search.visited += 1;
+
+        let mut child_path = path.to_vec();
+        child_path.push(node.access_key.clone());
+
+        // A truncated display value is matched on the full value instead.
+        let is_leaf = !node.has_children && !node.is_cycle;
+        let full_value = if is_leaf && node.is_truncated {
+            self.format_text(&child_path).ok()
+        } else {
+            None
+        };
+        let match_kind = search.match_kind(&node, full_value.as_deref());
+        let matched = match_kind.is_some();
+        if let Some(match_kind) = match_kind {
+            for (ancestor_path, ancestor_node, emitted) in search.pending.iter_mut() {
+                if !*emitted {
+                    search.rows.push(SearchRow {
+                        path: ancestor_path.clone(),
+                        node: ancestor_node.clone(),
+                        match_kind: SearchRowMatchKind::Ancestor,
+                    });
+                    *emitted = true;
+                }
+            }
+            search.rows.push(SearchRow {
+                path: child_path.clone(),
+                node: node.clone(),
+                match_kind,
+            });
+            search.matches += 1;
         }
 
+        if child_path.len() < search.max_depth && node.has_children {
+            search.pending.push((child_path.clone(), node, matched));
+            let stop = self.search_children(search, &child_path);
+            search.pending.pop();
+            return stop;
+        }
         false
     }
 
@@ -408,7 +393,7 @@ impl RObjectExplorer {
             {
                 object
             },
-            _ => anyhow::bail!("Can't view {path:?} as a table"),
+            _ => return Err(anyhow!("Can't view {path:?} as a table")),
         };
         let explorer = RDataExplorer::new(title, object, None, DataExplorerMode::Full)?;
         Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
@@ -505,7 +490,7 @@ impl CommHandler for RObjectExplorer {
         match self.update(ctx) {
             Ok(true) => {},
             Ok(false) => ctx.close_on_exit(),
-            Err(err) => log::error!("Error while checking for object explorer update: {err}"),
+            Err(err) => log::error!("Error while checking for object explorer update: {err:?}"),
         }
     }
 }
@@ -643,6 +628,48 @@ impl ChildSelector {
     }
 }
 
+/// Whether a child of `parent` is an environment that is also one of its
+/// ancestors.
+fn is_cycle(
+    parent: &EnvironmentVariableNode,
+    child: &Variable,
+    environments: &HashSet<SEXP>,
+) -> bool {
+    match PositronVariable::get_child_node_at(parent.clone(), &child.access_key) {
+        Ok(EnvironmentVariableNode::Concrete { object }) => {
+            r_typeof(object.sexp) == ENVSXP && environments.contains(&object.sexp)
+        },
+        _ => false,
+    }
+}
+
+/// Identifies the bindings of an environment and of the environments
+/// reachable through them, such as an R6 object's private fields. Empty for
+/// other objects. Global, package, and namespace environments aren't
+/// entered.
+fn environment_fingerprint(value: SEXP) -> Vec<(SEXP, RObjectValueId)> {
+    let mut ids = vec![];
+    let mut visited = HashSet::new();
+    let mut pending = vec![value];
+    while let Some(env) = pending.pop() {
+        if r_typeof(env) != ENVSXP ||
+            env == unsafe { R_GlobalEnv } ||
+            r_env_is_pkg_env(env) ||
+            r_env_is_ns_env(env) ||
+            !visited.insert(env)
+        {
+            continue;
+        }
+        for binding in Environment::view(env).iter().filter_map(Result::ok) {
+            if let BindingValue::Standard { object } = &binding.value {
+                pending.push(object.sexp);
+            }
+            ids.push(binding.id());
+        }
+    }
+    ids
+}
+
 /// Records the node's object if it is an environment.
 fn insert_environment(node: &EnvironmentVariableNode, environments: &mut HashSet<SEXP>) {
     if let EnvironmentVariableNode::Concrete { object } = node {
@@ -777,10 +804,10 @@ pub unsafe extern "C-unwind" fn ps_view_object(
 }
 
 /// Whether a printed value is nested data worth exploring inline in a
-/// notebook: a non-empty list (but not a data frame or matrix), or an
-/// environment other than the global one.
+/// notebook: a non-empty plain list, or a plain environment other than the
+/// global one. Classed objects are left to their print methods.
 pub(crate) fn is_inline_explorable(value: SEXP) -> bool {
-    if r_is_data_frame(value) || r_is_matrix(value) {
+    if r_is_object(value) || r_is_matrix(value) {
         return false;
     }
     match r_typeof(value) {
@@ -1064,6 +1091,19 @@ mod tests {
             assert!(!explorable("1:3"));
             assert!(!explorable("NULL"));
             assert!(!explorable("matrix(list(1, 2, 3, 4), 2)"));
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_is_inline_explorable() {
+        r_task(|| {
+            let explorable =
+                |code: &str| is_inline_explorable(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(explorable("list(a = 1)"));
+            assert!(explorable("new.env()"));
+            assert!(!explorable("list()"));
+            assert!(!explorable("R.version"));
+            assert!(!explorable("t.test(1:10)"));
         })
     }
 }

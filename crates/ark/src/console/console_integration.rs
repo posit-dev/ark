@@ -232,20 +232,12 @@ impl Console {
         &mut self,
         value: RObject,
     ) -> anyhow::Result<serde_json::Value> {
-        // There is no variable binding, so the title is the object's class,
-        // e.g. "lm", or its type.
-        let title = value
-            .class()
-            .ok()
-            .flatten()
-            .and_then(|classes| classes.into_iter().next())
-            .unwrap_or_else(|| {
-                String::from(if r_typeof(value.sexp) == libr::ENVSXP {
-                    "environment"
-                } else {
-                    "list"
-                })
-            });
+        // There is no variable binding, so the title is the object's type.
+        let title = String::from(if r_typeof(value.sexp) == libr::ENVSXP {
+            "environment"
+        } else {
+            "list"
+        });
 
         let explorer = RObjectExplorer::new(title.clone(), value, None, None, true);
         let comm_id = self.comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))?;

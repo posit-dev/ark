@@ -73,9 +73,11 @@ fn test_object_explorer_follows_environment_mutation() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     let comm_id = frontend.recv_iopub_comm_open().comm_id;
-    assert_eq!(frontend.recv_iopub_comm_msg().data["method"], "update");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+
+    // An unrelated execution doesn't update the explorer.
+    execute(&frontend, "oe_y <- 1");
 
     frontend.send_execute_request("oe_env$b <- 2", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -86,6 +88,26 @@ fn test_object_explorer_follows_environment_mutation() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
     assert_eq!(get_children(&frontend, &comm_id).total, 2);
+}
+
+/// An explorer on an active binding never calls the binding's function.
+#[test]
+fn test_object_explorer_does_not_run_active_binding() {
+    let frontend = DummyArkFrontend::lock();
+    execute(
+        &frontend,
+        "oe_n <- 0; makeActiveBinding('oe_ab', function() { oe_n <<- oe_n + 1; list(a = 1) }, globalenv())",
+    );
+
+    frontend.send_execute_request("View(oe_ab)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_comm_open();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    execute(&frontend, "oe_n_after <- oe_n");
+    execute(&frontend, "stopifnot(oe_n_after == oe_n, oe_n == 1)");
 }
 
 /// A data frame inside a list opens in a data explorer.
