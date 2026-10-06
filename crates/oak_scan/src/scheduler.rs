@@ -196,9 +196,9 @@ enum ScanState {
 #[derive(Debug, Default)]
 pub struct ScanScheduler {
     state: HashMap<Root, ScanState>,
-    /// Unique paths in arrival order. A `HashSet` would drain in hash order,
-    /// and `add_watched_file()` appends new files to `pkg.files` (load order)
-    /// and `root.scripts` in drain order.
+    /// Unique paths in arrival order. `add_watched_file()` appends new files to
+    /// `pkg.files` and `root.scripts` in drain order, and a `HashSet` would make
+    /// that order vary from run to run.
     buffered: IndexSet<FilePath>,
 }
 

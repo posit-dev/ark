@@ -1063,7 +1063,7 @@ fn test_r_file_event_waits_for_every_containing_root_scan() {
 }
 
 #[test]
-fn test_overlapping_rescans_preserve_watcher_event_order() -> io::Result<()> {
+fn test_buffered_path_matches_disk_after_overlapping_rescans() -> io::Result<()> {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let (tmp, _, _) = nested_roots(&mut db, &mut scheduler, false);
