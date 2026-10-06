@@ -381,16 +381,22 @@ impl ScanScheduler {
             }
         }
 
-        for path in paths {
-            let Some(fs_path) = path.as_path() else {
-                continue;
-            };
-            if triggers_rescan(fs_path) {
-                continue;
+        // Reconcile only this batch's paths. Already-buffered paths are still
+        // blocked: only a finished scan or a change of roots can unblock them,
+        // and those drain the whole buffer. Draining it here too would revisit
+        // the backlog on every batch that arrives during a long scan.
+        let r_paths: IndexSet<FilePath> = paths
+            .into_iter()
+            .filter(|path| {
+                path.as_path()
+                    .is_some_and(|fs_path| !triggers_rescan(fs_path))
+            })
+            .collect();
+        for path in r_paths {
+            if reconcile_watched_path(db, &self.state, &roots, &mut listings, editor_owned, &path) {
+                self.buffered.insert(path);
             }
-            self.buffered.insert(path);
         }
-        self.drain_buffered(db, editor_owned);
 
         requests
     }
@@ -556,51 +562,9 @@ impl ScanScheduler {
     fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
         let roots = workspace_root_paths(db);
         let mut listings = DirListings::default();
+        let state = &self.state;
         self.buffered.retain(|path| {
-            let Some(fs_path) = path.as_path() else {
-                return false;
-            };
-            let containing_roots: Vec<&(Utf8PathBuf, Root)> = roots
-                .iter()
-                .filter(|(root_path, _)| fs_path.starts_with(root_path))
-                .collect();
-            let Some((root_path, _)) = containing_roots.first() else {
-                return false;
-            };
-
-            // Nested roots share entities, so every containing scan must finish
-            // before a path can apply.
-            if containing_roots
-                .iter()
-                .any(|(_, root)| self.state.contains_key(root))
-            {
-                return true;
-            }
-            let on_disk = match is_file_on_disk(root_path, fs_path, &mut listings) {
-                Ok(on_disk) => on_disk,
-                // `NotADirectory` means an ancestor was replaced by a regular
-                // file (`ENOTDIR` on Unix), so the path can't exist either.
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-                    ) =>
-                {
-                    false
-                },
-                // Other errors (e.g. permissions) don't prove the file is gone,
-                // so keep the current registration rather than unlinking it.
-                Err(err) => {
-                    log::warn!("Can't check watched path {fs_path} on disk: {err:?}");
-                    return false;
-                },
-            };
-            if on_disk {
-                add_watched_file(db, path.clone());
-            } else if !editor_owned.contains(path) {
-                remove_watched_file(db, path.clone());
-            }
-            false
+            reconcile_watched_path(db, state, &roots, &mut listings, editor_owned, path)
         });
     }
 
@@ -656,6 +620,64 @@ fn triggers_rescan(path: &Utf8Path) -> bool {
         .is_some_and(|name| name == "DESCRIPTION" || is_environment_sentinel(name))
 }
 
+/// Apply one watched R-file path against the disk, unless a containing root is
+/// scanning. Returns `true` if the path must stay buffered.
+///
+/// See [`ScanScheduler::drain_buffered()`] for how open buffers are handled.
+fn reconcile_watched_path<DB: Db + DbInputs>(
+    db: &mut DB,
+    state: &HashMap<Root, ScanState>,
+    roots: &[(Utf8PathBuf, Root)],
+    listings: &mut DirListings,
+    editor_owned: &HashSet<FilePath>,
+    path: &FilePath,
+) -> bool {
+    let Some(fs_path) = path.as_path() else {
+        return false;
+    };
+    let containing_roots: Vec<&(Utf8PathBuf, Root)> = roots
+        .iter()
+        .filter(|(root_path, _)| fs_path.starts_with(root_path))
+        .collect();
+    let Some((root_path, _)) = containing_roots.first() else {
+        return false;
+    };
+
+    // Nested roots share entities, so every containing scan must finish
+    // before a path can apply.
+    if containing_roots
+        .iter()
+        .any(|(_, root)| state.contains_key(root))
+    {
+        return true;
+    }
+    let on_disk = match is_file_on_disk(root_path, fs_path, listings) {
+        Ok(on_disk) => on_disk,
+        // `NotADirectory` means an ancestor was replaced by a regular
+        // file (`ENOTDIR` on Unix), so the path can't exist either.
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            false
+        },
+        // Other errors (e.g. permissions) don't prove the file is gone,
+        // so keep the current registration rather than unlinking it.
+        Err(err) => {
+            log::warn!("Can't check watched path {fs_path} on disk: {err:?}");
+            return false;
+        },
+    };
+    if on_disk {
+        add_watched_file(db, path.clone());
+    } else if !editor_owned.contains(path) {
+        remove_watched_file(db, path.clone());
+    }
+    false
+}
+
 /// Reject stale ASCII case spellings of files below `root_path`.
 ///
 /// On case-insensitive volumes, `fs::metadata()` still resolves `foo.R` after
@@ -708,8 +730,8 @@ fn has_stale_spelling(
     Ok(false)
 }
 
-/// Cache directory listings for one pass over watcher events: the rescan check
-/// in [`ScanScheduler::apply_watcher_events()`] or one
+/// Cache directory listings for one pass over watcher events: one batch in
+/// [`ScanScheduler::apply_watcher_events()`] or one
 /// [`ScanScheduler::drain_buffered()`].
 ///
 /// Reading an N-entry directory for each of N buffered paths would visit N^2
