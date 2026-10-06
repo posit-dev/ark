@@ -137,7 +137,8 @@ impl RObjectExplorer {
     }
 
     /// Checks the binding for a new value. Returns false if the explorer
-    /// should close because the explored object is gone.
+    /// should close because the explored object is gone or its accessor now
+    /// selects a different object.
     fn update(&mut self, ctx: &CommHandlerContext) -> anyhow::Result<bool> {
         let Some(binding) = &self.binding else {
             return Ok(true);
@@ -154,6 +155,11 @@ impl RObjectExplorer {
             BindingValue::Standard { object } | BindingValue::Altrep { object, .. } => object,
             BindingValue::Active { .. } | BindingValue::Promise { .. } => return Ok(true),
         };
+        // The path's positional keys may now lead to a different element.
+        if path_accessor(&binding.name, value.clone(), &self.path_in_binding) != self.root_accessor
+        {
+            return Ok(false);
+        }
         let node = PositronVariable::resolve_object_from_path(value, &self.path_in_binding);
         let Ok(EnvironmentVariableNode::Concrete { object }) = node else {
             return Ok(false);
@@ -240,28 +246,23 @@ impl RObjectExplorer {
         }
     }
 
-    /// Resolves the node at a path, along with its accessor and the
-    /// environments from the root to it (the only objects that can contain
-    /// themselves).
-    fn resolve(
-        &self,
-        path: &[String],
-    ) -> anyhow::Result<(EnvironmentVariableNode, Option<String>, HashSet<SEXP>)> {
-        let mut node = EnvironmentVariableNode::Concrete {
-            object: self.root.clone(),
-        };
-        let mut accessor = self.root_accessor.clone();
-        let mut environments = HashSet::new();
-        insert_environment(&node, &mut environments);
-
+    /// Resolves the node at a path.
+    fn resolve(&self, path: &[String]) -> anyhow::Result<Resolved> {
+        let mut resolved = Resolved::new(
+            EnvironmentVariableNode::Concrete {
+                object: self.root.clone(),
+            },
+            self.root_accessor.clone(),
+            HashSet::new(),
+        );
         for key in path {
-            let selector = ChildSelector::new(&node).selector(key);
-            accessor = accessor.zip(selector).map(|(a, s)| a + &s);
-            node = PositronVariable::get_child_node_at(node, key)?;
-            insert_environment(&node, &mut environments);
+            let accessor = resolved.accessor.as_ref().and_then(|accessor| {
+                let selector = ChildSelector::new(&resolved.node).selector(key)?;
+                Some(format!("{accessor}{selector}"))
+            });
+            resolved = resolved.child(key, accessor)?;
         }
-
-        Ok((node, accessor, environments))
+        Ok(resolved)
     }
 
     /// Gets the nodes of the children of the object at `path` in `range`, and
@@ -271,20 +272,33 @@ impl RObjectExplorer {
         path: &[String],
         range: Range<usize>,
     ) -> anyhow::Result<(Vec<ObjectNode>, usize)> {
-        let (node, accessor, environments) = self.resolve(path)?;
-        let selector = ChildSelector::new(&node);
+        let parent = self.resolve(path)?;
+        let selector = ChildSelector::new(&parent.node);
+        self.child_nodes(&parent, &selector, path, range)
+    }
+
+    /// Gets the nodes of the children of `parent`, the object at `path`, in
+    /// `range`, and the total number of children.
+    fn child_nodes(
+        &self,
+        parent: &Resolved,
+        selector: &ChildSelector,
+        path: &[String],
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<ObjectNode>, usize)> {
         let (variables, total) =
             PositronVariable::inspect_children(self.root.clone(), path, range)?;
 
         let nodes = variables
             .into_iter()
             .map(|var| {
-                let child_accessor = accessor
+                let accessor = parent
+                    .accessor
                     .as_ref()
                     .zip(selector.selector(&var.access_key))
-                    .map(|(a, s)| format!("{a}{s}"));
-                let is_cycle = var.has_children && is_cycle(&node, &var, &environments);
-                object_node(var, child_accessor, is_cycle)
+                    .map(|(accessor, selector)| format!("{accessor}{selector}"));
+                let is_cycle = var.has_children && is_cycle(parent, &var);
+                object_node(var, accessor, is_cycle)
             })
             .collect();
 
@@ -304,7 +318,12 @@ impl RObjectExplorer {
             visited: 0,
             truncated: false,
         };
-        self.search_children(&mut search, &[]);
+        match self.resolve(&[]) {
+            Ok(root) => {
+                self.search_children(&mut search, &root, &[]);
+            },
+            Err(err) => log::error!("Object explorer search failed: {err:?}"),
+        }
         SearchResult {
             rows: search.rows,
             total_matches: search.matches as i64,
@@ -312,12 +331,14 @@ impl RObjectExplorer {
         }
     }
 
-    /// Visits the children of the object at `path` and their descendants.
-    /// Returns true when the search must stop.
-    fn search_children(&self, search: &mut Search, path: &[String]) -> bool {
+    /// Visits the children of `parent`, the object at `path`, and their
+    /// descendants. Returns true when the search must stop.
+    fn search_children(&self, search: &mut Search, parent: &Resolved, path: &[String]) -> bool {
+        let selector = ChildSelector::new(&parent.node);
         let mut start = 0;
         loop {
-            let (children, total) = match self.children(path, start..start + SEARCH_PAGE_SIZE) {
+            let page = start..start + SEARCH_PAGE_SIZE;
+            let (children, total) = match self.child_nodes(parent, &selector, path, page) {
                 Ok(page) => page,
                 Err(err) => {
                     log::warn!("Object explorer search skipped {path:?}: {err:?}");
@@ -325,7 +346,7 @@ impl RObjectExplorer {
                 },
             };
             for node in children {
-                if self.search_node(search, path, node) {
+                if self.search_node(search, parent, path, node) {
                     return true;
                 }
             }
@@ -336,9 +357,15 @@ impl RObjectExplorer {
         }
     }
 
-    /// Visits a child of the object at `path` and its descendants. Returns
-    /// true when the search must stop.
-    fn search_node(&self, search: &mut Search, path: &[String], node: ObjectNode) -> bool {
+    /// Visits a child of `parent`, the object at `path`, and its descendants.
+    /// Returns true when the search must stop.
+    fn search_node(
+        &self,
+        search: &mut Search,
+        parent: &Resolved,
+        path: &[String],
+        node: ObjectNode,
+    ) -> bool {
         if search.visited >= SEARCH_NODE_BUDGET || search.matches >= search.max_results {
             search.truncated = true;
             return true;
@@ -377,8 +404,15 @@ impl RObjectExplorer {
         }
 
         if child_path.len() < search.max_depth && node.has_children {
+            let child = match parent.child(&node.access_key, node.accessor.clone()) {
+                Ok(child) => child,
+                Err(err) => {
+                    log::warn!("Object explorer search skipped {child_path:?}: {err:?}");
+                    return false;
+                },
+            };
             search.pending.push((child_path.clone(), node, matched));
-            let stop = self.search_children(search, &child_path);
+            let stop = self.search_children(search, &child, &child_path);
             search.pending.pop();
             return stop;
         }
@@ -628,16 +662,45 @@ impl ChildSelector {
     }
 }
 
+/// A resolved node, with its accessor and the environments from the root to
+/// it (the only objects that can contain themselves).
+struct Resolved {
+    node: EnvironmentVariableNode,
+    accessor: Option<String>,
+    environments: HashSet<SEXP>,
+}
+
+impl Resolved {
+    fn new(
+        node: EnvironmentVariableNode,
+        accessor: Option<String>,
+        mut environments: HashSet<SEXP>,
+    ) -> Self {
+        if let EnvironmentVariableNode::Concrete { object } = &node {
+            if r_typeof(object.sexp) == ENVSXP {
+                environments.insert(object.sexp);
+            }
+        }
+        Self {
+            node,
+            accessor,
+            environments,
+        }
+    }
+
+    /// Resolves the child with an access key, given its accessor.
+    fn child(&self, access_key: &String, accessor: Option<String>) -> harp::Result<Self> {
+        let node = PositronVariable::get_child_node_at(self.node.clone(), access_key)?;
+        Ok(Self::new(node, accessor, self.environments.clone()))
+    }
+}
+
 /// Whether a child of `parent` is an environment that is also one of its
 /// ancestors.
-fn is_cycle(
-    parent: &EnvironmentVariableNode,
-    child: &Variable,
-    environments: &HashSet<SEXP>,
-) -> bool {
-    match PositronVariable::get_child_node_at(parent.clone(), &child.access_key) {
+fn is_cycle(parent: &Resolved, child: &Variable) -> bool {
+    match PositronVariable::get_child_node_at(parent.node.clone(), &child.access_key) {
         Ok(EnvironmentVariableNode::Concrete { object }) => {
-            r_typeof(object.sexp) == ENVSXP && environments.contains(&object.sexp)
+            r_typeof(object.sexp) == ENVSXP && parent.environments.contains(&object.sexp)
         },
         _ => false,
     }
@@ -668,15 +731,6 @@ fn environment_fingerprint(value: SEXP) -> Vec<(SEXP, RObjectValueId)> {
         }
     }
     ids
-}
-
-/// Records the node's object if it is an environment.
-fn insert_environment(node: &EnvironmentVariableNode, environments: &mut HashSet<SEXP>) {
-    if let EnvironmentVariableNode::Concrete { object } = node {
-        if r_typeof(object.sexp) == ENVSXP {
-            environments.insert(object.sexp);
-        }
-    }
 }
 
 /// Builds an object explorer node from a Variables pane variable.
@@ -831,6 +885,11 @@ pub(crate) fn path_accessor(name: &str, object: RObject, path: &[String]) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use amalthea::comm::event::CommEvent;
+    use amalthea::socket::comm::CommOutgoingTx;
+    use amalthea::socket::iopub::IOPubMessage;
+    use crossbeam::channel::bounded;
+
     use super::*;
     use crate::fixtures::package_is_installed;
     use crate::r_task;
@@ -1075,6 +1134,42 @@ mod tests {
                 max_results: 1000,
             });
             assert_eq!(result.total_matches, 1);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_closes_when_accessor_moves() {
+        r_task(|| {
+            harp::parse_eval_global("oe_x <- list(a = 1, b = list(c = 2))").unwrap();
+            let env = RObject::new(unsafe { R_GlobalEnv });
+            let path = to_path(&["1"]);
+            let value = harp::parse_eval_global("oe_x").unwrap();
+            let mut explorer = RObjectExplorer::new(
+                String::from(r#"oe_x[["b"]]"#),
+                harp::parse_eval_global(r#"oe_x[["b"]]"#).unwrap(),
+                path_accessor("oe_x", value, &path),
+                Some((
+                    DataObjectEnvInfo {
+                        name: String::from("oe_x"),
+                        env,
+                    },
+                    path,
+                )),
+                false,
+            );
+
+            let (iopub_tx, _iopub_rx) = bounded::<IOPubMessage>(10);
+            let (comm_event_tx, _) = bounded::<CommEvent>(10);
+            let ctx = CommHandlerContext::new(
+                CommOutgoingTx::new(String::from("oe"), iopub_tx),
+                comm_event_tx,
+            );
+
+            harp::parse_eval_global("oe_x <- list(z = 0, b = list(c = 3))").unwrap();
+            assert!(explorer.update(&ctx).unwrap());
+
+            harp::parse_eval_global("oe_x <- list(z = 0, a = list(1), b = list(c = 3))").unwrap();
+            assert!(!explorer.update(&ctx).unwrap());
         })
     }
 
