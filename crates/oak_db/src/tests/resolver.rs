@@ -977,6 +977,26 @@ fn test_source_anchors_at_nearest_environment_dir() {
 }
 
 #[test]
+fn test_source_chain_anchors_each_file_separately() {
+    // Per-file anchoring makes the nested `source("utils.R")` load
+    // `proj/sub/utils.R`, exporting `sub_fn` through `main.R`. R would load
+    // `proj/utils.R` and define `top_fn` in a session whose working directory
+    // remains `proj`, because these `source()` calls do not change `getwd()`.
+    let mut db = TestDb::new();
+    let (root, _) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    let main = make_script(&mut db, "proj/main.R", "source(\"sub/script.R\")\n");
+    let mut scripts = root.scripts(&db).clone();
+    scripts.push(main);
+    root.set_scripts(&mut db).to(scripts);
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = main.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
 fn test_source_anchor_follows_environment_dir_changes() {
     // Changing `environment_dirs` must invalidate the cached `semantic_index()`
     // even though the source text is unchanged.

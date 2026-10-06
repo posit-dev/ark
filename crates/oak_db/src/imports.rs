@@ -368,6 +368,11 @@ fn package_binding(db: &dyn SourceDb, package: Package, name: &str) -> PackageBi
 /// Do not retry missing paths against the workspace root. That would resolve
 /// code intended for a different working directory and environment.
 /// Outside a workspace root, use the file's parent directory.
+///
+/// Per-file anchoring approximates R's working directory. When a `source()`
+/// chain crosses environment directories, each file uses its own anchor here.
+/// R's `source()` calls leave `getwd()` unchanged by default, so nested calls
+/// instead use the session's working directory and can resolve different files.
 fn anchor_dir(db: &dyn SourceDb, file: File) -> Option<Utf8PathBuf> {
     let file_path = file.path(db).as_path()?;
 
