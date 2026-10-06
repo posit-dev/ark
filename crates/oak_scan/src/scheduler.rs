@@ -329,21 +329,22 @@ impl ScanScheduler {
     /// events that are coalesced, duplicated, or out of date by then.
     ///
     /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` paths rescan every
-    /// containing root, even for paths in `skip`. Sentinel events that leave
-    /// an idle root's `environment_dirs()` accurate are skipped (see
-    /// [`Self::is_environment_dir_current()`]). Idle roots return a
+    /// containing root, including when the editor owns them. Sentinel events
+    /// that leave an idle root's `environment_dirs()` accurate are skipped
+    /// (see [`Self::is_environment_dir_current()`]). Idle roots return a
     /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
     /// `apply_scan_completed()` to start.
     ///
     /// R-file paths apply directly only when no containing root has a pending
     /// scan. Otherwise they are buffered until all containing roots finish
     /// scanning, so older scan results cannot overwrite their effects. Paths
-    /// in `skip` at that point defer to editor buffers and are dropped.
+    /// in `editor_owned` are never removed, so an open buffer survives the
+    /// deletion of its file on disk.
     pub fn apply_watcher_events<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
         paths: Vec<FilePath>,
-        skip: &HashSet<FilePath>,
+        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let roots = workspace_root_paths(db);
         let mut requests = Vec::new();
@@ -353,8 +354,8 @@ impl ScanScheduler {
         //
         // Rescan every containing root because nested roots keep separate
         // `packages` and `environment_dirs` lists for overlapping paths.
-        // Ignore `skip` here because discovery depends on disk state even
-        // when the editor owns a file's contents.
+        // Ignore `editor_owned` here because discovery depends on disk state
+        // even when the editor owns a file's contents.
         let mut rescan_roots: Vec<Root> = Vec::new();
         let mut listings = DirListings::default();
         for path in &paths {
@@ -389,7 +390,7 @@ impl ScanScheduler {
             }
             self.buffered.insert(path);
         }
-        self.drain_buffered(db, skip);
+        self.drain_buffered(db, editor_owned);
 
         requests
     }
@@ -543,6 +544,12 @@ impl ScanScheduler {
     /// spellings are removed (see [`is_file_on_disk()`]). Repeated events for
     /// one path collapse into its current disk state, so they need no ordered replay.
     ///
+    /// Paths in `editor_owned` are added but never removed: the open buffer
+    /// stays the source of truth until it closes. Adding them matters for a
+    /// buffer opened before its file existed on disk, or rescued to `OrphanRoot`
+    /// and then saved. Without it the file would stay out of every container,
+    /// and go stale when the buffer closes.
+    ///
     /// Editor ownership is checked only once a path is unblocked. A blocked
     /// path must survive a buffer that opens and closes before its scan
     /// completes, otherwise the scan's older listing would win.
@@ -569,12 +576,8 @@ impl ScanScheduler {
             {
                 return true;
             }
-            if editor_owned.contains(path) {
-                return false;
-            }
-            match is_file_on_disk(root_path, fs_path, &mut listings) {
-                Ok(true) => add_watched_file(db, path.clone()),
-                Ok(false) => remove_watched_file(db, path.clone()),
+            let on_disk = match is_file_on_disk(root_path, fs_path, &mut listings) {
+                Ok(on_disk) => on_disk,
                 // `NotADirectory` means an ancestor was replaced by a regular
                 // file (`ENOTDIR` on Unix), so the path can't exist either.
                 Err(err)
@@ -583,11 +586,19 @@ impl ScanScheduler {
                         io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
                     ) =>
                 {
-                    remove_watched_file(db, path.clone())
+                    false
                 },
                 // Other errors (e.g. permissions) don't prove the file is gone,
                 // so keep the current registration rather than unlinking it.
-                Err(err) => log::warn!("Can't check watched path {fs_path} on disk: {err:?}"),
+                Err(err) => {
+                    log::warn!("Can't check watched path {fs_path} on disk: {err:?}");
+                    return false;
+                },
+            };
+            if on_disk {
+                add_watched_file(db, path.clone());
+            } else if !editor_owned.contains(path) {
+                remove_watched_file(db, path.clone());
             }
             false
         });

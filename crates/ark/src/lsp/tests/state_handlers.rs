@@ -1,8 +1,8 @@
 //! Smoke tests for the LSP -> oak translator in [`crate::lsp::state_handlers`].
 //! Dispatch behaviour itself is covered by `oak_scan/tests/watch.rs`. The tests
 //! here go through [`did_change_watched_files`] end-to-end so they catch a
-//! regression in either the translation step or the state.open_files -> skip set
-//! conversion.
+//! regression in either the translation step or the `state.open_files` ->
+//! `editor_owned` conversion.
 
 use std::collections::HashSet;
 use std::fs;
@@ -265,7 +265,7 @@ fn test_r_file_created_routes_through_add_file() {
 }
 
 #[test]
-fn test_r_file_changed_for_editor_open_file_is_skipped() {
+fn test_r_file_changed_for_editor_open_file_keeps_editor_contents() {
     // The editor is the source of truth for files it has open.
     // A disk-side `Changed` event that races against `didChange`
     // must not overwrite the editor's content.
@@ -317,7 +317,7 @@ fn test_r_file_deleted_routes_through_remove_file() {
 fn test_r_file_changed_for_unopened_file_updates_contents() {
     // No editor buffer, so the watcher's disk content is authoritative
     // and should land in `file.source_text()`. Complements the open-file
-    // skip test above.
+    // test above.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("a.R");
     fs::write(&path, "v1\n").unwrap();
@@ -350,13 +350,11 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
 }
 
 #[test]
-fn test_r_file_deleted_for_editor_open_file_is_skipped() {
-    // Mirror of `test_r_file_changed_for_editor_open_file_is_skipped`
-    // for the Deleted kind. The skip check in `apply_watcher_events`
-    // sits before the kind match, so editor-owned URLs should be
-    // protected from deletion too: the buffer stays visible to the
-    // user and queries keep resolving against the editor's
-    // last-pushed content.
+fn test_r_file_deleted_for_editor_open_file_keeps_buffer() {
+    // Mirror of `test_r_file_changed_for_editor_open_file_keeps_editor_contents`
+    // for the Deleted kind. `apply_watcher_events()` never removes paths in
+    // `editor_owned`, so the buffer stays visible to the user and queries keep
+    // resolving against the editor's last-pushed content.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("a.R");
     fs::write(&path, "disk_v1\n").unwrap();

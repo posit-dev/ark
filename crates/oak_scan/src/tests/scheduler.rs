@@ -589,10 +589,11 @@ fn test_editor_owned_sentinel_still_rescans() {
 
     let rprofile = tmp.path().join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let skip = HashSet::from([FilePath::from_path_buf(rprofile.clone()).unwrap()]);
-    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &skip);
+    let editor_owned = HashSet::from([FilePath::from_path_buf(rprofile.clone()).unwrap()]);
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &editor_owned);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &skip);
+    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
 }
 
@@ -692,6 +693,100 @@ fn test_rescan_restores_orphaned_open_file_when_it_reappears_on_disk() {
 
     assert_eq!(root.scripts(&db).clone(), vec![file]);
     assert!(!db.orphan_root().files(&db).contains(&file));
+}
+
+#[test]
+fn test_saving_rescued_open_file_restores_it_without_rescan() {
+    // The watcher event for the save is enough: the file must not wait in
+    // `OrphanRoot` for a rescan, and must stay registered after the buffer
+    // closes.
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("a.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let (file, editor_owned) =
+        rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+    assert!(db.orphan_root().files(&db).contains(&file));
+
+    fs::write(&script, "edited <- 1\n").unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&script)], &editor_owned);
+    assert!(requests.is_empty());
+    assert_eq!(root.scripts(&db).clone(), vec![file]);
+    assert!(!db.orphan_root().files(&db).contains(&file));
+    assert_eq!(file.source_text(&db), "edited <- 1\n");
+
+    let path = watched_path(&script);
+    db.close_editor(&path);
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(!db.stale_root().files(&db).contains(&file));
+}
+
+#[test]
+fn test_file_opened_before_creation_joins_its_container() {
+    // The editor can open a file before the watcher reports its creation, e.g.
+    // a file created from the explorer. The open buffer starts in
+    // `OrphanRoot`, and the creation event must place that same `File`.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let pkg = root.packages(&db)[0];
+    let a = db
+        .file_by_path(&watched_path(&tmp.path().join("pkg/R/a.R")))
+        .unwrap();
+
+    let mut editor_owned = HashSet::new();
+    let mut opened = Vec::new();
+    for new in ["pkg/R/b.R", "top.R"] {
+        let path = watched_path(&tmp.path().join(new));
+        let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+        assert!(db.orphan_root().files(&db).contains(&file));
+        editor_owned.insert(path.clone());
+        opened.push((path, file));
+    }
+    let [(b_path, b), (top_path, top)] = opened.try_into().unwrap();
+
+    fs::write(tmp.path().join("pkg/R/b.R"), "").unwrap();
+    fs::write(tmp.path().join("top.R"), "").unwrap();
+    let events = vec![b_path.clone(), top_path.clone()];
+    let requests = scheduler.apply_watcher_events(&mut db, events, &editor_owned);
+    assert!(requests.is_empty());
+
+    assert_eq!(pkg.files(&db), &[a, b]);
+    assert_eq!(b.package(&db), Some(pkg));
+    assert_eq!(root.scripts(&db).clone(), vec![top]);
+    assert!(db.orphan_root().files(&db).is_empty());
+    assert_eq!(b.source_text(&db), "edited <- 1\n");
+
+    db.close_editor(&b_path);
+    db.close_editor(&top_path);
+    assert_eq!(db.file_by_path(&b_path), Some(b));
+    assert_eq!(db.file_by_path(&top_path), Some(top));
+    assert!(db.stale_root().files(&db).is_empty());
+}
+
+#[test]
+fn test_deleting_open_file_keeps_it_registered() {
+    // Removals still defer to the open buffer.
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("a.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+
+    let path = watched_path(&script);
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+    let editor_owned = HashSet::from([path.clone()]);
+    fs::remove_file(&script).unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path], &editor_owned);
+    assert!(requests.is_empty());
+    assert_eq!(root.scripts(&db).clone(), vec![file]);
 }
 
 #[test]

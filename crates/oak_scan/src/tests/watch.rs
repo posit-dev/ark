@@ -39,10 +39,14 @@ fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &H
 
 /// Sync helper: dispatch watcher events through the scheduler and
 /// drive it to quiescence.
-fn apply_watcher_events(db: &mut OakDatabase, paths: Vec<FilePath>, skip: &HashSet<FilePath>) {
+fn apply_watcher_events(
+    db: &mut OakDatabase,
+    paths: Vec<FilePath>,
+    editor_owned: &HashSet<FilePath>,
+) {
     let mut scheduler = ScanScheduler::new();
-    let reqs = scheduler.apply_watcher_events(db, paths, skip);
-    drain_scheduler(db, &mut scheduler, reqs, skip);
+    let reqs = scheduler.apply_watcher_events(db, paths, editor_owned);
+    drain_scheduler(db, &mut scheduler, reqs, editor_owned);
 }
 
 /// Sync helper: report `path` to the watcher. The scheduler reads contents
@@ -492,10 +496,9 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
 }
 
 #[test]
-fn test_apply_watcher_events_skip_set_does_not_block_description() {
-    // DESCRIPTION classification is disk-authoritative, so the skip
-    // set (an editor-owned URL set) should not hold back a
-    // DESCRIPTION rescan even if the DESCRIPTION URL is in `skip`.
+fn test_apply_watcher_events_rescans_editor_owned_description() {
+    // DESCRIPTION classification is disk-authoritative, so an editor-owned
+    // DESCRIPTION still triggers a rescan.
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("pkg/R")).unwrap();
     let mut db = OakDatabase::new();
@@ -509,10 +512,9 @@ fn test_apply_watcher_events_skip_set_does_not_block_description() {
 
     let desc_fs_path = tmp.path().join("pkg/DESCRIPTION");
     let desc_path = FilePath::from_path_buf(desc_fs_path.clone()).unwrap();
-    let mut skip = HashSet::new();
-    skip.insert(desc_path);
+    let editor_owned = HashSet::from([desc_path]);
 
-    apply_watcher_events(&mut db, vec![watched_path(&desc_fs_path)], &skip);
+    apply_watcher_events(&mut db, vec![watched_path(&desc_fs_path)], &editor_owned);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 1);

@@ -39,6 +39,9 @@ use crate::packages::read_description_name;
 /// Their disk revision is refreshed, and missing `root.scripts` memberships
 /// are added. Nested roots share file entities but can have different scan
 /// results, so an existing entity does not imply membership in every root.
+///
+/// Files in `OrphanRoot` count as new, though they keep their entity and
+/// editor override.
 pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
     let Some(fs_path) = path.as_path() else {
         log::warn!("Skipping add_watched_file: URL is not a file path");
@@ -54,7 +57,13 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
         .filter_map(|root| classify(db, root, fs_path))
         .collect();
 
-    if let Some(existing) = db.file_by_path(&path) {
+    // A file only `OrphanRoot` holds (an open buffer no root lists yet) is
+    // placed like a new file. `upsert_root_file()` reuses its entity, keeps its
+    // editor override, and takes it out of `OrphanRoot`.
+    let existing = db
+        .file_by_path(&path)
+        .filter(|file| !db.orphan_root().files(db).contains(file));
+    if let Some(existing) = existing {
         // Duplicate watcher events can report the same mtime. Avoid invalidating
         // `source_text()` when the disk revision has not changed.
         if existing.revision(db) != revision {
