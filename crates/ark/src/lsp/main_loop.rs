@@ -22,6 +22,7 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
 use oak_db::Package;
+use oak_db::Root;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
@@ -136,6 +137,7 @@ pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
+    OakScanFailed(Root),
     SourceCompleted(SourceCompleted),
     SidecarCompleted(SidecarResponse),
     DiagnosticsReady(DiagnosticsReady),
@@ -152,6 +154,7 @@ impl Event {
             Event::Lsp(_) => "lsp",
             Event::Kernel(_) => "kernel",
             Event::OakScanCompleted(_) => "oak_scan_completed",
+            Event::OakScanFailed(_) => "oak_scan_failed",
             Event::SourceCompleted(_) => "source_completed",
             Event::SidecarCompleted(_) => "sidecar_completed",
             Event::DiagnosticsReady(_) => "diagnostics_ready",
@@ -853,31 +856,19 @@ impl GlobalState {
                 //   serially, so it never wraps its own reads in
                 //   `catch_cancellation()`. A background write would cancel those
                 //   reads out from under it, causing a cancellation panic.
+                self.apply_scan_outcome(|scheduler, db, editor_owned| {
+                    scheduler.apply_scan_completed(db, scan, editor_owned)
+                });
+            },
 
-                // Recompute editor-owned files at apply time, not at spawn
-                // time: a buffer may have opened or closed since the scan
-                // kicked off. The buffer-drain inside `apply_scan_completed` uses
-                // this set as its watcher-event `skip` argument.
-                let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
-                let followups = self.lsp_state.oak_scheduler.apply_scan_completed(
-                    self.world.db_mut(),
-                    scan,
-                    &editor_owned,
+            Event::OakScanFailed(root) => {
+                lsp::log_warn!(
+                    "Received `OakScanFailed` for {path}",
+                    path = root.path(self.world.db())
                 );
-                lsp::log_info!(
-                    "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
-                    n = followups.len(),
-                    n_holds = self.world.db().outstanding_holds(),
-                );
-
-                dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
-
-                // Warm the workspace symbol index once the scan settles. The
-                // oak semantic index is warmed separately, as a side effect of
-                // the diagnostics refresh in `refresh_if_due()`.
-                if !self.lsp_state.oak_scheduler.has_pending_scans() {
-                    analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
-                }
+                self.apply_scan_outcome(|scheduler, db, editor_owned| {
+                    scheduler.apply_scan_failed(db, root, editor_owned)
+                });
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
@@ -1006,6 +997,36 @@ impl GlobalState {
             .log_snapshot(&self.lsp_state.analysis_pool);
 
         self.schedule_sources();
+    }
+
+    /// Apply a finished or failed scan through `apply`, then dispatch the
+    /// follow-up scans it requests.
+    fn apply_scan_outcome(
+        &mut self,
+        apply: impl FnOnce(&mut ScanScheduler, &mut OakDatabase, &HashSet<FilePath>) -> Vec<ScanRequest>,
+    ) {
+        // Recompute editor-owned files at apply time, not at spawn time: a
+        // buffer may have opened or closed since the scan kicked off.
+        let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
+        let followups = apply(
+            &mut self.lsp_state.oak_scheduler,
+            self.world.db_mut(),
+            &editor_owned,
+        );
+        lsp::log_info!(
+            "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
+            n = followups.len(),
+            n_holds = self.world.db().outstanding_holds(),
+        );
+
+        dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
+
+        // Warm the workspace symbol index once scans settle. The oak semantic
+        // index is warmed separately, as a side effect of the diagnostics
+        // refresh in `refresh_if_due()`.
+        if !self.lsp_state.oak_scheduler.has_pending_scans() {
+            analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
+        }
     }
 
     fn schedule_sources(&mut self) {
@@ -1278,17 +1299,53 @@ fn classify_event_unwind(payload: panic::PanicPayload) -> EventUnwind {
 /// Run each [`ScanRequest`] on `pool`. Each job runs the pure-I/O
 /// [`ScanRequest::run`] and ships the [`ScanCompleted`] back to the main loop as
 /// [`Event::OakScanCompleted`], where the scheduler then applies it.
+///
+/// [`ScanFailureGuard`] reports [`Event::OakScanFailed`] if a job panics or
+/// is dropped before running. Without that notification, the root would remain
+/// `Scanning`, preventing buffered watcher events under it from applying.
 pub(super) fn dispatch_scan_requests(
     pool: &IoPool,
     events_tx: &TokioUnboundedSender<Event>,
     requests: Vec<ScanRequest>,
 ) {
     for req in requests {
-        let tx = events_tx.clone();
-        pool.submit(move || {
-            let scan = req.run();
-            tx.send(Event::OakScanCompleted(scan)).log_err();
-        });
+        let guard = ScanFailureGuard {
+            root: req.root,
+            events_tx: Some(events_tx.clone()),
+        };
+        pool.submit(move || guard.complete(req.run()));
+    }
+}
+
+/// Report scan failure if the job is dropped before [`ScanRequest::run()`]
+/// returns. Capturing the guard in the job covers both panic unwinding and
+/// cancellation before execution. A successful scan reports through
+/// [`Self::complete()`] instead.
+struct ScanFailureGuard {
+    root: Root,
+    events_tx: Option<TokioUnboundedSender<Event>>,
+}
+
+impl ScanFailureGuard {
+    /// Send [`Event::OakScanCompleted`] in place of the failure report.
+    fn complete(mut self, scan: ScanCompleted) {
+        let Some(events_tx) = self.events_tx.take() else {
+            return;
+        };
+        events_tx.send(Event::OakScanCompleted(scan)).log_err();
+    }
+}
+
+impl Drop for ScanFailureGuard {
+    fn drop(&mut self) {
+        let Some(events_tx) = self.events_tx.take() else {
+            return;
+        };
+        // Failure reporting can race with main-loop shutdown. Once the receiver
+        // is gone, no scheduler remains to recover the root.
+        if let Err(err) = events_tx.send(Event::OakScanFailed(self.root)) {
+            lsp::log_error!("Can't report failed scan: {err:?}");
+        }
     }
 }
 
@@ -1646,6 +1703,9 @@ mod tests {
     use std::time::Instant;
 
     use aether_path::FilePath;
+    use oak_db::OakDatabase;
+    use oak_db::Root;
+    use oak_db::RootKind;
     use oak_scan::DbScan;
     use serde_json::Value;
     use tower_lsp_server::jsonrpc;
@@ -1666,6 +1726,7 @@ mod tests {
     use super::GlobalState;
     use super::LspServiceContext;
     use super::LspState;
+    use super::ScanFailureGuard;
     use super::MAX_REFRESH_DELAY;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspMessage;
@@ -1678,6 +1739,7 @@ mod tests {
     use crate::lsp::harness::editor::notifications::did_open;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
+    use crate::panic::Recovery;
 
     #[tokio::test]
     async fn test_background_panic_is_reported_once_per_session() {
@@ -1871,6 +1933,56 @@ mod tests {
             WorldState::default(),
             LspState::new(tokio_unbounded_channel().0),
         )
+    }
+
+    fn scan_failure_guard() -> (
+        ScanFailureGuard,
+        Root,
+        tokio::sync::mpsc::UnboundedReceiver<Event>,
+    ) {
+        let db = OakDatabase::new();
+        let path = FilePath::from_path_buf(std::env::temp_dir()).unwrap();
+        let root = Root::new(
+            &db,
+            path,
+            RootKind::Workspace,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
+        let guard = ScanFailureGuard {
+            root,
+            events_tx: Some(events_tx),
+        };
+        (guard, root, events_rx)
+    }
+
+    #[test]
+    fn test_scan_failure_guard_reports_panicked_job() {
+        let (guard, root, mut events_rx) = scan_failure_guard();
+        let job = move || {
+            let _guard = guard;
+            panic!("Test panic in a scan job");
+        };
+
+        assert!(crate::panic::catch_unwind(Recovery::Always, job).is_err());
+        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
+            panic!("Expected `OakScanFailed`");
+        };
+        assert_eq!(failed, root);
+    }
+
+    #[test]
+    fn test_scan_failure_guard_reports_dropped_job() {
+        let (guard, root, mut events_rx) = scan_failure_guard();
+        let job = move || drop(guard);
+
+        drop(job);
+        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
+            panic!("Expected `OakScanFailed`");
+        };
+        assert_eq!(failed, root);
     }
 
     #[test]

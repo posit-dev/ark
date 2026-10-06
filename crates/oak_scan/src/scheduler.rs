@@ -408,7 +408,37 @@ impl ScanScheduler {
         }
 
         result.apply(db);
+        self.finish_scan(db, root, editor_owned)
+    }
 
+    /// Release `root` from scanning after its task panics or is dropped without
+    /// producing a result.
+    ///
+    /// No scan result replaces the root's contents. Buffered watcher events can
+    /// still apply once all containing roots are idle. A rescan queued by events
+    /// during the failed scan runs first, keeping those paths buffered.
+    /// Failure alone does not trigger a retry, avoiding an endless retry loop
+    /// for a scan that consistently panics.
+    pub fn apply_scan_failed<DB: Db + DbInputs>(
+        &mut self,
+        db: &mut DB,
+        root: Root,
+        editor_owned: &HashSet<FilePath>,
+    ) -> Vec<ScanRequest> {
+        let live = db.workspace_roots().roots(db).contains(&root);
+        if !live {
+            self.state.remove(&root);
+            return Vec::new();
+        }
+        self.finish_scan(db, root, editor_owned)
+    }
+
+    fn finish_scan<DB: Db + DbInputs>(
+        &mut self,
+        db: &mut DB,
+        root: Root,
+        editor_owned: &HashSet<FilePath>,
+    ) -> Vec<ScanRequest> {
         let prior = self.state.remove(&root);
         let requests = match prior {
             Some(ScanState::ScanningWithRescanQueued) => {
@@ -429,12 +459,11 @@ impl ScanScheduler {
             },
             Some(ScanState::Scanning) => Vec::new(),
             None => {
-                // A completion for a root we weren't tracking as scanning.
-                // Every dispatched scan marks its root `Scanning`, so reaching
-                // here means our state diverged from the in-flight work. The
-                // result is already applied.
+                // Every dispatched scan records a scanning state, so its absence
+                // means scheduler state diverged from the in-flight work. On the
+                // success path, the result has already been applied.
                 log::warn!(
-                    "Applied a `ScanCompleted` for an untracked root: {path:?}",
+                    "Finished a scan for an untracked root: {path:?}",
                     path = root.path(db)
                 );
                 Vec::new()

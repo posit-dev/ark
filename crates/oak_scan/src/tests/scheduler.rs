@@ -227,6 +227,79 @@ fn test_description_event_on_idle_root_returns_scan_request() {
     assert_eq!(root.packages(&db).len(), 1);
 }
 
+#[test]
+fn test_failed_scan_clears_state_and_drains_buffer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let request = scheduler
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .pop()
+        .unwrap();
+
+    let script = tmp.path().join("script.R");
+    fs::write(&script, "x <- 1\n").unwrap();
+    let script = FilePath::from_path_buf(script).unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![script.clone()], &HashSet::new());
+    assert!(requests.is_empty());
+    assert!(db.file_by_path(&script).is_none());
+
+    let followups = scheduler.apply_scan_failed(&mut db, request.root, &HashSet::new());
+    assert!(followups.is_empty());
+    assert!(!scheduler.has_pending_scans());
+    assert!(db.file_by_path(&script).is_some());
+}
+
+#[test]
+fn test_failed_scan_keeps_previous_root_contents() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    fs::write(tmp.path().join("script.R"), "y <- 2\n").unwrap();
+    fs::write(tmp.path().join(".Rprofile"), "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let packages = root.packages(&db).clone();
+    let scripts = root.scripts(&db).clone();
+    assert_eq!(packages.len(), 1);
+    assert_eq!(scripts.len(), 1);
+
+    let description = watched_path(&tmp.path().join("pkg/DESCRIPTION"));
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
+    let request = requests.pop().unwrap();
+
+    let followups = scheduler.apply_scan_failed(&mut db, request.root, &HashSet::new());
+    assert!(followups.is_empty());
+    assert!(!scheduler.has_pending_scans());
+    assert_eq!(root.packages(&db), &packages);
+    assert_eq!(root.scripts(&db), &scripts);
+    assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
+}
+
+#[test]
+fn test_failed_scan_starts_queued_rescan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let request = scheduler
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .pop()
+        .unwrap();
+    let root = request.root;
+
+    let description = tmp.path().join("DESCRIPTION");
+    fs::write(&description, "Package: pkg\nVersion: 0.0.0\n").unwrap();
+    let description = FilePath::from_path_buf(description).unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
+    assert!(requests.is_empty());
+
+    let followups = scheduler.apply_scan_failed(&mut db, root, &HashSet::new());
+    assert_eq!(followups.len(), 1);
+    assert_eq!(followups[0].root, root);
+    drain_scheduler(&mut db, &mut scheduler, followups, &HashSet::new());
+    assert_eq!(root.packages(&db).len(), 1);
+}
+
 // --- Environment directories ---
 
 fn watched_path(path: &Path) -> FilePath {
