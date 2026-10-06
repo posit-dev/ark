@@ -646,6 +646,66 @@ fn test_rescan_refreshes_revision_of_known_file() {
     assert_eq!(file.source_text(&db).as_str(), "x <- 2\n");
 }
 
+fn is_case_insensitive(dir: &Path) -> bool {
+    fs::write(dir.join("probe"), "").unwrap();
+    let insensitive = dir.join("PROBE").exists();
+    fs::remove_file(dir.join("probe")).unwrap();
+    insensitive
+}
+
+#[test]
+fn test_watcher_case_only_file_rename_unlinks_old_spelling() {
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_case_insensitive(tmp.path()) {
+        return;
+    }
+    fs::write(tmp.path().join("foo.R"), "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let old_path = tmp.path().join("foo.R");
+    let new_path = tmp.path().join("Foo.R");
+    fs::rename(&old_path, &new_path).unwrap();
+    apply_watcher_events(
+        &mut db,
+        vec![watched_path(&old_path), watched_path(&new_path)],
+        &HashSet::new(),
+    );
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let scripts = root.scripts(&db).clone();
+    assert_eq!(scripts.len(), 1);
+    assert_eq!(scripts[0].path(&db), &watched_path(&new_path));
+    assert!(db.file_by_path(&watched_path(&old_path)).is_none());
+}
+
+#[test]
+fn test_watcher_case_only_dir_rename_unlinks_old_spelling() {
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_case_insensitive(tmp.path()) {
+        return;
+    }
+    fs::create_dir_all(tmp.path().join("scripts")).unwrap();
+    fs::write(tmp.path().join("scripts/a.R"), "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    fs::rename(tmp.path().join("scripts"), tmp.path().join("Scripts")).unwrap();
+    let old_path = tmp.path().join("scripts/a.R");
+    let new_path = tmp.path().join("Scripts/a.R");
+    apply_watcher_events(
+        &mut db,
+        vec![watched_path(&old_path), watched_path(&new_path)],
+        &HashSet::new(),
+    );
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let scripts = root.scripts(&db).clone();
+    assert_eq!(scripts.len(), 1);
+    assert_eq!(scripts[0].path(&db), &watched_path(&new_path));
+    assert!(db.file_by_path(&watched_path(&old_path)).is_none());
+}
+
 #[test]
 fn test_watcher_reblip_same_mtime_does_not_bump_salsa_revision() {
     // Watchers coalesce and re-emit events, so one save can deliver a

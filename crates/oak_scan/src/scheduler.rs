@@ -391,9 +391,9 @@ impl ScanScheduler {
 
     /// Apply buffered paths whose containing roots are all idle.
     ///
-    /// Each path is reconciled against the disk: added or refreshed if it is a
-    /// file, removed if it is missing or not a file. Repeated events for one
-    /// path collapse into its current state, so they need no replay in order.
+    /// Files are added or refreshed. Missing paths, non-files, and stale case
+    /// spellings are removed (see [`is_file_on_disk()`]). Repeated events for
+    /// one path collapse into its current disk state, so they need no ordered replay.
     ///
     /// Editor ownership is checked only once a path is unblocked. A blocked
     /// path must survive a buffer that opens and closes before its scan
@@ -404,35 +404,34 @@ impl ScanScheduler {
             let Some(fs_path) = path.as_path() else {
                 return false;
             };
-            let containing_roots: Vec<&Root> = roots
+            let containing_roots: Vec<&(Utf8PathBuf, Root)> = roots
                 .iter()
                 .filter(|(root_path, _)| fs_path.starts_with(root_path))
-                .map(|(_, root)| root)
                 .collect();
-            if containing_roots.is_empty() {
+            let Some((root_path, _)) = containing_roots.first() else {
                 return false;
-            }
+            };
 
             // Nested roots share entities, so every containing scan must finish
             // before a path can apply.
             if containing_roots
                 .iter()
-                .any(|root| self.state.contains_key(*root))
+                .any(|(_, root)| self.state.contains_key(root))
             {
                 return true;
             }
             if editor_owned.contains(path) {
                 return false;
             }
-            match fs::metadata(fs_path) {
-                Ok(metadata) if metadata.is_file() => add_watched_file(db, path.clone()),
-                Ok(_) => remove_watched_file(db, path.clone()),
+            match is_file_on_disk(root_path, fs_path) {
+                Ok(true) => add_watched_file(db, path.clone()),
+                Ok(false) => remove_watched_file(db, path.clone()),
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {
                     remove_watched_file(db, path.clone())
                 },
                 // Other errors (e.g. permissions) don't prove the file is gone,
                 // so keep the current registration rather than unlinking it.
-                Err(err) => log::warn!("Can't read metadata of watched path {fs_path}: {err:?}"),
+                Err(err) => log::warn!("Can't check watched path {fs_path} on disk: {err:?}"),
             }
             false
         });
@@ -488,6 +487,51 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
 fn triggers_rescan(path: &Utf8Path) -> bool {
     path.file_name()
         .is_some_and(|name| name == "DESCRIPTION" || is_environment_sentinel(name))
+}
+
+/// Reject stale ASCII case spellings of files below `root_path`.
+///
+/// On case-insensitive volumes, `fs::metadata()` still resolves `foo.R` after
+/// a rename to `Foo.R`. Accepting both spellings would leave two registered
+/// [`File`] entities for one disk file. Directory listings expose the stored
+/// spelling, so a path component is stale when its parent lists an ASCII case
+/// variant but no exact match.
+///
+/// A component with neither an exact match nor an ASCII case variant is accepted
+/// if metadata resolves the file. APFS also ignores Unicode normalization, so
+/// an NFC client name can resolve to an NFD disk name. Requiring an exact match
+/// would unlink that file. This can retain duplicates, but avoids removing a
+/// file that still exists. The client-supplied spelling of `root_path` itself
+/// is not checked.
+fn is_file_on_disk(root_path: &Utf8Path, fs_path: &Utf8Path) -> io::Result<bool> {
+    if !fs::metadata(fs_path)?.is_file() {
+        return Ok(false);
+    }
+    let Ok(relative) = fs_path.strip_prefix(root_path) else {
+        return Ok(true);
+    };
+
+    let mut dir = root_path.to_path_buf();
+    for component in relative.components() {
+        let name = component.as_str();
+        let mut exact = false;
+        let mut case_variant = false;
+        for entry in fs::read_dir(&dir)? {
+            let entry_name = entry?.file_name();
+            if entry_name == name {
+                exact = true;
+                break;
+            }
+            if entry_name.eq_ignore_ascii_case(name) {
+                case_variant = true;
+            }
+        }
+        if case_variant && !exact {
+            return Ok(false);
+        }
+        dir.push(name);
+    }
+    Ok(true)
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
