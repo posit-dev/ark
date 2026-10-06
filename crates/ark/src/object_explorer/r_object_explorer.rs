@@ -78,9 +78,6 @@ pub struct RObjectExplorer {
     /// is removed.
     binding: Option<DataObjectEnvInfo>,
 
-    /// The value of the binding the explored object was last read from.
-    bound_value: Option<RObject>,
-
     /// The access key path from the binding's value to the explored object.
     path_in_binding: Vec<String>,
 
@@ -116,13 +113,11 @@ impl RObjectExplorer {
             Some((binding, path)) => (Some(binding), path),
             None => (None, vec![]),
         };
-        let bound_value = binding.as_ref().and_then(Self::binding_value);
         Self {
             title,
             root,
             root_accessor,
             binding,
-            bound_value,
             path_in_binding,
             inline,
         }
@@ -164,11 +159,7 @@ impl RObjectExplorer {
         let Some(value) = Self::binding_value(binding) else {
             return Ok(true);
         };
-        if self.bound_value.as_ref().map(|v| v.sexp) == Some(value.sexp) {
-            return Ok(true);
-        }
-
-        let node = PositronVariable::resolve_object_from_path(value.clone(), &self.path_in_binding);
+        let node = PositronVariable::resolve_object_from_path(value, &self.path_in_binding);
         let Ok(EnvironmentVariableNode::Concrete { object }) = node else {
             return Ok(false);
         };
@@ -176,8 +167,13 @@ impl RObjectExplorer {
             return Ok(false);
         }
 
-        self.root = RObject::new(object.sexp);
-        self.bound_value = Some(value);
+        // An environment (including an R6 object) changes in place, so it is
+        // always updated.
+        if object.sexp == self.root.sexp && r_typeof(object.sexp) != ENVSXP {
+            return Ok(true);
+        }
+
+        self.root = object;
         ctx.send_event(&ObjectExplorerFrontendEvent::Update);
         Ok(true)
     }
@@ -733,9 +729,9 @@ fn is_syntactic(name: &str) -> bool {
         Some(c) => c.is_alphabetic(),
         None => false,
     };
-    valid_start
-        && chars.all(|c| c.is_alphanumeric() || c == '.' || c == '_')
-        && !RESERVED.contains(&name)
+    valid_start &&
+        chars.all(|c| c.is_alphanumeric() || c == '.' || c == '_') &&
+        !RESERVED.contains(&name)
 }
 
 /// Opens an R object in the Object Explorer. Called from `View()`.
@@ -951,10 +947,11 @@ mod tests {
 
             let nodes = children(&explorer, &[]);
             assert_eq!(names(&nodes), vec!["field", "private", "methods"]);
-            assert_eq!(
-                accessors(&nodes),
-                vec![Some(String::from("x$field")), None, None]
-            );
+            assert_eq!(accessors(&nodes), vec![
+                Some(String::from("x$field")),
+                None,
+                None
+            ]);
             assert_eq!(accessors(&children(&explorer, &["<private>"])), vec![None]);
         })
     }
@@ -1026,16 +1023,13 @@ mod tests {
                 .iter()
                 .map(|row| format!("{}:{:?}", row.path.join("/"), row.match_kind))
                 .collect();
-            assert_eq!(
-                rows,
-                vec![
-                    "0:Ancestor",
-                    "0/0:Ancestor",
-                    "0/0/1:Value",
-                    "0/0/2:Ancestor",
-                    "0/0/2/0:Value",
-                ]
-            );
+            assert_eq!(rows, vec![
+                "0:Ancestor",
+                "0/0:Ancestor",
+                "0/0/1:Value",
+                "0/0/2:Ancestor",
+                "0/0/2/0:Value",
+            ]);
             assert_eq!(result.total_matches, 2);
             assert!(!result.truncated);
 

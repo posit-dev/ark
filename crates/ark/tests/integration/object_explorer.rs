@@ -62,6 +62,32 @@ fn test_object_explorer_follows_its_variable() {
     frontend.recv_shell_execute_reply();
 }
 
+/// An explorer on an environment is updated when the environment changes in
+/// place.
+#[test]
+fn test_object_explorer_follows_environment_mutation() {
+    let frontend = DummyArkFrontend::lock();
+    execute(&frontend, "oe_env <- new.env(); oe_env$a <- 1");
+
+    frontend.send_execute_request("View(oe_env)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let comm_id = frontend.recv_iopub_comm_open().comm_id;
+    assert_eq!(frontend.recv_iopub_comm_msg().data["method"], "update");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.send_execute_request("oe_env$b <- 2", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, comm_id);
+    assert_eq!(update.data["method"], "update");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    assert_eq!(get_children(&frontend, &comm_id).total, 2);
+}
+
 /// A data frame inside a list opens in a data explorer.
 #[test]
 fn test_object_explorer_view_table() {
