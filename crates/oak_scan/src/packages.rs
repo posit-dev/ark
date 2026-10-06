@@ -94,14 +94,6 @@ pub(crate) fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
 }
 
-/// Read just the package name from `package_dir/DESCRIPTION`. Cheaper than
-/// [`read_package_metadata`] when the caller only needs to look up an existing
-/// `Package` by name.
-pub(crate) fn read_description_name(package_dir: &Path) -> Option<String> {
-    let text = fs::read_to_string(package_dir.join("DESCRIPTION")).ok()?;
-    Description::parse(&text).log_err().map(|d| d.name)
-}
-
 /// Walk a workspace root for its packages: every directory that contains a
 /// `DESCRIPTION`, at any depth.
 ///

@@ -1343,6 +1343,39 @@ fn test_blocked_deletion_survives_editor_open_and_close() -> io::Result<()> {
 }
 
 #[test]
+fn test_new_file_joins_only_the_package_of_its_directory() {
+    // `a/` and `b/` both declare `pkg`. The outer root keeps `a/` (it sorts
+    // first), the inner root `b/` keeps `b/`. A new file under `b/R/` belongs to
+    // `b/`'s package only, so deleting it unlinks it everywhere.
+    let tmp = tempfile::tempdir().unwrap();
+    let outer = tmp.path().to_path_buf();
+    let inner = outer.join("b");
+    write_package(&outer.join("a"), "pkg", &[("a.R", "x <- 1\n")]);
+    write_package(&inner, "pkg", &[("b.R", "y <- 1\n")]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, &[inner.clone(), outer]);
+    let pkg_b = roots[0].packages(&db)[0];
+    let pkg_a = roots[1].packages(&db)[0];
+    assert_ne!(pkg_a, pkg_b);
+
+    let new = inner.join("R/new.R");
+    fs::write(&new, "z <- 1\n").unwrap();
+    let path = watched_path(&new);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    assert!(requests.is_empty());
+    let file = db.file_by_path(&path).unwrap();
+    assert_eq!(file.package(&db), Some(pkg_b));
+    assert!(pkg_b.files(&db).contains(&file));
+    assert!(!pkg_a.files(&db).contains(&file));
+
+    fs::remove_file(&new).unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    assert!(requests.is_empty());
+    assert_eq!(db.file_by_path(&path), None);
+}
+
+#[test]
 fn test_description_event_rescans_every_containing_root() {
     for inner_first in [false, true] {
         let mut db = OakDatabase::new();

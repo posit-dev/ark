@@ -26,7 +26,6 @@ use crate::inputs::with_cow_push;
 use crate::inputs::FileEntry;
 use crate::packages::file_revision;
 use crate::packages::is_r_file;
-use crate::packages::read_description_name;
 
 /// Sync a watched R file with disk and all containing workspace roots.
 ///
@@ -186,11 +185,15 @@ fn classify<DB: Db + DbInputs>(db: &DB, root: Root, path: &Utf8Path) -> Option<P
         return Some(Placement::Script(root));
     };
 
-    let pkg_name = read_description_name(pkg_dir.as_std_path())?;
+    // Match the `DESCRIPTION` path, not the package name. When two directories
+    // declare the same name, each root keeps one of them, and nested roots can
+    // keep different ones. A name match would place the file in a package of
+    // the other directory.
+    let description = pkg_dir.join("DESCRIPTION");
     let pkg = root
         .packages(db)
         .iter()
-        .find(|pkg| pkg.name(db) == &pkg_name)
+        .find(|pkg| pkg.description_path(db).as_path() == Some(description.as_path()))
         .copied()?;
 
     match classify_in_package(pkg_dir.as_std_path(), path.as_std_path()) {
