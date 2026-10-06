@@ -16,6 +16,7 @@ use oak_db::File;
 use oak_db::Package;
 use oak_db::PackagePlacement;
 use oak_db::Root;
+use rustc_hash::FxHashSet;
 use salsa::Setter;
 
 use crate::inputs::remove_from_orphan;
@@ -74,7 +75,10 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
         // Only `root.scripts` memberships need repair because nested roots share
         // `Package` entities.
         for placement in placements {
-            if let Placement::Script(_) = placement {
+            let Placement::Script(root) = placement else {
+                continue;
+            };
+            if !root_script_set(db, root).contains(&existing) {
                 append_to_container(db, existing, placement);
             }
         }
@@ -118,6 +122,14 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
             }
         },
     }
+}
+
+/// `root.scripts()` as a set. A batch of events for files the root already
+/// lists would otherwise scan the list once per file. Cached until
+/// `root.scripts` changes, which those events don't do.
+#[salsa::tracked(returns(ref))]
+fn root_script_set(db: &dyn Db, root: Root) -> FxHashSet<File> {
+    root.scripts(db).iter().copied().collect()
 }
 
 /// Unlink a deleted file so [`oak_db::Db::file_by_path()`] no longer finds it.
