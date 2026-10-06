@@ -442,6 +442,31 @@ fn test_sentinel_deletion_under_other_case_spelling_rescans() {
 }
 
 #[test]
+fn test_deleting_lowercase_sentinel_rescans() {
+    // On a case-insensitive volume, `.rprofile` makes `sub` an environment
+    // directory, so deleting it must rescan too.
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_case_insensitive(tmp.path()) {
+        return;
+    }
+    let sub = tmp.path().join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    let rprofile = sub.join(".rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    assert_eq!(environment_dirs(&db, root), vec![sub]);
+
+    fs::remove_file(&rprofile).unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    assert!(environment_dirs(&db, root).is_empty());
+}
+
+#[test]
 fn test_sentinel_event_under_stale_case_spelling_rescans() {
     // The scan lists `Sub`, which is then renamed to `sub`. An event under the
     // old spelling finds `Sub` listed and its sentinel still resolves, but the

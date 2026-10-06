@@ -308,8 +308,14 @@ pub(crate) fn scan_workspace_scripts(root: &Path) -> Vec<FileEntry> {
 /// File names used to identify [`oak_db::Root::environment_dirs()`].
 const ENVIRONMENT_SENTINELS: [&str; 2] = [".Rprofile", ".Renviron"];
 
+/// Compares ignoring ASCII case. On a case-insensitive volume,
+/// [`is_environment_dir()`] finds `.rprofile` through its `.Rprofile` probe, so
+/// an event for `.rprofile` must count as a sentinel event too. On a
+/// case-sensitive volume this only costs an unneeded rescan.
 pub(crate) fn is_environment_sentinel(file_name: &str) -> bool {
-    ENVIRONMENT_SENTINELS.contains(&file_name)
+    ENVIRONMENT_SENTINELS
+        .iter()
+        .any(|sentinel| sentinel.eq_ignore_ascii_case(file_name))
 }
 
 pub(crate) fn is_environment_dir(dir: &Path) -> bool {
