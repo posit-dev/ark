@@ -18,6 +18,7 @@ use oak_db::PackagePlacement;
 use oak_db::Root;
 use rustc_hash::FxHashSet;
 use salsa::Setter;
+use same_file::is_same_file;
 
 use crate::inputs::remove_from_orphan;
 use crate::inputs::remove_from_pkg_files;
@@ -197,22 +198,38 @@ fn classify<DB: Db + DbInputs>(db: &DB, root: Root, path: &Utf8Path) -> Option<P
         return Some(Placement::Script(root));
     };
 
-    // Match the `DESCRIPTION` path, not the package name. When two directories
-    // declare the same name, each root keeps one of them, and nested roots can
-    // keep different ones. A name match would place the file in a package of
-    // the other directory.
-    let description = pkg_dir.join("DESCRIPTION");
-    let pkg = root
-        .packages(db)
-        .iter()
-        .find(|pkg| pkg.description_path(db).as_path() == Some(description.as_path()))
-        .copied()?;
+    let pkg = package_at(db, root, &pkg_dir.join("DESCRIPTION"))?;
 
     match classify_in_package(pkg_dir.as_std_path(), path.as_std_path()) {
         PackagePlacement::File => Some(Placement::PackageFile(pkg)),
         PackagePlacement::Script => Some(Placement::PackageScript(pkg)),
         PackagePlacement::Skip => None,
     }
+}
+
+/// Match by `DESCRIPTION`, not package name, to avoid assigning a file to a
+/// different directory with the same package name. Each root retains one
+/// package per name, and nested roots can retain different directories.
+///
+/// File identity is the fallback when path spellings differ. On APFS, an NFC
+/// watcher path can name the same file as the scan's NFD path, so path equality
+/// alone would leave the file unassigned.
+fn package_at<DB: Db + DbInputs>(db: &DB, root: Root, description: &Utf8Path) -> Option<Package> {
+    let packages = root.packages(db);
+    let exact = packages
+        .iter()
+        .find(|pkg| pkg.description_path(db).as_path() == Some(description));
+    if let Some(&pkg) = exact {
+        return Some(pkg);
+    }
+    packages
+        .iter()
+        .find(|pkg| {
+            pkg.description_path(db)
+                .as_path()
+                .is_some_and(|registered| is_same_file(registered, description).unwrap_or(false))
+        })
+        .copied()
 }
 
 fn workspace_roots_containing<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Vec<Root> {

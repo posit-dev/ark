@@ -24,3 +24,19 @@ fn is_case_insensitive(dir: &Path) -> bool {
     }
     insensitive
 }
+
+/// Callers skip their test unless an NFC name resolves to a file created with
+/// its NFD spelling. As in [`is_case_insensitive()`], the skip is printed so a
+/// broken probe cannot silently skip all coverage.
+fn is_normalization_insensitive(dir: &Path) -> bool {
+    fs::write(dir.join("probe-e\u{301}"), "").unwrap();
+    let insensitive = dir.join("probe-\u{e9}").exists();
+    fs::remove_file(dir.join("probe-e\u{301}")).unwrap();
+    if !insensitive {
+        eprintln!(
+            "Skipping: {dir} is on a normalization-sensitive volume",
+            dir = dir.display()
+        );
+    }
+    insensitive
+}

@@ -2812,6 +2812,7 @@ dependencies = [
  "oak_tidy",
  "rustc-hash",
  "salsa",
+ "same-file",
  "stdext",
  "tempfile",
  "url",

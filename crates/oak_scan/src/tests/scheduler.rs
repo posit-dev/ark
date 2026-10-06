@@ -22,6 +22,7 @@ use oak_db::SourceDb;
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
 use crate::tests::is_case_insensitive;
+use crate::tests::is_normalization_insensitive;
 use crate::DbScan;
 use crate::ScanScheduler;
 
@@ -1398,6 +1399,31 @@ fn test_new_file_joins_only_the_package_of_its_directory() {
     let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
     assert!(requests.is_empty());
     assert_eq!(db.file_by_path(&path), None);
+}
+
+#[test]
+fn test_new_file_under_other_normalization_joins_its_package() {
+    // The scan stores the directory's NFD spelling. An event spelling it in NFC
+    // still names the same `DESCRIPTION`, so the file must join that package.
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_normalization_insensitive(tmp.path()) {
+        return;
+    }
+    write_package(&tmp.path().join("cafe\u{301}"), "pkg", &[(
+        "a.R", "x <- 1\n",
+    )]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let pkg = root.packages(&db)[0];
+
+    fs::write(tmp.path().join("cafe\u{301}/R/new.R"), "y <- 1\n").unwrap();
+    let path = watched_path(&tmp.path().join("caf\u{e9}/R/new.R"));
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    assert!(requests.is_empty());
+    let file = db.file_by_path(&path).unwrap();
+    assert_eq!(file.package(&db), Some(pkg));
+    assert!(pkg.files(&db).contains(&file));
 }
 
 #[test]

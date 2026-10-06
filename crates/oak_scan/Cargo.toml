@@ -27,6 +27,7 @@ oak_db.workspace = true
 oak_package_metadata.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
+same-file.workspace = true
 stdext.workspace = true
 url.workspace = true
 walkdir.workspace = true
