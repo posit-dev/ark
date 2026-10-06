@@ -441,6 +441,33 @@ fn test_sentinel_deletion_under_other_case_spelling_rescans() {
     assert!(environment_dirs(&db, root).is_empty());
 }
 
+#[test]
+fn test_sentinel_event_under_stale_case_spelling_rescans() {
+    // The scan lists `Sub`, which is then renamed to `sub`. An event under the
+    // old spelling finds `Sub` listed and its sentinel still resolves, but the
+    // next scan would list `sub`.
+    let tmp = tempfile::tempdir().unwrap();
+    if !is_case_insensitive(tmp.path()) {
+        return;
+    }
+    let old = tmp.path().join("Sub");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join(".Rprofile"), "").unwrap();
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    assert_eq!(environment_dirs(&db, root), vec![old.clone()]);
+
+    let new = tmp.path().join("sub");
+    fs::rename(&old, &new).unwrap();
+    let rprofile = old.join(".Rprofile");
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    assert_eq!(environment_dirs(&db, root), vec![new]);
+}
+
 #[cfg(unix)]
 #[test]
 fn test_environment_dir_replaced_by_symlink_rescans() {

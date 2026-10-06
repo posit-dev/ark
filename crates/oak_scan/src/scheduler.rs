@@ -355,6 +355,7 @@ impl ScanScheduler {
         // Ignore `skip` here because discovery depends on disk state even
         // when the editor owns a file's contents.
         let mut rescan_roots: Vec<Root> = Vec::new();
+        let mut listings = DirListings::default();
         for path in &paths {
             let Some(fs_path) = path.as_path() else {
                 continue;
@@ -366,7 +367,7 @@ impl ScanScheduler {
                 if !fs_path.starts_with(root_path) || rescan_roots.contains(root) {
                     continue;
                 }
-                if self.is_environment_dir_current(db, *root, fs_path) {
+                if self.is_environment_dir_current(db, *root, fs_path, &mut listings) {
                     continue;
                 }
                 rescan_roots.push(*root);
@@ -395,9 +396,9 @@ impl ScanScheduler {
     /// Whether a sentinel event on `path` leaves environment discovery unchanged.
     ///
     /// Its parent must remain in `root.environment_dirs()`, contain a sentinel,
-    /// and be reachable without symlinks below the root. A symlink would exclude
-    /// it from the next scan even if its sentinel still resolves
-    /// (see [`is_walkable_dir()`]).
+    /// and be reachable below the root without symlinks and under its stored
+    /// spelling. A symlink or a case rename would change the next scan's
+    /// listing even if the sentinel still resolves (see [`is_walkable_dir()`]).
     ///
     /// Only the existence of `.Rprofile` and `.Renviron` affects scans, so
     /// edits to them are skipped. `DESCRIPTION` always rescans because its
@@ -417,6 +418,7 @@ impl ScanScheduler {
         db: &DB,
         root: Root,
         path: &Utf8Path,
+        listings: &mut DirListings,
     ) -> bool {
         if self.state.contains_key(&root) {
             return false;
@@ -434,7 +436,7 @@ impl ScanScheduler {
             .environment_dirs(db)
             .iter()
             .any(|env_dir| env_dir.as_path() == Some(dir));
-        listed && is_environment_dir(dir.as_std_path()) && is_walkable_dir(root_path, dir)
+        listed && is_environment_dir(dir.as_std_path()) && is_walkable_dir(root_path, dir, listings)
     }
 
     /// Apply a [`ScanCompleted`] produced by [`ScanRequest::run`].
@@ -664,8 +666,19 @@ fn is_file_on_disk(
     if !fs::metadata(fs_path)?.is_file() {
         return Ok(false);
     }
-    let Ok(relative) = fs_path.strip_prefix(root_path) else {
-        return Ok(true);
+    Ok(!has_stale_spelling(root_path, fs_path, listings)?)
+}
+
+/// Whether a component of `path` below `root_path` is a stale ASCII case
+/// spelling: its parent lists a case variant of it but no exact match. See
+/// [`is_file_on_disk()`] for why other mismatches are accepted.
+fn has_stale_spelling(
+    root_path: &Utf8Path,
+    path: &Utf8Path,
+    listings: &mut DirListings,
+) -> io::Result<bool> {
+    let Ok(relative) = path.strip_prefix(root_path) else {
+        return Ok(false);
     };
 
     let mut dir = root_path.to_path_buf();
@@ -676,14 +689,16 @@ fn is_file_on_disk(
         if listing.folded.contains(&name_os.to_ascii_lowercase()) &&
             !listing.exact.contains(name_os)
         {
-            return Ok(false);
+            return Ok(true);
         }
         dir.push(name);
     }
-    Ok(true)
+    Ok(false)
 }
 
-/// Cache directory listings for one [`ScanScheduler::drain_buffered()`] pass.
+/// Cache directory listings for one pass over watcher events: the rescan check
+/// in [`ScanScheduler::apply_watcher_events()`] or one
+/// [`ScanScheduler::drain_buffered()`].
 ///
 /// Reading an N-entry directory for each of N buffered paths would visit N^2
 /// entries on the main loop. Sharing the listing avoids repeated directory
@@ -720,16 +735,24 @@ fn read_listing(dir: &Utf8Path) -> io::Result<DirListing> {
     Ok(DirListing { exact, folded })
 }
 
-/// Whether every component of `dir` below `root_path` is a real directory.
+/// Whether every component of `dir` below `root_path` is a real directory,
+/// under the spelling stored on disk.
 ///
 /// The scan's walker doesn't follow symlinks below the root, so a listed
 /// directory replaced by a symlink (or reached through one) drops out of the
 /// next scan even though `is_environment_dir()` still finds its sentinel
 /// through the link.
-fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path) -> bool {
+///
+/// The walker also reports stored spellings. After `Sub` is renamed to `sub`
+/// on a case-insensitive volume, `Sub` still resolves but the next scan lists
+/// `sub` instead. An unreadable listing counts as not walkable.
+fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path, listings: &mut DirListings) -> bool {
     let Ok(relative) = dir.strip_prefix(root_path) else {
         return false;
     };
+    if !matches!(has_stale_spelling(root_path, dir, listings), Ok(false)) {
+        return false;
+    }
     let mut current = root_path.to_path_buf();
     for component in relative.components() {
         current.push(component);
