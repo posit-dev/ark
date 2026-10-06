@@ -1343,9 +1343,11 @@ impl Drop for ScanFailureGuard {
         };
         // Failure reporting can race with main-loop shutdown. Once the receiver
         // is gone, no scheduler remains to recover the root.
-        if let Err(err) = events_tx.send(Event::OakScanFailed(self.root)) {
-            lsp::log_error!("Can't report failed scan: {err:?}");
-        }
+        //
+        // Log with `log_err()`, not `lsp::log_error!`: the latter goes through
+        // the auxiliary channel, which can panic, and a panic in `drop()` while
+        // the scan job is already unwinding aborts the process.
+        events_tx.send(Event::OakScanFailed(self.root)).log_err();
     }
 }
 
