@@ -64,6 +64,7 @@ use camino::Utf8PathBuf;
 use indexmap::IndexSet;
 use oak_db::Db;
 use oak_db::DbInputs;
+use oak_db::File;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
@@ -195,7 +196,8 @@ impl ScanScheduler {
     /// Reconcile `WorkspaceRoots` to exactly `paths`. Returns one
     /// [`ScanRequest`] per newly-added path; unchanged paths skip the
     /// rescan, removed paths are evicted via
-    /// [`RootExt::set_stale`].
+    /// [`RootExt::set_stale`]. A surviving nested root that shared packages
+    /// or scripts with a removed root also gets a rescan, to restore them.
     ///
     /// New roots are inserted into `workspace_roots` empty so watcher
     /// events can find them while their scan is in flight (the events
@@ -223,11 +225,23 @@ impl ScanScheduler {
             .map(|r| (r.path(db).clone(), *r))
             .collect();
 
-        for (old_path, &old_root) in &old {
-            if !new_paths.contains(old_path) {
-                old_root.set_stale(db, Some(editor_owned));
-                self.state.remove(&old_root);
-            }
+        let removed: Vec<Root> = old
+            .iter()
+            .filter(|(old_path, _)| !new_paths.contains(*old_path))
+            .map(|(_, &old_root)| old_root)
+            .collect();
+
+        // Snapshot before evicting anything: evicting one removed root empties
+        // the packages it shares with another.
+        let mut evicted_packages: HashSet<Package> = HashSet::new();
+        let mut evicted_files: HashSet<File> = HashSet::new();
+        for &old_root in &removed {
+            evicted_packages.extend(old_root.packages(db).iter().copied());
+            evicted_files.extend(root_files(db, old_root));
+        }
+        for &old_root in &removed {
+            old_root.set_stale(db, Some(editor_owned));
+            self.state.remove(&old_root);
         }
 
         let mut new_roots = Vec::with_capacity(new.len());
@@ -257,6 +271,33 @@ impl ScanScheduler {
         if db.workspace_roots().roots(db) != &new_roots {
             db.workspace_roots().set_roots(db).to(new_roots);
         }
+
+        // Nested roots share `Package` and `File` entities, and `set_stale()`
+        // evicts all of a removed root's entities, emptying packages, clearing
+        // backpointers, and moving files to the stale root even when a
+        // surviving nested root still lists them. The two roots can hold a file
+        // in different containers (a package's `files` in one, `scripts` in the
+        // other), so every container counts. Rescanning such a survivor
+        // resurrects them. Survivors that shared nothing keep their state,
+        // since a rescan walks the whole root.
+        if !removed.is_empty() {
+            for (old_path, &old_root) in &old {
+                if !new_paths.contains(old_path) {
+                    continue;
+                }
+                let shares = old_root
+                    .packages(db)
+                    .iter()
+                    .any(|pkg| evicted_packages.contains(pkg)) ||
+                    root_files(db, old_root)
+                        .iter()
+                        .any(|file| evicted_files.contains(file));
+                if shares {
+                    requests.extend(self.request_rescan(db, old_root));
+                }
+            }
+        }
+
         self.drain_buffered(db, editor_owned);
 
         requests
@@ -680,6 +721,17 @@ fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path) -> bool {
         }
     }
     true
+}
+
+/// Every `File` that `root` lists: its scripts and its packages' files and
+/// scripts.
+fn root_files<DB: Db + DbInputs>(db: &DB, root: Root) -> Vec<File> {
+    let mut files = root.scripts(db).clone();
+    for &pkg in root.packages(db) {
+        files.extend(pkg.files(db).iter().copied());
+        files.extend(pkg.scripts(db).iter().copied());
+    }
+    files
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {

@@ -430,6 +430,10 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
         //   before a scan classified it), drop it. Per the caller invariant
         //   the file is about to land in a `Root` container, so the orphan
         //   reference is stale by the time this returns.
+        //
+        // - If the file is also in `StaleRoot.files`, drop it. Evicting one of
+        //   two nested roots moves their shared files to stale while the
+        //   surviving root still lists them.
         let old_package = existing.package(db);
         if old_package != package {
             existing.set_package(db).to(package);
@@ -438,6 +442,7 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
             }
         }
         remove_from_orphan(db, existing);
+        remove_from_stale_files(db, existing);
         return existing;
     }
 

@@ -610,6 +610,125 @@ fn test_sentinel_event_rescans_every_containing_root() {
 }
 
 #[test]
+fn test_removing_nested_root_keeps_shared_entities_in_survivor() {
+    // Both roots list `pkg` and `inner/script.R`. Evicting either one must not
+    // leave the survivor with an emptied package or files stuck in stale.
+    for remove_outer in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("outer");
+        let inner = outer.join("inner");
+        write_package(&inner.join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+        fs::write(inner.join("script.R"), "y <- 2\n").unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let roots = scan_workspace(&mut db, &mut scheduler, &[outer.clone(), inner.clone()]);
+
+        let (survivor_path, survivor) = match remove_outer {
+            true => (inner.clone(), roots[1]),
+            false => (outer.clone(), roots[0]),
+        };
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].root, survivor);
+        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        let pkg = survivor.packages(&db)[0];
+        let a = db
+            .file_by_path(&watched_path(&inner.join("pkg/R/a.R")))
+            .unwrap();
+        let script = db
+            .file_by_path(&watched_path(&inner.join("script.R")))
+            .unwrap();
+        assert_eq!(pkg.files(&db), &[a]);
+        assert_eq!(a.package(&db), Some(pkg));
+        assert_eq!(survivor.scripts(&db).as_slice(), &[script]);
+        assert!(!db.stale_root().files(&db).contains(&a));
+        assert!(!db.stale_root().files(&db).contains(&script));
+        assert!(!db.stale_root().packages(&db).contains(&pkg));
+    }
+}
+
+#[test]
+fn test_removing_nested_root_keeps_shared_scripts_in_survivor() {
+    for remove_outer in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("script.R"), "y <- 2\n").unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let roots = scan_workspace(&mut db, &mut scheduler, &[
+            tmp.path().to_path_buf(),
+            sub.clone(),
+        ]);
+
+        let (survivor_path, survivor) = match remove_outer {
+            true => (sub.clone(), roots[1]),
+            false => (tmp.path().to_path_buf(), roots[0]),
+        };
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        assert_eq!(requests.len(), 1);
+        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        let script = db
+            .file_by_path(&watched_path(&sub.join("script.R")))
+            .unwrap();
+        assert_eq!(survivor.scripts(&db).as_slice(), &[script]);
+        assert!(!db.stale_root().files(&db).contains(&script));
+    }
+}
+
+#[test]
+fn test_removing_nested_root_repairs_file_held_in_different_containers() {
+    // With roots `pkg` and `pkg/R`, the outer root lists `a.R` in `pkg.files`
+    // and the inner root, which can't see `DESCRIPTION`, in its `scripts`.
+    for remove_outer in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path().join("pkg");
+        let inner = outer.join("R");
+        write_package(&outer, "pkg", &[("a.R", "x <- 1\n")]);
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+
+        // Apply the outer scan last, so the shared `File` points at the package.
+        let requests = scheduler.set_workspace_paths(
+            &mut db,
+            &[outer.clone(), inner.clone()],
+            &HashSet::new(),
+        );
+        let roots = db.workspace_roots().roots(&db).clone();
+        let (outer_root, inner_root) = (roots[0], roots[1]);
+        let (outer_req, inner_req): (Vec<_>, Vec<_>) =
+            requests.into_iter().partition(|req| req.root == outer_root);
+        drain_scheduler(&mut db, &mut scheduler, inner_req, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, outer_req, &HashSet::new());
+
+        let pkg = outer_root.packages(&db)[0];
+        let a = db.file_by_path(&watched_path(&inner.join("a.R"))).unwrap();
+        assert_eq!(pkg.files(&db), &[a]);
+        assert_eq!(inner_root.scripts(&db).as_slice(), &[a]);
+        assert_eq!(a.package(&db), Some(pkg));
+
+        let survivor_path = if remove_outer {
+            inner.clone()
+        } else {
+            outer.clone()
+        };
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        assert_eq!(requests.len(), 1);
+        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        if remove_outer {
+            assert_eq!(inner_root.scripts(&db).as_slice(), &[a]);
+        } else {
+            assert_eq!(pkg.files(&db), &[a]);
+            assert_eq!(a.package(&db), Some(pkg));
+        }
+        assert!(!db.stale_root().files(&db).contains(&a));
+    }
+}
+
+#[test]
 fn test_r_file_event_waits_for_every_containing_root_scan() {
     // `new.R` must survive both scan results, whichever root completes first.
     // Both scans predate the file and replace the shared package's `files`.
