@@ -82,6 +82,7 @@ use crate::packages::scan_workspace_packages;
 use crate::packages::scan_workspace_scripts;
 use crate::packages::PackageEntry;
 use crate::stale::remove_all_from_stale_files;
+use crate::stale::root_files;
 use crate::watch::add_watched_file;
 use crate::watch::remove_watched_file;
 
@@ -764,17 +765,6 @@ fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path, listings: &mut DirListi
         }
     }
     true
-}
-
-/// Every `File` that `root` lists: its scripts and its packages' files and
-/// scripts.
-fn root_files<DB: Db + DbInputs>(db: &DB, root: Root) -> Vec<File> {
-    let mut files = root.scripts(db).clone();
-    for &pkg in root.packages(db) {
-        files.extend(pkg.files(db).iter().copied());
-        files.extend(pkg.scripts(db).iter().copied());
-    }
-    files
 }
 
 /// Capture editor-owned `File` entities across all live roots before applying

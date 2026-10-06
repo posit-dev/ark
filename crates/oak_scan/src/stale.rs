@@ -55,12 +55,7 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     editor_owned: Option<&HashSet<FilePath>>,
 ) {
     let packages: Vec<Package> = root.packages(db).clone();
-
-    let mut all_files: Vec<File> = root.scripts(db).to_vec();
-    for &pkg in &packages {
-        all_files.extend(pkg.files(db).iter().copied());
-        all_files.extend(pkg.scripts(db).iter().copied());
-    }
+    let all_files = root_files(db, root);
 
     // Clear `file.package` first: by the time these files land in their new
     // home, their old `Package` entity is itself in stale and the backpointer
@@ -112,6 +107,17 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     }
     root.set_packages(db).to(Vec::new());
     root.set_environment_dirs(db).to(Vec::new());
+}
+
+/// Every `File` that `root` lists: its scripts and its packages' files and
+/// scripts.
+pub(crate) fn root_files<DB: Db + DbInputs>(db: &DB, root: Root) -> Vec<File> {
+    let mut files = root.scripts(db).clone();
+    for &pkg in root.packages(db) {
+        files.extend(pkg.files(db).iter().copied());
+        files.extend(pkg.scripts(db).iter().copied());
+    }
+    files
 }
 
 pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
