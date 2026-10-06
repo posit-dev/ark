@@ -871,12 +871,14 @@ mod tests {
         assert!(!scheduler.has_pending_scans());
     }
 
-    /// `DESCRIPTION` can disappear between the package walk and the script
-    /// walk of one scan, so both list the same file. The open buffer must keep
-    /// a single `File`, placed as a workspace script. The race can't be timed
-    /// through `ScanRequest::run()`, so we build its result by hand.
+    // `DESCRIPTION` can disappear between the package walk and the script walk
+    // of one scan, so both list the same file. It must end up as a single
+    // `File`, placed as a workspace script, whether it starts live, absent or
+    // stale. The race can't be timed through `ScanRequest::run()`, so these
+    // tests build its result by hand.
+
     #[test]
-    fn test_path_listed_as_package_file_and_script_keeps_one_entity() {
+    fn test_live_path_listed_as_package_file_and_script_keeps_one_entity() {
         let tmp = tempfile::tempdir().unwrap();
         let mut db = OakDatabase::new();
         let mut scheduler = ScanScheduler::new();
@@ -884,7 +886,72 @@ mod tests {
             scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
         drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
 
-        let pkg_dir = tmp.path().join("pkg");
+        let path = write_package_with_file(tmp.path());
+        let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+        let editor_owned = HashSet::from([path.clone()]);
+
+        let description = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+        let requests = scheduler.apply_watcher_events(&mut db, vec![description], &editor_owned);
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &editor_owned);
+
+        let pkg = root.packages(&db)[0];
+        assert!(pkg.files(&db).is_empty());
+        assert_eq!(root.scripts(&db).clone(), vec![file]);
+        assert_eq!(file.package(&db), None);
+        assert_eq!(db.file_by_path(&path), Some(file));
+        assert_eq!(file.source_text(&db), "edited <- 1\n");
+        assert!(!db.orphan_root().files(&db).contains(&file));
+    }
+
+    #[test]
+    fn test_new_path_listed_as_package_file_and_script_gets_one_entity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let path = write_package_with_file(tmp.path());
+
+        let requests =
+            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        let pkg = root.packages(&db)[0];
+        assert!(pkg.files(&db).is_empty());
+        let scripts = root.scripts(&db).clone();
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].package(&db), None);
+        assert_eq!(db.file_by_path(&path), Some(scripts[0]));
+    }
+
+    #[test]
+    fn test_stale_path_listed_as_package_file_and_script_resurrects_one_entity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let path = write_package_with_file(tmp.path());
+        let workspace = [tmp.path().to_path_buf()];
+        let requests = scheduler.set_workspace_paths(&mut db, &workspace, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        let file = db.file_by_path(&path).unwrap();
+
+        let requests = scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
+        assert!(requests.is_empty());
+        assert!(db.stale_root().files(&db).contains(&file));
+
+        let requests = scheduler.set_workspace_paths(&mut db, &workspace, &HashSet::new());
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &HashSet::new());
+
+        let pkg = root.packages(&db)[0];
+        assert!(pkg.files(&db).is_empty());
+        assert_eq!(root.scripts(&db).clone(), vec![file]);
+        assert_eq!(file.package(&db), None);
+        assert_eq!(db.file_by_path(&path), Some(file));
+        assert!(!db.stale_root().files(&db).contains(&file));
+    }
+
+    /// Write `pkg/` with a `DESCRIPTION` and `R/a.R` under `dir`. Returns the
+    /// path of `R/a.R`.
+    fn write_package_with_file(dir: &std::path::Path) -> FilePath {
+        let pkg_dir = dir.join("pkg");
         fs::create_dir_all(pkg_dir.join("R")).unwrap();
         fs::write(
             pkg_dir.join("DESCRIPTION"),
@@ -892,15 +959,18 @@ mod tests {
         )
         .unwrap();
         fs::write(pkg_dir.join("R/a.R"), "x <- 1\n").unwrap();
-        let path = FilePath::from_path_buf(pkg_dir.join("R/a.R")).unwrap();
-        let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-        let editor_owned = HashSet::from([path.clone()]);
+        FilePath::from_path_buf(pkg_dir.join("R/a.R")).unwrap()
+    }
 
-        let mut requests = scheduler.apply_watcher_events(
-            &mut db,
-            vec![FilePath::from_path_buf(pkg_dir.join("DESCRIPTION")).unwrap()],
-            &editor_owned,
-        );
+    /// Complete the single scan in `requests` with a result that lists the
+    /// package's files both in the package and as workspace scripts. Returns
+    /// the scanned root.
+    fn apply_listed_twice(
+        db: &mut OakDatabase,
+        scheduler: &mut ScanScheduler,
+        mut requests: Vec<ScanRequest>,
+        editor_owned: &HashSet<FilePath>,
+    ) -> Root {
         assert_eq!(requests.len(), 1);
         let request = requests.remove(0);
         let packages = scan_workspace_packages(request.path.as_std_path());
@@ -913,15 +983,8 @@ mod tests {
             scripts,
             environment_dirs: Vec::new(),
         };
-        let requests = scheduler.apply_scan_completed(&mut db, result, &editor_owned);
+        let requests = scheduler.apply_scan_completed(db, result, editor_owned);
         assert!(requests.is_empty());
-
-        let pkg = root.packages(&db)[0];
-        assert!(pkg.files(&db).is_empty());
-        assert_eq!(root.scripts(&db).clone(), vec![file]);
-        assert_eq!(file.package(&db), None);
-        assert_eq!(db.file_by_path(&path), Some(file));
-        assert_eq!(file.source_text(&db), "edited <- 1\n");
-        assert!(!db.orphan_root().files(&db).contains(&file));
+        root
     }
 }

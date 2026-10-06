@@ -438,9 +438,12 @@ pub(crate) fn upsert_workspace_scripts<DB: Db + DbInputs>(
     }
 }
 
-/// Upsert a single `File` for `entry`, for the watcher's
-/// [`watch::add_watched_file`]. See [`FileUpserts`] for the identity rules and
-/// the caller invariant.
+/// Upsert a single `File` for the watcher's [`add_watched_file()`](watch::add_watched_file).
+/// See [`FileUpserts`] for the identity rules.
+///
+/// The caller must insert the returned file into a root or package container
+/// before any path lookup. This function removes it from [`OrphanRoot`] and
+/// [`StaleRoot`], so it may be unreachable until the caller inserts it.
 pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     db: &mut DB,
     package: Option<Package>,
@@ -468,11 +471,14 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 /// and in `StaleRoot` after one of two nested roots is evicted, and the stale
 /// branch would clear its editor override.
 ///
-/// **Caller invariant.** The caller must place every returned `File` in some
-/// `Root` container (`pkg.files`, `pkg.scripts` or `root.scripts`) before
-/// calling [`finish()`](Self::finish), which drops them from `OrphanRoot` and
-/// `StaleRoot`. A file left without a container would be unreachable through
-/// `file_by_path()`.
+/// Every returned [`File`] must be inserted into `pkg.files()`, `pkg.scripts()`,
+/// or `root.scripts()` before any lookup of its path. [`finish()`](Self::finish)
+/// removes the files from [`OrphanRoot`] and [`StaleRoot`], making files without
+/// another container unreachable through `file_by_path()`.
+///
+/// Batch callers write their containers before calling `finish()`.
+/// [`upsert_root_file()`] calls `finish()` before returning, so its caller must
+/// insert the file before the next path lookup.
 pub(crate) struct FileUpserts {
     resolved: FxHashMap<FilePath, Resolved>,
     leaving_buckets: HashSet<File>,
@@ -482,6 +488,9 @@ pub(crate) struct FileUpserts {
 enum Resolved {
     Live(File),
     Stale(File),
+    /// Cache failed live and stale lookups so duplicate entries from nested
+    /// packages do not repeat those lookups.
+    Missing,
 }
 
 impl FileUpserts {
@@ -498,7 +507,7 @@ impl FileUpserts {
                 Some(file) => Resolved::Live(file),
                 None => match stale_file_by_path(db, &entry.path) {
                     Some(file) => Resolved::Stale(file),
-                    None => continue,
+                    None => Resolved::Missing,
                 },
             };
             resolved.insert(entry.path.clone(), file);
@@ -570,7 +579,7 @@ impl FileUpserts {
                 self.leaving_buckets.insert(stale);
                 stale
             },
-            None => {
+            Some(Resolved::Missing) | None => {
                 let path = entry.path.clone();
                 let file = File::new(db, entry.path, entry.revision, None, package);
                 self.resolved.insert(path, Resolved::Live(file));
