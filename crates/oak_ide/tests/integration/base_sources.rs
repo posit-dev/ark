@@ -28,8 +28,8 @@
 use std::fs;
 use std::path::Path;
 
-use oak_db::Db;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use oak_source::SourceCache;
 

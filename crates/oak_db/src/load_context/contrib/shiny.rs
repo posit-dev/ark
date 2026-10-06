@@ -8,13 +8,15 @@ use camino::Utf8Path;
 
 use crate::directory::files_in_directory;
 use crate::file_imports::CollationView;
-use crate::load_context::collation_visible_files;
+use crate::load_context::collation_environment;
 use crate::load_context::in_r_directory;
+use crate::load_context::EnvironmentChain;
 use crate::load_context::LoadContext;
+use crate::load_context::LoadEnvironment;
 use crate::load_context::LoadKind;
 use crate::load_context::LoaderInfo;
-use crate::Db;
 use crate::File;
+use crate::SourceDb;
 
 const LOADER: LoaderInfo = LoaderInfo {
     name: "This Shiny app",
@@ -25,35 +27,41 @@ const LOADER: LoaderInfo = LoaderInfo {
 /// `None` means Shiny does not load it, including `R/` files disabled by
 /// `_disable_autoload.R`. Checking `R/` membership first keeps `R/app.R` in its
 /// enclosing app's collation rather than treating it as an app root.
-pub(crate) fn load_context(db: &dyn Db, file: File, view: CollationView) -> Option<LoadContext> {
+pub(crate) fn load_context(
+    db: &dyn SourceDb,
+    file: File,
+    view: CollationView,
+) -> Option<LoadContext> {
     if in_r_directory(file, db) {
         let autoload = shiny_autoload(db, file).as_deref()?;
         return Some(autoload_context(db, file, view, autoload));
     }
     if let Some(autoload) = shiny_autoload(db, file).as_deref() {
-        return Some(entry_context(file, autoload));
+        return Some(entry_context(db, file, autoload));
     }
     // `global.R` runs first in the global environment, so it cannot see app bindings.
-    is_shiny_global_file(file, db).then(global_context)
+    is_shiny_global_file(file, db).then(|| global_context(file))
 }
 
 /// An `R/` file `loadSupport()` sources: the plain `R/` collation, plus
 /// whatever ran before the directory did.
 fn autoload_context(
-    db: &dyn Db,
+    db: &dyn SourceDb,
     file: File,
     view: CollationView,
     autoload: &[File],
 ) -> LoadContext {
-    let mut visible_files = collation_visible_files(db, file, view);
+    let environment = collation_environment(db, file, view);
 
-    // `global.R` loads before `R/` into its parent environment, so every sibling
-    // shadows it.
-    visible_files.extend(autoload);
+    // `global.R` binds in the parent environment, so `R/` bindings shadow it
+    // regardless of their relative load positions.
+    let environments = EnvironmentChain(vec![environment, LoadEnvironment {
+        files: autoload.to_vec(),
+    }]);
 
     LoadContext {
         kind: LoadKind::Session,
-        visible_files,
+        environments,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
@@ -61,26 +69,34 @@ fn autoload_context(
 
 /// A Shiny entry point after `loadSupport()` evaluates `global.R` and adjacent
 /// `R/` files. It sees the full support set because it is not a collation member.
-fn entry_context(file: File, autoload: &[File]) -> LoadContext {
+fn entry_context(db: &dyn SourceDb, file: File, autoload: &[File]) -> LoadContext {
+    let mut environments = EnvironmentChain::own(file);
+    environments.0.push(LoadEnvironment {
+        files: autoload
+            .iter()
+            .copied()
+            .filter(|support| in_r_directory(*support, db))
+            .collect(),
+    });
+    environments.0.push(LoadEnvironment {
+        files: autoload
+            .iter()
+            .copied()
+            .filter(|support| !in_r_directory(*support, db))
+            .collect(),
+    });
     LoadContext {
         kind: LoadKind::Session,
-        // `R/` bindings shadow `global.R` through reverse load order and the
-        // child environment created by `loadSupport()`.
-        visible_files: autoload
-            .iter()
-            .rev()
-            .copied()
-            .filter(|support| *support != file)
-            .collect(),
+        environments,
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
 }
 
-fn global_context() -> LoadContext {
+fn global_context(file: File) -> LoadContext {
     LoadContext {
         kind: LoadKind::Session,
-        visible_files: Vec::new(),
+        environments: EnvironmentChain::own(file),
         implicit_attaches: vec!["shiny"],
         loader: Some(LOADER),
     }
@@ -94,7 +110,7 @@ fn global_context() -> LoadContext {
 /// tracked [`is_shiny_entry_file()`] lets unchanged entry-point classification
 /// backdate callers after a source edit.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn shiny_autoload(db: &dyn Db, file: File) -> Option<Vec<File>> {
+pub(crate) fn shiny_autoload(db: &dyn SourceDb, file: File) -> Option<Vec<File>> {
     // `R/` files get only `global.R` here because collation supplies siblings.
     // Disabled autoload removes both their Shiny layers and implicit attachment.
     //
@@ -122,7 +138,7 @@ const SHINY_ENTRY_FILES: [(&str, &str); 3] = [
 ];
 
 /// Files `loadSupport()` evaluates before app code, in load order.
-fn shiny_support_files(db: &dyn Db, app_dir: &Utf8Path) -> Vec<File> {
+fn shiny_support_files(db: &dyn SourceDb, app_dir: &Utf8Path) -> Vec<File> {
     let mut files: Vec<File> = shiny_global_file(db, app_dir).into_iter().collect();
 
     // `_disable_autoload.R` leaves `global.R` in the support set.
@@ -136,7 +152,7 @@ fn shiny_support_files(db: &dyn Db, app_dir: &Utf8Path) -> Vec<File> {
 
 /// Whether `_disable_autoload.R` prevents `loadSupport()` from loading `R/`
 /// files. `global.R` remains in the support list.
-fn r_autoload_disabled(db: &dyn Db, app_dir: &Utf8Path) -> bool {
+fn r_autoload_disabled(db: &dyn SourceDb, app_dir: &Utf8Path) -> bool {
     files_in_directory(db, &app_dir.join("R"))
         .iter()
         .any(|file| is_named(*file, db, "_disable_autoload.R"))
@@ -144,7 +160,7 @@ fn r_autoload_disabled(db: &dyn Db, app_dir: &Utf8Path) -> bool {
 
 /// Whether `file` is an app's `global.R`, which `loadSupport()` loads even when
 /// `_disable_autoload.R` is present.
-fn is_shiny_global_file(file: File, db: &dyn Db) -> bool {
+fn is_shiny_global_file(file: File, db: &dyn SourceDb) -> bool {
     if !is_named(file, db, "global.R") {
         return false;
     }
@@ -156,7 +172,7 @@ fn is_shiny_global_file(file: File, db: &dyn Db) -> bool {
 
 /// The Shiny app directory whose `R/` holds `file`, if any. `None` unless
 /// `file` sits directly in an `R/` that an app encloses.
-fn enclosing_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
+fn enclosing_app_dir(file: File, db: &dyn SourceDb) -> Option<&Utf8Path> {
     if !in_r_directory(file, db) {
         return None;
     }
@@ -164,7 +180,7 @@ fn enclosing_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
     is_shiny_dir(db, app_dir).then_some(app_dir)
 }
 
-fn shiny_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
+fn shiny_app_dir(file: File, db: &dyn SourceDb) -> Option<&Utf8Path> {
     if !is_shiny_entry_file(db, file) {
         return None;
     }
@@ -172,20 +188,20 @@ fn shiny_app_dir(file: File, db: &dyn Db) -> Option<&Utf8Path> {
 }
 
 /// Whether `dir` has a Shiny entry point and therefore autoloads its adjacent `R/`.
-fn is_shiny_dir(db: &dyn Db, dir: &Utf8Path) -> bool {
+fn is_shiny_dir(db: &dyn SourceDb, dir: &Utf8Path) -> bool {
     files_in_directory(db, dir)
         .iter()
         .any(|file| is_shiny_entry_file(db, *file))
 }
 
 #[salsa::tracked(returns(copy))]
-fn is_shiny_entry_file(db: &dyn Db, file: File) -> bool {
+pub(crate) fn is_shiny_entry_file(db: &dyn SourceDb, file: File) -> bool {
     SHINY_ENTRY_FILES
         .iter()
         .any(|(name, marker)| is_named(file, db, name) && file.source_text(db).contains(marker))
 }
 
-fn shiny_global_file(db: &dyn Db, app_dir: &Utf8Path) -> Option<File> {
+fn shiny_global_file(db: &dyn SourceDb, app_dir: &Utf8Path) -> Option<File> {
     files_in_directory(db, app_dir)
         .into_iter()
         .find(|file| is_named(*file, db, "global.R"))
@@ -193,7 +209,7 @@ fn shiny_global_file(db: &dyn Db, app_dir: &Utf8Path) -> Option<File> {
 
 /// Shiny matches these filenames case-insensitively, unlike the exact `R/`
 /// convention in [`in_r_directory()`].
-fn is_named(file: File, db: &dyn Db, name: &str) -> bool {
+fn is_named(file: File, db: &dyn SourceDb, name: &str) -> bool {
     file.path(db)
         .file_name()
         .is_some_and(|basename| basename.eq_ignore_ascii_case(name))

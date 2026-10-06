@@ -10,6 +10,7 @@ use crate::DbInputs;
 use crate::Definition;
 use crate::File;
 use crate::FileRevision;
+use crate::Name;
 use crate::Package;
 use crate::Root;
 use crate::RootKind;
@@ -233,6 +234,75 @@ fn test_source_after_local_overrides_local() {
 
     assert_eq!(def.file(&db), helpers);
     assert_eq!(def.name(&db).text(&db).as_str(), "foo");
+}
+
+#[test]
+fn test_package_function_body_sees_later_sibling_over_own_file() {
+    // Both files' top levels bind in the package namespace in collation
+    // order, so `b.R`'s later `x <- 2` is what a function body in `a.R`
+    // sees at call time.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+
+    let a_source = "x <- 1\nf <- function() x\n";
+    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", a_source, pkg);
+    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", "x <- 2\n", pkg);
+    pkg.set_files(&mut db).to(vec![a, b]);
+
+    let offset = TextSize::from(a_source.rfind("x").unwrap() as u32);
+    let def = resolve_one(&db, a, offset);
+
+    assert_eq!(def.file(&db), b);
+}
+
+#[test]
+fn test_package_function_body_sees_later_sibling_over_own_source_forward() {
+    // `a.R` forwards `x` from `defs.R` through `source()`. The forward is an
+    // own-file top-level binding, so a later collation sibling outranks it
+    // the same way it outranks a local assignment.
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+
+    let a_source = "source(\"R/defs.R\")\nf <- function() x\n";
+    let a = make_package_file(&mut db, "workspace/pkg/R/a.R", a_source, pkg);
+    let defs_r = make_package_file(&mut db, "workspace/pkg/R/defs.R", "x <- 1\n", pkg);
+    let b = make_package_file(&mut db, "workspace/pkg/R/b.R", "x <- 2\n", pkg);
+    // Keep `defs.R` outside the collation so it contributes only through
+    // `a.R`'s `source()` call.
+    pkg.set_files(&mut db).to(vec![a]);
+    pkg.set_scripts(&mut db).to(vec![defs_r]);
+
+    let offset = TextSize::from(a_source.rfind("x").unwrap() as u32);
+
+    let def = resolve_one(&db, a, offset);
+    assert_eq!(def.file(&db), defs_r);
+
+    pkg.set_files(&mut db).to(vec![a, b]);
+    let def = resolve_one(&db, a, offset);
+    assert_eq!(def.file(&db), b);
+}
+
+#[test]
+fn test_conditional_successor_source_keeps_own_package_binding() {
+    let mut db = TestDb::new();
+    let (_root, pkg) = install_workspace_package(&mut db, "pkg");
+    let own_source = "x <- 1\nf <- function() x\n";
+    let own = make_package_file(&mut db, "workspace/pkg/R/a.R", own_source, pkg);
+    let later = make_package_file(
+        &mut db,
+        "workspace/pkg/R/b.R",
+        "if (flag) source(\"R/defs.R\")\n",
+        pkg,
+    );
+    let target = make_package_file(&mut db, "workspace/pkg/R/defs.R", "x <- 2\n", pkg);
+    pkg.set_files(&mut db).to(vec![own, later]);
+    pkg.set_scripts(&mut db).to(vec![target]);
+
+    let offset = TextSize::from(own_source.rfind("x").unwrap() as u32);
+    let defs = own.resolve_at(&db, offset);
+    let files: Vec<File> = defs.iter().map(|def| def.file(&db)).collect();
+    assert_eq!(files, vec![target, own]);
+    assert_eq!(own.resolve(&db, Name::new(&db, "x")), defs);
 }
 
 #[test]

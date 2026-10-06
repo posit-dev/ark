@@ -5,7 +5,6 @@
 use std::collections::HashSet;
 
 use aether_path::FilePath;
-use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::FileRevision;
@@ -13,6 +12,7 @@ use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
+use oak_db::SourceDb;
 use salsa::Setter;
 use url::Url;
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::Context;
-use oak_db::Db;
+use oak_db::SourceDb;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::PrepareRenameResponse;
 use tower_lsp_server::ls_types::RenameParams;
@@ -21,7 +21,7 @@ pub(crate) fn prepare_rename(
     let path = params.text_document.uri.to_document_path()?;
     let position = params.position;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {
@@ -53,7 +53,7 @@ pub(crate) fn rename(
     let position = params.text_document_position.position;
     let new_name = params.new_name;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {

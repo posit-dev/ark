@@ -58,7 +58,18 @@ impl AnalysisPool {
         for _ in 0..threads {
             let shared = Arc::clone(&shared);
             let service_context = Arc::clone(&service_context);
-            spawn!("oak-analysis", move || work(shared, service_context));
+            spawn!("oak-analysis", move || {
+                // `run_entry()` recovers task panics. A panic that reaches this
+                // boundary comes from the worker loop itself, so let this
+                // worker exit rather than abort the process. The remaining
+                // workers keep draining the queue.
+                let outcome =
+                    panic::catch_unwind(Recovery::Always, || work(&shared, &service_context));
+                if let Err(message) = outcome {
+                    lsp::log_error!("Panic in an analysis worker: {message}");
+                    service_context.report_background_panic();
+                }
+            });
         }
 
         Self { shared }
@@ -158,12 +169,12 @@ struct Entry {
     run: Box<dyn FnOnce(WorldStateSnapshot) + Send>,
 }
 
-fn work(shared: Arc<Shared>, service_context: Arc<LspServiceContext>) {
+fn work(shared: &Shared, service_context: &LspServiceContext) {
     // `run_entry` takes the entry by value, so the snapshot has dropped by the
     // time we ask for the next one. A worker parked on `next_entry` doesn't
     // hold a db handle and can't block a writer.
     while let Some(entry) = shared.next_entry() {
-        run_entry(entry, &service_context);
+        run_entry(entry, service_context);
     }
 }
 
@@ -204,10 +215,9 @@ fn run_entry(entry: Entry, service_context: &LspServiceContext) {
         return;
     }
 
-    if let Err(payload) =
+    if let Err(message) =
         panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot)))
     {
-        let message = panic::message(&payload);
         lsp::log_error!("An analysis task panicked: {message}");
         service_context.report_background_panic();
     }
@@ -275,6 +285,46 @@ mod tests {
         });
 
         barrier_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+    }
+
+    /// Panics when dropped, so a task panicking with it as payload makes
+    /// `run_entry()` panic again when it drops the payload after its own
+    /// `catch_unwind()` returns.
+    struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("Test panic while dropping a task's panic payload");
+        }
+    }
+
+    /// Install the production hook so a panic that escapes the worker's
+    /// boundary aborts the test process. Two workers, so the one left after
+    /// the other exits must still run tasks.
+    #[test]
+    fn test_pool_survives_panic_outside_a_task() {
+        crate::panic::install();
+
+        let state = WorldState::default();
+        let context = Arc::new(LspServiceContext::new());
+        let pool = AnalysisPool::with_threads(2, Arc::clone(&context));
+        pool.spawn(state.snapshot(), |_snapshot| {
+            std::panic::panic_any(PanicOnDrop)
+        });
+
+        // Each worker holds a clone of `context` and drops it when its thread
+        // returns through the boundary. An escaped panic aborts before that.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while Arc::strong_count(&context) > 2 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
+        pool.spawn(state.snapshot(), move |_snapshot| ran_tx.send(()).unwrap());
+        ran_rx
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap();
     }

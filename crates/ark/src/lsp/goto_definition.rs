@@ -1,7 +1,7 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use oak_db::Db;
+use oak_db::SourceDb;
 use oak_ide::NavigationTarget;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
@@ -22,7 +22,7 @@ pub(crate) fn goto_definition(
         .to_document_path()?;
     let position = params.text_document_position_params.position;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {
@@ -60,7 +60,7 @@ fn nav_target_to_link(
     encoding: PositionEncoding,
     target: &NavigationTarget,
 ) -> anyhow::Result<LocationLink> {
-    let db = &state.db;
+    let db = state.db();
     let line_index = target.file.line_index(db);
     let target_range = to_proto::range(target.full_range, line_index, encoding)?;
     let target_selection_range = to_proto::range(target.focus_range, line_index, encoding)?;

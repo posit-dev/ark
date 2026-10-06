@@ -27,6 +27,7 @@ use super::is_right_assignment;
 use super::is_super_assignment;
 use super::SemanticIndexBuilder;
 use crate::effects::AssignBinding;
+use crate::effects::CalleeResolution;
 use crate::effects::ResolvedArgumentEffect;
 use crate::effects::ResolvedArgumentEffects;
 use crate::effects::ScopeContext;
@@ -53,13 +54,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     ///   entered (its `BodyScan::Deferred` snapshot). The parent's own scan was
     ///   seeded the same way, so this is transitively complete: it holds every
     ///   eager binding visible from an ancestor at this scope's definition point.
-    /// - The scope's own already-bound names. For a function scope that's the
-    ///   parameters, recorded just before the scan runs. For file and NSE scopes
-    ///   nothing local is bound yet.
+    /// - The scope's own already-bound names from its symbol table.
     ///
-    /// Parameter defaults are a special case: they are scanned before the params
-    /// are recorded, so `walk_function` seeds the full formal set by hand
-    /// (all formals bind at once in R, so a default sees every parameter name).
+    /// A function scope's parameters are not in its symbol table yet, because
+    /// the walk records them after the scan. `scan_parameter_defaults()` seeds
+    /// the formals instead.
     pub(super) fn begin_scan(&mut self) {
         let range = self.scopes[self.current_scope].range;
 
@@ -398,14 +397,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// Scan a call for effects (NSE scopes, attaches, sources, assigns) and
     /// record its decisions for the walk to reuse. The callee is resolved once
     /// through [`resolve_effects`].
-    ///
-    /// `Current + Eager` and `Nested + Eager` arguments are scanned here:
-    /// `Current + Eager` transparently, `Nested + Eager` by descending into the
-    /// body and staging the names it binds. A `Current + Lazy` body (`on_load()`)
-    /// is queued and scanned at the end of this scan unit's drain, once the
-    /// owner's bindings are complete. A `Nested + Lazy` body (`reactive()`) is
-    /// its own scan unit, deferred to the walk because resolution of effects in
-    /// that lazy scope needs the child's own flow context.
     fn scan_call(&mut self, call: &RCall) {
         let (arg_effects, attach, source, assign) = match self.resolve_effects(call) {
             Some(effects) => (
@@ -416,6 +407,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             ),
             None => (None, None, None, None),
         };
+
+        // Eager argument bodies must not see the enclosing call's attach,
+        // source, or assign effects. For example, `local()` in
+        // `assign("local", local({ ... }))` resolves before the new binding.
+        self.scan_call_arguments(call, arg_effects);
 
         if let Some(package) = attach {
             let call_range = call.syntax().text_trimmed_range();
@@ -486,7 +482,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     .push(binding);
             }
         }
+    }
 
+    /// Scan eager arguments now. Defer `Current + Lazy` bodies (`on_load()`)
+    /// until this scan unit's drain, when the owner's bindings are complete.
+    /// Defer `Nested + Lazy` bodies (`reactive()`) to the walk, where each child
+    /// has its own flow context for effect resolution.
+    fn scan_call_arguments(&mut self, call: &RCall, arg_effects: Option<ResolvedArgumentEffects>) {
         let Some(arg_effects) = arg_effects else {
             if let Ok(args) = call.arguments() {
                 for item in args.items().iter() {
@@ -676,11 +678,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
 
         let call_range = call.syntax().text_trimmed_range();
-        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-            name,
-            call_range,
-            reason: AmbiguityReason::ConditionalShadow { binding_range },
-        });
+        self.diagnostics
+            .push(SemanticDiagnostic::AmbiguousCalleeResolution {
+                name,
+                call_range,
+                reason: AmbiguityReason::ConditionalShadow { binding_range },
+            });
     }
 
     /// Scan the `Current + Lazy` bodies queued since `watermark`, now that the
@@ -743,8 +746,20 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     pub(super) fn scan_parameter_defaults(&mut self, params: &RParameters) {
-        // Seed `bound_so_far` with every parameter names so a callee inside a
-        // default value sees the full formal set
+        // Every default sees all formals because R binds them into the frame
+        // at once, regardless of parameter order. For example, `local()` in
+        // `function(b = local(...), local)` does not use base NSE semantics.
+        //
+        // The scan approximates defaults as forced at function entry, in
+        // declaration order. Their bindings and package attachments are visible
+        // throughout the body, and their callees resolve before body bindings.
+        // R instead forces default promises on first use, possibly in another
+        // order or not at all. These differences produce no diagnostic, as
+        // asserted by the `test_approximation_` tests in `contrib/base.rs`.
+        //
+        // Both `bound_so_far` and `bound_anywhere` need the formals for the
+        // defaults and body, including frame queries such as `substitute()`.
+        // The walk cannot supply them because it runs after the body scan.
         for param in params.items().iter() {
             let Ok(param) = param else { continue };
             let Ok(name) = param.name() else { continue };
@@ -753,7 +768,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 AnyRParameterName::RDots(_) => String::from("..."),
                 AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
             };
-            self.scan.bound_so_far.bind(text);
+            self.record_binding(text, name.syntax().text_trimmed_range());
         }
 
         for param in params.items().iter() {
@@ -942,13 +957,13 @@ pub(super) struct SourcedFile {
     pub(super) resolution: Option<SourceResolution>,
 }
 
-/// Backs a [`CallContext`]'s [`ScopeQuery`] with the builder's live scope
-/// state, so an effect handler (`substitute`) can query bindings during the
-/// scan without reaching into the builder directly.
+/// Backs a [`CallContext`]'s [`ScopeContext`] with live scan state. Resolving
+/// a nested callee may mutate the imports cache, so this holds the builder
+/// mutably.
 ///
 /// [`CallContext`]: crate::effects::CallContext
 pub(super) struct ScanBindings<'a, R: ImportsResolver> {
-    pub(super) builder: &'a SemanticIndexBuilder<R>,
+    pub(super) builder: &'a mut SemanticIndexBuilder<R>,
 }
 
 impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
@@ -964,6 +979,10 @@ impl<R: ImportsResolver> ScopeContext for ScanBindings<'_, R> {
 
     fn is_global(&self) -> bool {
         self.builder.scan_scope_is_global()
+    }
+
+    fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
+        self.builder.resolve_callee(call)
     }
 }
 

@@ -1,6 +1,6 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
-use oak_db::Db;
+use oak_db::SourceDb;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types::Location;
 use tower_lsp_server::ls_types::ReferenceParams;
@@ -20,7 +20,7 @@ pub(crate) fn find_references(
     let position = params.text_document_position.position;
     let include_declaration = params.context.include_declaration;
 
-    let db = &state.db;
+    let db = state.db();
     let encoding = state.config.position_encoding;
 
     let Some(file) = db.file_by_path(&path) else {

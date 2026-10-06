@@ -312,7 +312,7 @@ where
         let result = Arc::clone(&result);
         let closure = move || {
             let caught = if caller_recovers_panic {
-                panic::catch_unwind(Recovery::Always, f)
+                panic::catch_unwind_payload(Recovery::Always, f)
             } else {
                 Ok(f())
             };

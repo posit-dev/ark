@@ -958,16 +958,9 @@ fn test_attach_in_eager_scope_is_visible_to_later_top_level_code() {
 
 #[test]
 fn test_imports_at_covers_the_same_layers_as_the_per_sourcing_file_view() {
-    // Both views narrow to `offset` by the same rule and cover the same layers,
-    // grouped differently. `imports_at` is band-major, every sourcing file's
-    // `above` band, then own attaches, then every sourcing file's `below` band.
-    // The per-sourcing-file view is context-major, one file's `above` / own /
-    // `below` in full before the next file's. So the comparison below is over
-    // layer sets, not order.
-    //
-    // Nothing in production reads `imports_at` today (`resolve_at` moved to the
-    // per-sourcing-file view, completions will want the flat one), so this pins
-    // the two together against drift in the narrowing.
+    // `imports_at()` groups layers by precedence band, while resolution keeps
+    // the loader fallback and alternative sourcing contexts separate. Compare
+    // layer sets rather than order to pin their offset narrowing together.
     let mut db = TestDb::new();
     install_packages(&mut db, &["base", "dplyr", "rlang"]);
     let root = workspace_root(&db, "w");
@@ -983,12 +976,12 @@ fn test_imports_at_covers_the_same_layers_as_the_per_sourcing_file_view() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let offset = TextSize::from(0);
-    // `helpers.R`'s own standalone context, then one per sourcing file.
     let contexts = helpers.imports_by_sourcing_file_at(&db, offset);
-    assert_eq!(contexts.len(), 3);
+    assert_eq!(contexts.len(), 2);
 
     let flat = helpers.imports_at(&db, offset);
-    let grouped: Vec<ImportLayer> = contexts.into_iter().flatten().collect();
+    let mut grouped = helpers.loader_fallback_at(&db, offset);
+    grouped.extend(contexts.into_iter().flatten());
     assert_eq!(layer_keys(&db, &flat), layer_keys(&db, &grouped));
 }
 

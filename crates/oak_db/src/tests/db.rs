@@ -1,18 +1,22 @@
 use std::collections::HashSet;
 
+use aether_path::FilePath;
 use salsa::Setter;
+use url::Url;
 
 use crate::all_known_files;
 use crate::all_used_files;
+use crate::db::notebook_by_cell;
 use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
-use crate::Db;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
+use crate::Notebook;
 use crate::Package;
+use crate::SourceDb;
 
 #[test]
 fn test_file_by_path_finds_workspace_script() {
@@ -217,4 +221,33 @@ fn test_all_used_files_excludes_unrelated_library_files() {
 
     // `all_used_files` drops `unused`: nothing in the workspace references it.
     assert_eq!(all_used_files(&db), &vec![script, used_file]);
+}
+
+fn notebook_cell(db: &TestDb, notebook: &str, handle: usize, contents: &str) -> File {
+    let url = Url::parse(&format!("vscode-notebook-cell:/{notebook}#W{handle}s")).unwrap();
+    File::new(
+        db,
+        FilePath::from_url(&url),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        None,
+    )
+}
+
+#[test]
+fn test_notebook_by_cell_finds_the_owning_notebook() {
+    let mut db = TestDb::new();
+    let a = notebook_cell(&db, "a.ipynb", 0, "x <- 1\n");
+    let b = notebook_cell(&db, "b.ipynb", 0, "y <- 1\n");
+    let loose = notebook_cell(&db, "loose.ipynb", 0, "z <- 1\n");
+
+    let notebook_a = Notebook::new(&db, FilePath::parse("file:///a.ipynb").unwrap(), vec![a]);
+    let notebook_b = Notebook::new(&db, FilePath::parse("file:///b.ipynb").unwrap(), vec![b]);
+    db.open_notebooks()
+        .set_notebooks(&mut db)
+        .to(vec![notebook_a, notebook_b]);
+
+    assert_eq!(notebook_by_cell(&db, a), Some(notebook_a));
+    assert_eq!(notebook_by_cell(&db, b), Some(notebook_b));
+    assert_eq!(notebook_by_cell(&db, loose), None);
 }

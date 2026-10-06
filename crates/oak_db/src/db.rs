@@ -1,10 +1,15 @@
+use std::io;
+
 use aether_path::FilePath;
+use camino::Utf8Path;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
 use crate::File;
 use crate::LibraryRoots;
 use crate::LiveRoot;
+use crate::Notebook;
+use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::Package;
 use crate::Root;
@@ -12,13 +17,11 @@ use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete-input surface of the salsa database. Each impl
-/// ([`crate::OakDatabase`], the test db) supplies the three singleton input
-/// handles.
+/// ([`crate::OakDatabase`], the test db) supplies singleton input handles
+/// and file reads.
 ///
-/// Kept separate from [`Db`] (the query trait) so input accessors and derived
-/// queries live on different traits. Mirrors rust-analyzer's `SourceDatabase`
-/// / `DefDatabase` split: input plumbing on the base trait, derived queries
-/// on the query trait.
+/// [`SourceDb`] adds lookups over these inputs. [`Db`] additionally permits
+/// recursive semantic queries.
 #[salsa::db]
 pub trait DbInputs: salsa::Database {
     /// Workspace folders opened by the editor.
@@ -33,20 +36,25 @@ pub trait DbInputs: salsa::Database {
     /// Files and packages from roots that have been removed. Holding
     /// pen for entity reuse on re-add (see [`StaleRoot`]).
     fn stale_root(&self) -> StaleRoot;
+
+    /// Read through the database's file reader. Note that this method is not
+    /// tracked and callers _must_ depend on the corresponding revision input
+    /// for the file before reading.
+    fn read_to_string(&self, path: &Utf8Path) -> io::Result<String>;
+
+    /// Notebooks open in the editor, with their cells in document order.
+    fn open_notebooks(&self) -> OpenNotebooks;
 }
 
-/// Salsa database trait used throughout `oak_db`. Tracked queries take `&dyn
-/// Db`, so query code never names the concrete db type.
+/// Database access for source text, syntax, membership, and package metadata.
+/// Queries accepting this trait cannot directly call semantic queries that
+/// require [`Db`].
 ///
-/// Methods aren't memoized at this level: they delegate to free helpers
-/// (`file_by_path_query` etc.) that walk per-root indices which *are* memoized,
-/// so salsa records dep edges through those.
-///
-/// Each concrete db type provides its own forwarding `impl Db`, which is
-/// what lets `db.file_by_path(path)` work on both `&dyn Db` (via the trait
-/// method) and concrete db references (via the type's impl).
+/// Lookup methods delegate to tracked per-root indices, preserving their
+/// invalidation boundaries. Recovery helpers also use this trait: keep its
+/// implementations and their transitive dependencies free of semantic queries.
 #[salsa::db]
-pub trait Db: DbInputs {
+pub trait SourceDb: DbInputs {
     /// Look up the `File` interned at `path`, if any.
     ///
     /// Walks the per-root URL indices in workspace-then-library order,
@@ -84,8 +92,12 @@ pub trait Db: DbInputs {
     fn live_roots(&self) -> &[LiveRoot];
 }
 
+/// Unrestricted database access for recursive semantic queries.
+#[salsa::db]
+pub trait Db: SourceDb {}
+
 #[salsa::tracked(returns(ref))]
-pub(crate) fn live_roots_query(db: &dyn Db) -> Vec<LiveRoot> {
+pub(crate) fn live_roots_query(db: &dyn SourceDb) -> Vec<LiveRoot> {
     let mut roots: Vec<LiveRoot> = db
         .workspace_roots()
         .roots(db)
@@ -146,7 +158,7 @@ pub fn all_used_files(db: &dyn Db) -> Vec<File> {
 /// wide searches. LSP functionality should generally not depend on
 /// non-dependencies, prefer [`all_used_files()`] instead.
 #[salsa::tracked(returns(ref))]
-pub fn all_known_files(db: &dyn Db) -> Vec<File> {
+pub fn all_known_files(db: &dyn SourceDb) -> Vec<File> {
     let mut seen = FxHashSet::default();
     let mut files = Vec::new();
 
@@ -172,7 +184,7 @@ pub fn all_known_files(db: &dyn Db) -> Vec<File> {
 /// already in `seen`. When `dependencies` is `Some`, packages not in that set
 /// are skipped entirely.
 fn push_root_files(
-    db: &dyn Db,
+    db: &dyn SourceDb,
     files: &mut Vec<File>,
     seen: &mut FxHashSet<File>,
     root: Root,
@@ -195,7 +207,7 @@ fn push_root_files(
 /// package files, plus orphan editor buffers. Library roots are excluded, so
 /// installed package symbols don't leak into e.g. workspace symbols.
 #[salsa::tracked(returns(ref))]
-pub fn workspace_files(db: &dyn Db) -> Vec<File> {
+pub fn workspace_files(db: &dyn SourceDb) -> Vec<File> {
     let mut files: Vec<File> = Vec::new();
 
     for &root in db.live_roots() {
@@ -212,7 +224,7 @@ pub fn workspace_files(db: &dyn Db) -> Vec<File> {
 /// The scripts held directly by workspace roots, in root order.
 /// Like [`workspace_files`] but without package files.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn workspace_scripts(db: &dyn Db) -> Vec<File> {
+pub(crate) fn workspace_scripts(db: &dyn SourceDb) -> Vec<File> {
     db.workspace_roots()
         .roots(db)
         .iter()
@@ -223,7 +235,7 @@ pub(crate) fn workspace_scripts(db: &dyn Db) -> Vec<File> {
 /// Every file owned by a workspace root, including package files. Orphan
 /// buffers are excluded because directory loading is rooted on disk.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn workspace_root_files(db: &dyn Db) -> Vec<File> {
+pub(crate) fn workspace_root_files(db: &dyn SourceDb) -> Vec<File> {
     let mut files: Vec<File> = Vec::new();
     for &root in db.workspace_roots().roots(db) {
         collect_root_files(db, &mut files, root);
@@ -231,7 +243,7 @@ pub(crate) fn workspace_root_files(db: &dyn Db) -> Vec<File> {
     files
 }
 
-fn collect_root_files(db: &dyn Db, files: &mut Vec<File>, r: Root) {
+fn collect_root_files(db: &dyn SourceDb, files: &mut Vec<File>, r: Root) {
     let owned = |f: File| root_by_file(db, f) == Some(r);
     files.extend(r.scripts(db).iter().copied().filter(|&f| owned(f)));
 
@@ -241,13 +253,13 @@ fn collect_root_files(db: &dyn Db, files: &mut Vec<File>, r: Root) {
     }
 }
 
-/// Implementation of [`Db::file_by_path`]. Walks the per-root indices.
+/// Implementation of [`SourceDb::file_by_path`]. Walks the per-root indices.
 ///
 /// Not itself salsa-tracked (its `&FilePath` argument isn't a salsa
 /// entity), but every step is: each [`root_path_index`] call returns a
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
-pub(crate) fn file_by_path_query(db: &dyn Db, path: &FilePath) -> Option<File> {
+pub(crate) fn file_by_path_query(db: &dyn SourceDb, path: &FilePath) -> Option<File> {
     for &root in db.live_roots() {
         let hit = match root {
             LiveRoot::Workspace(r) | LiveRoot::Library(r) => {
@@ -262,10 +274,10 @@ pub(crate) fn file_by_path_query(db: &dyn Db, path: &FilePath) -> Option<File> {
     None
 }
 
-/// Implementation of [`Db::package_by_name`]. Same shape as
+/// Implementation of [`SourceDb::package_by_name`]. Same shape as
 /// [`file_by_path_query`]; orphan has no packages, so it contributes
 /// nothing to the walk.
-pub(crate) fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
+pub(crate) fn package_by_name_query(db: &dyn SourceDb, name: &str) -> Option<Package> {
     for &root in db.live_roots() {
         if let LiveRoot::Workspace(r) | LiveRoot::Library(r) = root {
             if let Some(&pkg) = root_package_index(db, r).get(name) {
@@ -276,9 +288,9 @@ pub(crate) fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> 
     None
 }
 
-/// Implementation of [`Db::root_by_package`]. Walks all live roots looking for
+/// Implementation of [`SourceDb::root_by_package`]. Walks all live roots looking for
 /// `pkg` in their `packages` vec, picking the longest-path root on ties.
-pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
+pub(crate) fn root_by_package_query(db: &dyn SourceDb, pkg: Package) -> Option<Root> {
     let mut best: Option<(Root, usize)> = None;
     for &root in db.live_roots() {
         let (LiveRoot::Workspace(r) | LiveRoot::Library(r)) = root else {
@@ -307,7 +319,7 @@ pub(crate) fn root_by_package_query(db: &dyn Db, pkg: Package) -> Option<Root> {
 ///
 /// Returns `None` for orphan files (they live in no workspace or library
 /// root). [`File::root`] handles that case with a path-prefix fallback.
-pub(crate) fn root_by_file(db: &dyn Db, file: File) -> Option<Root> {
+pub(crate) fn root_by_file(db: &dyn SourceDb, file: File) -> Option<Root> {
     let mut best: Option<(Root, usize)> = None;
 
     let path = file.path(db);
@@ -335,7 +347,7 @@ pub(crate) fn root_by_file(db: &dyn Db, file: File) -> Option<Root> {
 /// letter), which would silently collapse all depths to zero and degrade
 /// the tiebreaker into "first found wins". Depth is a structural property
 /// of the URL hierarchy, so the URL itself is the right source.
-fn root_depth(db: &dyn Db, root: Root) -> usize {
+fn root_depth(db: &dyn SourceDb, root: Root) -> usize {
     root.path(db)
         .to_url()
         .path_segments()
@@ -348,7 +360,7 @@ fn root_depth(db: &dyn Db, root: Root) -> usize {
 /// `pkg.scripts` reachable from this root. Adding or removing a file
 /// in *this* root invalidates this entry; other roots stay cached.
 #[salsa::tracked(returns(ref))]
-fn root_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, File> {
+fn root_path_index(db: &dyn SourceDb, root: Root) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in root.scripts(db) {
         map.insert(file.path(db).clone(), file);
@@ -366,7 +378,7 @@ fn root_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, File> {
 
 /// Orphan URL -> File index. Reads only `orphan_root().files`.
 #[salsa::tracked(returns(ref))]
-fn orphan_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
+fn orphan_path_index(db: &dyn SourceDb) -> FxHashMap<FilePath, File> {
     let mut map = FxHashMap::default();
     for &file in db.orphan_root().files(db) {
         map.insert(file.path(db).clone(), file);
@@ -377,10 +389,34 @@ fn orphan_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> {
 /// Per-root name -> Package index. Same granularity as
 /// [`root_path_index`].
 #[salsa::tracked(returns(ref))]
-fn root_package_index(db: &dyn Db, root: Root) -> FxHashMap<String, Package> {
+fn root_package_index(db: &dyn SourceDb, root: Root) -> FxHashMap<String, Package> {
     let mut map = FxHashMap::default();
     for &pkg in root.packages(db) {
         map.insert(pkg.name(db).clone(), pkg);
+    }
+    map
+}
+
+/// Unchanged notebook membership stops cell-index invalidation from propagating
+/// to a file's downstream queries, such as [`File::cross_file_layers()`]. Salsa
+/// backdates this query when its result is unchanged. Cell reorders still
+/// invalidate [`crate::load_context`] through its direct read of
+/// [`Notebook::cells()`].
+#[salsa::tracked(returns(copy))]
+pub(crate) fn notebook_by_cell(db: &dyn SourceDb, file: File) -> Option<Notebook> {
+    notebook_cell_index(db).get(&file).copied()
+}
+
+/// Invalidated when the open-notebook list or any open notebook's cell list
+/// changes. Cell text edits do not invalidate this index because it reads
+/// membership, not source text.
+#[salsa::tracked(returns(ref))]
+fn notebook_cell_index(db: &dyn SourceDb) -> FxHashMap<File, Notebook> {
+    let mut map = FxHashMap::default();
+    for &notebook in db.open_notebooks().notebooks(db) {
+        for &cell in notebook.cells(db) {
+            map.insert(cell, notebook);
+        }
     }
     map
 }

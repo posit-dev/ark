@@ -2,8 +2,11 @@ use aether_path::FilePath;
 use oak_semantic::semantic_index::DefinitionKind;
 use rustc_hash::FxHashMap;
 
+use crate::recovery::record;
+use crate::recovery::Recovery;
 use crate::Db;
 use crate::File;
+use crate::Name;
 
 /// Names bound at top-level in a file.
 ///
@@ -56,7 +59,7 @@ impl File {
     ///
     /// Delegates the walk to [`SemanticIndex::exports`], then translates
     /// each `DefinitionKind::Import { file, name }` into
-    /// `ExportEntry::Import { file, name }` via [`Db::file_by_path`]. If
+    /// `ExportEntry::Import { file, name }` via [`crate::SourceDb::file_by_path`]. If
     /// the target file isn't interned yet, that Import is dropped
     /// silently. Expected, since [`SalsaImportsResolver`] only injects
     /// Imports when `file_by_path()` resolves the target.
@@ -99,8 +102,17 @@ impl File {
 
         FileExports { entries }
     }
+
+    /// Keep binding certainty separate from definition identity so changing a
+    /// conditional assignment to an unconditional one invalidates resolution
+    /// even when `exports()` and `resolve_export()` are unchanged.
+    #[salsa::tracked(returns(copy))]
+    pub(crate) fn export_is_bound(self, db: &dyn Db, name: Name<'_>) -> bool {
+        self.semantic_index(db).export_is_bound(name.text(db))
+    }
 }
 
-fn exports_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> FileExports {
+fn exports_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> FileExports {
+    record(db, Recovery::Exports(file));
     FileExports::default()
 }

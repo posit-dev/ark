@@ -21,7 +21,7 @@ fn test_diagnostics_published_through_refresh_snapshot() {
         let uri = url.to_uri().unwrap();
         let code = "foo";
         let file = state
-            .db
+            .db_mut()
             .upsert_editor(FilePath::from_url(&url), code.to_string());
         state.insert_open_file(uri.clone(), FilePath::from_url(&url), file, None);
 
