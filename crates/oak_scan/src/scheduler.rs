@@ -426,7 +426,14 @@ impl ScanScheduler {
             match is_file_on_disk(root_path, fs_path) {
                 Ok(true) => add_watched_file(db, path.clone()),
                 Ok(false) => remove_watched_file(db, path.clone()),
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                // `NotADirectory` means an ancestor was replaced by a regular
+                // file (`ENOTDIR` on Unix), so the path can't exist either.
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    ) =>
+                {
                     remove_watched_file(db, path.clone())
                 },
                 // Other errors (e.g. permissions) don't prove the file is gone,

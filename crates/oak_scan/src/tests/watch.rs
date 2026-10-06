@@ -646,6 +646,24 @@ fn test_rescan_refreshes_revision_of_known_file() {
     assert_eq!(file.source_text(&db).as_str(), "x <- 2\n");
 }
 
+#[test]
+fn test_watcher_parent_dir_replaced_by_file_unlinks_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("sub")).unwrap();
+    fs::write(tmp.path().join("sub/foo.R"), "x <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let fs_path = tmp.path().join("sub/foo.R");
+    fs::remove_dir_all(tmp.path().join("sub")).unwrap();
+    fs::write(tmp.path().join("sub"), "").unwrap();
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+
+    let root = db.workspace_roots().roots(&db)[0];
+    assert!(root.scripts(&db).is_empty());
+    assert!(db.file_by_path(&watched_path(&fs_path)).is_none());
+}
+
 fn is_case_insensitive(dir: &Path) -> bool {
     fs::write(dir.join("probe"), "").unwrap();
     let insensitive = dir.join("PROBE").exists();
