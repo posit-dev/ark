@@ -39,5 +39,3 @@ pub use inputs::RootExt;
 pub use scheduler::ScanCompleted;
 pub use scheduler::ScanRequest;
 pub use scheduler::ScanScheduler;
-pub use watch::FileEvent;
-pub use watch::FileEventKind;

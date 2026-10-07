@@ -2641,6 +2641,7 @@ dependencies = [
  "camino",
  "filetime",
  "ignore",
+ "indexmap 2.14.0",
  "insta",
  "log",
  "oak_core",

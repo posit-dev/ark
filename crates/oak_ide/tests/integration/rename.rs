@@ -468,7 +468,7 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
     pkg.set_files(db).to(created.clone());
 
     let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg], vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
     created
 }
@@ -487,7 +487,7 @@ fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
     pkg.set_files(db).to(vec![file]);
 
     let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg], vec![]);
     db.library_roots().set_roots(db).to(vec![root]);
     file
 }

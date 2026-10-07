@@ -111,6 +111,7 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         pkg.set_scripts(db).to(Vec::new());
     }
     root.set_packages(db).to(Vec::new());
+    root.set_environment_dirs(db).to(Vec::new());
 }
 
 pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
