@@ -266,11 +266,13 @@ fn test_remove_watched_file_from_package() {
     let path = tmp.path().join("pkg/R/a.R");
     fs::remove_file(&path).unwrap();
     let path = FilePath::from_path_buf(path.clone()).unwrap();
+    let file = db.file_by_path(&path).unwrap();
     remove_watched_file(&mut db, path.clone());
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.files(&db).len(), 1);
     assert!(db.file_by_path(&path).is_none());
+    assert_eq!(file.package(&db), None);
 }
 
 #[test]

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -377,9 +376,9 @@ fn test_set_library_paths_re_add_preserves_package_identity() {
 }
 
 #[test]
-fn test_set_library_paths_stale_invisible_to_analysis() {
-    // A stale package must not show up in `package_by_name`. Stale is
-    // entity-reuse storage, not part of the analysis universe.
+fn test_set_library_paths_evicted_package_invisible_to_analysis() {
+    // `package_by_name()` uses live membership, not the identity map. An
+    // evicted package retains its identity but is invisible to analysis.
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("dplyr"), "dplyr", &[]);
     let mut db = OakDatabase::new();
@@ -389,26 +388,28 @@ fn test_set_library_paths_stale_invisible_to_analysis() {
 
     db.set_library_paths(&[]);
 
-    // The lookup misses; the package is in stale, not the live universe.
     assert!(db.package_by_name("dplyr").is_none());
-    assert_eq!(db.stale_root().packages(&db).len(), 1);
+    let description = FilePath::from_path_buf(tmp.path().join("dplyr/DESCRIPTION")).unwrap();
+    assert!(db.interned_package(&description).is_some());
 }
 
 #[test]
-fn test_set_library_paths_stale_no_duplicates_across_cycles() {
-    // Repeated add/remove/add must not duplicate entities in stale: on
-    // re-add the entity comes back out of stale, so by the time we
-    // remove it again there's only one copy to push back in.
+fn test_set_library_paths_keeps_identity_across_cycles() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[]);
     let mut db = OakDatabase::new();
 
-    for _ in 0..3 {
-        db.set_library_paths(&[tmp.path().to_path_buf()]);
-        db.set_library_paths(&[]);
-    }
+    db.set_library_paths(&[tmp.path().to_path_buf()]);
+    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
 
-    assert_eq!(db.stale_root().packages(&db).len(), 1);
+    for _ in 0..3 {
+        db.set_library_paths(&[]);
+        db.set_library_paths(&[tmp.path().to_path_buf()]);
+        assert_eq!(
+            db.library_roots().roots(&db)[0].packages(&db).clone(),
+            vec![pkg]
+        );
+    }
 }
 
 // --- nested-root resolution (longest-path-wins) ---
@@ -578,23 +579,14 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
     // contents preserved (the scan's disk snapshot doesn't overwrite),
     // and the orphan reference is cleaned up so the orphan-placement
     // invariant (`package == None`) stays honest.
-    use oak_db::File;
     use oak_scan::FileEntry;
 
     let mut db = OakDatabase::new();
 
     // Editor opens the file before any scan -> orphan.
     let r_path = file_path("/lib/pkg/R/a.R");
-    let file = File::new(
-        &db,
-        r_path.clone(),
-        oak_db::FileRevision::zero(),
-        Some("editor content".to_string()),
-        None,
-    );
-    db.orphan_root()
-        .set_files(&mut db)
-        .to(HashSet::from([file]));
+    let file = db.upsert_editor(r_path.clone(), "editor content".to_string());
+    assert!(db.orphan_root().files(&db).contains(&file));
     assert_eq!(file.package(&db), None);
 
     // Now a library scan picks up the same URL as part of a package.
@@ -624,12 +616,9 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
 }
 
 #[test]
-fn test_set_package_stale_resurrection_changes_owning_root() {
-    // Stale resurrection: the previous `Root` entity at this path was
-    // evicted (so it's no longer in `library_roots`), and a fresh `Root`
-    // is created at the same path. The resurrected `Package` ends up in
-    // the new root's `packages` vec, and `root_by_package` reports the new
-    // root accordingly.
+fn test_set_package_after_eviction_changes_owning_root() {
+    // Package identity is independent of root identity. Re-adding its path
+    // under a fresh `Root` must make `root_by_package()` resolve to that root.
     let mut db = OakDatabase::new();
     let old = empty_library_root(&db, "/lib");
     let new = empty_library_root(&db, "/lib");
@@ -649,9 +638,7 @@ fn test_set_package_stale_resurrection_changes_owning_root() {
     register_package(&mut db, old, p1);
     assert_eq!(db.root_by_package(p1), Some(old));
 
-    // Simulate eviction: drop `old` from `library_roots` and move the
-    // package into `stale_root.packages`.
-    db.stale_root().set_packages(&mut db).to(vec![p1]);
+    old.evict(&mut db, None);
     db.library_roots().set_roots(&mut db).to(vec![]);
     assert_eq!(db.root_by_package(p1), None);
 

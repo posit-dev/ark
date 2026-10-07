@@ -23,14 +23,15 @@
 //! handled like this:
 //!
 //! - **didOpen / didChange during scan.** No special handling. The file
-//!   lands in `OrphanRoot` via [`crate::DbScan::upsert_editor`]. When the
-//!   scan applies, `upsert_root_file()` finds the existing entity,
-//!   promotes it into the right container, and leaves its contents
-//!   alone (the buffer wins over the disk read).
+//!   lands in `OrphanRoot` via [`crate::DbScan::upsert_editor()`]. When the
+//!   scan applies, [`FileUpserts`] reuses the entity through the identity
+//!   map and establishes root or package membership without changing its
+//!   editor override. The buffer remains authoritative.
 //!
-//! - **didClose during scan.** The orphan entity moves to stale. The
-//!   scan's `upsert_root_file` then resurrects it from stale, restoring
-//!   the disk contents the scanner read.
+//! - **didClose during scan.** The entity leaves `OrphanRoot` with its
+//!   override cleared. The scan reuses it through the identity map and
+//!   establishes root or package membership. `File::source_text()` then
+//!   reads from disk.
 //!
 //! - **Watcher events during scan.** R-file paths stay buffered until every
 //!   containing root is idle, then are reconciled against the disk. Paths
@@ -44,10 +45,9 @@
 //!   silently drops it. The `Root` salsa entity stays as a leak (no
 //!   GC), but nothing references it.
 //!
-//! - **Folder added back during in-flight scan.** Each add mints a
-//!   fresh `Root`, not a revival of the staled one. That way the
-//!   first scan's stale result drops on identity check instead of
-//!   clobbering the second scan's empty state.
+//! - **Folder added back during in-flight scan.** Each add creates a fresh
+//!   `Root`. The identity check rejects the first scan's result so it cannot
+//!   overwrite the new root's state.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -70,6 +70,7 @@ use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
 
+use crate::eviction::root_files;
 use crate::inputs::upsert_package;
 use crate::inputs::upsert_workspace_scripts;
 use crate::inputs::FileEntry;
@@ -81,8 +82,6 @@ use crate::packages::scan_workspace_environment_dirs;
 use crate::packages::scan_workspace_packages;
 use crate::packages::scan_workspace_scripts;
 use crate::packages::PackageEntry;
-use crate::stale::remove_all_from_stale_files;
-use crate::stale::root_files;
 use crate::watch::add_watched_file;
 use crate::watch::remove_watched_file;
 
@@ -144,11 +143,7 @@ impl ScanCompleted {
             environment_dirs,
         } = self;
 
-        let entries = packages
-            .iter()
-            .flat_map(|pkg| pkg.files.iter().chain(&pkg.scripts))
-            .chain(&scripts);
-        let mut upserts = FileUpserts::resolve(db, entries);
+        let mut upserts = FileUpserts::new();
 
         let package_entities: Vec<Package> = packages
             .into_iter()
@@ -215,7 +210,7 @@ impl ScanScheduler {
     /// Reconcile `WorkspaceRoots` to exactly `paths`. Returns one
     /// [`ScanRequest`] per newly-added path; unchanged paths skip the
     /// rescan, removed paths are evicted via
-    /// [`RootExt::set_stale`]. A surviving nested root that shared packages
+    /// [`RootExt::evict()`]. A surviving nested root that shared packages
     /// or scripts with a removed root also gets a rescan, to restore them.
     ///
     /// New roots are inserted into `workspace_roots` empty so watcher
@@ -259,7 +254,7 @@ impl ScanScheduler {
             evicted_files.extend(root_files(db, old_root));
         }
         for &old_root in &removed {
-            old_root.set_stale(db, Some(editor_owned));
+            old_root.evict(db, Some(editor_owned));
             self.state.remove(&old_root);
         }
 
@@ -291,14 +286,13 @@ impl ScanScheduler {
             db.workspace_roots().set_roots(db).to(new_roots);
         }
 
-        // Nested roots share `Package` and `File` entities, and `set_stale()`
-        // evicts all of a removed root's entities, emptying packages, clearing
-        // backpointers, and moving files to the stale root even when a
-        // surviving nested root still lists them. The two roots can hold a file
-        // in different containers (a package's `files` in one, `scripts` in the
-        // other), so every container counts. Rescanning such a survivor
-        // resurrects them. Survivors that shared nothing keep their state,
-        // since a rescan walks the whole root.
+        // Nested roots share `Package` and `File` entities, and `evict()`
+        // empties all of a removed root's packages and clears its files'
+        // backpointers even when a surviving nested root still lists them. The
+        // two roots can hold a file in different containers (a package's
+        // `files` in one, `scripts` in the other), so every container counts.
+        // Rescanning such a survivor restores them. Survivors that shared
+        // nothing keep their state, since a rescan walks the whole root.
         if !removed.is_empty() {
             for (old_path, &old_root) in &old {
                 if !new_paths.contains(old_path) {
@@ -476,9 +470,8 @@ impl ScanScheduler {
             return Vec::new();
         }
 
-        let open_files = open_file_entities(db, editor_owned);
         result.apply(db);
-        orphan_dropped_editor_files(db, open_files);
+        orphan_dropped_editor_files(db, editor_owned);
         self.finish_scan(db, root, editor_owned)
     }
 
@@ -554,7 +547,7 @@ impl ScanScheduler {
     /// stays the source of truth until it closes. Adding them matters for a
     /// buffer opened before its file existed on disk, or rescued to `OrphanRoot`
     /// and then saved. Without it the file would stay out of every container,
-    /// and go stale when the buffer closes.
+    /// and become invisible when the buffer closes.
     ///
     /// Editor ownership is checked only once a path is unblocked. A blocked
     /// path must survive a buffer that opens and closes before its scan
@@ -800,46 +793,32 @@ fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path, listings: &mut DirListi
     true
 }
 
-/// Capture editor-owned `File` entities across all live roots before applying
-/// a scan. `set_package()` reuses the entity found by `package_by_path()`, so
-/// scanning one root can remove files from a `Package` shared with another root.
-fn open_file_entities<DB: Db + DbInputs>(db: &DB, editor_owned: &HashSet<FilePath>) -> Vec<File> {
-    editor_owned
-        .iter()
-        .filter_map(|path| db.file_by_path(path))
-        .collect()
-}
-
 /// Keep editor-owned files reachable through [`OrphanRoot`] when a scan removes
 /// them from every live container, as happens when their files are missing on disk.
-/// Otherwise `file_by_path()` would miss an entity still held by the editor, and
-/// `upsert_editor()` would create a second [`File`] for the same buffer.
+/// Otherwise `file_by_path()` would miss an entity still held by the editor and
+/// analysis would lose the buffer.
 ///
 /// Files still reachable after the scan retain their container and package,
-/// including entities shared with another root.
-///
-/// A rescued file leaves `StaleRoot` too. It can be in stale while live after
-/// one of two nested roots is evicted, and `upsert_editor()` doesn't remove it
-/// from stale when it finds the live entity.
+/// including entities shared with another root. Calling `set_package()` on a
+/// shared `Package` can remove files from another root's view, so every
+/// editor-owned path is checked, not just those under the scanned root.
 ///
 /// Every lookup runs before the first write, so the orphan path index isn't
 /// invalidated and rebuilt once per rescued file.
-fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, open_files: Vec<File>) {
+fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, editor_owned: &HashSet<FilePath>) {
     let mut dropped: HashSet<File> = HashSet::new();
-    for file in open_files {
-        match db.file_by_path(file.path(db)) {
+    for path in editor_owned {
+        let Some(file) = db.interned_file(path) else {
+            continue;
+        };
+        match db.file_by_path(path) {
             None => {
                 dropped.insert(file);
             },
-            Some(current) if current == file => {},
-            Some(_) => {
-                // Orphaning `file` wouldn't help: lookups still resolve the
-                // path to the other entity.
-                log::error!(
-                    "Scan replaced the `File` of an open buffer: {path}",
-                    path = file.path(db)
-                );
-            },
+            Some(current) => stdext::soft_assert!(
+                current == file,
+                "A second `File` is published for an open buffer: {path}"
+            ),
         }
     }
     if dropped.is_empty() {
@@ -855,7 +834,6 @@ fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, open_files: Vec<F
     let mut orphan_files = orphan.files(db).clone();
     orphan_files.extend(dropped.iter().copied());
     orphan.set_files(db).to(orphan_files);
-    remove_all_from_stale_files(db, &dropped);
 }
 
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
@@ -920,7 +898,7 @@ mod tests {
     // `DESCRIPTION` can disappear between the package walk and the script walk
     // of one scan, so both list the same file. It must end up as a single
     // `File`, placed as a workspace script, whether it starts live, absent or
-    // stale. The race can't be timed through `ScanRequest::run()`, so these
+    // evicted. The race can't be timed through `ScanRequest::run()`, so these
     // tests build its result by hand.
 
     #[test]
@@ -969,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stale_path_listed_as_package_file_and_script_resurrects_one_entity() {
+    fn test_evicted_path_listed_as_package_file_and_script_reuses_one_entity() {
         let tmp = tempfile::tempdir().unwrap();
         let mut db = OakDatabase::new();
         let mut scheduler = ScanScheduler::new();
@@ -981,7 +959,7 @@ mod tests {
 
         let requests = scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
         assert!(requests.is_empty());
-        assert!(db.stale_root().files(&db).contains(&file));
+        assert!(db.file_by_path(&path).is_none());
 
         let requests = scheduler.set_workspace_paths(&mut db, &workspace, &HashSet::new());
         let root = apply_listed_twice(&mut db, &mut scheduler, requests, &HashSet::new());
@@ -991,7 +969,6 @@ mod tests {
         assert_eq!(root.scripts(&db).clone(), vec![file]);
         assert_eq!(file.package(&db), None);
         assert_eq!(db.file_by_path(&path), Some(file));
-        assert!(!db.stale_root().files(&db).contains(&file));
     }
 
     /// Write `pkg/` with a `DESCRIPTION` and `R/a.R` under `dir`. Returns the

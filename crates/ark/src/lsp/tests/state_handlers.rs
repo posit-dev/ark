@@ -592,9 +592,8 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
 
     let file_before = state.db().file_by_path(&file_path).unwrap();
 
-    // Remove the workspace folder. The handler builds the editor_owned set
-    // from state.open_files.keys() and passes it to oak; the buffer's file
-    // routes to OrphanRoot rather than StaleRoot.
+    // `state.open_files.keys()` supplies the editor-owned paths, so removing
+    // the workspace folder keeps the buffer visible through `OrphanRoot`.
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
@@ -627,11 +626,11 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
 }
 
 #[test]
-fn test_did_close_releases_orphan_file_to_stale() {
-    // End-to-end: open buffer → remove its workspace folder (file goes
-    // to orphan, editor-owned) → close → file leaves orphan, lands in
-    // stale. Without the `close_editor` hook in `did_close`, the file
-    // would zombie in orphan with the editor's last content.
+fn test_did_close_releases_orphan_file() {
+    // Closing a buffer after workspace eviction must remove its orphan
+    // membership and override while retaining its identity. Without the
+    // `close_editor()` call in `did_close()`, analysis would keep seeing the
+    // closed buffer's unsaved contents.
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
@@ -661,7 +660,6 @@ fn test_did_close_releases_orphan_file_to_stale() {
     // satisfy `send_auxiliary`), so grab the receiver only once that's done.
     let mut aux_rx = init_aux_for_test();
 
-    // Now close the buffer. File should move from orphan to stale.
     let params = DidCloseTextDocumentParams {
         text_document: TextDocumentIdentifier {
             uri: url.to_uri().unwrap(),
@@ -670,7 +668,9 @@ fn test_did_close_releases_orphan_file_to_stale() {
     did_close(params, &mut state).unwrap();
 
     assert!(!state.db().orphan_root().files(state.db()).contains(&file));
-    assert!(state.db().stale_root().files(state.db()).contains(&file));
+    assert_eq!(state.db().file_by_path(&file_path), None);
+    assert_eq!(state.db().interned_file(&file_path), Some(file));
+    assert_eq!(file.source_text_override(state.db()), &None);
 
     // did_close() clears diagnostics for the closed file.
     let event = aux_rx.try_recv().unwrap();
@@ -741,9 +741,9 @@ fn assert_incremental_edits_apply(state: &mut WorldState, uri: &Uri) {
     }
 }
 
-/// A rescan must preserve lookup of an open buffer's `File` even when its file
-/// is missing on disk. Otherwise `upsert_editor()` creates a second entity while
-/// `did_change()` continues reading the original entity's text.
+/// A rescan must keep an open buffer's `File` visible to analysis even when its
+/// file is missing on disk. Otherwise `file_by_path()` misses the entity that
+/// `did_change()` keeps writing to.
 #[test]
 fn test_rescan_keeps_open_script_missing_on_disk() {
     let tmp = tempfile::tempdir().unwrap();

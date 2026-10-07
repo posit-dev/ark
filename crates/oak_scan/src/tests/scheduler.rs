@@ -19,7 +19,6 @@ use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
 
-use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
 use crate::tests::is_case_insensitive;
 use crate::tests::is_normalization_insensitive;
@@ -65,9 +64,8 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
     let followups = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
     assert!(followups.is_empty());
 
-    // The package the scan would have created shouldn't surface.
     let pkg_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-    assert!(package_by_path(&db, &pkg_path).is_none());
+    assert!(db.interned_package(&pkg_path).is_none());
 }
 
 #[test]
@@ -748,7 +746,6 @@ fn test_saving_rescued_open_file_restores_it_without_rescan() {
     let path = watched_path(&script);
     db.close_editor(&path);
     assert_eq!(db.file_by_path(&path), Some(file));
-    assert!(!db.stale_root().files(&db).contains(&file));
 }
 
 #[test]
@@ -793,7 +790,6 @@ fn test_file_opened_before_creation_joins_its_container() {
     db.close_editor(&top_path);
     assert_eq!(db.file_by_path(&b_path), Some(b));
     assert_eq!(db.file_by_path(&top_path), Some(top));
-    assert!(db.stale_root().files(&db).is_empty());
 }
 
 #[test]
@@ -919,11 +915,10 @@ fn test_parent_description_keeps_open_child_package_file_entity() {
 }
 
 #[test]
-fn test_rescued_open_file_leaves_stale() {
-    // Removing the outer root moves its scripts to stale, including the one the
-    // inner root still lists. Opening that file finds the live entity and
-    // leaves it in stale. When the inner root's rescan then drops it, the
-    // rescue must take it out of stale.
+fn test_rescued_open_file_shared_with_evicted_root() {
+    // The surviving inner root can keep listing a script after outer-root
+    // eviction. If the inner scan drops it while its buffer is open, orphan
+    // membership must keep the same entity visible.
     let tmp = tempfile::tempdir().unwrap();
     let outer = tmp.path().join("outer");
     let inner = outer.join("inner");
@@ -938,7 +933,6 @@ fn test_rescued_open_file_leaves_stale() {
     let requests = scheduler.set_workspace_paths(&mut db, &[inner], &HashSet::new());
     assert_eq!(requests.len(), 1);
     let file = db.file_by_path(&path).unwrap();
-    assert!(db.stale_root().files(&db).contains(&file));
 
     assert_eq!(
         db.upsert_editor(path.clone(), "edited <- 1\n".to_string()),
@@ -950,7 +944,6 @@ fn test_rescued_open_file_leaves_stale() {
 
     assert_eq!(db.file_by_path(&path), Some(file));
     assert!(db.orphan_root().files(&db).contains(&file));
-    assert!(!db.stale_root().files(&db).contains(&file));
 }
 
 #[test]
@@ -1022,7 +1015,7 @@ fn test_sentinel_event_rescans_every_containing_root() {
 #[test]
 fn test_removing_nested_root_keeps_shared_entities_in_survivor() {
     // Both roots list `pkg` and `inner/script.R`. Evicting either one must not
-    // leave the survivor with an emptied package or files stuck in stale.
+    // leave the survivor with an emptied package or unlisted files.
     for remove_outer in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
         let outer = tmp.path().join("outer");
@@ -1052,9 +1045,6 @@ fn test_removing_nested_root_keeps_shared_entities_in_survivor() {
         assert_eq!(pkg.files(&db), &[a]);
         assert_eq!(a.package(&db), Some(pkg));
         assert_eq!(survivor.scripts(&db).as_slice(), &[script]);
-        assert!(!db.stale_root().files(&db).contains(&a));
-        assert!(!db.stale_root().files(&db).contains(&script));
-        assert!(!db.stale_root().packages(&db).contains(&pkg));
     }
 }
 
@@ -1084,7 +1074,6 @@ fn test_removing_nested_root_keeps_shared_scripts_in_survivor() {
             .file_by_path(&watched_path(&sub.join("script.R")))
             .unwrap();
         assert_eq!(survivor.scripts(&db).as_slice(), &[script]);
-        assert!(!db.stale_root().files(&db).contains(&script));
     }
 }
 
@@ -1134,7 +1123,6 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
             assert_eq!(pkg.files(&db), &[a]);
             assert_eq!(a.package(&db), Some(pkg));
         }
-        assert!(!db.stale_root().files(&db).contains(&a));
     }
 }
 

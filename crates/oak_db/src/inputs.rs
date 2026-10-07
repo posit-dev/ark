@@ -60,9 +60,7 @@ pub enum RootKind {
 ///
 /// Bundles the three salsa inputs that hold files / packages the user is
 /// actively working with: workspace [`Root`]s, library [`Root`]s, and the
-/// [`OrphanRoot`] that catches unanchored buffers. Stale entities in
-/// [`StaleRoot`] aren't included -- they have separate access patterns
-/// (scanner upsert only, never analysis), so they stay as their own input.
+/// [`OrphanRoot`] that catches unanchored buffers.
 ///
 /// `crate::SourceDb::live_roots()` yields these in lookup precedence (workspace first, then
 /// library, then orphan).
@@ -148,47 +146,6 @@ impl OrphanRoot {
     }
 }
 
-/// Files and packages from workspace or library roots that were removed
-/// during a `set_*_paths` call.
-///
-/// Salsa doesn't garbage-collect entities, so dropping a `Root` doesn't
-/// free its `File` and `Package` entities. They'd just leak. Instead we
-/// move them here and consult this bucket on the next `set_*_paths`,
-/// reusing entities by URL when their paths come back. This matters for
-/// agent / multi-repo workflows where the same workspace folder gets
-/// added and removed repeatedly across a session.
-///
-/// **Not consulted by analysis.** `crate::SourceDb::file_by_path` and
-/// `crate::SourceDb::package_by_name` walk workspace / library roots and (for files)
-/// `OrphanRoot` only. Entities in `StaleRoot` are invisible to
-/// completions, goto-def, etc. — they correspond to folders the user
-/// has explicitly removed.
-///
-/// **Consulted by scanners.** The scanner's package-by-URL lookup walks
-/// live roots then falls back to stale. Scanner upsert helpers do the same
-/// for files. On reuse, the entity is moved out of stale back into a live
-/// container.
-///
-/// Singleton like `OrphanRoot`. The `files` and `packages` fields are
-/// independent: a stale file's `package` may still point at a stale
-/// package, and that's fine. Both are invisible to analysis until one
-/// of them gets pulled back into a live container.
-#[salsa::input]
-pub struct StaleRoot {
-    /// Unordered: entity-reuse storage looked up by URL, no collation chain,
-    /// so membership is all that matters.
-    #[returns(ref)]
-    pub files: HashSet<File>,
-    #[returns(ref)]
-    pub packages: Vec<Package>,
-}
-
-impl StaleRoot {
-    pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, HashSet::new(), vec![])
-    }
-}
-
 /// A notebook whose cells the editor syncs through `notebookDocument/*`
 /// notifications. Also covers Quarto and R Markdown documents, which Positron
 /// presents as notebooks.
@@ -207,8 +164,8 @@ pub struct Notebook {
 /// The notebooks currently open in the editor.
 ///
 /// Closed [`Notebook`] inputs remain allocated because Salsa does not
-/// garbage-collect inputs. Unlike [`StaleRoot`], this list has no reuse pool,
-/// so reopening a notebook allocates a new input.
+/// garbage-collect inputs. Unlike `File` and `Package`, notebooks have no entry
+/// in [`crate::IdentityMap`], so reopening a notebook allocates a new input.
 #[salsa::input]
 pub struct OpenNotebooks {
     #[returns(ref)]

@@ -469,11 +469,9 @@ fn test_scan_workspace_excludes_renv_library() {
 
 #[test]
 fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
-    // The motivating case for routing editor-owned files to `OrphanRoot`
-    // (rather than `StaleRoot`) on eviction: a buffer the user has open
-    // stays analysable while its workspace folder is removed, and snaps
-    // back into `pkg.files` with the same `File` entity when the folder
-    // is re-added.
+    // Orphan membership keeps an open buffer visible during workspace
+    // eviction. Re-adding the folder must restore package context on the same
+    // `File` without overwriting the editor contents.
     use std::collections::HashSet;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -490,7 +488,6 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     db.upsert_editor(path.clone(), "edited <- 2\n".to_string());
     let editor_owned: HashSet<FilePath> = [path.clone()].into_iter().collect();
 
-    // Workspace folder removed. File routes to orphan, package goes to stale.
     set_workspace_paths(&mut db, &[], &editor_owned);
     let after_remove = db.file_by_path(&path).unwrap();
     assert_eq!(file, after_remove);
@@ -504,17 +501,19 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &editor_owned);
     let after_readd = db.file_by_path(&path).unwrap();
     assert_eq!(file, after_readd);
-    assert!(after_readd.package(&db).is_some());
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(after_readd.package(&db), Some(pkg));
+    assert_eq!(pkg.files(&db), &[file]);
+    assert_eq!(
+        after_readd.source_text_override(&db).as_deref(),
+        Some("edited <- 2\n")
+    );
     assert_eq!(after_readd.source_text(&db), "edited <- 2\n");
-    // Orphan reference cleaned up by `upsert_root_file`.
     assert!(!db.orphan_root().files(&db).contains(&after_readd));
 }
 
 #[test]
-fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
-    // The other half of the routing: with no editor-owned set, all files
-    // route to stale and disappear from analysis until the folder is
-    // re-added.
+fn test_set_workspace_paths_non_editor_owned_file_becomes_invisible() {
     use std::collections::HashSet;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -527,11 +526,10 @@ fn test_set_workspace_paths_non_editor_owned_file_goes_to_stale() {
 
     set_workspace_paths(&mut db, &[], &HashSet::new());
     assert!(db.file_by_path(&path).is_none());
-    assert!(db.stale_root().files(&db).contains(&file));
+    assert_eq!(db.interned_file(&path), Some(file));
 
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    let resurrected = db.file_by_path(&path).unwrap();
-    assert_eq!(file, resurrected);
+    assert_eq!(db.file_by_path(&path), Some(file));
 }
 
 #[test]
@@ -588,10 +586,9 @@ fn test_scan_workspace_package_files_sorted_by_basename() {
 }
 
 #[test]
-fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
-    // Eviction to stale doesn't snapshot disk contents. When the folder is
-    // re-added, the resurrected file reflects current disk, not whatever it
-    // held when evicted.
+fn test_set_workspace_paths_readded_file_picks_up_disk_contents() {
+    // Eviction doesn't snapshot disk contents. When the folder is re-added,
+    // the file reflects current disk, not whatever it held when evicted.
     use std::collections::HashSet;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -611,24 +608,31 @@ fn test_set_workspace_paths_resurrected_file_picks_up_disk_contents() {
 }
 
 #[test]
-fn test_set_workspace_paths_stale_no_duplicates_across_cycles() {
-    // Repeated add/remove must not duplicate entities in stale: on re-add the
-    // entity comes back out of stale, so by the time we remove it again
-    // there's only one copy to push back in.
+fn test_set_workspace_paths_keeps_identity_across_cycles() {
     use std::collections::HashSet;
 
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
+    let path = FilePath::from_path_buf(tmp.path().join("pkg/R/a.R")).unwrap();
+    let description = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let file = db.file_by_path(&path).unwrap();
+    let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
 
     for _ in 0..3 {
-        set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
         set_workspace_paths(&mut db, &[], &HashSet::new());
-    }
+        assert_eq!(db.interned_file(&path), Some(file));
+        assert_eq!(db.interned_package(&description), Some(pkg));
 
-    let stale = db.stale_root();
-    assert_eq!(stale.files(&db).len(), 1);
-    assert_eq!(stale.packages(&db).len(), 1);
+        set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        assert_eq!(db.file_by_path(&path), Some(file));
+        assert_eq!(
+            db.workspace_roots().roots(&db)[0].packages(&db).clone(),
+            vec![pkg]
+        );
+    }
 }
 
 #[test]

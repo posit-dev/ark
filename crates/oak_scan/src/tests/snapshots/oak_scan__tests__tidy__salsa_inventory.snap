@@ -10,9 +10,6 @@ expression: "oak_tidy::salsa_inventory(&source_dir)"
 == tracked structs ==
 
 == tracked queries ==
-lookup.rs: fn root_package_path_index(db: &dyn Db, root: Root) -> FxHashMap<FilePath, Package> [returns(ref)]
-stale.rs: fn stale_package_path_index(db: &dyn Db) -> FxHashMap<FilePath, Package> [returns(ref)]
-stale.rs: fn stale_path_index(db: &dyn Db) -> FxHashMap<FilePath, File> [returns(ref)]
 watch.rs: fn root_script_set(db: &dyn Db, root: Root) -> FxHashSet<File> [returns(ref)]
 
 == cycle recovery ==

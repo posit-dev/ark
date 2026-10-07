@@ -335,9 +335,8 @@ impl File {
     /// to a URL-prefix lookup so the file still resolves to the workspace
     /// folder it lives under.
     ///
-    /// Returns `None` if the file's package was evicted to
-    /// [`StaleRoot`] (no live root contains it), or if the file is in
-    /// orphan and the URL falls outside every workspace folder.
+    /// Returns `None` if no live root lists the file's package, or if the file
+    /// is in `OrphanRoot` and its URL falls outside every workspace folder.
     ///
     /// Callers that need to distinguish workspace from library roots
     /// inspect `root.kind(db)`.

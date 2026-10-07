@@ -21,6 +21,7 @@ use crate::Db;
 use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
+use crate::IdentityMap;
 use crate::LibraryRoots;
 use crate::OpenNotebooks;
 use crate::OrphanRoot;
@@ -29,7 +30,6 @@ use crate::PackageFiles;
 use crate::Root;
 use crate::RootKind;
 use crate::SourceDb;
-use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 type Events = Arc<Mutex<Vec<salsa::Event>>>;
@@ -43,7 +43,7 @@ pub(super) struct TestDb {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
-    stale_root: Arc<OnceLock<StaleRoot>>,
+    identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
 }
 
@@ -63,7 +63,7 @@ impl TestDb {
             workspace_roots: Arc::new(OnceLock::new()),
             library_roots: Arc::new(OnceLock::new()),
             orphan_root: Arc::new(OnceLock::new()),
-            stale_root: Arc::new(OnceLock::new()),
+            identity_map: Arc::default(),
             open_notebooks: Arc::new(OnceLock::new()),
         }
     }
@@ -135,8 +135,8 @@ impl DbInputs for TestDb {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
     }
 
-    fn stale_root(&self) -> StaleRoot {
-        *self.stale_root.get_or_init(|| StaleRoot::empty(self))
+    fn identity_map(&self) -> &IdentityMap {
+        &self.identity_map
     }
 
     fn open_notebooks(&self) -> OpenNotebooks {

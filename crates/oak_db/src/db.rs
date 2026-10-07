@@ -1,4 +1,8 @@
+use std::collections::hash_map::Entry;
 use std::io;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
+use std::sync::PoisonError;
 
 use aether_path::FilePath;
 use camino::Utf8Path;
@@ -6,14 +10,15 @@ use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
 use crate::File;
+use crate::FileRevision;
 use crate::LibraryRoots;
 use crate::LiveRoot;
 use crate::Notebook;
 use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::Package;
+use crate::PackageFiles;
 use crate::Root;
-use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete-input surface of the salsa database. Each impl
@@ -33,9 +38,8 @@ pub trait DbInputs: salsa::Database {
     /// Files not yet anchored to any workspace or library root.
     fn orphan_root(&self) -> OrphanRoot;
 
-    /// Files and packages from roots that have been removed. Holding
-    /// pen for entity reuse on re-add (see [`StaleRoot`]).
-    fn stale_root(&self) -> StaleRoot;
+    /// The [`IdentityMap`] shared by all handles to this database.
+    fn identity_map(&self) -> &IdentityMap;
 
     /// Read through the database's file reader. Note that this method is not
     /// tracked and callers _must_ depend on the corresponding revision input
@@ -44,6 +48,147 @@ pub trait DbInputs: salsa::Database {
 
     /// Notebooks open in the editor, with their cells in document order.
     fn open_notebooks(&self) -> OpenNotebooks;
+
+    /// Look up the [`File`] for `path` without creating it or checking live
+    /// membership. Analysis uses [`SourceDb::file_by_path()`] instead.
+    fn interned_file(&self, path: &FilePath) -> Option<File> {
+        self.identity_map().file(path)
+    }
+
+    /// Look up the [`Package`] for `description_path` without creating it or
+    /// checking live membership.
+    fn interned_package(&self, description_path: &FilePath) -> Option<Package> {
+        self.identity_map().package(description_path)
+    }
+
+    /// Return the [`File`] for `path`, creating it from `revision` and `package`
+    /// if absent. Existing entities are returned unchanged, so callers must
+    /// update any fields that differ.
+    ///
+    /// This does not add the file to a container. Callers must establish
+    /// membership for analysis to see it.
+    fn intern_file(
+        &mut self,
+        path: FilePath,
+        revision: FileRevision,
+        package: Option<Package>,
+    ) -> File {
+        self.identity_map()
+            .intern_file(self, path, revision, package)
+    }
+
+    /// Return the [`Package`] for `description_path`, creating it from the
+    /// metadata arguments if absent. Existing entities are returned unchanged.
+    /// Callers must update their fields and establish root membership, as with
+    /// [`Self::intern_file()`].
+    fn intern_package(
+        &mut self,
+        description_path: FilePath,
+        name: String,
+        description_revision: FileRevision,
+        namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
+    ) -> Package {
+        self.identity_map().intern_package(
+            self,
+            description_path,
+            name,
+            description_revision,
+            namespace_revision,
+            index_revision,
+        )
+    }
+}
+
+/// One [`File`] per path and one [`Package`] per `DESCRIPTION` path for the
+/// database's lifetime.
+///
+/// Writers reuse entities through this map independently of container
+/// membership. Eviction, rescans, and buffer closure can remove membership
+/// without changing the entity returned to the next writer for that path.
+/// Analysis visibility depends on live containers, as checked by
+/// [`SourceDb::file_by_path()`].
+///
+/// This is not a Salsa input and no query reads it, so map updates do not
+/// invalidate queries. Entries are retained for the database's lifetime,
+/// matching Salsa's retention of input entities. The map stores paths and
+/// handles to those entities.
+///
+/// Salsa generates a public constructor for every input, so the compiler can't
+/// enforce creation through this map. Production code creates `File` and
+/// `Package` entities only through [`DbInputs::intern_file()`] and
+/// [`DbInputs::intern_package()`]. A fixture that calls `File::new()` directly
+/// and then invokes an `oak_scan` writer on the same path creates two entities.
+#[derive(Default)]
+pub struct IdentityMap {
+    inner: Mutex<Identities>,
+}
+
+#[derive(Default)]
+struct Identities {
+    files: FxHashMap<FilePath, File>,
+    packages: FxHashMap<FilePath, Package>,
+}
+
+impl IdentityMap {
+    fn file(&self, path: &FilePath) -> Option<File> {
+        self.lock().files.get(path).copied()
+    }
+
+    fn package(&self, description_path: &FilePath) -> Option<Package> {
+        self.lock().packages.get(description_path).copied()
+    }
+
+    fn intern_file<DB: ?Sized + salsa::Database>(
+        &self,
+        db: &DB,
+        path: FilePath,
+        revision: FileRevision,
+        package: Option<Package>,
+    ) -> File {
+        match self.lock().files.entry(path) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let file = File::new(db, entry.key().clone(), revision, None, package);
+                *entry.insert(file)
+            },
+        }
+    }
+
+    fn intern_package<DB: ?Sized + salsa::Database>(
+        &self,
+        db: &DB,
+        description_path: FilePath,
+        name: String,
+        description_revision: FileRevision,
+        namespace_revision: FileRevision,
+        index_revision: Option<FileRevision>,
+    ) -> Package {
+        match self.lock().packages.entry(description_path) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let pkg = Package::new(
+                    db,
+                    entry.key().clone(),
+                    name,
+                    description_revision,
+                    namespace_revision,
+                    index_revision,
+                    None,
+                    PackageFiles::default(),
+                    Vec::new(),
+                );
+                *entry.insert(pkg)
+            },
+        }
+    }
+
+    // A poisoned lock can be recovered because each critical section only
+    // reads the maps or inserts a handle after constructing its entity. A
+    // constructor panic leaves no entry pointing to an incomplete entity.
+    fn lock(&self) -> MutexGuard<'_, Identities> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Database access for source text, syntax, membership, and package metadata.
@@ -71,8 +216,8 @@ pub trait SourceDb: DbInputs {
 
     /// Resolve the live `Root` that contains `pkg`, if any.
     ///
-    /// Returns `None` when the package is only in [`StaleRoot`] (its live
-    /// container was previously evicted).
+    /// Returns `None` when no live root lists the package, including when all
+    /// roots that listed it are evicted.
     ///
     /// **Nested roots.** Two roots can claim the same package when one is
     /// nested inside the other, e.g. the frontend opens both `/proj` and
@@ -87,8 +232,8 @@ pub trait SourceDb: DbInputs {
 
     /// All live roots in lookup-precedence order: workspace folders first, then
     /// library paths (mirroring R's `.libPaths()`), then the orphan bucket.
-    /// Stale roots are not included. Salsa-cached and invalidates when one of
-    /// `workspace_roots` / `library_roots` / `orphan_root` changes.
+    /// Salsa caches this list. Changes to `WorkspaceRoots.roots` or
+    /// `LibraryRoots.roots` invalidate it.
     fn live_roots(&self) -> &[LiveRoot];
 }
 

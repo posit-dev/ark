@@ -1,10 +1,9 @@
 //! Library scanner. Drives `LibraryRoots` from `.libPaths()` entries.
 //!
-//! [`set_library_paths`] is declarative: it reconciles the live set of
-//! library roots to exactly the paths it's given. Unchanged paths are
-//! left alone (no fs walk, no salsa churn). Removed paths' entities go
-//! to [`oak_db::StaleRoot`] so re-adding the same path later reuses the
-//! same `File` and `Package` entities (Salsa doesn't GC inputs).
+//! [`set_library_paths()`] reconciles live library roots to the supplied
+//! paths. Unchanged paths require no filesystem walk or Salsa writes.
+//! Removed roots are evicted, but [`oak_db::IdentityMap`] retains their
+//! `File` and `Package` identities for reuse if their paths are added again.
 //!
 //! Installed packages don't have a watcher today: the LSP currently
 //! calls this once at init. The diff path is here ahead of need so
@@ -47,11 +46,10 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
         .map(|r| (r.path(db).clone(), *r))
         .collect();
 
-    // Evict roots not in the new set. Since library files aren't editor-owned,
-    // we pass `None` so everything routes to stale.
+    // Library eviction has no editor-owned paths to preserve in `OrphanRoot`.
     for (old_path, &old_root) in &old {
         if !new_paths.contains(old_path) {
-            old_root.set_stale(db, None);
+            old_root.evict(db, None);
         }
     }
 

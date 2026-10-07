@@ -8,17 +8,17 @@ use crate::file_reader::DiskFileReader;
 use crate::file_reader::FileReader;
 use crate::Db;
 use crate::DbInputs;
+use crate::IdentityMap;
 use crate::LibraryRoots;
 use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::SourceDb;
-use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete Salsa database.
 ///
-/// Singleton inputs are initialised on first access and shared across
-/// database snapshots.
+/// Singleton inputs are initialised on first access. Both these inputs and
+/// the [`IdentityMap`] are shared across database snapshots.
 #[salsa::db]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
@@ -26,7 +26,7 @@ pub struct OakDatabase {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
-    stale_root: Arc<OnceLock<StaleRoot>>,
+    identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
     // Clone counter that represents how many background readers have cloned the database
     holds: Arc<()>,
@@ -45,7 +45,7 @@ impl OakDatabase {
             workspace_roots: Arc::default(),
             library_roots: Arc::default(),
             orphan_root: Arc::default(),
-            stale_root: Arc::default(),
+            identity_map: Arc::default(),
             open_notebooks: Arc::default(),
             holds: Arc::default(),
         }
@@ -67,7 +67,7 @@ impl OakDatabase {
             workspace_roots: Arc::clone(&self.workspace_roots),
             library_roots: Arc::clone(&self.library_roots),
             orphan_root: Arc::clone(&self.orphan_root),
-            stale_root: Arc::clone(&self.stale_root),
+            identity_map: Arc::clone(&self.identity_map),
             open_notebooks: Arc::clone(&self.open_notebooks),
             holds: Arc::clone(&self.holds),
         }
@@ -116,8 +116,8 @@ impl DbInputs for OakDatabase {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
     }
 
-    fn stale_root(&self) -> StaleRoot {
-        *self.stale_root.get_or_init(|| StaleRoot::empty(self))
+    fn identity_map(&self) -> &IdentityMap {
+        &self.identity_map
     }
 
     fn open_notebooks(&self) -> OpenNotebooks {

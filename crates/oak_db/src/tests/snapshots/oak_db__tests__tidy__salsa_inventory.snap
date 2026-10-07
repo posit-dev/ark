@@ -24,9 +24,6 @@ inputs.rs: struct Root [debug]
   scripts: Vec<File> [returns(ref)]
   packages: Vec<Package> [returns(ref)]
   environment_dirs: Vec<FilePath> [returns(ref)]
-inputs.rs: struct StaleRoot
-  files: HashSet<File> [returns(ref)]
-  packages: Vec<Package> [returns(ref)]
 inputs.rs: struct WorkspaceRoots
   roots: Vec<Root> [returns(ref)]
 package.rs: struct Package [debug]

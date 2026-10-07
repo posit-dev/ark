@@ -148,6 +148,7 @@ pub(crate) fn remove_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath
 
     if let Some(pkg) = file.package(db) {
         remove_from_pkg_files(db, pkg, file);
+        file.set_package(db).to(None);
     }
     for &root in &db.workspace_roots().roots(db).clone() {
         if let Some(scripts) = with_cow_filter(root.scripts(db), file) {
