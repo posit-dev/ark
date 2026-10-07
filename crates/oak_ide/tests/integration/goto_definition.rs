@@ -1,6 +1,6 @@
 //! Goto-definition at the ide layer.
 //!
-//! These only check that `oak_ide::goto_definition()` assembles a
+//! These mostly check that `oak_ide::goto_definition()` assembles a
 //! `NavigationTarget` from a resolved binding, i.e.:
 //!
 //! - A local def
@@ -10,12 +10,27 @@
 //! The resolution itself is covered exhaustively by `oak_db`'s `file_resolve_at()` /
 //! `file_resolve()` / `package_resolve()` tests, and the use-def logic by `oak_semantic`,
 //! we don't re-test it here.
+//!
+//! The exception is visibility across notebook cells. It is user-visible
+//! behavior that the Positron e2e tests rely on, so the main rules and their
+//! negative cases are pinned here too, with notebooks opened through `DbScan`
+//! the way the LSP opens them.
 
+use aether_path::FilePath;
+use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+use oak_db::File;
 use oak_db::OakDatabase;
 use oak_ide::goto_definition;
+use oak_ide::NavigationTarget;
+use oak_scan::DbScan;
 
+use crate::support::cell_url;
+use crate::support::file_url;
 use crate::support::install_library_package;
+use crate::support::offset_of;
+use crate::support::open_notebook;
+use crate::support::open_notebook_with_handles;
 use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
@@ -279,4 +294,164 @@ fn test_navigates_through_a_conditional_attach_at_one_of_two_source_calls() {
     assert_eq!(target.file, pkg_file);
     assert_eq!(target.name, "foo");
     assert_eq!(target.full_range, range(0, 3));
+}
+
+// --- Notebooks ---
+
+#[test]
+fn test_notebook_navigates_to_earlier_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "helper <- function(x) x\n",
+        "helper(1)\n",
+    ]);
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "helper"));
+
+    // The target is in cell 0's own coordinates.
+    assert_eq!(targets, vec![target(cells[0], "helper", range(0, 6))]);
+}
+
+#[test]
+fn test_notebook_latest_earlier_cell_wins() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x <- 2\n", "x\n"]);
+
+    let targets = goto_definition(&db, cells[2], offset_of(&db, cells[2], "x"));
+
+    assert_eq!(targets, vec![target(cells[1], "x", range(0, 1))]);
+}
+
+#[test]
+fn test_notebook_own_cell_shadows_earlier_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x <- 2\nx\n"]);
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+
+    assert_eq!(targets, vec![target(cells[1], "x", range(0, 1))]);
+}
+
+#[test]
+fn test_notebook_function_body_navigates_to_later_cell() {
+    // A function body runs after the cells have run, so it sees later cells.
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "f <- function() later\n",
+        "later <- 1\n",
+    ]);
+
+    let targets = goto_definition(&db, cells[0], offset_of(&db, cells[0], "later"));
+
+    assert_eq!(targets, vec![target(cells[1], "later", range(0, 5))]);
+}
+
+#[test]
+fn test_notebook_library_in_earlier_cell() {
+    let mut db = OakDatabase::new();
+    let pkg_file =
+        install_library_package(&mut db, "mypkg", &["foo"], "a.R", "foo <- function() 42\n");
+    let cells = open_notebook(&mut db, "nb.ipynb", &["library(mypkg)\n", "foo\n"]);
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "foo"));
+
+    assert_eq!(targets, vec![target(pkg_file, "foo", range(0, 3))]);
+}
+
+#[test]
+fn test_notebook_order_comes_from_cell_list_not_handles() {
+    // Handles are stable IDs, not positions. Here the cell with handle 2 is
+    // first in the document, so it is the earlier cell.
+    let mut db = OakDatabase::new();
+    let cells = open_notebook_with_handles(&mut db, "nb.ipynb", &[2, 0], &["x <- 1\n", "x\n"]);
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+
+    assert_eq!(targets, vec![target(cells[0], "x", range(0, 1))]);
+}
+
+#[test]
+fn test_notebook_top_level_does_not_see_later_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["later\n", "later <- 1\n"]);
+
+    let targets = goto_definition(&db, cells[0], offset_of(&db, cells[0], "later"));
+
+    assert_eq!(targets, vec![]);
+}
+
+#[test]
+fn test_notebook_top_level_does_not_see_own_later_binding_over_earlier_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\nx <- 2\n"]);
+
+    // Cursor on the first `x` in cell 1, which runs before `x <- 2`.
+    let targets = goto_definition(&db, cells[1], TextSize::from(0u32));
+
+    assert_eq!(targets, vec![target(cells[0], "x", range(0, 1))]);
+}
+
+#[test]
+fn test_notebook_cells_of_other_notebook_are_not_visible() {
+    let mut db = OakDatabase::new();
+    open_notebook(&mut db, "a.ipynb", &["x <- 1\n"]);
+    let cells = open_notebook(&mut db, "b.ipynb", &["x\n"]);
+
+    let targets = goto_definition(&db, cells[0], offset_of(&db, cells[0], "x"));
+
+    assert_eq!(targets, vec![]);
+}
+
+#[test]
+fn test_closed_notebook_cell_sees_no_other_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n"]);
+    db.close_notebook(&FilePath::from_url(&file_url("nb.ipynb")));
+
+    // The cell buffers are still open, only the notebook is gone.
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+
+    assert_eq!(targets, vec![]);
+}
+
+#[test]
+fn test_notebook_reorder_changes_target() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n"]);
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+    assert_eq!(targets, vec![target(cells[0], "x", range(0, 1))]);
+
+    // Move the use above the definition.
+    db.set_notebook_cells(FilePath::from_url(&file_url("nb.ipynb")), vec![
+        cells[1], cells[0],
+    ]);
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+    assert_eq!(targets, vec![]);
+}
+
+#[test]
+fn test_notebook_edit_in_earlier_cell_changes_target() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n"]);
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+    assert_eq!(targets, vec![target(cells[0], "x", range(0, 1))]);
+
+    db.upsert_editor(
+        FilePath::from_url(&cell_url("nb.ipynb", 0)),
+        "y <- 1\n".to_string(),
+    );
+
+    let targets = goto_definition(&db, cells[1], offset_of(&db, cells[1], "x"));
+    assert_eq!(targets, vec![]);
+}
+
+/// A target whose full range and focus range are both the binding's name.
+fn target(file: File, name: &str, range: TextRange) -> NavigationTarget {
+    NavigationTarget {
+        file,
+        name: name.to_string(),
+        full_range: range,
+        focus_range: range,
+    }
 }
