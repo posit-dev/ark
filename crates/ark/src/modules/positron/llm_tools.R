@@ -5,38 +5,6 @@
 #
 #
 
-#' Get the help topics for a package
-#'
-#' This function retrieves the help topics for a specified package in R.
-#' It returns a data frame with the topic ID, title, and aliases for each help
-#' topic in the package.
-#'
-#' Adapted from btw::btw_tool_docs_package_help_topics
-#'
-#' @param package_name Name of the package to get help topics for
-#' @return A list of help topics for the package, each with a topic ID,
-#'   title, and aliases.
-#'
-#' @export
-.ps.rpc.list_package_help_topics <- function(package_name) {
-    # Check if the package is installed
-    if (!is_on_disk(package_name)) {
-        return(paste("Package", package_name, "is not installed."))
-    }
-
-    topics <- package_help_topics(package_name)
-    if (!length(topics)) {
-        return(paste("No help topics found for package", package_name, "."))
-    }
-    lapply(topics, function(topic) {
-        list(
-            topic_id = topic$topic,
-            title = topic$title,
-            aliases = topic$aliases
-        )
-    })
-}
-
 #' List the documentation for a package
 #'
 #' Returns the help topics and vignettes for a package, so that individual
@@ -109,33 +77,6 @@ package_vignettes <- function(package_name) {
         } else {
             "Not installed"
         }
-    })
-}
-
-#' Get available vignettes for a package
-#'
-#' This function retrieves the vignettes available for a specified package in R.
-#' It returns a list of vignettes, each with a title and topic.
-#'
-#' Adapted from btw::btw_tool_docs_available_vignettes.
-#'
-#' @param package_name Name of the package to get vignettes for
-#' @return A list of vignettes for the package, each with a title and topic.
-#'
-#' @export
-.ps.rpc.list_available_vignettes <- function(package_name) {
-    # Check if the package is installed
-    if (!is_on_disk(package_name)) {
-        return(paste("Package", package_name, "is not installed."))
-    }
-
-    vignettes <- package_vignettes(package_name)
-    if (!length(vignettes)) {
-        return(paste("Package", package_name, "has no vignettes."))
-    }
-
-    lapply(vignettes, function(info) {
-        list(title = info$Title, topic = info$Topic)
     })
 }
 
