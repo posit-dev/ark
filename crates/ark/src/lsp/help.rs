@@ -321,9 +321,7 @@ impl RHtmlHelp {
             } else {
                 let mut buffer = String::new();
                 for elt in elements {
-                    let converter = MarkdownConverter::new(*elt);
-                    let markdown = converter.convert();
-                    buffer.push_str(markdown.as_str());
+                    MarkdownConverter::new(*elt).convert_into(&mut buffer);
                 }
 
                 buffer
@@ -371,6 +369,7 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
 
 #[cfg(test)]
 mod tests {
+    use scraper::Html;
     use tower_lsp_server::ls_types::MarkupKind;
 
     use crate::lsp::help::RHtmlHelp;
@@ -415,6 +414,24 @@ mod tests {
 
             assert!(help.parameter("not_a_parameter").unwrap().is_none());
         });
+    }
+
+    #[test]
+    fn test_markdown_list_after_inline_element_starts_on_new_line() {
+        let html = r#"<html><body>
+<h3>Description</h3>
+<code>x</code>
+<ul>
+<li> <p>Item.</p>
+</li></ul>
+</body></html>"#;
+        let help = RHtmlHelp {
+            html: Html::parse_document(html),
+            function: false,
+        };
+
+        let markdown = help.markdown().unwrap();
+        assert!(markdown.contains("`x`\n- Item."), "{markdown:?}");
     }
 
     #[test]
