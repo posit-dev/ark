@@ -24,7 +24,46 @@
         return(paste("Package", package_name, "is not installed."))
     }
 
-    # Search for help topics in the package
+    topics <- package_help_topics(package_name)
+    if (!length(topics)) {
+        return(paste("No help topics found for package", package_name, "."))
+    }
+    lapply(topics, function(topic) {
+        list(
+            topic_id = topic$topic,
+            title = topic$title,
+            aliases = topic$aliases
+        )
+    })
+}
+
+#' List the documentation for a package
+#'
+#' Returns the help topics and vignettes for a package, so that individual
+#' pages can be read with `get_help_page()` and `get_package_vignette()`.
+#'
+#' @param package_name Name of the package
+#' @return A list with the package name, its help topics (each with a topic,
+#'   title, and aliases), and its vignettes (each with a name and title), or
+#'   a message if the package is not installed.
+#'
+#' @export
+.ps.rpc.list_package_docs <- function(package_name) {
+    if (!requireNamespace(package_name, quietly = TRUE)) {
+        return(paste("Package", package_name, "is not installed."))
+    }
+
+    list(
+        package = package_name,
+        topics = package_help_topics(package_name),
+        vignettes = lapply(package_vignettes(package_name), function(info) {
+            list(name = info$Topic, title = info$Title)
+        })
+    )
+}
+
+#' Adapted from btw::btw_tool_docs_package_help_topics
+package_help_topics <- function(package_name) {
     help_db <- utils::help.search(
         "",
         package = package_name,
@@ -33,15 +72,10 @@
     )
     res <- help_db$matches
 
-    # Did we get any matches?
-    if (nrow(res) == 0) {
-        return(paste("No help topics found for package", package_name, "."))
-    }
-
     res_split <- split(res, res$Name)
     res_list <- lapply(res_split, function(group) {
         list(
-            topic_id = group$Name[1],
+            topic = group$Name[1],
             title = group$Entry[group$Field == "Title"][1],
             aliases = paste(
                 group$Entry[group$Field == "alias"],
@@ -51,6 +85,12 @@
     })
     names(res_list) <- NULL
     res_list
+}
+
+#' The vignettes of a package, as a list of rows of `tools::getVignetteInfo()`
+package_vignettes <- function(package_name) {
+    vignettes <- as.data.frame(tools::getVignetteInfo(package = package_name))
+    lapply(seq_len(nrow(vignettes)), function(i) as.list(vignettes[i, ]))
 }
 
 #' Get the version of installed packages
@@ -89,73 +129,74 @@
         return(paste("Package", package_name, "is not installed."))
     }
 
-    # Get vignettes for the package
-    vignettes <- tools::getVignetteInfo(package = package_name)
-    if (length(vignettes) == 0) {
+    vignettes <- package_vignettes(package_name)
+    if (!length(vignettes)) {
         return(paste("Package", package_name, "has no vignettes."))
     }
 
-    # Convert the matrix to a list of lists
-    vignette_list <- lapply(seq_len(nrow(vignettes)), function(i) {
-        list(
-            title = vignettes[i, "Title"],
-            topic = vignettes[i, "Topic"]
-        )
+    lapply(vignettes, function(info) {
+        list(title = info$Title, topic = info$Topic)
     })
-    vignette_list
 }
 
 #' Get a specific vignette for a package
 #'
-#' This function retrieves a specific vignette available for a specified package in R.
-#' It returns the vignette content as a Markdown character string.
+#' Returns the vignette as Markdown, converted with Pandoc from its rendered
+#' HTML. Vignettes without rendered HTML (e.g. PDF vignettes) are returned as
+#' their source (R Markdown, Sweave, etc.).
 #'
 #' Adapted from btw::btw_tool_docs_vignette.
 #'
-#' @param package_name Name of the package to get vignettes for
-#' @return A list of vignettes for the package, each with a title and topic.
+#' @param package_name Name of the package
+#' @param vignette Name of the vignette
+#' @return A list with the vignette's `content`, `title`, `name`, and
+#'   `package`, or a message if the vignette is not found.
 #'
 #' @export
 .ps.rpc.get_package_vignette <- function(package_name, vignette) {
-    vignettes <- as.data.frame(tools::getVignetteInfo(package = package_name))
-    if (nrow(vignettes) == 0) {
-        return(paste("Package", package_name, "has no vignettes."))
+    if (!requireNamespace(package_name, quietly = TRUE)) {
+        return(paste("Package", package_name, "is not installed."))
     }
-    vignette_info <- vignettes[vignettes$Topic == vignette, , drop = FALSE]
-    if (nrow(vignette_info) == 0) {
-        return(
-            paste(
-                "No vignette",
-                vignette,
-                "for package",
-                package_name,
-                "found."
-            )
+
+    vignettes <- package_vignettes(package_name)
+    vignette_names <- vapply(vignettes, function(info) info$Topic, character(1))
+    info <- vignettes[vignette_names == vignette]
+    if (!length(info)) {
+        return(paste0(
+            "No vignette ",
+            vignette,
+            " found for package ",
+            package_name,
+            ". Available vignettes: ",
+            paste(vignette_names, collapse = ", "),
+            "."
+        ))
+    }
+    info <- info[[1]]
+
+    doc_dir <- file.path(info$Dir, "doc")
+    if (grepl("\\.html?$", info$PDF, ignore.case = TRUE)) {
+        output_file <- tempfile(fileext = ".md")
+        on.exit(unlink(output_file), add = TRUE)
+        pandoc_convert(
+            input = file.path(doc_dir, info$PDF),
+            to = "markdown_strict-raw_html+pipe_tables+backtick_code_blocks",
+            output = output_file
         )
+        content <- readLines(output_file, warn = FALSE)
+    } else {
+        content <- readLines(file.path(doc_dir, info$File), warn = FALSE)
     }
+    content <- paste(content, collapse = "\n")
 
-    # Use Pandoc (bundled with Positron) to convert rendered vignette (PDF or
-    # HTML) to Markdown
-    output_file <- tempfile(fileext = ".md")
-    tryCatch(
-        {
-            pandoc_convert(
-                input = file.path(vignette_info$Dir, "doc", vignette_info$PDF),
-                to = "markdown",
-                output = output_file,
-                verbose = FALSE
-            )
-            # read the converted Markdown file
-            vignette_md <- readLines(output_file, warn = FALSE)
+    # Drop embedded images, which are large and unreadable as text
+    content <- gsub("!\\[[^]]*\\]\\(data:[^)]*\\)", "", content)
 
-            # remove the first line which is the title
-            vignette_md <- vignette_md[-1]
-            vignette_md <- paste(vignette_md, collapse = "\n")
-            vignette_md
-        },
-        error = function(e) {
-            paste("Error converting vignette:", e$message)
-        }
+    list(
+        content = content,
+        title = info$Title,
+        name = info$Topic,
+        package = package_name
     )
 }
 
@@ -216,19 +257,16 @@
     resolved <- help_package_topic(help_page)
 
     if (length(resolved$resolved) > 1) {
-        calls <- sprintf(
-            '{"topic":"%s", "package_name":"%s"}',
-            resolved$resolved,
-            resolved$package
-        )
-        calls <- stats::setNames(calls, "*")
+        matches <- paste0(resolved$package, "::", resolved$resolved)
         return(
-            paste(
-                "Topic",
+            paste0(
+                "Topic ",
                 topic,
-                "matched",
-                length(resolved$resolved),
-                "different topics. Choose one or submit individual tool calls for each topic.",
+                " matched ",
+                length(matches),
+                " help pages: ",
+                paste(matches, collapse = ", "),
+                ". Specify the package to choose one."
             )
         )
     }
