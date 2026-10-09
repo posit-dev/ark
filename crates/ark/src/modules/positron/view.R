@@ -62,6 +62,10 @@ view <- function(
         return(view_function(x, title, var, env, top_level = top_level))
     }
 
+    if (is_explorable_object(x)) {
+        return(view_object(x, title, var, env, name))
+    }
+
     stop(sprintf(
         "Can't `View()` an object of class `%s`",
         paste(class(x), collapse = "/")

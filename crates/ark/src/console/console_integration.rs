@@ -15,6 +15,8 @@ use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
+use crate::object_explorer::r_object_explorer::RObjectExplorer;
+use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
 
 /// UI comm integration.
 impl Console {
@@ -222,6 +224,25 @@ impl Console {
         };
 
         Ok(serde_json::to_value(inline_data)?)
+    }
+
+    /// Open an inline object explorer for nested data and return the MIME
+    /// type payload to include in the execute result.
+    pub(super) fn open_inline_object_explorer(
+        &mut self,
+        value: RObject,
+    ) -> anyhow::Result<serde_json::Value> {
+        // There is no variable binding, so the title is the object's type.
+        let title = String::from(if r_typeof(value.sexp) == libr::ENVSXP {
+            "environment"
+        } else {
+            "list"
+        });
+
+        let explorer = RObjectExplorer::new(title.clone(), value, None, None, true);
+        let comm_id = self.comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+        Ok(serde_json::json!({ "version": 1, "comm_id": comm_id, "title": title }))
     }
 }
 

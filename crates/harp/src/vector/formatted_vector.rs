@@ -5,6 +5,8 @@
 //
 //
 
+use std::ops::Range;
+
 use anyhow::anyhow;
 use libr::CPLXSXP;
 use libr::INTSXP;
@@ -58,12 +60,17 @@ impl FormattedVector {
     /// Should be used when the vector is potentially large and you won't need to
     /// iterate over the entire vector.
     pub fn iter_take(&self, n: usize) -> anyhow::Result<FormattedVectorIter> {
+        self.iter_range(0..n)
+    }
+
+    /// Returns an iterator over the elements of a vector in `range`.
+    pub fn iter_range(&self, range: Range<usize>) -> anyhow::Result<FormattedVectorIter> {
         // The iterators for atomic values and factors are lazy and don't need any special
         // treatment.
-        let length = r_length(self.vector.sexp);
-        let n = n.min(length as usize);
+        let length = r_length(self.vector.sexp) as usize;
+        let indices = range.start.min(length) as i64..range.end.min(length) as i64;
 
-        FormattedVectorIter::new_unchecked(self.vector.clone(), Some(Box::new(0..n as i64)))
+        FormattedVectorIter::new_unchecked(self.vector.clone(), Some(Box::new(indices)))
     }
 
     /// Formats a single element of a vector
