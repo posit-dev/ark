@@ -457,6 +457,7 @@ format_help_page_markdown <- function(
 ) {
     rd_obj <- help_to_rd(help_page)
     tmp_rd_file <- tempfile(fileext = ".html")
+    on.exit(unlink(tmp_rd_file), add = TRUE)
 
     tools::Rd2HTML(rd_obj, out = tmp_rd_file)
 
@@ -489,7 +490,7 @@ help_package_topic <- function(help_page) {
     # In the case where there are multiple matches, sort them so that the
     # raised error is deterministic
     package <- basename(dirname(dirname(help_path)))
-    sort_indices <- rank(package, ties.method = "first")
+    sort_indices <- order(package)
 
     list(
         topic = rep(topic, length(help_path)),

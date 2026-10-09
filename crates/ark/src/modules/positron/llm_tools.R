@@ -20,7 +20,7 @@
 #' @export
 .ps.rpc.list_package_help_topics <- function(package_name) {
     # Check if the package is installed
-    if (!requireNamespace(package_name, quietly = TRUE)) {
+    if (!is_on_disk(package_name)) {
         return(paste("Package", package_name, "is not installed."))
     }
 
@@ -49,7 +49,7 @@
 #'
 #' @export
 .ps.rpc.list_package_docs <- function(package_name) {
-    if (!requireNamespace(package_name, quietly = TRUE)) {
+    if (!is_on_disk(package_name)) {
         return(paste("Package", package_name, "is not installed."))
     }
 
@@ -125,7 +125,7 @@ package_vignettes <- function(package_name) {
 #' @export
 .ps.rpc.list_available_vignettes <- function(package_name) {
     # Check if the package is installed
-    if (!requireNamespace(package_name, quietly = TRUE)) {
+    if (!is_on_disk(package_name)) {
         return(paste("Package", package_name, "is not installed."))
     }
 
@@ -154,11 +154,14 @@ package_vignettes <- function(package_name) {
 #'
 #' @export
 .ps.rpc.get_package_vignette <- function(package_name, vignette) {
-    if (!requireNamespace(package_name, quietly = TRUE)) {
+    if (!is_on_disk(package_name)) {
         return(paste("Package", package_name, "is not installed."))
     }
 
     vignettes <- package_vignettes(package_name)
+    if (!length(vignettes)) {
+        return(paste("Package", package_name, "has no vignettes."))
+    }
     vignette_names <- vapply(vignettes, function(info) info$Topic, character(1))
     info <- vignettes[vignette_names == vignette]
     if (!length(info)) {
@@ -174,20 +177,13 @@ package_vignettes <- function(package_name) {
     }
     info <- info[[1]]
 
-    doc_dir <- file.path(info$Dir, "doc")
-    if (grepl("\\.html?$", info$PDF, ignore.case = TRUE)) {
-        output_file <- tempfile(fileext = ".md")
-        on.exit(unlink(output_file), add = TRUE)
-        pandoc_convert(
-            input = file.path(doc_dir, info$PDF),
-            to = "markdown_strict-raw_html+pipe_tables+backtick_code_blocks",
-            output = output_file
-        )
-        content <- readLines(output_file, warn = FALSE)
-    } else {
-        content <- readLines(file.path(doc_dir, info$File), warn = FALSE)
+    content <- tryCatch(
+        read_vignette(info),
+        error = function(err) err
+    )
+    if (inherits(content, "error")) {
+        return(paste("Error reading vignette:", conditionMessage(content)))
     }
-    content <- paste(content, collapse = "\n")
 
     # Drop embedded images, which are large and unreadable as text
     content <- gsub("!\\[[^]]*\\]\\(data:[^)]*\\)", "", content)
@@ -200,6 +196,26 @@ package_vignettes <- function(package_name) {
     )
 }
 
+read_vignette <- function(info) {
+    doc_dir <- file.path(info$Dir, "doc")
+    if (grepl("\\.html?$", info$PDF, ignore.case = TRUE)) {
+        output_file <- tempfile(fileext = ".md")
+        on.exit(unlink(output_file), add = TRUE)
+        pandoc_convert(
+            input = file.path(doc_dir, info$PDF),
+            to = "markdown_strict-raw_html+pipe_tables+backtick_code_blocks",
+            output = output_file
+        )
+        content <- readLines(output_file, warn = FALSE, encoding = "UTF-8")
+    } else {
+        content <- readLines(
+            file.path(doc_dir, info$File),
+            warn = FALSE,
+            encoding = "UTF-8"
+        )
+    }
+    paste(content, collapse = "\n")
+}
 
 #' Get a specific help page
 #'
@@ -220,7 +236,7 @@ package_vignettes <- function(package_name) {
     }
 
     if (!is.null(package_name)) {
-        if (!requireNamespace(package_name, quietly = TRUE)) {
+        if (!is_on_disk(package_name)) {
             return(paste("Package", package_name, "is not installed."))
         }
     }
@@ -273,6 +289,7 @@ package_vignettes <- function(package_name) {
 
     # Convert the help page to Markdown using Pandoc
     md_file <- tempfile(fileext = ".md")
+    on.exit(unlink(md_file), add = TRUE)
     format_help_page_markdown(
         help_page,
         output = md_file,
@@ -285,13 +302,6 @@ package_vignettes <- function(package_name) {
     if (first_empty > 0) {
         md <- md[-seq_len(first_empty)]
     }
-
-    # Add a heading for the help page
-    heading <- sprintf(
-        "## `help(package = \"%s\", \"%s\")`",
-        resolved$package,
-        topic
-    )
 
     # Return the help page as a list
     list(
