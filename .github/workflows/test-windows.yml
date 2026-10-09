@@ -58,6 +58,7 @@ jobs:
             ragg
             readr
             rstudioapi
+            S7
             survival
             tibble
 
