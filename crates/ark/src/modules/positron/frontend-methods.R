@@ -8,8 +8,8 @@
 # TODO: Unexport these methods
 
 #' @export
-.ps.ui.LastActiveEditorContext <- function() {
-    .ps.Call("ps_ui_last_active_editor_context")
+.ps.ui.LastActiveEditorContext <- function(allowConsole = TRUE) {
+    .ps.Call("ps_ui_last_active_editor_context", allowConsole)
 }
 
 #' @export
