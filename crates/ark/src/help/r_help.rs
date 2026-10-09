@@ -5,10 +5,13 @@
 //
 //
 
+use std::cell::RefCell;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpBackendReply;
 use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::HelpFrontendEvent;
+use amalthea::comm::help_comm::HelpTopicSuggestion;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use anyhow::anyhow;
@@ -30,6 +33,26 @@ use crate::help_proxy;
 use crate::methods::ArkGenerics;
 
 pub const HELP_COMM_NAME: &str = "positron.help";
+
+thread_local! {
+    // Browser callbacks run synchronously on the R thread while a search is printed.
+    // Keep this separate from RHelp, which is already borrowed during RPC dispatch.
+    static SEARCH_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+struct SearchContext(Option<String>);
+
+impl SearchContext {
+    fn enter(id: String) -> Self {
+        Self(SEARCH_ID.replace(Some(id)))
+    }
+}
+
+impl Drop for SearchContext {
+    fn drop(&mut self) {
+        SEARCH_ID.set(self.0.take());
+    }
+}
 
 /// Ports for the R help server and our proxy, recorded on `Console` once both
 /// are running.
@@ -74,6 +97,36 @@ impl RHelp {
                     Ok(found) => Ok(HelpBackendReply::ShowHelpTopicReply(found)),
                     Err(err) => Err(err),
                 }
+            },
+            HelpBackendRequest::SearchHelp(search) => {
+                let _search_context = SearchContext::enter(search.search_id);
+                let shown = RFunction::from(".ps.help.searchHelp")
+                    .add(search.query)
+                    .call()?
+                    .to::<bool>()?;
+                Ok(HelpBackendReply::SearchHelpReply(shown))
+            },
+            HelpBackendRequest::GetHelpTopics(params) => {
+                if !(1..=50).contains(&params.limit) {
+                    return Err(anyhow!("Help suggestion limit must be between 1 and 50."));
+                }
+                let topics = RFunction::from(".ps.help.getHelpTopics")
+                    .add(params.query)
+                    .add(params.limit as i32)
+                    .call()?
+                    .to::<Vec<String>>()?;
+                let suggestions = topics
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let (package, topic) = entry.split_once('\u{1f}')?;
+                        Some(HelpTopicSuggestion {
+                            label: topic.to_string(),
+                            topic: format!("{package}::{topic}"),
+                            detail: Some(package.to_string()),
+                        })
+                    })
+                    .collect();
+                Ok(HelpBackendReply::GetHelpTopicsReply(suggestions))
             },
         }
     }
@@ -136,6 +189,7 @@ impl RHelp {
             content: url,
             kind: ShowHelpKind::Url,
             focus: true,
+            search_id: SEARCH_ID.with(|id| id.borrow().clone()),
         });
         ctx.send_event(&msg);
 
@@ -144,6 +198,18 @@ impl RHelp {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
+        // Suggestions contain literal package-qualified aliases, including `$` and
+        // `@`. Prefer their documentation before trying a custom expression handler.
+        if topic.contains("::") &&
+            RFunction::from(".ps.help.showHelpTopic")
+                .add(topic.clone())
+                .param("qualified_only", true)
+                .call()?
+                .to::<bool>()?
+        {
+            return Ok(true);
+        }
+
         let topic = HelpTopic::parse(topic);
 
         let found = match topic {
@@ -257,7 +323,7 @@ enum HelpTopic {
     // no obvious expression syntax — e.g. "abs", "base::abs"
     Simple(String),
     // contains expression syntax — e.g. "tensorflow::tf$abs", "model@coef"
-    // such that there will never exist a help topic with that name
+    // after checking for a literal package-qualified help alias
     Expression(String),
 }
 
@@ -281,4 +347,33 @@ pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
     }))?;
 
     Ok(R_NilValue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchContext;
+    use super::SEARCH_ID;
+
+    #[test]
+    fn search_context_restores_after_error() {
+        fn fail() -> anyhow::Result<()> {
+            let _context = SearchContext::enter(String::from("inner"));
+            assert_eq!(
+                SEARCH_ID.with(|id| id.borrow().clone()),
+                Some(String::from("inner"))
+            );
+            Err(anyhow::anyhow!("search failed"))
+        }
+
+        assert_eq!(SEARCH_ID.with(|id| id.borrow().clone()), None);
+        {
+            let _context = SearchContext::enter(String::from("outer"));
+            assert!(fail().is_err());
+            assert_eq!(
+                SEARCH_ID.with(|id| id.borrow().clone()),
+                Some(String::from("outer"))
+            );
+        }
+        assert_eq!(SEARCH_ID.with(|id| id.borrow().clone()), None);
+    }
 }
