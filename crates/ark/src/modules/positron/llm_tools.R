@@ -126,9 +126,6 @@ package_vignettes <- function(package_name) {
         return(paste("Error reading vignette:", conditionMessage(content)))
     }
 
-    # Drop embedded images, which are large and unreadable as text
-    content <- gsub("!\\[[^]]*\\]\\(data:[^)]*\\)", "", content)
-
     list(
         content = content,
         title = info$Title,
@@ -148,6 +145,8 @@ read_vignette <- function(info) {
             output = output_file
         )
         content <- readLines(output_file, warn = FALSE, encoding = "UTF-8")
+        # Drop embedded images, which are large and unreadable as text
+        content <- gsub("!\\[[^]]*\\]\\(data:[^)]*\\)", "", content)
     } else {
         content <- readLines(
             file.path(doc_dir, info$File),
@@ -168,7 +167,8 @@ read_vignette <- function(info) {
 #' @param topic The topic to get help for
 #' @param package_name The name of the package to get help for. If empty,
 #' searches all installed packages.
-#' @return A list of help pages for the package, each with a title and topic.
+#' @return A list with the page's `help_text` (Markdown), `topic`, and
+#'   `package`, or a message if no single page is found.
 #'
 #' @export
 .ps.rpc.get_help_page <- function(topic, package_name = "") {
