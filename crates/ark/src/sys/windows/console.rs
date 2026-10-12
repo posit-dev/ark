@@ -38,6 +38,9 @@ use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(args: &Vec<String>) {
     unsafe {
+        // Must be set before R is touched, as R 4.2.0 hits it in `cmdlineoptions()`
+        _set_invalid_parameter_handler(Some(r_invalid_parameter_handler));
+
         libr::set(R_SignalHandlers, 0);
 
         // - We have to collect these before `cmdlineoptions()` is called, because
@@ -225,6 +228,43 @@ extern "C-unwind" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     let question = unsafe { CStr::from_ptr(question).to_str().unwrap() };
     log::warn!("Ignoring `YesNoCancel` question: '{question}'. Returning `NO`.");
     return -1;
+}
+
+type InvalidParameterHandler = unsafe extern "C" fn(
+    expression: *const u16,
+    function: *const u16,
+    file: *const u16,
+    line: u32,
+    reserved: usize,
+);
+
+extern "C" {
+    fn _set_invalid_parameter_handler(
+        handler: Option<InvalidParameterHandler>,
+    ) -> Option<InvalidParameterHandler>;
+}
+
+/// Ignore invalid parameters passed to C runtime functions, like R does
+///
+/// By default, the UCRT terminates the process with `0xc0000409` when a C
+/// runtime function gets an invalid parameter. R's front ends are built with
+/// MinGW, whose runtime installs a handler that ignores these, so the function
+/// just returns an error code. R and packages rely on that, e.g. R 4.2.0 calls
+/// `setlocale(LC_MESSAGES, "")` at startup, which UCRT does not support, and
+/// that crashed ark. RStudio installs the same kind of handler.
+/// https://github.com/posit-dev/positron/issues/8488
+/// https://github.com/rstudio/rstudio/blob/main/src/cpp/session/SessionMain.cpp
+///
+/// The arguments are always null in release builds of the UCRT, so we can
+/// only log that it happened.
+extern "C" fn r_invalid_parameter_handler(
+    _expression: *const u16,
+    _function: *const u16,
+    _file: *const u16,
+    _line: u32,
+    _reserved: usize,
+) {
+    log::warn!("Ignoring invalid parameter passed to a C runtime function.");
 }
 
 // - (?-u) to disable unicode so it matches the bytes exactly
