@@ -857,17 +857,18 @@ pub unsafe extern "C-unwind" fn ps_view_object(
     Ok(R_NilValue)
 }
 
-/// Whether a printed value is nested data worth exploring inline in a
-/// notebook: a non-empty plain list, or a plain environment other than the
-/// global one. Classed objects are left to their print methods.
-pub(crate) fn is_inline_explorable(value: SEXP) -> bool {
+/// The title of an inline object explorer for a printed value, if it is nested
+/// data worth exploring inline in a notebook: a non-empty plain list, or a
+/// plain environment other than the global one. Classed objects are left to
+/// their print methods.
+pub(crate) fn inline_explorer_title(value: SEXP) -> Option<&'static str> {
     if r_is_object(value) || r_is_matrix(value) {
-        return false;
+        return None;
     }
     match r_typeof(value) {
-        VECSXP => unsafe { Rf_xlength(value) > 0 },
-        ENVSXP => value != unsafe { R_GlobalEnv },
-        _ => false,
+        VECSXP if unsafe { Rf_xlength(value) > 0 } => Some("list"),
+        ENVSXP if value != unsafe { R_GlobalEnv } => Some("environment"),
+        _ => None,
     }
 }
 
@@ -1190,15 +1191,16 @@ mod tests {
     }
 
     #[test]
-    fn test_object_explorer_is_inline_explorable() {
+    fn test_object_explorer_inline_explorer_title() {
         r_task(|| {
-            let explorable =
-                |code: &str| is_inline_explorable(harp::parse_eval_global(code).unwrap().sexp);
-            assert!(explorable("list(a = 1)"));
-            assert!(explorable("new.env()"));
-            assert!(!explorable("list()"));
-            assert!(!explorable("R.version"));
-            assert!(!explorable("t.test(1:10)"));
+            let title =
+                |code: &str| inline_explorer_title(harp::parse_eval_global(code).unwrap().sexp);
+            assert_eq!(title("list(a = 1)"), Some("list"));
+            assert_eq!(title("new.env()"), Some("environment"));
+            assert_eq!(title("list()"), None);
+            assert_eq!(title("globalenv()"), None);
+            assert_eq!(title("R.version"), None);
+            assert_eq!(title("t.test(1:10)"), None);
         })
     }
 }

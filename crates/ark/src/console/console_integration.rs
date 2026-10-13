@@ -231,15 +231,9 @@ impl Console {
     pub(super) fn open_inline_object_explorer(
         &mut self,
         value: RObject,
+        title: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        // There is no variable binding, so the title is the object's type.
-        let title = String::from(if r_typeof(value.sexp) == libr::ENVSXP {
-            "environment"
-        } else {
-            "list"
-        });
-
-        let explorer = RObjectExplorer::new(title.clone(), value, None, None, true);
+        let explorer = RObjectExplorer::new(title.to_string(), value, None, None, true);
         let comm_id = self.comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
         Ok(serde_json::json!({ "version": 1, "comm_id": comm_id, "title": title }))

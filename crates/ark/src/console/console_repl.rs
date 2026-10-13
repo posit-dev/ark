@@ -18,7 +18,7 @@ use stdext::DebugRefCell;
 use super::*;
 use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
-use crate::object_explorer::r_object_explorer::is_inline_explorable;
+use crate::object_explorer::r_object_explorer::inline_explorer_title;
 use crate::object_explorer::r_object_explorer::POSITRON_OBJECT_EXPLORER_MIME;
 use crate::panic;
 use crate::panic::Recovery;
@@ -1354,8 +1354,8 @@ impl Console {
                     log::error!("Failed to open inline data explorer: {err:?}");
                 },
             }
-        } else if is_inline_explorable(value.sexp) {
-            match self.open_inline_object_explorer(value) {
+        } else if let Some(title) = inline_explorer_title(value.sexp) {
+            match self.open_inline_object_explorer(value, title) {
                 Ok(mime_data) => {
                     data.insert(POSITRON_OBJECT_EXPLORER_MIME.to_string(), mime_data);
                 },
