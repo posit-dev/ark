@@ -28,7 +28,6 @@ use anyhow::anyhow;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
-use harp::environment::RObjectValueId;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -95,7 +94,7 @@ pub struct RObjectExplorer {
 
     /// The bindings reachable from the explored object if it is an
     /// environment, to detect changes made in place.
-    fingerprint: Vec<(SEXP, RObjectValueId)>,
+    fingerprint: Vec<Binding>,
 }
 
 impl std::fmt::Debug for RObjectExplorer {
@@ -171,7 +170,11 @@ impl RObjectExplorer {
         }
 
         let fingerprint = environment_fingerprint(object.sexp);
-        if object.sexp == self.root.sexp && fingerprint == self.fingerprint {
+        let unchanged = fingerprint
+            .iter()
+            .map(Binding::id)
+            .eq(self.fingerprint.iter().map(Binding::id));
+        if object.sexp == self.root.sexp && unchanged {
             return Ok(true);
         }
 
@@ -708,12 +711,12 @@ fn is_cycle(parent: &Resolved, child: &Variable) -> bool {
     }
 }
 
-/// Identifies the bindings of an environment and of the environments
+/// Collects the bindings of an environment and of the environments
 /// reachable through them, such as an R6 object's private fields. Empty for
 /// other objects. Global, package, and namespace environments aren't
 /// entered.
-fn environment_fingerprint(value: SEXP) -> Vec<(SEXP, RObjectValueId)> {
-    let mut ids = vec![];
+fn environment_fingerprint(value: SEXP) -> Vec<Binding> {
+    let mut bindings = vec![];
     let mut visited = HashSet::new();
     let mut pending = vec![value];
     while let Some(env) = pending.pop() {
@@ -729,10 +732,10 @@ fn environment_fingerprint(value: SEXP) -> Vec<(SEXP, RObjectValueId)> {
             if let BindingValue::Standard { object } = &binding.value {
                 pending.push(object.sexp);
             }
-            ids.push(binding.id());
+            bindings.push(binding);
         }
     }
-    ids
+    bindings
 }
 
 /// Builds an object explorer node from a Variables pane variable.
