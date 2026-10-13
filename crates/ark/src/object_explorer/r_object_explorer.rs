@@ -571,14 +571,14 @@ impl Search {
 }
 
 /// Builds an R expression that selects children of an object, following the
-/// conventions R users write by hand: `[["name"]]` for uniquely named list
-/// elements and bindings, `[[i]]` otherwise, `$name` for R6 fields, `@name`
-/// for S4 slots, and `[i]` / `[, j]` for vector elements and matrix columns.
+/// conventions R users write by hand: `[["name"]]` / `[[i]]` for list elements
+/// and bindings, `["name"]` / `[i]` for vector elements, `[, j]` for matrix
+/// columns, `$name` for R6 fields, and `@name` for S4 slots.
 /// `$` is never used for lists because it matches partially.
 enum ChildSelector {
     /// A list or atomic vector, whose elements are selected by name when the
-    /// name is unique and non-empty, and otherwise by position with `[[i]]`
-    /// (lists) or `[i]` (atomic vectors).
+    /// name is unique and non-empty, and otherwise by position, with `[[`
+    /// (lists) or `[` (atomic vectors).
     Named {
         names: Vec<Option<String>>,
         counts: HashMap<String, usize>,
@@ -647,12 +647,16 @@ impl ChildSelector {
                 atomic,
             } => {
                 let index = parse_index(access_key).ok()? as usize;
-                match names.get(index).cloned().flatten() {
+                let key = match names.get(index).cloned().flatten() {
                     Some(name) if !name.is_empty() && counts.get(&name) == Some(&1) => {
-                        Some(format!("[[{}]]", str_quote(&name)))
+                        str_quote(&name)
                     },
-                    _ if *atomic => Some(format!("[{}]", index + 1)),
-                    _ => Some(format!("[[{}]]", index + 1)),
+                    _ => (index + 1).to_string(),
+                };
+                if *atomic {
+                    Some(format!("[{key}]"))
+                } else {
+                    Some(format!("[[{key}]]"))
                 }
             },
             Self::Pairlist => Some(format!("[[{}]]", position()?)),
@@ -906,7 +910,7 @@ mod tests {
 
             assert_eq!(
                 accessors(&children(&explorer, &["0"])),
-                some(&[r#"x[["v"]][["a"]]"#, r#"x[["v"]][["b"]]"#])
+                some(&[r#"x[["v"]]["a"]"#, r#"x[["v"]]["b"]"#])
             );
             assert_eq!(
                 accessors(&children(&explorer, &["1"])),
