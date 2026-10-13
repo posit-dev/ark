@@ -32,6 +32,8 @@ use harp::environment::RObjectValueId;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::syntax::str_quote;
+use harp::syntax::sym_quote_invalid;
 use harp::utils::r_chr_get_owned_utf8;
 use harp::utils::r_env_is_ns_env;
 use harp::utils::r_env_is_pkg_env;
@@ -644,7 +646,7 @@ impl ChildSelector {
                 let index = parse_index(access_key).ok()? as usize;
                 match names.get(index).cloned().flatten() {
                     Some(name) if !name.is_empty() && counts.get(&name) == Some(&1) => {
-                        Some(format!("[[{}]]", r_string_literal(&name)))
+                        Some(format!("[[{}]]", str_quote(&name)))
                     },
                     _ if *atomic => Some(format!("[{}]", index + 1)),
                     _ => Some(format!("[[{}]]", index + 1)),
@@ -653,10 +655,10 @@ impl ChildSelector {
             Self::Pairlist => Some(format!("[[{}]]", position()?)),
             Self::Matrix => Some(format!("[, {}]", position()?)),
             Self::MatrixColumn => Some(format!("[{}]", position()?)),
-            Self::Environment => Some(format!("[[{}]]", r_string_literal(access_key))),
+            Self::Environment => Some(format!("[[{}]]", str_quote(access_key))),
             Self::R6 if access_key.starts_with('<') => None,
-            Self::R6 => Some(format!("${}", r_name(access_key))),
-            Self::S4 => Some(format!("@{}", r_name(access_key))),
+            Self::R6 => Some(format!("${}", sym_quote_invalid(access_key))),
+            Self::S4 => Some(format!("@{}", sym_quote_invalid(access_key))),
             Self::None => None,
         }
     }
@@ -751,68 +753,6 @@ fn object_node(var: Variable, accessor: Option<String>, is_cycle: bool) -> Objec
         is_cycle,
         accessor,
     }
-}
-
-/// Formats a string as an R string literal.
-fn r_string_literal(value: &str) -> String {
-    let mut literal = String::with_capacity(value.len() + 2);
-    literal.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => literal.push_str("\\\""),
-            '\\' => literal.push_str("\\\\"),
-            '\n' => literal.push_str("\\n"),
-            '\r' => literal.push_str("\\r"),
-            '\t' => literal.push_str("\\t"),
-            c => literal.push(c),
-        }
-    }
-    literal.push('"');
-    literal
-}
-
-/// Formats a name for use after `$` or `@`, backquoting it if it isn't
-/// syntactic.
-fn r_name(name: &str) -> String {
-    if is_syntactic(name) {
-        name.to_string()
-    } else {
-        format!("`{}`", name.replace('\\', "\\\\").replace('`', "\\`"))
-    }
-}
-
-/// Whether a name is syntactic in R, i.e. usable without backquotes.
-fn is_syntactic(name: &str) -> bool {
-    const RESERVED: &[&str] = &[
-        "if",
-        "else",
-        "repeat",
-        "while",
-        "function",
-        "for",
-        "next",
-        "break",
-        "TRUE",
-        "FALSE",
-        "NULL",
-        "Inf",
-        "NaN",
-        "NA",
-        "NA_integer_",
-        "NA_real_",
-        "NA_character_",
-        "NA_complex_",
-        "in",
-    ];
-    let mut chars = name.chars();
-    let valid_start = match chars.next() {
-        Some('.') => !name.chars().nth(1).is_some_and(|c| c.is_ascii_digit()),
-        Some(c) => c.is_alphabetic(),
-        None => false,
-    };
-    valid_start &&
-        chars.all(|c| c.is_alphanumeric() || c == '.' || c == '_') &&
-        !RESERVED.contains(&name)
 }
 
 /// Opens an R object in the Object Explorer. Called from `View()`.
