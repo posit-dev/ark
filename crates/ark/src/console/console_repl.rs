@@ -1344,24 +1344,25 @@ impl Console {
 
         // Open an inline data explorer for a data frame, or an inline object
         // explorer for nested data.
-        if r_is_data_frame(value.sexp) {
-            match self.open_inline_data_explorer(value.sexp) {
-                Ok(mime_data) => {
-                    data.insert(POSITRON_DATA_EXPLORER_MIME.to_string(), mime_data);
-                },
-                Err(err) => {
-                    log::error!("Failed to open inline data explorer: {err:?}");
-                },
-            }
+        let (mime, result) = if r_is_data_frame(value.sexp) {
+            (
+                POSITRON_DATA_EXPLORER_MIME,
+                self.open_inline_data_explorer(value.sexp),
+            )
         } else if let Some(title) = inline_explorer_title(value.sexp) {
-            match self.open_inline_object_explorer(value, title) {
-                Ok(mime_data) => {
-                    data.insert(POSITRON_OBJECT_EXPLORER_MIME.to_string(), mime_data);
-                },
-                Err(err) => {
-                    log::error!("Failed to open inline object explorer: {err:?}");
-                },
-            }
+            (
+                POSITRON_OBJECT_EXPLORER_MIME,
+                self.open_inline_object_explorer(value, title),
+            )
+        } else {
+            return data;
+        };
+
+        match result {
+            Ok(mime_data) => {
+                data.insert(mime.to_string(), mime_data);
+            },
+            Err(err) => log::error!("Failed to open inline explorer for {mime}: {err:?}"),
         }
 
         data
