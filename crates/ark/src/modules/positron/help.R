@@ -457,7 +457,7 @@ format_help_page_markdown <- function(
 ) {
     rd_obj <- help_to_rd(help_page)
     tmp_rd_file <- tempfile(fileext = ".html")
-    on.exit(unlink(tmp_rd_file), add = TRUE)
+    defer(unlink(tmp_rd_file))
 
     tools::Rd2HTML(rd_obj, out = tmp_rd_file)
 

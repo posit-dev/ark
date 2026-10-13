@@ -138,7 +138,7 @@ read_vignette <- function(info) {
     doc_dir <- file.path(info$Dir, "doc")
     if (grepl("\\.html?$", info$PDF, ignore.case = TRUE)) {
         output_file <- tempfile(fileext = ".md")
-        on.exit(unlink(output_file), add = TRUE)
+        defer(unlink(output_file))
         pandoc_convert(
             input = file.path(doc_dir, info$PDF),
             to = "markdown_strict-raw_html+pipe_tables+backtick_code_blocks",
@@ -230,7 +230,7 @@ read_vignette <- function(info) {
 
     # Convert the help page to Markdown using Pandoc
     md_file <- tempfile(fileext = ".md")
-    on.exit(unlink(md_file), add = TRUE)
+    defer(unlink(md_file))
     format_help_page_markdown(
         help_page,
         output = md_file,
