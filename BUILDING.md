@@ -78,4 +78,4 @@ For more installation tips, see the just README.
 
 ## Formatting
 
-Run `just format` to format Rust code with `rustfmt` and R code with [Air](https://posit-dev.github.io/air/). The R formatting step requires the Air CLI; on macOS, install it with `brew install air`. See the [Air installation docs](https://posit-dev.github.io/air/cli.html) for other platforms.
+Run `just format` to format Rust code with `rustfmt` and R code with [Air](https://posit-dev.github.io/air/). The R formatting step uses the Air CLI if it's on your `PATH`, and otherwise falls back to the copy bundled with the Air extension for Positron or VS Code. To install the CLI on macOS, use `brew install air`. See the [Air installation docs](https://posit-dev.github.io/air/cli.html) for other platforms.

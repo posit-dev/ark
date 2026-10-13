@@ -22,5 +22,13 @@ clippy:
 
 # Reformat source files
 format:
+  #!/usr/bin/env bash
+  set -euo pipefail
   cargo +nightly fmt --all
-  air format .
+  # Fall back to the Air binary bundled with the Positron or VS Code extension
+  air=$(command -v air || ls -t ~/.positron/extensions/posit.air-vscode-*/bundled/bin/air ~/.vscode/extensions/posit.air-vscode-*/bundled/bin/air 2>/dev/null | head -1 || true)
+  if [ -z "$air" ]; then
+    echo "Air not found. Install it from https://posit-dev.github.io/air/cli.html" >&2
+    exit 1
+  fi
+  "$air" format .
