@@ -7,16 +7,36 @@
 
 # `utils::View()` replacement, with exact same arguments
 view_hook <- function(x, title) {
+    expr <- substitute(x)
+    if (missing(title)) {
+        title <- as_label(expr)
+    }
+
+    # Only a symbol names a variable that can be watched for updates
+    name <- if (is.symbol(expr)) as.character(expr) else ""
+
     # `sys.nframe() == 1` must be evaluated in the hook frame because
     # `view_hook` adds a frame above `view()`. Gates namespace srcref mutation
     # in `view_function_info()`, only safe when no user code is on the stack.
     view(
         x = x,
         title = title,
-        name = as_label(substitute(x)),
+        name = name,
+        accessor = expr_accessor(expr),
         env = parent.frame(),
         top_level = sys.nframe() == 1
     )
+}
+
+# R code that evaluates to the value of `expr` and can be followed by a subset
+# selector like `[[1]]`
+expr_accessor <- function(expr) {
+    code <- deparse_string(expr)
+    if (call_parse_type(expr) %in% c("", "$", "@", "::", ":::", "[", "[[", "(")) {
+        code
+    } else {
+        paste0("(", code, ")")
+    }
 }
 
 # Called from Rust. Dispatches to object handlers. The handlers take `name` and
@@ -28,6 +48,7 @@ view <- function(
     x,
     title,
     name = NULL,
+    accessor = name,
     env = parent.frame(),
     top_level = sys.nframe() == 1
 ) {
@@ -63,7 +84,7 @@ view <- function(
     }
 
     if (is_explorable_object(x)) {
-        return(view_object(x, title, var, env, name))
+        return(view_object(x, title, var, env, accessor))
     }
 
     stop(sprintf(

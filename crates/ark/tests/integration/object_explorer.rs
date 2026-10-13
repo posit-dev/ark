@@ -145,6 +145,47 @@ fn test_object_explorer_view_table() {
     frontend.recv_iopub_idle();
 }
 
+/// Accessors of an explorer on an expression build on the full expression.
+#[test]
+fn test_object_explorer_view_expression_accessors() {
+    let frontend = DummyArkFrontend::lock();
+
+    let comm_id = view(&frontend, "View(list(1, 2))");
+    let accessors: Vec<Option<String>> = get_children(&frontend, &comm_id)
+        .children
+        .into_iter()
+        .map(|node| node.accessor)
+        .collect();
+    assert_eq!(accessors, vec![
+        Some(String::from("list(1, 2)[[1]]")),
+        Some(String::from("list(1, 2)[[2]]")),
+    ]);
+
+    let comm_id = view(&frontend, "View(if (TRUE) list(1))");
+    let accessors: Vec<Option<String>> = get_children(&frontend, &comm_id)
+        .children
+        .into_iter()
+        .map(|node| node.accessor)
+        .collect();
+    assert_eq!(accessors, vec![Some(String::from("(if (TRUE) list(1))[[1]]"))]);
+}
+
+/// An explorer on a call is not bound to the variable named by its head.
+#[test]
+fn test_object_explorer_view_call_is_unbound() {
+    let frontend = DummyArkFrontend::lock();
+    execute(&frontend, "oe_f <- function() list(1)");
+
+    frontend.send_execute_request("View(oe_f())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let comm_open = frontend.recv_iopub_comm_open();
+    assert_eq!(comm_open.data["title"], "oe_f()");
+    assert_eq!(comm_open.data["variable_path"], serde_json::Value::Null);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Atomic vectors are neither tables nor explorable, so `View()` still errors.
 #[test]
 fn test_object_explorer_view_atomic_vector_errors() {
@@ -166,6 +207,16 @@ fn execute(frontend: &DummyArkFrontend, code: &str) {
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+fn view(frontend: &DummyArkFrontend, code: &str) -> String {
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let comm_id = frontend.recv_iopub_comm_open().comm_id;
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    comm_id
 }
 
 fn get_children(frontend: &DummyArkFrontend, comm_id: &str) -> ChildrenResult {
