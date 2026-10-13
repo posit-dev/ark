@@ -66,6 +66,10 @@ pub const POSITRON_OBJECT_EXPLORER_MIME: &str = "application/vnd.positron.object
 /// The most nodes a search visits before it stops early.
 const SEARCH_NODE_BUDGET: usize = 200_000;
 
+/// The most bindings an environment fingerprint collects. Changes in place
+/// beyond these aren't detected.
+const FINGERPRINT_BINDING_BUDGET: usize = 10_000;
+
 /// The number of children a search fetches at a time.
 const SEARCH_PAGE_SIZE: usize = 1_000;
 
@@ -718,7 +722,7 @@ fn is_cycle(parent: &Resolved, child: &Variable) -> bool {
 /// Collects the bindings of an environment and of the environments
 /// reachable through them, such as an R6 object's private fields. Empty for
 /// other objects. Global, package, and namespace environments aren't
-/// entered.
+/// entered. Stops after `FINGERPRINT_BINDING_BUDGET` bindings.
 fn environment_fingerprint(value: SEXP) -> Vec<Binding> {
     let mut bindings = vec![];
     let mut visited = HashSet::new();
@@ -733,6 +737,9 @@ fn environment_fingerprint(value: SEXP) -> Vec<Binding> {
             continue;
         }
         for binding in Environment::view(env).iter().filter_map(Result::ok) {
+            if bindings.len() == FINGERPRINT_BINDING_BUDGET {
+                return bindings;
+            }
             if let BindingValue::Standard { object } = &binding.value {
                 pending.push(object.sexp);
             }
