@@ -1097,7 +1097,7 @@ impl PositronVariable {
         }
 
         Ok(EnvironmentVariableNode::Concrete {
-            object: RObject::view(x),
+            object: RObject::new(x),
         })
     }
 
@@ -1169,7 +1169,7 @@ impl PositronVariable {
             VECSXP | EXPRSXP => {
                 let index = parse_index(access_key)?;
                 Ok(EnvironmentVariableNode::Concrete {
-                    object: RObject::view(harp::list_get(object.sexp, index)),
+                    object: RObject::new(harp::list_get(object.sexp, index)),
                 })
             },
             LISTSXP => {
@@ -1179,7 +1179,7 @@ impl PositronVariable {
                     pairlist = unsafe { CDR(pairlist) };
                 }
                 Ok(EnvironmentVariableNode::Concrete {
-                    object: RObject::view(unsafe { CAR(pairlist) }),
+                    object: RObject::new(unsafe { CAR(pairlist) }),
                 })
             },
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
@@ -1214,13 +1214,13 @@ impl PositronVariable {
                 match name.as_str() {
                     "<private>" => {
                         let env = Environment::new(object);
-                        let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
-                        let private = Environment::new(RObject::view(enclos.find("private")?));
+                        let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
+                        let private = Environment::new(RObject::new(enclos.find("private")?));
 
                         // TODO: it seems unlikely that private would host active bindings
                         //       so find() is fine, we can assume this is concrete
                         Ok(EnvironmentVariableNode::Concrete {
-                            object: RObject::view(private.find(path_elt)?),
+                            object: RObject::new(private.find(path_elt)?),
                         })
                     },
 
