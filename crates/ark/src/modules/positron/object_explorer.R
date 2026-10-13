@@ -10,13 +10,8 @@ view_object <- function(x, title, var, env, accessor) {
     invisible(.ps.Call("ps_view_object", x, title, var, env, accessor))
 }
 
-# Lists (other than data frames), environments, S4 objects, pairlists, and
-# expression vectors open in the Object Explorer.
 is_explorable_object <- function(x) {
-    !is.null(x) &&
-        !is.data.frame(x) &&
-        !is.matrix(x) &&
-        (is.list(x) || is.environment(x) || isS4(x) || is.expression(x))
+    .ps.Call("ps_is_explorable", x)
 }
 
 #' @export

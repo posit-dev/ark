@@ -797,6 +797,11 @@ pub unsafe extern "C-unwind" fn ps_view_object(
     Ok(R_NilValue)
 }
 
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_explorable(x: SEXP) -> anyhow::Result<SEXP> {
+    Ok(RObject::from(is_explorable(x)).sexp)
+}
+
 /// The title of an inline object explorer for a printed value, if it is nested
 /// data worth exploring inline in a notebook: a non-empty plain list, or a
 /// plain environment other than the global one. Classed objects are left to
