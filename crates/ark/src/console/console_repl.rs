@@ -681,6 +681,7 @@ impl Console {
             try_idle_rx,
             pending_futures: HashMap::new(),
             session_mode,
+            is_positron: std::env::var("POSITRON").as_deref() == Ok("1"),
             positron_ns: None,
             banner: None,
             r_error_buffer: None,
@@ -1337,9 +1338,7 @@ impl Console {
         // that require comm support. Other Jupyter frontends don't understand
         // their MIME types, so we gate on the POSITRON env var to avoid
         // sending them to vanilla Jupyter notebooks.
-        if self.session_mode != SessionMode::Notebook ||
-            std::env::var("POSITRON").as_deref() != Ok("1")
-        {
+        if self.session_mode != SessionMode::Notebook || !self.is_positron {
             return data;
         }
 

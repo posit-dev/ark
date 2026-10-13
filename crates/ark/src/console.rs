@@ -200,6 +200,9 @@ pub struct Console {
     /// Whether we are running in Console, Notebook, or Background mode.
     session_mode: SessionMode,
 
+    /// Whether the frontend is Positron (`POSITRON=1`).
+    is_positron: bool,
+
     /// Channel used to send along messages relayed on the open comms.
     comm_event_tx: Sender<CommEvent>,
 
