@@ -77,7 +77,7 @@ pub struct RObjectExplorer {
     /// The explored object.
     root: RObject,
 
-    /// R code that evaluates to the explored object, if any.
+    /// R expression that evaluates to the explored object, if any.
     root_accessor: Option<String>,
 
     /// The top-level variable the explored object was read from, if any. The
@@ -109,7 +109,7 @@ impl RObjectExplorer {
     ///
     /// - `title`: The title of the explorer.
     /// - `root`: The object to explore.
-    /// - `root_accessor`: R code that evaluates to the object, if any.
+    /// - `root_accessor`: R expression that evaluates to the object, if any.
     /// - `binding`: The variable the object was read from, if any, and the
     ///   access key path from the variable's value to the object.
     /// - `inline`: Whether the explorer is shown inline only.
@@ -565,7 +565,7 @@ impl Search {
     }
 }
 
-/// Builds R code that selects children of an object, following the
+/// Builds an R expression that selects children of an object, following the
 /// conventions R users write by hand: `[["name"]]` for uniquely named list
 /// elements and bindings, `[[i]]` otherwise, `$name` for R6 fields, `@name`
 /// for S4 slots, and `[i]` / `[, j]` for vector elements and matrix columns.
@@ -629,7 +629,7 @@ impl ChildSelector {
         }
     }
 
-    /// The R code selecting the child with an access key, if any.
+    /// The R expression selecting the child with an access key, if any.
     fn selector(&self, access_key: &str) -> Option<String> {
         if matches!(parse_custom_access_key(access_key), Ok(Some(_))) {
             return None;
@@ -821,7 +821,7 @@ fn is_syntactic(name: &str) -> bool {
 /// - `title`: The title of the explorer.
 /// - `var`: The name of the variable holding the object in `env`, or `""`.
 /// - `env`: The environment holding the variable, or `NULL`.
-/// - `accessor`: R code that evaluates to the object, or `""`.
+/// - `accessor`: R expression that evaluates to the object, or `""`.
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_view_object(
     x: SEXP,
@@ -872,7 +872,7 @@ pub(crate) fn inline_explorer_title(value: SEXP) -> Option<&'static str> {
     }
 }
 
-/// Builds the R code that selects the object at an access key path below a
+/// Builds the R expression that selects the object at an access key path below a
 /// named object, if there is such code.
 pub(crate) fn path_accessor(name: &str, object: RObject, path: &[String]) -> Option<String> {
     let mut node = EnvironmentVariableNode::Concrete { object };
