@@ -244,19 +244,21 @@ extern "C" {
     ) -> Option<InvalidParameterHandler>;
 }
 
-/// Ignore invalid parameters passed to C runtime functions, like R does
+/// Match other R frontends by returning from C runtime invalid-parameter checks.
 ///
-/// By default, the UCRT terminates the process with `0xc0000409` when a C
-/// runtime function gets an invalid parameter. R's front ends are built with
-/// MinGW, whose runtime installs a handler that ignores these, so the function
-/// just returns an error code. R and packages rely on that, e.g. R 4.2.0 calls
-/// `setlocale(LC_MESSAGES, "")` at startup, which UCRT does not support, and
-/// that crashed ark. RStudio installs the same kind of handler.
+/// UCRT's default handler terminates the process with `0xc0000409`. Rterm and
+/// Rgui use MinGW's non-terminating handler, and RStudio installs its own.
+/// Returning here lets CRT functions that support recovery report an error
+/// to the caller instead.
+///
+/// R 4.2.0 needs this during startup because it calls
+/// `setlocale(LC_MESSAGES, "")`, but UCRT does not support `LC_MESSAGES`.
+///
 /// https://github.com/posit-dev/positron/issues/8488
-/// https://github.com/rstudio/rstudio/blob/main/src/cpp/session/SessionMain.cpp
+/// https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/src/cpp/session/SessionMain.cpp#L2446-L2452
 ///
-/// The arguments are always null in release builds of the UCRT, so we can
-/// only log that it happened.
+/// Release UCRT builds omit the expression, function name, and source
+/// location, so the warning cannot identify the failing call.
 extern "C" fn r_invalid_parameter_handler(
     _expression: *const u16,
     _function: *const u16,
