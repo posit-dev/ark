@@ -23,3 +23,4 @@ clippy:
 # Reformat source files
 format:
   cargo +nightly fmt --all
+  air format .

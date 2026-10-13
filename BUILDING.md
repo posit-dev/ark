@@ -75,3 +75,7 @@ We use [just](https://github.com/casey/just) as a simple command runner, and the
 On macOS, install just with `brew install just`.
 On Windows, we've used `cargo install just` with success.
 For more installation tips, see the just README.
+
+## Formatting
+
+Run `just format` to format Rust code with `rustfmt` and R code with [Air](https://posit-dev.github.io/air/). The R formatting step requires the Air CLI; on macOS, install it with `brew install air`. See the [Air installation docs](https://posit-dev.github.io/air/cli.html) for other platforms.

@@ -91,10 +91,10 @@ just clippy
 ### Formatting
 
 ```sh
-cargo +nightly fmt --all
+just format
 ```
 
-This requires the nightly toolchain because `.rustfmt.toml` uses nightly-only options.
+This runs `cargo +nightly fmt --all` for Rust and `air format .` for R. The nightly toolchain is required because `.rustfmt.toml` uses nightly-only options, and the [Air](https://posit-dev.github.io/air/) CLI must be installed.
 
 ### Kernel and DAP Test Infrastructure
 

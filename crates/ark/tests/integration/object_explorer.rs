@@ -167,7 +167,9 @@ fn test_object_explorer_view_expression_accessors() {
         .into_iter()
         .map(|node| node.accessor)
         .collect();
-    assert_eq!(accessors, vec![Some(String::from("(if (TRUE) list(1))[[1]]"))]);
+    assert_eq!(accessors, vec![Some(String::from(
+        "(if (TRUE) list(1))[[1]]"
+    ))]);
 }
 
 /// An explorer on a call is not bound to the variable named by its head.

@@ -32,7 +32,9 @@ view_hook <- function(x, title) {
 # selector like `[[1]]`
 expr_accessor <- function(expr) {
     code <- deparse_string(expr)
-    if (call_parse_type(expr) %in% c("", "$", "@", "::", ":::", "[", "[[", "(")) {
+    if (
+        call_parse_type(expr) %in% c("", "$", "@", "::", ":::", "[", "[[", "(")
+    ) {
         code
     } else {
         paste0("(", code, ")")
