@@ -159,6 +159,7 @@ The following R packages are required for tests:
 - data.table
 - dplyr
 - rstudioapi
+- S7
 - tibble
 - haven
 - htmltools

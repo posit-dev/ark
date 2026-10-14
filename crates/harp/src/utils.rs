@@ -134,6 +134,10 @@ pub fn r_is_s4(object: SEXP) -> bool {
     unsafe { libr::Rf_isS4(object) != 0 }
 }
 
+pub fn r_is_s7(object: SEXP) -> bool {
+    r_inherits(object, "S7_object")
+}
+
 pub fn r_is_unbound(object: SEXP) -> bool {
     object == unsafe { R_UnboundValue }
 }
