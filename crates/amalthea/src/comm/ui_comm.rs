@@ -371,6 +371,15 @@ pub struct ModifyEditorSelectionsParams {
 	pub values: Vec<String>,
 }
 
+/// Parameters for the LastActiveEditorContext method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LastActiveEditorContextParams {
+	/// Whether the calling session's console input may be returned when it
+	/// was the last editor focused. Set to false to return only editors in
+	/// the editor area. If omitted, defaults to true.
+	pub allow_console: Option<bool>,
+}
+
 /// Parameters for the ShowUrl method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowUrlParams {
@@ -525,7 +534,7 @@ pub enum UiFrontendRequest {
 	/// Returns metadata such as file path for the last editor selected by the
 	/// user. The result may be undefined if there are no active editors.
 	#[serde(rename = "last_active_editor_context")]
-	LastActiveEditorContext,
+	LastActiveEditorContext(LastActiveEditorContextParams),
 
 }
 
@@ -678,7 +687,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
-		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::LastActiveEditorContext(_) => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
 

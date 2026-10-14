@@ -1,4 +1,7 @@
 //! Rename at the ide layer.
+//!
+//! The notebook section pins which cells a rename edits, since that is
+//! user-visible behavior that the Positron e2e tests rely on.
 
 use aether_path::FilePath;
 use oak_db::DbInputs;
@@ -18,6 +21,7 @@ use crate::support::edit_ranges;
 use crate::support::install_library_package;
 use crate::support::install_workspace_package;
 use crate::support::offset;
+use crate::support::open_notebook;
 use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
@@ -444,6 +448,36 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
     ]);
 }
 
+// --- rename: notebooks ---
+
+#[test]
+fn test_notebook_rename_edits_across_cells() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "helper <- function() 1\n",
+        "helper()\n",
+    ]);
+
+    let targets = rename(&db, cells[1], offset(0), "util").unwrap();
+    // Cell 1 (cursor's file) first, then cell 0.
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[1], range(0, 6)),
+        (cells[0], range(0, 6)),
+    ]);
+}
+
+#[test]
+fn test_notebook_rename_respects_shadowing_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n", "x <- 2\n", "x\n"]);
+
+    let targets = rename(&db, cells[0], offset(0), "y").unwrap();
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[0], range(0, 1)),
+        (cells[1], range(0, 1)),
+    ]);
+}
+
 // --- helpers for root / package wiring ---
 
 /// Build a workspace package holding `files` (name, contents), each with the
@@ -468,7 +502,7 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
     pkg.set_files(db).to(created.clone());
 
     let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg], vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
     created
 }
@@ -487,7 +521,7 @@ fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
     pkg.set_files(db).to(vec![file]);
 
     let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg], vec![]);
     db.library_roots().set_roots(db).to(vec![root]);
     file
 }

@@ -40,6 +40,7 @@ mod kernel_srcref;
 mod kernel_stdin;
 mod kernel_stream_capture;
 mod kernel_variables;
+mod llm_tools;
 mod lsp;
 mod lsp_completions;
 mod object_explorer;

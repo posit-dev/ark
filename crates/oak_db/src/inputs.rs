@@ -40,6 +40,14 @@ pub struct Root {
     /// `Workspace`, installed packages for `Library`).
     #[returns(ref)]
     pub packages: Vec<Package>,
+    /// Directories containing `.Rprofile` (renv, rv) or `.Renviron` (rig).
+    /// Relative `source()` paths anchor at the nearest enclosing entry,
+    /// assuming a session started there to load that environment.
+    ///
+    /// Sorted by path so unchanged rescans compare equal and reverse lookup
+    /// finds the nearest enclosing directory first. Always empty for `Library` roots.
+    #[returns(ref)]
+    pub environment_dirs: Vec<FilePath>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

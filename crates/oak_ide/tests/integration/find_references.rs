@@ -5,6 +5,10 @@
 //! chains, cross-file source) lives in `oak_db`'s tests; we only check the
 //! orchestration here: scope decision, confirm step, member scan.
 //!
+//! Notebook cells are the exception. Which cells a reference reaches is
+//! user-visible behavior that the Positron e2e tests rely on, so a few
+//! notebook cases are pinned here too.
+//!
 //! Results are deterministically ordered (current file first, then by URL,
 //! then by source offset), so tests assert the full result vector rather than
 //! membership.
@@ -17,6 +21,7 @@ use crate::support::install_library_package;
 use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
 use crate::support::offset;
+use crate::support::open_notebook;
 use crate::support::pairs;
 use crate::support::place_in_workspace_scripts;
 use crate::support::range;
@@ -618,5 +623,68 @@ fn test_cross_file_references_reach_past_a_lazy_source_call() {
         (helpers, range(0, 5)),
         (main, range(def, def + 5)),
         (main, range(use_, use_ + 5)),
+    ]);
+}
+
+// --- Notebooks ---
+
+#[test]
+fn test_notebook_references_span_cells() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "x <- 1\n",
+        "x + 1\n",
+        "f <- function() x\n",
+    ]);
+
+    let refs = find_references(&db, cells[0], offset(0), true);
+
+    // Results sort by URL, which here matches document order.
+    assert_eq!(pairs(&refs), vec![
+        (cells[0], range(0, 1)),
+        (cells[1], range(0, 1)),
+        (cells[2], range(16, 17)),
+    ]);
+}
+
+#[test]
+fn test_notebook_references_exclude_use_before_definition() {
+    // The top-level use in cell 0 runs before cell 1 defines `x`.
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x\n", "x <- 1\n", "x\n"]);
+
+    let refs = find_references(&db, cells[1], offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (cells[1], range(0, 1)),
+        (cells[2], range(0, 1)),
+    ]);
+}
+
+#[test]
+fn test_notebook_references_include_function_body_in_earlier_cell() {
+    // A function body runs after the cells have run, so its use in cell 0
+    // reaches the definition in cell 1.
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["f <- function() x\n", "x <- 1\n"]);
+
+    let refs = find_references(&db, cells[1], offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (cells[1], range(0, 1)),
+        (cells[0], range(16, 17)),
+    ]);
+}
+
+#[test]
+fn test_notebook_references_stop_at_shadowing_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n", "x <- 2\n", "x\n"]);
+
+    let refs = find_references(&db, cells[0], offset(0), true);
+
+    assert_eq!(pairs(&refs), vec![
+        (cells[0], range(0, 1)),
+        (cells[1], range(0, 1)),
     ]);
 }

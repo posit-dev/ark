@@ -27,7 +27,7 @@ The easiest way to try Ark without any installation or configuration is by runni
 
 ### In Jupyter applications
 
-Download a [release](https://github.com/posit-dev/ark/releases) of Ark to a location of your choice, such as `/usr/local/bin/ark` on macOS or Linux. Then install the Jupyter kernel specification file with:
+Download a [release](https://github.com/posit-dev/ark/releases) of Ark to a location of your choice, such as `/usr/local/bin/ark` on macOS or Linux. On macOS, use the `darwin-arm64` zip for Apple Silicon or the `darwin-x64` zip for Intel. Then install the Jupyter kernel specification file with:
 
 ```sh
 $ ark --install

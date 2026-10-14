@@ -10,6 +10,7 @@ use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::EvaluateWhenClauseParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ExecuteCommandParams;
+use amalthea::comm::ui_comm::LastActiveEditorContextParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
 use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
@@ -24,10 +25,16 @@ use crate::console::Console;
 use crate::ui::events::ps_ui_robj_as_ranges;
 
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_last_active_editor_context(
+    allow_console: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = LastActiveEditorContextParams {
+        allow_console: Some(RObject::view(allow_console).try_into()?),
+    };
+
     let out = Console::get()
         .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
+        .call_frontend_method(UiFrontendRequest::LastActiveEditorContext(params))?;
     Ok(out.sexp)
 }
 
