@@ -257,6 +257,14 @@ pub(crate) fn generate_diagnostics(
         context.installed_packages.insert(pkg.clone());
     }
 
+    // In a notebook cell, packages that earlier cells attach are available
+    // from the start of this cell. Later cells don't count.
+    for cell in file.earlier_notebook_cells(db) {
+        for package in cell.attached_packages(db) {
+            insert_package_exports(package.text(db).as_str(), Point::new(0, 0), &mut context);
+        }
+    }
+
     // Start iterating through the nodes.
     let root = file.tree_sitter(db).root_node();
 
