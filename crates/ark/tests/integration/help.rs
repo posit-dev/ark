@@ -454,32 +454,40 @@ fn test_help_search_navigation_correlation() {
     // This full kernel test needs HTML navigation; unit-test mode suppresses it.
     frontend.execute_request_invisibly("options(ark.testing = FALSE)");
     let comm_id = open_help_comm(&frontend);
-    frontend.send_shell(CommWireMsg {
-        comm_id: comm_id.clone(),
-        data: serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": "help-search-request",
-            "method": "search_help",
-            "params": { "query": "[.data.frame", "search_id": "ui-search" }
-        }),
-    });
-    frontend.recv_iopub_busy();
-    // Shell idle and comm delivery come from different threads and may interleave.
-    let messages = frontend.recv_iopub_interleaved(&[&[IopubExpectation::Idle], &[
-        IopubExpectation::CommMsg,
-        IopubExpectation::CommMsg,
-    ]]);
-    let comms: Vec<_> = messages
-        .into_iter()
-        .filter_map(|message| match message {
-            Message::CommMsg(message) => Some(message.content),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(comms[0].comm_id, comm_id);
-    assert_eq!(comms[0].data["method"], "show_help");
-    assert_eq!(comms[0].data["params"]["search_id"], "ui-search");
-    assert_eq!(comms[1].data["result"], true);
+    for help_type in ["html", "text"] {
+        frontend.execute_request_invisibly(&format!("options(help_type = '{help_type}')"));
+        frontend.send_shell(CommWireMsg {
+            comm_id: comm_id.clone(),
+            data: serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "help-search-request",
+                "method": "search_help",
+                "params": { "query": "[.data.frame", "search_id": "ui-search" }
+            }),
+        });
+        frontend.recv_iopub_busy();
+        // Shell idle and comm delivery come from different threads and may interleave.
+        let messages = frontend.recv_iopub_interleaved(&[&[IopubExpectation::Idle], &[
+            IopubExpectation::CommMsg,
+            IopubExpectation::CommMsg,
+        ]]);
+        let comms: Vec<_> = messages
+            .into_iter()
+            .filter_map(|message| match message {
+                Message::CommMsg(message) => Some(message.content),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(comms[0].comm_id, comm_id);
+        assert_eq!(comms[0].data["method"], "show_help");
+        assert_eq!(comms[0].data["params"]["search_id"], "ui-search");
+        assert_eq!(comms[1].comm_id, comm_id);
+        assert_eq!(comms[1].data["result"], true);
+        frontend.execute_request_invisibly(&format!(
+            "stopifnot(identical(getOption('help_type'), '{help_type}'))"
+        ));
+    }
+    frontend.execute_request_invisibly("options(help_type = 'html')");
 
     // The scope has ended: console search must remain ordinary native Help.
     frontend.send_execute_request("??plot", ExecuteRequestOptions::default());

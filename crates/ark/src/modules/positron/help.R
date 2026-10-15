@@ -68,6 +68,8 @@ help <- function(topic, package = NULL) {
     results <- .ps.help.searchResults(query)
 
     if (!in_ark_tests()) {
+        old <- options(help_type = "html")
+        on.exit(options(old), add = TRUE)
         print(results)
     }
 
