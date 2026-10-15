@@ -250,10 +250,6 @@ pub(crate) struct UiCommRef<'a> {
 }
 
 impl UiCommRef<'_> {
-    pub(crate) fn has_originator(&self) -> bool {
-        self.originator.is_some()
-    }
-
     pub(crate) fn send_event(&self, event: &UiFrontendEvent) {
         self.comm.ctx.send_event(event);
     }

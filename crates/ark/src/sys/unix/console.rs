@@ -130,7 +130,7 @@ pub fn setup_r(args: &Vec<String>) {
 
 /// Backs `file.choose()` with the frontend's file dialog, falling back to R's
 /// console prompt if the dialog can't be shown. Returns the length of the path
-/// written to `buf`, or 0 if the user cancelled or there is no active request.
+/// written to `buf`, or 0 if the user cancelled.
 unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_int) -> c_int {
     let Ok(size) = usize::try_from(len) else {
         return 0;
@@ -141,9 +141,6 @@ unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_i
 
     let path = Console::with(|console| {
         let ui = console.try_ui_comm()?;
-        if !ui.has_originator() {
-            return Ok(None);
-        }
         let params = SelectFileParams {
             title: String::from("Select File"),
             existing: new == 0,
