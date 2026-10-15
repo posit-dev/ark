@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 use amalthea::comm::ui_comm::SelectFileParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
+use anyhow::anyhow;
 use harp::utils::r_is_null;
 use libr::ptr_R_Busy;
 use libr::ptr_R_ChooseFile;
@@ -131,41 +132,54 @@ pub fn setup_r(args: &Vec<String>) {
     }
 }
 
-/// Backs `file.choose()` with the frontend's file dialog. Returns the length of
-/// the path written to `buf`, or 0 if the user cancelled.
+/// Backs `file.choose()` with the frontend's file dialog, falling back to R's
+/// console prompt if the dialog can't be shown. Returns the length of the path
+/// written to `buf`, or 0 if the user cancelled.
 unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_int) -> c_int {
-    let console = Console::get();
-    let Some(ui) = console.ui_comm() else {
-        return match R_CHOOSE_FILE_DEFAULT.get() {
-            Some(default) => default(new, buf, len),
-            None => 0,
-        };
+    let Ok(size) = usize::try_from(len) else {
+        return 0;
     };
+    if size == 0 {
+        return 0;
+    }
 
-    let params = SelectFileParams {
-        title: String::from("Select File"),
-        existing: new == 0,
-    };
-    let path = ui
-        .call_frontend_method(UiFrontendRequest::SelectFile(params))
-        .and_then(|path| match r_is_null(path.sexp) {
-            true => Ok(None),
-            false => Ok(Some(String::try_from(path)?)),
-        });
+    let path = Console::with(|console| {
+        let Some(ui) = console.ui_comm() else {
+            return Err(anyhow!("UI comm not connected"));
+        };
+        let params = SelectFileParams {
+            title: String::from("Select File"),
+            existing: new == 0,
+        };
+        let path = ui.call_frontend_method(UiFrontendRequest::SelectFile(params))?;
+        if r_is_null(path.sexp) {
+            return Ok(None);
+        }
+        Ok(Some(String::try_from(path)?))
+    });
+
     let path = match path {
         Ok(Some(path)) => path,
         Ok(None) => return 0,
         Err(err) => {
-            log::error!("Can't show file dialog: {err:?}");
-            return 0;
+            log::warn!("Can't show file dialog, prompting in console instead: {err:?}");
+            return match R_CHOOSE_FILE_DEFAULT.get() {
+                Some(default) => default(new, buf, len),
+                None => 0,
+            };
         },
     };
 
-    // Truncate to fit, leaving room for the nul terminator
-    let n = path.len().min(len as usize - 1);
-    std::ptr::copy_nonoverlapping(path.as_ptr(), buf as *mut u8, n);
-    *buf.add(n) = 0;
-    n as c_int
+    // A path that doesn't fit is reported with its full length and an empty
+    // `buf`, which `file.choose()` reports as "file name too long"
+    if path.len() >= size {
+        *buf = 0;
+        return c_int::try_from(path.len()).unwrap_or(c_int::MAX);
+    }
+
+    std::ptr::copy_nonoverlapping(path.as_ptr(), buf as *mut u8, path.len());
+    *buf.add(path.len()) = 0;
+    path.len() as c_int
 }
 
 pub fn run_r() {
