@@ -10,11 +10,9 @@ use std::ffi::c_int;
 use std::ffi::CStr;
 use std::sync::Condvar;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 
 use amalthea::comm::ui_comm::SelectFileParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
-use anyhow::anyhow;
 use harp::utils::r_is_null;
 use libr::ptr_R_Busy;
 use libr::ptr_R_ChooseFile;
@@ -50,7 +48,7 @@ use crate::signals::initialize_signal_handlers;
 type ChooseFileFn = unsafe extern "C-unwind" fn(c_int, *mut c_char, c_int) -> c_int;
 
 /// R's default `file.choose()` callback, which prompts in the console
-static R_CHOOSE_FILE_DEFAULT: OnceLock<ChooseFileFn> = OnceLock::new();
+static mut R_CHOOSE_FILE_DEFAULT: Option<ChooseFileFn> = None;
 
 // For shutdown signal in integration tests
 pub static CLEANUP_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
@@ -90,9 +88,7 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
-        if let Some(default) = libr::get(ptr_R_ChooseFile) {
-            let _ = R_CHOOSE_FILE_DEFAULT.set(default);
-        }
+        R_CHOOSE_FILE_DEFAULT = libr::get(ptr_R_ChooseFile);
         libr::set(ptr_R_ChooseFile, Some(r_choose_file));
 
         // See `Console::interrupt_events()` for documentation about this
@@ -134,7 +130,7 @@ pub fn setup_r(args: &Vec<String>) {
 
 /// Backs `file.choose()` with the frontend's file dialog, falling back to R's
 /// console prompt if the dialog can't be shown. Returns the length of the path
-/// written to `buf`, or 0 if the user cancelled.
+/// written to `buf`, or 0 if the user cancelled or there is no active request.
 unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_int) -> c_int {
     let Ok(size) = usize::try_from(len) else {
         return 0;
@@ -144,9 +140,10 @@ unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_i
     }
 
     let path = Console::with(|console| {
-        let Some(ui) = console.ui_comm() else {
-            return Err(anyhow!("UI comm not connected"));
-        };
+        let ui = console.try_ui_comm()?;
+        if !ui.has_originator() {
+            return Ok(None);
+        }
         let params = SelectFileParams {
             title: String::from("Select File"),
             existing: new == 0,
@@ -163,7 +160,7 @@ unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_i
         Ok(None) => return 0,
         Err(err) => {
             log::warn!("Can't show file dialog, prompting in console instead: {err:?}");
-            return match R_CHOOSE_FILE_DEFAULT.get() {
+            return match R_CHOOSE_FILE_DEFAULT {
                 Some(default) => default(new, buf, len),
                 None => 0,
             };

@@ -111,7 +111,7 @@ fn test_file_choose_errors_when_path_too_long() {
     let frontend = DummyArkFrontend::lock();
     let comm_id = frontend.open_ui_comm();
 
-    let path = format!("/{}", "a".repeat(2000));
+    let path = format!("/{}", "a".repeat(5000));
     send_file_choose(&frontend, "file.choose()", true, result(Value::from(path)));
 
     assert!(frontend
