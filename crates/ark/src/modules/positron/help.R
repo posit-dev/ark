@@ -98,14 +98,33 @@ help <- function(topic, package = NULL) {
 }
 
 # Cache sorted aliases, rebuilding native R's search database when library metadata
-# changes. Checking metadata also catches in-place updates that do not change the
-# library directory's mtime (which is what help.search() checks itself).
+# changes. Check library directories on each request, but scan package metadata
+# at most once a minute unless the libraries or search settings change. This avoids
+# per-package filesystem calls on every keystroke, especially on network libraries.
+# In-place updates may take a minute to appear, on the next request after expiry.
 .ps.help.searchIndex <- local({
     signature <- NULL
+    metadata_signature <- NULL
+    last_checked <- -Inf
     index <- NULL
 
     function() {
         libraries <- .libPaths()
+        current <- list(
+            libraries = libraries,
+            files = file.info(libraries)[,
+                c("size", "mtime", "ctime"),
+                drop = FALSE
+            ],
+            locale = Sys.getlocale("LC_CTYPE"),
+            collation = Sys.getlocale("LC_COLLATE"),
+            types = getOption("help.search.types")
+        )
+        now <- proc.time()[["elapsed"]]
+        if (identical(current, signature) && now - last_checked < 60) {
+            return(index)
+        }
+
         packages <- unlist(
             lapply(libraries, list.dirs, recursive = FALSE),
             use.names = FALSE
@@ -117,17 +136,14 @@ help <- function(topic, package = NULL) {
             ),
             use.names = FALSE
         )
-        current <- list(
-            libraries = libraries,
-            files = file.info(c(libraries, metadata))[,
-                c("size", "mtime", "ctime"),
-                drop = FALSE
-            ],
-            locale = Sys.getlocale("LC_CTYPE"),
-            collation = Sys.getlocale("LC_COLLATE"),
-            types = getOption("help.search.types")
-        )
-        if (!identical(current, signature)) {
+        current_metadata <- file.info(metadata)[,
+            c("size", "mtime", "ctime"),
+            drop = FALSE
+        ]
+        if (
+            !identical(current, signature) ||
+                !identical(current_metadata, metadata_signature)
+        ) {
             matches <- utils::help.search(
                 ".",
                 fields = "alias",
@@ -146,7 +162,9 @@ help <- function(topic, package = NULL) {
                 topics = topics[sorted, , drop = FALSE]
             )
             signature <<- current
+            metadata_signature <<- current_metadata
         }
+        last_checked <<- now
         index
     }
 })

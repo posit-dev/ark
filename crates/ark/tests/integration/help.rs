@@ -522,16 +522,38 @@ fn test_help_index_freshness() {
     assert!(r_task(|| {
         harp::parse_eval0(r#"
 local({
+    # Control elapsed time and count package scans without sleeping or needing NFS.
+    cache <- environment(.ps.help.searchIndex)
+    now <- 100
+    scans <- 0L
+    metadata_checks <- 0L
+    cache$proc.time <- function() c(elapsed = now)
+    cache$list.dirs <- function(...) {
+        scans <<- scans + 1L
+        base::list.dirs(...)
+    }
+    cache$file.info <- function(paths, ...) {
+        if (any(endsWith(paths, ".rds"))) {
+            metadata_checks <<- metadata_checks + 1L
+        }
+        base::file.info(paths, ...)
+    }
+    on.exit(rm(list = c("proc.time", "list.dirs", "file.info"), envir = cache), add = TRUE)
+    .ps.help.searchIndex()
     old_paths <- .libPaths()
     library <- tempfile("ark-help-index-")
     dir.create(library)
-    on.exit({ .libPaths(old_paths); unlink(library, recursive = TRUE) })
+    on.exit({ .libPaths(old_paths); unlink(library, recursive = TRUE) }, add = TRUE)
     dir.create(file.path(library, "stats"))
     stopifnot(file.copy(file.path(find.package("stats"), "Meta"), file.path(library, "stats"), recursive = TRUE))
+    before_paths_change <- scans
     .libPaths(c(library, old_paths))
     stopifnot(nrow(.ps.help.getHelpTopics("", 50L)) == 0L)
     stopifnot(nrow(.ps.help.getHelpTopics("lm", 1L)) == 1L)
     stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
+    stopifnot(scans == before_paths_change + length(.libPaths()))
+    initial_scans <- scans
+    initial_checks <- metadata_checks
     marker <- "zzzz_ark_help_cache_alias"
     stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     metadata <- file.path(library, "stats", "Meta", "hsearch.rds")
@@ -543,10 +565,21 @@ local({
     # Force a distinguishable metadata time even on low-resolution filesystems.
     # The library directory itself has not changed.
     Sys.setFileTime(metadata, Sys.time() + 2)
+    now <- 159
+    stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    stopifnot(scans == initial_scans, metadata_checks == initial_checks)
+    now <- 160
     stopifnot(identical(unname(as.list(.ps.help.getHelpTopics(marker, 50L))), list("stats", marker)))
+    stopifnot(scans == initial_scans + length(.libPaths()))
+    stopifnot(metadata_checks == initial_checks + 1L)
+    # Repeated requests do not repeat the full scan after expiry has been handled.
+    .ps.help.getHelpTopics(marker, 50L)
+    stopifnot(metadata_checks == initial_checks + 1L)
     stopifnot(nrow(utils::help.search(marker, agrep = FALSE)$matches) > 0L)
     unlink(file.path(library, "stats"), recursive = TRUE)
+    Sys.setFileTime(library, Sys.time() + 4)
     stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    stopifnot(metadata_checks == initial_checks + 2L)
     TRUE
 })
 
