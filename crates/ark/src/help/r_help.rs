@@ -93,7 +93,7 @@ impl RHelp {
             HelpBackendRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
-                match self.show_help_topic(topic.topic.clone()) {
+                match self.show_help_topic(topic.topic, topic.package_name) {
                     Ok(found) => Ok(HelpBackendReply::ShowHelpTopicReply(found)),
                     Err(err) => Err(err),
                 }
@@ -114,16 +114,20 @@ impl RHelp {
                     .add(params.query)
                     .add(params.limit as i32)
                     .call()?
-                    .to::<Vec<String>>()?;
-                let suggestions = topics
+                    .to::<Vec<RObject>>()?;
+                let [packages, labels] = topics.as_slice() else {
+                    return Err(anyhow!(
+                        "Expected package and label columns for Help suggestions."
+                    ));
+                };
+                let suggestions = Vec::<String>::try_from(packages)?
                     .into_iter()
-                    .filter_map(|entry| {
-                        let (package, topic) = entry.split_once('\u{1f}')?;
-                        Some(HelpTopicSuggestion {
-                            label: topic.to_string(),
-                            topic: format!("{package}::{topic}"),
-                            detail: Some(package.to_string()),
-                        })
+                    .zip(Vec::<String>::try_from(labels)?)
+                    .map(|(package, topic)| HelpTopicSuggestion {
+                        label: topic.clone(),
+                        topic,
+                        detail: Some(package.clone()),
+                        package: Some(package),
                     })
                     .collect();
                 Ok(HelpBackendReply::GetHelpTopicsReply(suggestions))
@@ -197,17 +201,15 @@ impl RHelp {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
-        // Suggestions contain literal package-qualified aliases, including `$` and
-        // `@`. Prefer their documentation before trying a custom expression handler.
-        if topic.contains("::") &&
-            RFunction::from(".ps.help.showHelpTopic")
-                .add(topic.clone())
-                .param("qualified_only", true)
+    fn show_help_topic(&self, topic: String, package: Option<String>) -> anyhow::Result<bool> {
+        // Suggestions carry literal aliases separately from their package. All
+        // other requests retain custom-handler-first expression resolution.
+        if let Some(package) = package {
+            return Ok(RFunction::from(".ps.help.showHelpTopic")
+                .add(topic)
+                .param("package", package)
                 .call()?
-                .to::<bool>()?
-        {
-            return Ok(true);
+                .to::<bool>()?);
         }
 
         let topic = HelpTopic::parse(topic);

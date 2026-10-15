@@ -41,25 +41,14 @@ help <- function(topic, package = NULL) {
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
 #' @export
-.ps.help.showHelpTopic <- function(topic, qualified_only = FALSE) {
-    info <- split_topic(topic)
-    topic <- info$topic
-    package <- info$package
-
-    # Try to find help on the topic.
-    if (qualified_only) {
-        if (is.null(package)) {
-            return(FALSE)
-        }
-        # A qualified expression may not be an alias (or name an installed package).
-        # Leave it to the custom handler when literal help cannot be found.
-        results <- tryCatch(
-            suppressWarnings(help(topic, package)),
-            error = function(e) character()
-        )
-    } else {
-        results <- help(topic, package)
+.ps.help.showHelpTopic <- function(topic, package = NULL) {
+    if (is.null(package)) {
+        info <- split_topic(topic)
+        topic <- info$topic
+        package <- info$package
     }
+
+    results <- help(topic, package)
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -148,11 +137,7 @@ help <- function(topic, package = NULL) {
             sorted <- order(labels, topics$package)
             index <<- list(
                 labels = labels[sorted],
-                entries = paste(
-                    topics$package[sorted],
-                    topics$label[sorted],
-                    sep = "\u001f"
-                )
+                topics = topics[sorted, , drop = FALSE]
             )
             signature <<- current
         }
@@ -160,7 +145,7 @@ help <- function(topic, package = NULL) {
     }
 })
 
-# Return only matching package-qualified aliases, ranked as in the search box:
+# Return matching packages and literal aliases, ranked as in the search box:
 # exact label, prefix, then substring; alphabetical within each group.
 #' @export
 .ps.help.getHelpTopics <- function(query, limit) {
@@ -175,7 +160,7 @@ help <- function(topic, package = NULL) {
     }
     query <- tolower(trimws(query))
     if (!nzchar(query)) {
-        return(character())
+        return(data.frame(package = character(), label = character()))
     }
     index <- .ps.help.searchIndex()
     hits <- which(grepl(query, index$labels, fixed = TRUE))
@@ -185,7 +170,7 @@ help <- function(topic, package = NULL) {
         0L,
         ifelse(startsWith(labels, query), 1L, 2L)
     )
-    index$entries[utils::head(hits[order(rank)], limit)]
+    index$topics[utils::head(hits[order(rank)], limit), , drop = FALSE]
 }
 
 # Resolve the package specifier, if there is one

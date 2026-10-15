@@ -21,7 +21,11 @@ pub struct HelpTopicSuggestion {
 	pub topic: String,
 
 	/// Optional context such as the package containing the topic.
-	pub detail: Option<String>
+	pub detail: Option<String>,
+
+	/// Optional package to send unchanged with topic when opening this
+	/// suggestion.
+	pub package: Option<String>
 }
 
 /// Possible values for Kind in ShowHelp
@@ -45,6 +49,11 @@ pub enum ShowHelpKind {
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
+
+	/// Optional package containing a literal documentation alias. When
+	/// supplied, topic is an exact alias, not an expression. Omit for normal
+	/// help resolution.
+	pub package_name: Option<String>,
 }
 
 /// Parameters for the SearchHelp method.
@@ -122,6 +131,7 @@ pub enum HelpBackendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
@@ -149,6 +159,7 @@ pub enum HelpFrontendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum HelpFrontendReply {
 }
 

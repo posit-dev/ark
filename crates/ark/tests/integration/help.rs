@@ -89,6 +89,7 @@ impl TestRHelp {
     fn test_topic(&self, topic: &str, id: &str) {
         let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
             topic: String::from(topic),
+            package_name: None,
         });
         assert_eq!(
             self.request(request, id),
@@ -165,9 +166,11 @@ fn test_help_search_comm() {
     assert_eq!(topics[0].label, "plot");
     assert!(r_help.get_topics("", 50, "empty-help-topics").is_empty());
     assert_eq!(r_help.get_topics("plot", 1, "limited-help-topics").len(), 1);
-    assert!(topics
-        .iter()
-        .any(|topic| { topic.label == "plot" && topic.topic == "graphics::plot" }));
+    assert!(topics.iter().any(|topic| {
+        topic.label == "plot" &&
+            topic.topic == "plot" &&
+            topic.package.as_deref() == Some("graphics")
+    }));
 }
 
 #[test]
@@ -184,7 +187,8 @@ fn test_help_search_query_edge_cases() {
     }
     let topics = r_help.get_topics("[.data.frame", 50, "help-literal-topics");
     assert_eq!(topics[0].label, "[.data.frame");
-    assert_eq!(topics[0].topic, "base::[.data.frame");
+    assert_eq!(topics[0].topic, "[.data.frame");
+    assert_eq!(topics[0].package.as_deref(), Some("base"));
 
     assert!(r_task(|| {
         harp::parse_eval0(
@@ -269,6 +273,44 @@ fn test_custom_help_handlers() {
         "qualified-expression",
     );
     assert!(r_task(|| harp::parse_eval_global("called").unwrap().to::<bool>()).unwrap());
+}
+
+#[test]
+fn test_qualified_topic_preserves_custom_handler() {
+    let r_help = TestRHelp::new();
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            # Give a documented export an explicit class, as reticulate objects have.
+            ns <- asNamespace("stats")
+            unlockBinding("median", ns)
+            assign("median", structure(stats::median, class = "help_test"), ns)
+            lockBinding("median", ns)
+            called <- FALSE
+            .ark.register_method("ark_positron_help_get_handler", "help_test", function(x) {
+                function() { called <<- TRUE }
+            })
+            stopifnot(length(utils::help("median", package = "stats")) > 0L)
+        "#,
+        )
+        .unwrap();
+    });
+    r_help.test_topic("stats::median", "custom-handler-first");
+    assert!(r_task(|| harp::parse_eval_global("called").unwrap().to::<bool>()).unwrap());
+    r_task(|| {
+        harp::parse_eval_global("called <- FALSE").unwrap();
+    });
+    assert_eq!(
+        r_help.request(
+            HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
+                topic: String::from("median"),
+                package_name: Some(String::from("stats")),
+            }),
+            "literal-suggestion"
+        ),
+        HelpBackendReply::ShowHelpTopicReply(true)
+    );
+    assert!(!r_task(|| harp::parse_eval_global("called").unwrap().to::<bool>()).unwrap());
 }
 
 /// End-to-end test that a help URL browsed from R reaches the frontend as a
@@ -462,12 +504,12 @@ local({
     dir.create(file.path(library, "stats"))
     stopifnot(file.copy(file.path(find.package("stats"), "Meta"), file.path(library, "stats"), recursive = TRUE))
     .libPaths(c(library, old_paths))
-    stopifnot(length(.ps.help.getHelpTopics("", 50L)) == 0L)
-    stopifnot(length(.ps.help.getHelpTopics("lm", 1L)) == 1L)
+    stopifnot(nrow(.ps.help.getHelpTopics("", 50L)) == 0L)
+    stopifnot(nrow(.ps.help.getHelpTopics("lm", 1L)) == 1L)
     stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
     stopifnot(inherits(try(.ps.help.getHelpTopics("lm", 0L), silent = TRUE), "try-error"))
     marker <- "zzzz_ark_help_cache_alias"
-    stopifnot(length(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     metadata <- file.path(library, "stats", "Meta", "hsearch.rds")
     db <- readRDS(metadata)
     alias <- db[[2L]][1L, , drop = FALSE]
@@ -477,10 +519,10 @@ local({
     # Force a distinguishable metadata time even on low-resolution filesystems.
     # The library directory itself has not changed.
     Sys.setFileTime(metadata, Sys.time() + 2)
-    stopifnot(identical(.ps.help.getHelpTopics(marker, 50L), paste("stats", marker, sep = "\u001f")))
+    stopifnot(identical(unname(as.list(.ps.help.getHelpTopics(marker, 50L))), list("stats", marker)))
     stopifnot(nrow(utils::help.search(marker, agrep = FALSE)$matches) > 0L)
     unlink(file.path(library, "stats"), recursive = TRUE)
-    stopifnot(length(.ps.help.getHelpTopics(marker, 50L)) == 0L)
+    stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     TRUE
 })
 
@@ -530,6 +572,7 @@ fn test_help_punctuation_suggestions_open_exact_target() {
 
     for (package, alias, target) in [
         ("arkhelpaliases", "$.data.frame", "Extract"),
+        ("data.table", ":=", "assign"),
         ("base", "$", "Extract"),
         ("base", "$<-", "Extract"),
         ("base", "@", "slotOp"),
@@ -566,15 +609,23 @@ fn test_help_punctuation_suggestions_open_exact_target() {
                 suggestion.label == alias && suggestion.detail.as_deref() == Some(package)
             })
             .unwrap();
-        assert_eq!(suggestion.topic, format!("{package}::{alias}"));
-        assert_help_topic_target(&frontend, &comm_id, &suggestion.topic, package, target);
+        assert_eq!(suggestion.topic, alias);
+        assert_eq!(suggestion.package.as_deref(), Some(package));
+        assert_help_topic_target(
+            &frontend,
+            &comm_id,
+            &suggestion.topic,
+            suggestion.package.as_deref(),
+            package,
+            target,
+        );
     }
     for (topic, target) in [
         (":", "Colon"),
         ("::", "ns-dblcolon"),
         (":::", "ns-dblcolon"),
     ] {
-        assert_help_topic_target(&frontend, &comm_id, topic, "base", target);
+        assert_help_topic_target(&frontend, &comm_id, topic, None, "base", target);
     }
     frontend.execute_request_invisibly(
         ".libPaths(old_alias_paths); unlink(alias_library, recursive = TRUE)",
@@ -585,6 +636,7 @@ fn assert_help_topic_target(
     frontend: &DummyArkFrontend,
     comm_id: &str,
     topic: &str,
+    request_package: Option<&str>,
     package: &str,
     target: &str,
 ) {
@@ -592,7 +644,7 @@ fn assert_help_topic_target(
         comm_id: String::from(comm_id),
         data: serde_json::json!({
             "jsonrpc": "2.0", "id": "open-alias", "method": "show_help_topic",
-            "params": { "topic": topic }
+            "params": { "topic": topic, "package_name": request_package }
         }),
     });
     frontend.recv_iopub_busy();
