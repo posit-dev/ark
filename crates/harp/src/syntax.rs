@@ -93,13 +93,33 @@ pub fn sym_quote_invalid(name: &str) -> String {
 }
 
 pub fn sym_quote(name: &str) -> String {
-    format!("`{}`", name.replace("`", "\\`"))
+    format!("`{}`", name.replace('\\', "\\\\").replace('`', "\\`"))
+}
+
+/// Formats a string as a double-quoted R string literal.
+pub fn str_quote(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[cfg(test)]
 mod tests {
     use super::is_reserved_word;
     use super::is_valid_symbol;
+    use super::str_quote;
+    use super::sym_quote;
     use super::RESERVED_WORDS;
 
     #[test]
@@ -151,5 +171,22 @@ mod tests {
     #[test]
     fn test_is_syntactic_symbol_empty() {
         assert!(!is_valid_symbol(""));
+    }
+
+    #[test]
+    fn test_sym_quote() {
+        assert_eq!(sym_quote("a b"), "`a b`");
+        assert_eq!(sym_quote("a`b"), r"`a\`b`");
+        assert_eq!(sym_quote(r"a\b"), r"`a\\b`");
+    }
+
+    #[test]
+    fn test_str_quote() {
+        assert_eq!(str_quote("hello"), r#""hello""#);
+        assert_eq!(str_quote(""), r#""""#);
+        assert_eq!(str_quote(r#"say "hello""#), r#""say \"hello\"""#);
+        assert_eq!(str_quote(r"C:\Users\jenny"), r#""C:\\Users\\jenny""#);
+        assert_eq!(str_quote("a\nb\tc\r"), r#""a\nb\tc\r""#);
+        assert_eq!(str_quote("it's `x`"), r#""it's `x`""#);
     }
 }

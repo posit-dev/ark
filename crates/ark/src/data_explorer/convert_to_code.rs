@@ -14,6 +14,9 @@ use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::TextSearchType;
+use harp::syntax::is_valid_symbol;
+use harp::syntax::str_quote;
+use harp::syntax::sym_quote;
 
 /// Sort key with resolved column name
 #[derive(Clone, Debug)]
@@ -210,13 +213,13 @@ pub fn suggest_code_syntax() -> CodeSyntaxName {
 fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
     match display_type {
         // For strings, wrap in quotes
-        ColumnDisplayType::String => escape_character_constant(value),
+        ColumnDisplayType::String => str_quote(value),
 
         // For date and datetime types, wrap in quotes
         ColumnDisplayType::Date |
         ColumnDisplayType::Datetime |
         ColumnDisplayType::Time |
-        ColumnDisplayType::Interval => escape_character_constant(value),
+        ColumnDisplayType::Interval => str_quote(value),
 
         // For booleans, return as R logical constants
         ColumnDisplayType::Boolean => {
@@ -236,7 +239,7 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
         },
 
         // For any other type, default to quoting
-        _ => escape_character_constant(value),
+        _ => str_quote(value),
     }
 }
 
@@ -305,27 +308,27 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 match search.search_type {
                     TextSearchType::Contains => Some(format!(
                         "grepl({}, {}, fixed = TRUE)",
-                        escape_character_constant(&search.term),
+                        str_quote(&search.term),
                         column_name
                     )),
                     TextSearchType::NotContains => Some(format!(
                         "grepl({}, {}, fixed = TRUE, invert = TRUE)",
-                        escape_character_constant(&search.term),
+                        str_quote(&search.term),
                         column_name
                     )),
                     TextSearchType::StartsWith => Some(format!(
                         "startsWith({}, {})",
                         column_name,
-                        escape_character_constant(&search.term)
+                        str_quote(&search.term)
                     )),
                     TextSearchType::EndsWith => Some(format!(
                         "endsWith({}, {})",
                         column_name,
-                        escape_character_constant(&search.term)
+                        str_quote(&search.term)
                     )),
                     TextSearchType::RegexMatch => Some(format!(
                         "grepl({}, {})",
-                        escape_character_constant(&search.term),
+                        str_quote(&search.term),
                         column_name
                     )),
                 }
@@ -338,7 +341,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 let values = set
                     .values
                     .iter()
-                    .map(|v| escape_character_constant(v))
+                    .map(|v| str_quote(v))
                     .collect::<Vec<_>>()
                     .join(", ");
 
@@ -354,87 +357,24 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
     }
 }
 
-/// Non-syntactic column names need to be surrounded by backticks
+/// Non-syntactic column names need to be surrounded by backticks. Names made
+/// only of dots and `..N` forms are syntactic, but they have special meaning
+/// in dplyr and data.table code, so they get backticks too.
 fn needs_backticks(name: &str) -> bool {
-    // I think an empty string is super degenerate here, but will "handle" for
-    // some semblance of completeness.
-    if name.is_empty() {
+    if !is_valid_symbol(name) || name.chars().all(|c| c == '.') {
         return true;
     }
-
-    const RESERVED: &[&str] = &[
-        "if",
-        "else",
-        "repeat",
-        "while",
-        "function",
-        "for",
-        "in",
-        "next",
-        "break",
-        "TRUE",
-        "FALSE",
-        "NULL",
-        "Inf",
-        "NaN",
-        "NA",
-        "NA_integer_",
-        "NA_real_",
-        "NA_complex_",
-        "NA_character_",
-    ];
-    if RESERVED.contains(&name) {
-        return true;
-    }
-
-    // We're mostly targetting `...` and `.` here, but let's just backtick any
-    // name that consists entirely of dots.
-    if name.chars().all(|c| c == '.') {
-        return true;
-    }
-
-    // Check for ..j where j is one or more digits (..1, ..2, ..123, etc.)
-    if let Some(rest) = name.strip_prefix("..") {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return true;
-        }
-    }
-
-    // Must start with
-    // * letter or
-    // * or a dot followed by a non-digit
-    let first = name.chars().next().unwrap();
-    if !first.is_alphabetic() && first != '.' {
-        return true;
-    }
-    if first == '.' {
-        if let Some(second) = name.chars().nth(1) {
-            if second.is_ascii_digit() {
-                return true;
-            }
-        }
-    }
-
-    // All characters must be alphanumeric, dot, or underscore
-    !name
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+    name.strip_prefix("..")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Formats a column name for use in R code, adding backticks if needed
 fn format_column_name(name: &str) -> String {
     if needs_backticks(name) {
-        format!("`{}`", name)
+        sym_quote(name)
     } else {
         name.to_string()
     }
-}
-
-/// Escape certain characters
-fn escape_character_constant(s: &str) -> String {
-    // Escape backslashes first, then double quotes
-    let escaped = s.replace("\\", "\\\\").replace("\"", "\\\"");
-    format!("\"{}\"", escaped)
 }
 
 #[cfg(test)]
@@ -937,35 +877,6 @@ mod tests {
         assert_eq!(format_column_name("column-name"), "`column-name`");
         assert_eq!(format_column_name("if"), "`if`");
         assert_eq!(format_column_name("123abc"), "`123abc`");
-    }
-
-    #[test]
-    fn test_escape_character_constant() {
-        assert_eq!(escape_character_constant("hello"), r#""hello""#);
-
-        // String with embedded double quotes
-        assert_eq!(
-            escape_character_constant(r#"say "hello""#),
-            r#""say \"hello\"""#
-        );
-
-        // String with backslashes
-        assert_eq!(
-            escape_character_constant(r"C:\Users\jenny"),
-            r#""C:\\Users\\jenny""#
-        );
-
-        // String with both backslashes and quotes
-        assert_eq!(escape_character_constant(r#"a\"b"#), r#""a\\\"b""#);
-
-        // Empty string
-        assert_eq!(escape_character_constant(""), r#""""#);
-
-        // String with single quote - not escaped, R accepts it in double-quoted strings
-        assert_eq!(escape_character_constant("it's"), r#""it's""#);
-
-        // String with backtick - not escaped, R accepts it in double-quoted strings
-        assert_eq!(escape_character_constant("code: `x`"), r#""code: `x`""#);
     }
 
     #[test]

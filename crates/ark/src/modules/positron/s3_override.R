@@ -85,7 +85,7 @@ reattach_S3_overrides <- function() {
     for (name in names) {
         if (exists(name, envir = table)) {
             # retrieve reference to method
-            method = get(name, envir = table)
+            method <- get(name, envir = table)
 
             # if we didn't put the method there, we've been replaced; reattach our own method.
             if (
