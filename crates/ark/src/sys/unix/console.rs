@@ -6,11 +6,17 @@
  */
 
 use std::ffi::c_char;
+use std::ffi::c_int;
 use std::ffi::CStr;
 use std::sync::Condvar;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
+use amalthea::comm::ui_comm::SelectFileParams;
+use amalthea::comm::ui_comm::UiFrontendRequest;
+use harp::utils::r_is_null;
 use libr::ptr_R_Busy;
+use libr::ptr_R_ChooseFile;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
 use libr::ptr_R_Suicide;
@@ -39,6 +45,11 @@ use crate::console::r_suicide;
 use crate::console::r_write_console;
 use crate::console::Console;
 use crate::signals::initialize_signal_handlers;
+
+type ChooseFileFn = unsafe extern "C-unwind" fn(c_int, *mut c_char, c_int) -> c_int;
+
+/// R's default `file.choose()` callback, which prompts in the console
+static R_CHOOSE_FILE_DEFAULT: OnceLock<ChooseFileFn> = OnceLock::new();
 
 // For shutdown signal in integration tests
 pub static CLEANUP_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
@@ -78,6 +89,11 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
+        if let Some(default) = libr::get(ptr_R_ChooseFile) {
+            let _ = R_CHOOSE_FILE_DEFAULT.set(default);
+        }
+        libr::set(ptr_R_ChooseFile, Some(r_choose_file));
+
         // See `Console::interrupt_events()` for documentation about this
         libr::set(R_PolledEvents, Some(r_interrupt_events));
 
@@ -113,6 +129,43 @@ pub fn setup_r(args: &Vec<String>) {
         // Set up main loop
         setup_Rmainloop();
     }
+}
+
+/// Backs `file.choose()` with the frontend's file dialog. Returns the length of
+/// the path written to `buf`, or 0 if the user cancelled.
+unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_int) -> c_int {
+    let console = Console::get();
+    let Some(ui) = console.ui_comm() else {
+        return match R_CHOOSE_FILE_DEFAULT.get() {
+            Some(default) => default(new, buf, len),
+            None => 0,
+        };
+    };
+
+    let params = SelectFileParams {
+        title: String::from("Select File"),
+        existing: new == 0,
+    };
+    let path = ui
+        .call_frontend_method(UiFrontendRequest::SelectFile(params))
+        .and_then(|path| match r_is_null(path.sexp) {
+            true => Ok(None),
+            false => Ok(Some(String::try_from(path)?)),
+        });
+    let path = match path {
+        Ok(Some(path)) => path,
+        Ok(None) => return 0,
+        Err(err) => {
+            log::error!("Can't show file dialog: {err:?}");
+            return 0;
+        },
+    };
+
+    // Truncate to fit, leaving room for the nul terminator
+    let n = path.len().min(len as usize - 1);
+    std::ptr::copy_nonoverlapping(path.as_ptr(), buf as *mut u8, n);
+    *buf.add(n) = 0;
+    n as c_int
 }
 
 pub fn run_r() {
