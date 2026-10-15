@@ -353,8 +353,29 @@ pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
 
 #[cfg(test)]
 mod tests {
+    use amalthea::comm::help_comm::GetHelpTopicsParams;
+    use amalthea::comm::help_comm::HelpBackendRequest;
+    use anyhow::anyhow;
+
+    use super::RHelp;
     use super::SearchContext;
     use super::SEARCH_ID;
+
+    #[test]
+    fn help_suggestion_limit_is_validated_at_protocol_boundary() {
+        for limit in [-1, 0, 51, i64::MAX] {
+            let result = RHelp::default().handle_rpc(HelpBackendRequest::GetHelpTopics(
+                GetHelpTopicsParams {
+                    query: String::from("lm"),
+                    limit,
+                },
+            ));
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "Help suggestion limit must be between 1 and 50."
+            );
+        }
+    }
 
     #[test]
     fn search_context_restores_after_error() {
@@ -364,7 +385,7 @@ mod tests {
                 SEARCH_ID.with(|id| id.borrow().clone()),
                 Some(String::from("inner"))
             );
-            Err(anyhow::anyhow!("search failed"))
+            Err(anyhow!("search failed"))
         }
 
         assert_eq!(SEARCH_ID.with(|id| id.borrow().clone()), None);

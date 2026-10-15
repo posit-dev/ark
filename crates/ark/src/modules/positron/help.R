@@ -64,6 +64,10 @@ help <- function(topic, package = NULL) {
 # Search all installed help documentation and show R's native HTML results page.
 #' @export
 .ps.help.searchHelp <- function(query) {
+    if (!nzchar(trimws(query))) {
+        return(FALSE)
+    }
+
     .ps.help.searchIndex()
     results <- .ps.help.searchResults(query)
 
@@ -151,15 +155,6 @@ help <- function(topic, package = NULL) {
 # exact label, prefix, then substring; alphabetical within each group.
 #' @export
 .ps.help.getHelpTopics <- function(query, limit) {
-    if (
-        length(limit) != 1L ||
-            is.na(limit) ||
-            limit < 1L ||
-            limit > 50L ||
-            limit != as.integer(limit)
-    ) {
-        stop("Help suggestion limit must be between 1 and 50.")
-    }
     query <- tolower(trimws(query))
     if (!nzchar(query)) {
         return(data.frame(package = character(), label = character()))

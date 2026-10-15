@@ -174,6 +174,23 @@ fn test_help_search_comm() {
 }
 
 #[test]
+fn test_help_search_empty_query() {
+    let r_help = TestRHelp::new();
+    for query in ["", " ", "\t\n"] {
+        assert_eq!(
+            r_help.request(
+                HelpBackendRequest::SearchHelp(SearchHelpParams {
+                    query: String::from(query),
+                    search_id: String::from("empty-search"),
+                }),
+                "empty-search",
+            ),
+            HelpBackendReply::SearchHelpReply(false)
+        );
+    }
+}
+
+#[test]
 fn test_help_search_query_edge_cases() {
     let r_help = TestRHelp::new();
     for query in [
@@ -515,7 +532,6 @@ local({
     stopifnot(nrow(.ps.help.getHelpTopics("", 50L)) == 0L)
     stopifnot(nrow(.ps.help.getHelpTopics("lm", 1L)) == 1L)
     stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
-    stopifnot(inherits(try(.ps.help.getHelpTopics("lm", 0L), silent = TRUE), "try-error"))
     marker <- "zzzz_ark_help_cache_alias"
     stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     metadata <- file.path(library, "stats", "Meta", "hsearch.rds")
