@@ -299,6 +299,9 @@ pub struct SelectFileParams {
 	/// Whether the file must already exist. If false, the user may also enter
 	/// the name of a new file.
 	pub existing: bool,
+
+	/// The directory the file dialog starts in
+	pub default_dir: String,
 }
 
 /// Parameters for the PromptState method.

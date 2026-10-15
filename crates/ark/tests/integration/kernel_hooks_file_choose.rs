@@ -39,6 +39,10 @@ fn send_file_choose(frontend: &DummyArkFrontend, code: &str, existing: bool, rep
         UiFrontendRequest::SelectFile(SelectFileParams {
             title: String::from("Select File"),
             existing,
+            default_dir: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         })
     );
 
@@ -87,6 +91,36 @@ fn test_file_choose_new_allows_new_file() {
         "[1] \"/data/new.csv\""
     );
     frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// The dialog starts in R's working directory.
+#[test]
+fn test_file_choose_starts_in_working_directory() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("setwd('/'); file.choose()", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let request = assert_matches!(frontend.recv_stdin(), Message::CommRequest(msg) => msg.content);
+    let params = assert_matches!(request, UiFrontendRequest::SelectFile(params) => params);
+    assert_eq!(params.default_dir, "/");
+
+    frontend.send_stdin(result(Value::from("/file.csv")));
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"/file.csv\"");
+    frontend.recv_ui_prompt_state(&comm_id);
+    assert_eq!(
+        frontend.recv_iopub_comm_msg().data["method"],
+        "working_directory"
+    );
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
