@@ -100,7 +100,11 @@ view <- function(
 }
 
 is_single_string <- function(x) {
-    is.character(x) && length(x) == 1 && is.null(dim(x)) && !is.object(x)
+    is.character(x) &&
+        length(x) == 1 &&
+        !is.na(x) &&
+        is.null(dim(x)) &&
+        !is.object(x)
 }
 
 # A single string opens in an untitled editor.
