@@ -1,3 +1,5 @@
+use std::fs;
+
 use oak_db::DbInputs;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
@@ -167,6 +169,51 @@ fn test_notebook_diagnostics_ignore_library_in_later_cell() {
     assert_eq!(cell_diagnostic_messages(&state, 0), vec![
         "No symbol named 'path_to_file' in scope.".to_string()
     ]);
+}
+
+fn write_package(library: &tempfile::TempDir, name: &str, description: &str, namespace: &str) {
+    let package = library.path().join(name);
+    fs::create_dir(&package).unwrap();
+    fs::write(package.join("DESCRIPTION"), description).unwrap();
+    fs::write(package.join("NAMESPACE"), namespace).unwrap();
+}
+
+#[test]
+fn test_notebook_diagnostics_see_depends_of_library_in_earlier_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    write_package(
+        &library,
+        "colony",
+        "Package: colony\nVersion: 1.0\nDepends: penguins\n",
+        "",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(colony)\n"),
+        (1, "path_to_file()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_diagnostics_see_tidyverse_members_in_earlier_cell() {
+    // `library(tidyverse)` attaches its members by name, so `tidyverse`
+    // itself does not need to be installed.
+    let library = tempfile::tempdir().unwrap();
+    write_package(
+        &library,
+        "dplyr",
+        "Package: dplyr\nVersion: 1.0\n",
+        "export(mutate)\n",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(tidyverse)\n"),
+        (1, "mutate()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
 }
 
 #[test]
