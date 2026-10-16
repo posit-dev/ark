@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use ark_test::DummyArkFrontend;
 use serde_json::json;
+use serde_json::Value;
 
 #[test]
 fn test_lsp_init() {
@@ -22,6 +23,77 @@ fn test_lsp_init() {
 
     // Verify the server reports completion support
     assert!(lsp.server_capabilities().completion_provider.is_some());
+}
+
+// 157 exceeds the transport's default four active handlers plus 100 buffered
+// handlers. The configuration response is deliberately ordered behind the burst.
+#[test]
+fn test_lsp_configuration_response_survives_request_burst() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let result = (|| -> anyhow::Result<()> {
+        let uri = lsp.open_document("configuration_response_request_burst.R", "foo <- 1\n");
+        let document_symbol_params = json!({
+            "textDocument": { "uri": uri },
+        });
+        let expected_symbols = json!([
+            {
+                "name": "foo",
+                "kind": 13,
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 8 },
+                },
+                "selectionRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 8 },
+                },
+                "children": [],
+            }
+        ]);
+
+        assert_eq!(
+            lsp.send_request(
+                "textDocument/documentSymbol",
+                document_symbol_params.clone()
+            ),
+            expected_symbols
+        );
+
+        lsp.send_notification(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": {} }),
+        );
+        let (configuration_id, configuration_params) =
+            lsp.recv_server_request_without_reply("workspace/configuration");
+        let configuration_items = configuration_params["items"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Missing workspace configuration items"))?;
+
+        let mut ids = Vec::with_capacity(157);
+        for _ in 0..157 {
+            ids.push(lsp.send_request_raw(
+                "textDocument/documentSymbol",
+                document_symbol_params.clone(),
+            ));
+        }
+        lsp.send_server_response(
+            configuration_id,
+            Value::Array(vec![Value::Null; configuration_items.len()]),
+        );
+
+        let responses = lsp.recv_responses(&ids, Duration::from_secs(2))?;
+        assert_eq!(responses.len(), 157);
+        for response in responses {
+            assert_eq!(response, expected_symbols);
+        }
+
+        Ok(())
+    })();
+
+    lsp.disconnect_abruptly();
+    result
 }
 
 #[test]

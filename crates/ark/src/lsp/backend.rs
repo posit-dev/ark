@@ -764,7 +764,10 @@ pub(crate) fn start_lsp(
         };
         let service = CatchServicePanics::new(service, client.clone(), service_context);
 
-        let server = Server::new(read, write, socket);
+        // Finite transport concurrency and its pending queue can stop the socket reader while
+        // handlers await the serial Ark main loop, which can await a client configuration response.
+        // Unlimited admission keeps the reader progressing without parallelizing main-loop handlers.
+        let server = Server::new(read, write, socket).concurrency_level(usize::MAX);
 
         let serving = async {
             tokio::select! {
