@@ -611,24 +611,34 @@ fn has_viewer(value: SEXP, has_children: bool) -> bool {
         Ok(None) => {
             r_is_data_frame(value) ||
                 r_is_matrix(value) ||
-                (is_explorable(value) && has_children) ||
+                (is_explorable(value) && !r_is_atomic(value) && has_children) ||
                 is_viewable_character(value)
         },
     }
 }
 
-/// Whether the Object Explorer can show an object: a list (but not a data
-/// frame or matrix), an environment, an S4 object, a pairlist, or an
+/// Whether the Object Explorer can show an object: a list or atomic vector (but
+/// not a data frame or matrix), an environment, an S4 object, a pairlist, or an
 /// expression vector.
 pub(crate) fn is_explorable(value: SEXP) -> bool {
     if r_is_null(value) || r_is_data_frame(value) || r_is_matrix(value) {
         return false;
     }
-    r_is_s4(value) || matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
+    r_is_s4(value) ||
+        r_is_atomic(value) ||
+        matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
 }
 
-/// Whether a plain, non-empty character vector can be viewed. A single string
-/// opens in an untitled editor and a longer vector in the Object Explorer.
+fn r_is_atomic(value: SEXP) -> bool {
+    matches!(
+        r_typeof(value),
+        LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP
+    )
+}
+
+/// Whether a plain, non-empty character vector gets a viewer button in the
+/// Variables pane. Full text search makes the Object Explorer most useful for
+/// these, unlike other atomic vectors.
 pub(crate) fn is_viewable_character(value: SEXP) -> bool {
     r_typeof(value) == STRSXP &&
         !r_is_object(value) &&

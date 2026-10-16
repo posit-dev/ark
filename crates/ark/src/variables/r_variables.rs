@@ -27,6 +27,7 @@ use harp::environment::EnvironmentFilter;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::get_option;
+use harp::object::r_length;
 use harp::object::RObject;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_function;
@@ -357,13 +358,15 @@ impl RVariables {
                 return Ok(None);
             }
 
-            if is_explorable(obj.sexp) {
-                return self.view_object(obj, path, env).map(Some);
+            if is_viewable_character(obj.sexp) && r_length(obj.sexp) == 1 {
+                RFunction::new("", "view_string")
+                    .add(obj.sexp)
+                    .call_in(ARK_ENVS.positron_ns)?;
+                return Ok(None);
             }
 
-            if is_viewable_character(obj.sexp) {
-                self.view_character(obj, path, env)?;
-                return Ok(None);
+            if is_explorable(obj.sexp) {
+                return self.view_object(obj, path, env).map(Some);
             }
 
             let name = unsafe { path.get_unchecked(path.len() - 1) };
@@ -413,29 +416,6 @@ impl RVariables {
         Console::get_mut()
             .comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))
             .map_err(harp::Error::Anyhow)
-    }
-
-    /// Views a character vector: a single string opens in an untitled editor
-    /// and a longer vector in an Object Explorer.
-    fn view_character(
-        &self,
-        obj: RObject,
-        path: &[String],
-        env: RObject,
-    ) -> Result<(), harp::error::Error> {
-        let Some((name, path_in_binding)) = path.split_first() else {
-            return Err(harp::Error::Anyhow(anyhow!("Can't view an empty path")));
-        };
-        let value = PositronVariable::resolve_data_object(env, std::slice::from_ref(name))?;
-        let accessor = path_accessor(name, value, path_in_binding);
-        let title = accessor.clone().unwrap_or_else(|| name.clone());
-
-        RFunction::new("", "view_character")
-            .add(obj.sexp)
-            .add(title)
-            .add(accessor.unwrap_or_default())
-            .call_in(ARK_ENVS.positron_ns)?;
-        Ok(())
     }
 
     /// Query table summary for the given variable.
