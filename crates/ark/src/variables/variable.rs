@@ -21,6 +21,7 @@ use harp::environment::EnvironmentFilter;
 use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::r_dim;
 use harp::object::r_length;
 use harp::object::RObject;
 use harp::r_null;
@@ -37,6 +38,7 @@ use harp::utils::r_is_data_frame;
 use harp::utils::r_is_function;
 use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
+use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_is_unbound;
@@ -607,7 +609,10 @@ fn has_viewer(value: SEXP, has_children: bool) -> bool {
         // No method found: data frames and matrices open in the Data Explorer,
         // and other containers with children open in the Object Explorer.
         Ok(None) => {
-            r_is_data_frame(value) || r_is_matrix(value) || (is_explorable(value) && has_children)
+            r_is_data_frame(value) ||
+                r_is_matrix(value) ||
+                (is_explorable(value) && has_children) ||
+                is_viewable_character(value)
         },
     }
 }
@@ -620,6 +625,15 @@ pub(crate) fn is_explorable(value: SEXP) -> bool {
         return false;
     }
     r_is_s4(value) || matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
+}
+
+/// Whether a plain, non-empty character vector can be viewed. A single string
+/// opens in an untitled editor and a longer vector in the Object Explorer.
+pub(crate) fn is_viewable_character(value: SEXP) -> bool {
+    r_typeof(value) == STRSXP &&
+        !r_is_object(value) &&
+        r_dim(value) == r_null() &&
+        r_length(value) > 0
 }
 
 /// Try to view an object using a custom view method.
@@ -1938,6 +1952,20 @@ mod tests {
                 "#,
             )
             .unwrap();
+        })
+    }
+
+    #[test]
+    fn test_has_viewer_character() {
+        r_task(|| {
+            let viewable =
+                |code: &str| is_viewable_character(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(viewable("'a'"));
+            assert!(viewable("c(a = 'a', b = 'b')"));
+            assert!(!viewable("character()"));
+            assert!(!viewable("matrix(letters[1:4], 2)"));
+            assert!(!viewable("factor('a')"));
+            assert!(!viewable("1:3"));
         })
     }
 

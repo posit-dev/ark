@@ -48,6 +48,7 @@ use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
+use crate::modules::ARK_ENVS;
 use crate::object_explorer::r_object_explorer::path_accessor;
 use crate::object_explorer::r_object_explorer::RObjectExplorer;
 use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
@@ -55,6 +56,7 @@ use crate::r_task;
 use crate::r_task::RTask;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::is_explorable;
+use crate::variables::variable::is_viewable_character;
 use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
@@ -359,6 +361,11 @@ impl RVariables {
                 return self.view_object(obj, path, env).map(Some);
             }
 
+            if is_viewable_character(obj.sexp) {
+                self.view_character(obj, path, env)?;
+                return Ok(None);
+            }
+
             let name = unsafe { path.get_unchecked(path.len() - 1) };
 
             let binding = DataObjectEnvInfo {
@@ -406,6 +413,29 @@ impl RVariables {
         Console::get_mut()
             .comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))
             .map_err(harp::Error::Anyhow)
+    }
+
+    /// Views a character vector: a single string opens in an untitled editor
+    /// and a longer vector in an Object Explorer.
+    fn view_character(
+        &self,
+        obj: RObject,
+        path: &[String],
+        env: RObject,
+    ) -> Result<(), harp::error::Error> {
+        let Some((name, path_in_binding)) = path.split_first() else {
+            return Err(harp::Error::Anyhow(anyhow!("Can't view an empty path")));
+        };
+        let value = PositronVariable::resolve_data_object(env, std::slice::from_ref(name))?;
+        let accessor = path_accessor(name, value, path_in_binding);
+        let title = accessor.clone().unwrap_or_else(|| name.clone());
+
+        RFunction::new("", "view_character")
+            .add(obj.sexp)
+            .add(title)
+            .add(accessor.unwrap_or_default())
+            .call_in(ARK_ENVS.positron_ns)?;
+        Ok(())
     }
 
     /// Query table summary for the given variable.

@@ -89,10 +89,26 @@ view <- function(
         return(view_object(x, title, var, env, accessor))
     }
 
+    if (is.character(x) && is.null(dim(x)) && !is.object(x)) {
+        return(view_character(x, title, accessor))
+    }
+
     stop(sprintf(
         "Can't `View()` an object of class `%s`",
         paste(class(x), collapse = "/")
     ))
+}
+
+# A single string opens in an untitled editor. A longer vector opens in the
+# object explorer as a list of its elements. The result isn't bound to the
+# variable, so it isn't watched for updates.
+view_character <- function(x, title, accessor) {
+    if (length(x) == 1) {
+        .ps.ui.newDocument(x, "plaintext")
+    } else {
+        view_object(as.list(x), title, "", NULL, accessor)
+    }
+    invisible()
 }
 
 view_function <- function(
