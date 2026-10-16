@@ -27,6 +27,8 @@ mod kernel_debugger;
 mod kernel_execute;
 mod kernel_execute_error;
 mod kernel_fork_guard;
+#[cfg(unix)]
+mod kernel_hooks_file_choose;
 mod kernel_hooks_session;
 mod kernel_hooks_source;
 mod kernel_hooks_timestamp;

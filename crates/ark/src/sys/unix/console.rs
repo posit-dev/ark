@@ -6,11 +6,16 @@
  */
 
 use std::ffi::c_char;
+use std::ffi::c_int;
 use std::ffi::CStr;
 use std::sync::Condvar;
 use std::sync::Mutex;
 
+use amalthea::comm::ui_comm::SelectFileParams;
+use amalthea::comm::ui_comm::UiFrontendRequest;
+use harp::utils::r_is_null;
 use libr::ptr_R_Busy;
+use libr::ptr_R_ChooseFile;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
 use libr::ptr_R_Suicide;
@@ -39,6 +44,11 @@ use crate::console::r_suicide;
 use crate::console::r_write_console;
 use crate::console::Console;
 use crate::signals::initialize_signal_handlers;
+
+type ChooseFileFn = unsafe extern "C-unwind" fn(c_int, *mut c_char, c_int) -> c_int;
+
+/// R's default `file.choose()` callback, which prompts in the console
+static mut R_CHOOSE_FILE_DEFAULT: Option<ChooseFileFn> = None;
 
 // For shutdown signal in integration tests
 pub static CLEANUP_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
@@ -78,6 +88,9 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
+        R_CHOOSE_FILE_DEFAULT = libr::get(ptr_R_ChooseFile);
+        libr::set(ptr_R_ChooseFile, Some(r_choose_file));
+
         // See `Console::interrupt_events()` for documentation about this
         libr::set(R_PolledEvents, Some(r_interrupt_events));
 
@@ -113,6 +126,55 @@ pub fn setup_r(args: &Vec<String>) {
         // Set up main loop
         setup_Rmainloop();
     }
+}
+
+/// Backs `file.choose()` with the frontend's file dialog, falling back to R's
+/// console prompt if the dialog can't be shown. Returns the length of the path
+/// written to `buf`, or 0 if the user cancelled.
+unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_int) -> c_int {
+    let Ok(size) = usize::try_from(len) else {
+        return 0;
+    };
+    if size == 0 {
+        return 0;
+    }
+
+    let path = Console::with(|console| {
+        let ui = console.try_ui_comm()?;
+        let params = SelectFileParams {
+            title: String::from("Select File"),
+            existing: new == 0,
+            default_dir: std::env::current_dir()?.to_string_lossy().to_string(),
+        };
+        let path = ui.call_frontend_method(UiFrontendRequest::SelectFile(params))?;
+        if r_is_null(path.sexp) {
+            return Ok(None);
+        }
+        Ok(Some(String::try_from(path)?))
+    });
+
+    let path = match path {
+        Ok(Some(path)) => path,
+        Ok(None) => return 0,
+        Err(err) => {
+            log::warn!("Can't show file dialog, prompting in console instead: {err:?}");
+            return match R_CHOOSE_FILE_DEFAULT {
+                Some(default) => default(new, buf, len),
+                None => 0,
+            };
+        },
+    };
+
+    // A path that doesn't fit is reported with its full length and an empty
+    // `buf`, which `file.choose()` reports as "file name too long"
+    if path.len() >= size {
+        *buf = 0;
+        return c_int::try_from(path.len()).unwrap_or(c_int::MAX);
+    }
+
+    std::ptr::copy_nonoverlapping(path.as_ptr(), buf as *mut u8, path.len());
+    *buf.add(path.len()) = 0;
+    path.len() as c_int
 }
 
 pub fn run_r() {
