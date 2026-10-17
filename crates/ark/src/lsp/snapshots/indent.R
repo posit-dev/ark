@@ -9,7 +9,7 @@ declare(ark(diagnostics(enable = FALSE)))
 ## 1
 {
   fun <- function(argument1,
-                  argument2) {
+    argument2) {
     body
   }
 }
@@ -17,9 +17,9 @@ declare(ark(diagnostics(enable = FALSE)))
 ## 2
 {
   function(
-           argument1,
-           argument2
-           )
+    argument1,
+    argument2
+  )
   {
     body
   }
@@ -198,15 +198,15 @@ argument3)
 
 ## 8
 fun_call(argument1
-, argument2
-, argument3,
+  , argument2
+  , argument3,
   argument4, (
     stuff1
   ),
   argument5, (
     stuff2
   )
- ,
+  ,
   argument6
 )
 
@@ -295,6 +295,49 @@ fun_call(argument,
 fun_call(parameter1 = ,
   parameter2 = argument)
 
+## 21
+fun_call(
+  "abc
+def",
+  argument
+)
+
+## 22
+fun_call(
+  parameter = "abc
+def",
+  argument
+)
+
+## 23
+fun_call(
+  r"(abc
+def)",
+  argument
+)
+
+## 24
+fun_call("abc
+def",
+  argument)
+
+## 25
+fun_call(
+  "abc
+    def
+ghi",
+  "jkl
+mno",
+  argument)
+
+## 26
+fun_call(
+  parameter = c(
+    "abc
+def"
+  ),
+  argument)
+
 
 ### Blocks
 
@@ -379,11 +422,11 @@ function(x) {
 
 ## 9
 fun_call(
-{
-  stuff
-}, {
-  stuff
-}
+  {
+    stuff
+  }, {
+    stuff
+  }
 )
 
 ## 10
@@ -437,7 +480,7 @@ fun_call1(
 
 ## 17
 fun_call(argument, function(argument1,
-                            argument2) {
+  argument2) {
   body
 }
 )
@@ -446,7 +489,7 @@ fun_call(argument, function(argument1,
 fun_call(
   argument,
   function(argument1,
-           argument2) {
+    argument2) {
     body
   }
 )
@@ -503,7 +546,7 @@ object[(
       body
     ),
     argument[
-    (
+      (
       sub_argument
     )
     ]
@@ -929,7 +972,7 @@ fun_call(argument1 %>%
         stuff4
     } %>%
       stuff5,
-           argument3
+  argument3
 )
 
 ## 11
@@ -1093,15 +1136,15 @@ fun_call1(fun_call2(
 fun_call(object1 + object2 ~ object3 +
   object4 + object5 := object6 +
   object7,
-           argument)
+  argument)
 
 ## 32
 fun_call(~ object
-  )
+)
 
 ## 33
 fun_call(object + object2
-  )
+)
 
 ## 34
 fun_call(object[index1]$element[index2][index3]@attribute +
@@ -1185,9 +1228,9 @@ x |>
 {
   ## Hanging comment 1
   fun_call(
-  {
-    ## Hanging comment 2
-  }
+    {
+      ## Hanging comment 2
+    }
   )
 }
 
