@@ -110,6 +110,23 @@ pub(crate) fn indent_edit(
 
     let (old_indent, old_indent_byte) = line_indent(text, line, config);
 
+    // Whether the first non-blank character of `row` is inside a string that
+    // starts on an earlier row. Its indentation is string content, not code
+    // indentation.
+    let starts_in_string = |within: tree_sitter::Node, row: usize| -> bool {
+        let point = tree_sitter::Point {
+            row,
+            column: line_indent(text, row, config).1,
+        };
+        let Some(node) = within.descendant_for_point_range(point, point) else {
+            return false;
+        };
+        let in_string = node
+            .ancestors()
+            .any(|node| node.is_string() && node.start_position().row < row);
+        in_string
+    };
+
     // Indentation of a line where an argument or parameter goes. Starts one
     // level past the line of the opening delimiter, but doesn't add back
     // indentation removed on a line where the previous argument starts or
@@ -137,18 +154,21 @@ pub(crate) fn indent_edit(
 
         let prev_indent = prev
             .into_iter()
-            .flat_map(|prev| [prev.start_position().row, prev.end_position().row])
-            .filter(|row| *row > open_row)
+            .flat_map(|prev| {
+                [prev.start_position().row, prev.end_position().row]
+                    .into_iter()
+                    .filter(|row| *row > open_row)
+                    .filter(move |row| !starts_in_string(prev, *row))
+            })
             .map(|row| line_indent(text, row, config).0)
             .min();
 
-        if let Some(prev_indent) =
-            prev_indent.filter(|indent| *indent < anchor + config.indent_size)
-        {
-            return (prev_indent, 0);
-        }
+        let Some(prev_indent) = prev_indent.filter(|indent| *indent < anchor + config.indent_size)
+        else {
+            return (anchor, config.indent_size);
+        };
 
-        (anchor, config.indent_size)
+        (prev_indent, 0)
     };
 
     let arguments_indent = |parent: tree_sitter::Node| -> (usize, usize) {
@@ -726,6 +746,41 @@ mod tests {
             .unwrap();
         apply_text_edits(edit, &mut db, &file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\na = bar(\n  x\n  ),\nb)");
+    }
+
+    #[test]
+    fn test_line_indent_arguments_after_multiline_string() {
+        // The string's last line is content, not an outdent
+        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\n  \"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\n  \"abc\ndef\",\n  x)");
+
+        // Raw string
+        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\n  r\"(abc\ndef)\",\nx)");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\n  r\"(abc\ndef)\",\n  x)");
+
+        // The string starts on an outdented line, which still counts
+        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\na = \"abc\ndef\",\n  x)");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\na = \"abc\ndef\",\nx)");
+
+        // The string starts on the line of the opening delimiter
+        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, &file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\"abc\ndef\",\n  x)");
     }
 
     #[test]

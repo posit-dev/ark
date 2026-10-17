@@ -295,6 +295,49 @@ fun_call(argument,
 fun_call(parameter1 = ,
   parameter2 = argument)
 
+## 21
+fun_call(
+  "abc
+def",
+  argument
+)
+
+## 22
+fun_call(
+  parameter = "abc
+def",
+  argument
+)
+
+## 23
+fun_call(
+  r"(abc
+def)",
+  argument
+)
+
+## 24
+fun_call("abc
+def",
+  argument)
+
+## 25
+fun_call(
+  "abc
+    def
+ghi",
+  "jkl
+mno",
+  argument)
+
+## 26
+fun_call(
+  parameter = c(
+    "abc
+def"
+  ),
+  argument)
+
 
 ### Blocks
 
