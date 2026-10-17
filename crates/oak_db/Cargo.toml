@@ -10,6 +10,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+fuzz = ["dep:anyhow", "dep:mutatis", "dep:rand", "dep:serde", "dep:serde_json", "oak_semantic/serde", "oak_semantic/testing"]
+
 [lints]
 workspace = true
 
@@ -17,18 +20,23 @@ workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_path.workspace = true
+anyhow = { workspace = true, optional = true }
 biome_line_index.workspace = true
 biome_rowan.workspace = true
 camino.workspace = true
 compact_str.workspace = true
 filetime.workspace = true
 log.workspace = true
+mutatis = { workspace = true, optional = true }
 oak_core.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
+rand = { workspace = true, optional = true }
 rustc-hash.workspace = true
 salsa.workspace = true
 salsa-macros.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 stacker.workspace = true
 stdext.workspace = true
 url.workspace = true
@@ -37,6 +45,6 @@ url.workspace = true
 annotate-snippets.workspace = true
 anyhow.workspace = true
 insta.workspace = true
-oak_semantic = { workspace = true, features = ["salsa", "testing"] }
+oak_db = { workspace = true, features = ["fuzz"] }
 oak_tidy.workspace = true
 tempfile.workspace = true

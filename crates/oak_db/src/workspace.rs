@@ -42,7 +42,7 @@ pub fn all_package_dependencies(db: &dyn Db) -> Vec<Package> {
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 #[salsa::tracked(returns(ref))]
-fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
+pub(crate) fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
     // It's likely that we will have a lot of duplicated package use across workspace
     // files, so we use a BTreeSet to avoid having to sort and dedup a large vector
     let mut names: BTreeSet<&str> = BTreeSet::new();
@@ -69,7 +69,7 @@ fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> {
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 #[salsa::tracked(returns(ref))]
-fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> {
+pub(crate) fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> {
     let mut names: BTreeSet<&'static str> = BTreeSet::new();
 
     for &file in workspace_files(db) {
@@ -86,7 +86,7 @@ fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> {
 ///
 /// Returned sorted on package name and unique, maximizing backdating potential.
 #[salsa::tracked(returns(ref))]
-fn all_workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
+pub(crate) fn all_workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
     // We aren't expecting there to be many duplicates here (probably none for single
     // package workspaces), so a simple Vec is fine
     let mut names = Vec::new();
@@ -119,7 +119,7 @@ fn all_workspace_package_dependencies(db: &dyn Db) -> Vec<Package> {
 ///
 /// These are effectively static, so we don't need to sort them by name at this point
 #[salsa::tracked(returns(ref))]
-fn default_search_path_packages(db: &dyn Db) -> Vec<Package> {
+pub(crate) fn default_search_path_packages(db: &dyn Db) -> Vec<Package> {
     as_packages(crate::search::DEFAULT_SEARCH_PATH_PACKAGES, db)
 }
 
