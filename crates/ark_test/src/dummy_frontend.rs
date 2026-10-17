@@ -174,6 +174,8 @@ pub enum IopubExpectation {
     /// `Status(Idle)` whose parent is a shell-channel message
     /// (`execute_request`).
     IdleShell,
+    /// A `CommMsg` message.
+    CommMsg,
     /// A `DebugEvent` message.
     DebugEvent,
     /// An `ExecuteInput` message.
@@ -223,6 +225,7 @@ fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
                 Message::Status(data) if data.content.execution_state == ExecutionState::Idle
             ) && is_shell_parent
         },
+        IopubExpectation::CommMsg => matches!(msg, Message::CommMsg(_)),
         IopubExpectation::DebugEvent => matches!(msg, Message::DebugEvent(_)),
         IopubExpectation::ExecuteInput => matches!(msg, Message::ExecuteInput(_)),
         IopubExpectation::ExecuteResult => matches!(msg, Message::ExecuteResult(_)),
