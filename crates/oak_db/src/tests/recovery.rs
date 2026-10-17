@@ -13,6 +13,7 @@ use crate::file_imports::CollationView;
 use crate::recovery;
 use crate::test_path::file_path;
 use crate::tests::file_imports::install_packages;
+use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
@@ -273,4 +274,45 @@ fn test_inherited_layers_never_fires_on_ring_closed_by_edit() {
     let _ = b.inherited_layers(&db, CollationView::Eager);
 
     assert_inherited_layers_did_not_fire();
+}
+
+#[test]
+fn test_base_binds_fires_when_base_source_reaches_a_non_base_super_assignment() {
+    // `other.R` calls `base_binds()`, which indexes base's `a.R`. That file
+    // sources `script.R`, whose own `<<-` on the same name calls `base_binds()`
+    // with the key already active. `zzz` has no registry entry in base, so
+    // lookup falls through to `base_binds()`.
+    let mut db = TestDb::new();
+    let (base, _) = make_package(&mut db, "base", Namespace::default(), &[(
+        "ws/base/R/a.R",
+        "source(\"../../../script.R\")\n",
+    )]);
+    let root = library_root(&db, "libs/base");
+    root.set_packages(&mut db).to(vec![base]);
+    db.library_roots().set_roots(&mut db).to(vec![root]);
+    let files = scripts(&mut db, "", &[
+        ("script.R", "f <- function() zzz <<- 1\n"),
+        ("other.R", "g <- function() zzz <<- 1\n"),
+    ]);
+
+    recovery::reset();
+    let _ = files[1].semantic_index(&db);
+
+    assert_fired(&[
+        "attached_packages(script.R)",
+        "base_binds(base, zzz)",
+        "exports(script.R)",
+        "exports(ws/base/R/a.R)",
+        "semantic_index(script.R)",
+        "semantic_index(ws/base/R/a.R)",
+    ]);
+
+    // The `semantic_index()` recoveries in the same cycle already report it to
+    // the user on the file whose `source()` call closes it.
+    let kinds: Vec<&str> = files[0]
+        .diagnostics(&db)
+        .iter()
+        .map(|diagnostic| diagnostic.kind().as_str())
+        .collect();
+    assert_eq!(kinds, ["source-cycle"]);
 }

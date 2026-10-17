@@ -1,7 +1,7 @@
 //! Restricts the recursive queries available during resolution.
 //!
 //! Source operations use [`SourceDb`] directly. This wrapper exposes only the
-//! three recursive queries needed by [`SalsaImportsResolver`], each backed by
+//! four recursive queries needed by [`SalsaImportsResolver`], each backed by
 //! a `cycle_result` handler. Their bodies still require the full [`Db`].
 //!
 //! The raw database is private, so callers cannot bypass these forwarding
@@ -14,9 +14,12 @@
 
 use crate::file_imports::CollationView;
 use crate::file_imports::FileLoadLayers;
+use crate::imports::base_binds;
 use crate::Db;
 use crate::File;
 use crate::FileExports;
+use crate::Name;
+use crate::Package;
 use crate::SourceDb;
 
 #[derive(Clone, Copy)]
@@ -44,6 +47,11 @@ impl<'db> ResolverDb<'db> {
             .iter()
             .map(|name| name.text(self.db).to_string())
             .collect()
+    }
+
+    /// Whether a top-level file binding in the `base` package defines `name`.
+    pub(crate) fn base_binds(self, base: Package, name: &str) -> bool {
+        *base_binds(self.db, base, Name::new(self.db, name))
     }
 
     pub(crate) fn cross_file_layers(self, file: File, view: CollationView) -> &'db FileLoadLayers {
