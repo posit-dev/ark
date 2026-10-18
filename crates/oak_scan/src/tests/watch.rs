@@ -476,7 +476,7 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
 }
 
 #[test]
-fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
+fn test_apply_watcher_events_refreshes_revision_of_editor_owned_file() {
     let tmp = tempfile::tempdir().unwrap();
     let fs_path = tmp.path().join("a.R");
     fs::write(&fs_path, "disk_v1\n").unwrap();
@@ -486,14 +486,20 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
     // Driver "owns" this URL (the editor has it open).
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     db.upsert_editor(path.clone(), "editor_v2\n".to_string());
-
-    let mut skip = HashSet::new();
-    skip.insert(path.clone());
-
-    fs::write(&fs_path, "disk_v3\n").unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &skip);
-
     let file = db.file_by_path(&path).unwrap();
+    let before = file.revision(&db);
+
+    let editor_owned = HashSet::from([path.clone()]);
+    fs::write(&fs_path, "disk_v3\n").unwrap();
+    // Make sure the mtime differs even on coarse-grained filesystems.
+    filetime::set_file_mtime(
+        &fs_path,
+        filetime::FileTime::from_unix_time(1_000_000_000, 0),
+    )
+    .unwrap();
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &editor_owned);
+
+    assert_ne!(file.revision(&db), before);
     assert_eq!(file.source_text(&db), "editor_v2\n");
 }
 
@@ -761,6 +767,43 @@ fn test_watcher_remove_unlinks_from_every_nested_root() {
     for root in &roots {
         assert!(root.scripts(&db).is_empty());
     }
+    assert!(db.file_by_path(&watched_path(&fs_path)).is_none());
+}
+
+#[test]
+fn test_watcher_add_and_remove_file_held_by_package_and_nested_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_dir = tmp.path().join("pkg");
+    fs::create_dir_all(pkg_dir.join("R")).unwrap();
+    fs::write(
+        pkg_dir.join("DESCRIPTION"),
+        "Package: pkg\nVersion: 0.0.0\n",
+    )
+    .unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(
+        &mut db,
+        &[pkg_dir.clone(), pkg_dir.join("R")],
+        &HashSet::new(),
+    );
+    let roots = db.workspace_roots().roots(&db).clone();
+    let (outer, inner) = (roots[0], roots[1]);
+    let pkg = outer.packages(&db)[0];
+
+    let fs_path = pkg_dir.join("R/new.R");
+    fs::write(&fs_path, "x <- 1\n").unwrap();
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+
+    let file = db.file_by_path(&watched_path(&fs_path)).unwrap();
+    assert_eq!(pkg.files(&db), &vec![file]);
+    assert_eq!(inner.scripts(&db), &vec![file]);
+    assert_eq!(file.package(&db), Some(pkg));
+
+    fs::remove_file(&fs_path).unwrap();
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+
+    assert!(pkg.files(&db).is_empty());
+    assert!(inner.scripts(&db).is_empty());
     assert!(db.file_by_path(&watched_path(&fs_path)).is_none());
 }
 

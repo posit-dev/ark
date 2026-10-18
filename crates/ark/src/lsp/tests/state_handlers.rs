@@ -126,7 +126,7 @@ where
         let editor_owned = editor_owned_of(state);
         while lsp_state.oak_scheduler.has_pending_scans() {
             let Some(Event::OakScanCompleted(scan)) = events_rx.recv().await else {
-                break;
+                panic!("Expected `OakScanCompleted`");
             };
             let followups =
                 lsp_state
@@ -701,11 +701,19 @@ fn rescan_without_open_file(state: &mut WorldState, workspace: &Path, r_path: &P
     };
     did_change_watched_files(params, state).unwrap();
 
+    // Checked before any `did_change()`, which would restore visibility by
+    // itself through `upsert_editor()` and hide a missing rescue.
+    let path = uri.to_document_path().unwrap();
+    let file = state.open_file(&path).unwrap().file();
+    assert_eq!(state.db().file_by_path(&path), Some(file));
+
     uri
 }
 
-/// The second edit must use the first edit's result as its input. Applying it
-/// to the original text would insert `z` after the space rather than after `yy`.
+/// Each edit goes through `did_change()` and must keep writing to the held
+/// `File`. The second edit must use the first edit's result as its input.
+/// Applying it to the original text would insert `z` after the space rather
+/// than after `yy`.
 fn assert_incremental_edits_apply(state: &mut WorldState, uri: &Uri) {
     let mut lsp_state = test_lsp_state();
     let edits = [

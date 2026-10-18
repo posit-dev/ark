@@ -17,6 +17,7 @@ mod file_source_site;
 mod file_visible_names;
 mod fuzz;
 mod identifier;
+mod identity;
 mod inputs;
 mod notebook;
 mod package_resolve;

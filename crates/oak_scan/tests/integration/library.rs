@@ -384,13 +384,13 @@ fn test_set_library_paths_evicted_package_invisible_to_analysis() {
     let mut db = OakDatabase::new();
 
     db.set_library_paths(&[tmp.path().to_path_buf()]);
-    assert!(db.package_by_name("dplyr").is_some());
+    let pkg = db.package_by_name("dplyr").unwrap();
 
     db.set_library_paths(&[]);
 
     assert!(db.package_by_name("dplyr").is_none());
     let description = FilePath::from_path_buf(tmp.path().join("dplyr/DESCRIPTION")).unwrap();
-    assert!(db.interned_package(&description).is_some());
+    assert_eq!(db.interned_package(&description), Some(pkg));
 }
 
 #[test]
@@ -439,8 +439,8 @@ fn empty_library_root(db: &OakDatabase, path: &str) -> Root {
 
 /// Stash `pkg` in `root.packages` and register `root` on
 /// `library_roots`, mirroring what the library scanner does after
-/// `set_package` returns. Without this step `package_by_path` can't see
-/// the package on subsequent `set_package` calls.
+/// `set_package` returns. The identity map finds the package without this
+/// step. It matters for visibility to analysis and for `root_by_package()`.
 fn register_package(db: &mut OakDatabase, root: Root, pkg: Package) {
     root.set_packages(db).to(vec![pkg]);
     let mut roots = db.library_roots().roots(db).clone();
@@ -573,9 +573,8 @@ fn test_all_files_emits_shared_file_once_under_deepest_root() {
 
 #[test]
 fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
-    // Mirrors the doc claim in `eviction.rs`: an editor-open file that
-    // was evicted to `OrphanRoot` should come back into `pkg.files`
-    // when the package's root is re-added. Same `File` entity, editor
+    // An editor-open file in `OrphanRoot` should move into `pkg.files` when a
+    // scan of the package's root lists it. Same `File` entity, editor
     // contents preserved (the scan's disk snapshot doesn't overwrite),
     // and the orphan reference is cleaned up so the orphan-placement
     // invariant (`package == None`) stays honest.

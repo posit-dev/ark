@@ -75,10 +75,14 @@ fn test_held_handle_stays_current() {
         scheduler.apply_watcher_events(&mut db, vec![file_path(&rprofile)], &editor_owned);
     assert_eq!(requests.len(), 1);
     drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    // Each step asserts visibility before `upsert_editor()`, which restores
+    // it by itself and would hide a missing rescue.
+    assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v1\n".to_string()), held);
     fs::write(&disk, "x <- 1\n").unwrap();
 
     set_workspace_paths(&mut db, &mut scheduler, &[], &editor_owned);
+    assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v2\n".to_string()), held);
 
     set_workspace_paths(
@@ -87,6 +91,7 @@ fn test_held_handle_stays_current() {
         slice::from_ref(&inner),
         &editor_owned,
     );
+    assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v3\n".to_string()), held);
 
     set_workspace_paths(
@@ -96,6 +101,12 @@ fn test_held_handle_stays_current() {
         &editor_owned,
     );
     set_workspace_paths(&mut db, &mut scheduler, &[inner], &editor_owned);
+    // Eviction of `outer` orphaned the open file, and the survivor's repair
+    // rescan must take it back out and restore its package.
+    assert_eq!(db.file_by_path(&path), Some(held));
+    assert!(!db.orphan_root().files(&db).contains(&held));
+    let pkg = held.package(&db).unwrap();
+    assert_eq!(pkg.files(&db), &vec![held]);
     assert_eq!(db.upsert_editor(path.clone(), "v4\n".to_string()), held);
 
     assert_eq!(db.file_by_path(&path), Some(held));
@@ -285,48 +296,6 @@ fn test_close_editor_twice_is_revision_neutral() {
 }
 
 #[test]
-fn test_intern_returns_existing_entity_unchanged_and_shares_with_snapshots() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = file_path(&tmp.path().join("a.R"));
-    let description = file_path(&tmp.path().join("DESCRIPTION"));
-    let mut db = OakDatabase::new();
-
-    let file = db.intern_file(path.clone(), FileRevision::zero(), None);
-    let pkg = db.intern_package(
-        description.clone(),
-        "pkg".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-    );
-    let before = salsa::plumbing::current_revision(&db);
-
-    let new_revision = file_revision(tmp.path());
-    assert_ne!(new_revision, FileRevision::zero());
-    assert_eq!(db.intern_file(path.clone(), new_revision, Some(pkg)), file);
-    assert_eq!(
-        db.intern_package(
-            description.clone(),
-            "renamed".to_string(),
-            new_revision,
-            new_revision,
-            Some(new_revision),
-        ),
-        pkg
-    );
-
-    assert_eq!(salsa::plumbing::current_revision(&db), before);
-    assert_eq!(file.revision(&db), FileRevision::zero());
-    assert_eq!(file.package(&db), None);
-    assert_eq!(pkg.name(&db), "pkg");
-    assert_eq!(pkg.index_revision(&db), None);
-
-    let snapshot = db.snapshot();
-    assert_eq!(snapshot.interned_file(&path), Some(file));
-    assert_eq!(snapshot.interned_package(&description), Some(pkg));
-}
-
-#[test]
 fn test_library_root_readd_refreshes_index_revision() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = tmp.path().join("lib");
@@ -409,6 +378,8 @@ fn test_workspace_root_readd_reuses_entities_and_refreshes_metadata() {
     assert_eq!(file.package(&db), Some(pkg));
 }
 
+// Documents current behavior: a workspace package and a library package at the
+// same `DESCRIPTION` share one `Package`. Whether they should stays undecided.
 #[test]
 fn test_library_registration_shares_workspace_package() {
     let tmp = tempfile::tempdir().unwrap();

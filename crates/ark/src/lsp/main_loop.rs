@@ -1309,12 +1309,22 @@ pub(super) fn dispatch_scan_requests(
     requests: Vec<ScanRequest>,
 ) {
     for req in requests {
-        let guard = ScanFailureGuard {
-            root: req.root,
-            events_tx: Some(events_tx.clone()),
-        };
-        pool.submit(move || guard.complete(req.run()));
+        pool.submit(scan_job(req, events_tx));
     }
+}
+
+/// The pool job for one scan. Dropping it before it runs, or panicking inside
+/// [`ScanRequest::run()`], sends [`Event::OakScanFailed`]. Running it to
+/// completion sends only [`Event::OakScanCompleted`].
+fn scan_job(
+    req: ScanRequest,
+    events_tx: &TokioUnboundedSender<Event>,
+) -> impl FnOnce() + Send + 'static {
+    let guard = ScanFailureGuard {
+        root: req.root,
+        events_tx: Some(events_tx.clone()),
+    };
+    move || guard.complete(req.run())
 }
 
 /// Report scan failure if the job is dropped before [`ScanRequest::run()`]
@@ -1702,6 +1712,7 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::time::Instant;
 
     use aether_path::FilePath;
@@ -1709,6 +1720,8 @@ mod tests {
     use oak_db::Root;
     use oak_db::RootKind;
     use oak_scan::DbScan;
+    use oak_scan::ScanRequest;
+    use oak_scan::ScanScheduler;
     use serde_json::Value;
     use tower_lsp_server::jsonrpc;
     use url::Url;
@@ -1717,6 +1730,7 @@ mod tests {
     use super::init_aux_for_test;
     use super::register_auxiliary_tx;
     use super::respond;
+    use super::scan_job;
     use super::send_auxiliary;
     use super::tokio_unbounded_channel;
     use super::AuxiliaryEvent;
@@ -1958,6 +1972,44 @@ mod tests {
             events_tx: Some(events_tx),
         };
         (guard, root, events_rx)
+    }
+
+    fn scan_request() -> (ScanRequest, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = OakDatabase::new();
+        let mut scheduler = ScanScheduler::new();
+        let requests =
+            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        let request = requests.into_iter().next().unwrap();
+        (request, tmp)
+    }
+
+    #[test]
+    fn test_scan_job_reports_failure_when_dropped() {
+        let (request, _tmp) = scan_request();
+        let root = request.root;
+        let (events_tx, mut events_rx) = tokio_unbounded_channel::<Event>();
+
+        drop(scan_job(request, &events_tx));
+
+        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
+            panic!("Expected `OakScanFailed`");
+        };
+        assert_eq!(failed, root);
+        assert!(events_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_scan_job_reports_only_completion_when_run() {
+        let (request, _tmp) = scan_request();
+        let (events_tx, mut events_rx) = tokio_unbounded_channel::<Event>();
+
+        scan_job(request, &events_tx)();
+
+        let Ok(Event::OakScanCompleted(_)) = events_rx.try_recv() else {
+            panic!("Expected `OakScanCompleted`");
+        };
+        assert!(events_rx.try_recv().is_err());
     }
 
     #[test]
