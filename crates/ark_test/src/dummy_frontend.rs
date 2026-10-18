@@ -978,7 +978,7 @@ impl DummyArkFrontend {
     /// by `recv_iopub_next()` (parallel to how Stream messages are handled).
     #[track_caller]
     pub fn open_variables_comm(&self) -> RefreshParams {
-        debug_assert!(
+        assert!(
             self.variables_comm_id.borrow().is_none(),
             "Variables comm already open"
         );

@@ -37,6 +37,8 @@ impl<Storage> __BindgenBitfieldUnit<Storage> {
         Self { storage }
     }
 }
+// Bindgen output, kept verbatim.
+#[allow(clippy::disallowed_macros)]
 impl<Storage> __BindgenBitfieldUnit<Storage>
 where
     Storage: AsRef<[u8]> + AsMut<[u8]>,

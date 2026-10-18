@@ -1747,7 +1747,7 @@ impl Console {
         buflen: c_int,
         cmd: String,
     ) -> ConsoleResult {
-        debug_assert!(
+        stdext::soft_assert!(
             DEBUG_COMMANDS.contains(&&cmd[..]),
             "Expected a debug command, got: {cmd}"
         );

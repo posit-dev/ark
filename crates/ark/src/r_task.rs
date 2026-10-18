@@ -729,7 +729,7 @@ impl RTask {
             } else {
                 // Unit tests run without a Console. The dummy capture is
                 // inert and doesn't interact with Console state.
-                debug_assert!(stdext::IS_TESTING);
+                stdext::soft_assert!(stdext::IS_TESTING);
                 ConsoleOutputCapture::dummy()
             };
             fun(capture).await

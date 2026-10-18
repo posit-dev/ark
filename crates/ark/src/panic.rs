@@ -120,7 +120,7 @@ fn in_catch_boundary() -> bool {
 /// enables it for every integration test and benchmark. The LSP harness enters
 /// boundaries instead, see [`test_boundary()`].
 pub(crate) fn assert_in_catch_boundary() {
-    debug_assert!(cfg!(test) || in_catch_boundary());
+    stdext::soft_assert!(cfg!(test) || in_catch_boundary());
 }
 
 /// Allow synchronous harness code to unwind to the test or benchmark runner

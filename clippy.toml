@@ -1,0 +1,5 @@
+disallowed-macros = [
+    { path = "std::debug_assert", reason = "Use `stdext::soft_assert!`, which also logs in release builds" },
+    { path = "std::debug_assert_eq", reason = "Use `stdext::soft_assert!`, which also logs in release builds" },
+    { path = "std::debug_assert_ne", reason = "Use `stdext::soft_assert!`, which also logs in release builds" },
+]
