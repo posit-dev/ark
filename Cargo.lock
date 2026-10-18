@@ -2718,6 +2718,7 @@ dependencies = [
  "camino",
  "compact_str",
  "filetime",
+ "indexmap 2.14.2",
  "insta",
  "log",
  "mutatis",

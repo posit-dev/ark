@@ -19,6 +19,7 @@ use salsa::plumbing::AsId;
 use crate::test_path::file_path;
 use crate::Db;
 use crate::DbInputs;
+use crate::EditorBuffers;
 use crate::File;
 use crate::FileRevision;
 use crate::IdentityMap;
@@ -45,6 +46,7 @@ pub(super) struct TestDb {
     orphan_root: Arc<OnceLock<OrphanRoot>>,
     identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
+    editor_buffers: EditorBuffers,
 }
 
 impl TestDb {
@@ -65,6 +67,7 @@ impl TestDb {
             orphan_root: Arc::new(OnceLock::new()),
             identity_map: Arc::default(),
             open_notebooks: Arc::new(OnceLock::new()),
+            editor_buffers: EditorBuffers::default(),
         }
     }
 
@@ -143,6 +146,10 @@ impl DbInputs for TestDb {
         *self
             .open_notebooks
             .get_or_init(|| OpenNotebooks::empty(self))
+    }
+
+    fn editor_buffers_mut(&mut self) -> &mut EditorBuffers {
+        &mut self.editor_buffers
     }
 }
 

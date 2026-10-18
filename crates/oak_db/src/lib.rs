@@ -46,6 +46,7 @@ pub use db::all_used_files;
 pub use db::workspace_files;
 pub use db::Db;
 pub use db::DbInputs;
+pub use db::EditorBuffers;
 pub use db::IdentityMap;
 pub use db::SourceDb;
 pub use definition::Definition;

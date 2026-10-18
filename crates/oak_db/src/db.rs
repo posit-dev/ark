@@ -6,8 +6,10 @@ use std::sync::PoisonError;
 
 use aether_path::FilePath;
 use camino::Utf8Path;
+use indexmap::IndexSet;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
+use salsa::Setter;
 
 use crate::File;
 use crate::FileRevision;
@@ -48,6 +50,43 @@ pub trait DbInputs: salsa::Database {
 
     /// Notebooks open in the editor, with their cells in document order.
     fn open_notebooks(&self) -> OpenNotebooks;
+
+    /// Write-side buffer registry, excluded from Salsa queries. See [`EditorBuffers`].
+    fn editor_buffers_mut(&mut self) -> &mut EditorBuffers;
+
+    /// Record `file` as an open editor buffer with `contents`.
+    ///
+    /// This does not establish container membership, so the file may remain
+    /// invisible to analysis. Use `oak_scan::DbScan::upsert_editor()` to also
+    /// make the buffer visible.
+    fn set_editor_buffer(&mut self, file: File, contents: String) {
+        file.set_source_text_override(self).to(Some(contents));
+        self.editor_buffers_mut().insert(file);
+    }
+
+    /// Release the editor buffer of `file`, making disk contents
+    /// authoritative.
+    ///
+    /// Container membership is unchanged. Use `oak_scan::DbScan::close_editor()`
+    /// to also remove orphan membership.
+    fn clear_editor_buffer(&mut self, file: File) {
+        // Repeated closes must not advance the Salsa revision. `IdentityMap`
+        // retains closed entities, so they can reach this method again.
+        if file.source_text_override(self).is_some() {
+            file.set_source_text_override(self).to(None);
+        }
+        self.editor_buffers_mut().remove(file);
+    }
+
+    /// Files with an open editor buffer, in opening order.
+    fn editor_buffer_files(&mut self) -> Vec<File> {
+        self.editor_buffers_mut().files()
+    }
+
+    /// Whether `file` has an open editor buffer.
+    fn is_editor_buffer(&mut self, file: File) -> bool {
+        self.editor_buffers_mut().contains(file)
+    }
 
     /// Look up the [`File`] for `path` without creating it or checking live
     /// membership. Analysis uses [`SourceDb::file_by_path()`] instead.
@@ -102,6 +141,38 @@ pub trait DbInputs: salsa::Database {
             namespace_revision,
             index_revision,
         )
+    }
+}
+
+/// Files with an open editor buffer, in opening order.
+///
+/// [`DbInputs::set_editor_buffer()`] and [`DbInputs::clear_editor_buffer()`]
+/// update membership and `File.source_text_override` together. Callers must use
+/// these methods rather than raw override setters to keep the registry consistent.
+///
+/// This is write-side state, not a Salsa input. Access through [`DbInputs`]
+/// requires `&mut self`, so queries cannot depend on buffer membership.
+/// Read-only database snapshots start with an empty registry.
+#[derive(Clone, Default)]
+pub struct EditorBuffers {
+    files: IndexSet<File>,
+}
+
+impl EditorBuffers {
+    fn insert(&mut self, file: File) {
+        self.files.insert(file);
+    }
+
+    fn remove(&mut self, file: File) {
+        self.files.shift_remove(&file);
+    }
+
+    fn files(&self) -> Vec<File> {
+        self.files.iter().copied().collect()
+    }
+
+    fn contains(&self, file: File) -> bool {
+        self.files.contains(&file)
     }
 }
 

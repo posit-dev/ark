@@ -8,6 +8,7 @@ use crate::file_reader::DiskFileReader;
 use crate::file_reader::FileReader;
 use crate::Db;
 use crate::DbInputs;
+use crate::EditorBuffers;
 use crate::IdentityMap;
 use crate::LibraryRoots;
 use crate::OpenNotebooks;
@@ -28,6 +29,7 @@ pub struct OakDatabase {
     orphan_root: Arc<OnceLock<OrphanRoot>>,
     identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
+    editor_buffers: EditorBuffers,
     // Clone counter that represents how many background readers have cloned the database
     holds: Arc<()>,
 }
@@ -47,6 +49,7 @@ impl OakDatabase {
             orphan_root: Arc::default(),
             identity_map: Arc::default(),
             open_notebooks: Arc::default(),
+            editor_buffers: EditorBuffers::default(),
             holds: Arc::default(),
         }
     }
@@ -69,6 +72,8 @@ impl OakDatabase {
             orphan_root: Arc::clone(&self.orphan_root),
             identity_map: Arc::clone(&self.identity_map),
             open_notebooks: Arc::clone(&self.open_notebooks),
+            // Snapshots never write, so they don't need the open set.
+            editor_buffers: EditorBuffers::default(),
             holds: Arc::clone(&self.holds),
         }
     }
@@ -124,6 +129,10 @@ impl DbInputs for OakDatabase {
         *self
             .open_notebooks
             .get_or_init(|| OpenNotebooks::empty(self))
+    }
+
+    fn editor_buffers_mut(&mut self) -> &mut EditorBuffers {
+        &mut self.editor_buffers
     }
 }
 

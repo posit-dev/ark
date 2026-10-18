@@ -26,6 +26,7 @@ biome_rowan.workspace = true
 camino.workspace = true
 compact_str.workspace = true
 filetime.workspace = true
+indexmap.workspace = true
 log.workspace = true
 mutatis = { workspace = true, optional = true }
 oak_core.workspace = true
