@@ -48,20 +48,19 @@ fn test_stale_result_dropped_when_root_removed_mid_scan() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
 
-    let mut requests =
-        scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let mut requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
     assert_eq!(requests.len(), 1);
     let req = requests.pop().unwrap();
     let dead_root = req.root;
 
     // User removes the folder while the scan is still in flight.
-    let evict = scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
+    let evict = scheduler.set_workspace_paths(&mut db, &[]);
     assert!(evict.is_empty());
     assert!(!db.workspace_roots().roots(&db).contains(&dead_root));
 
     // Scan finally completes. Result should drop.
     let result = req.run();
-    let followups = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+    let followups = scheduler.apply_scan_completed(&mut db, result);
     assert!(followups.is_empty());
 
     let pkg_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
@@ -80,17 +79,17 @@ fn test_remove_then_readd_during_scan_uses_distinct_root_entities() {
     let mut scheduler = ScanScheduler::new();
 
     let first = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root_a = first.root;
 
     // Folder removed.
-    scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
+    scheduler.set_workspace_paths(&mut db, &[]);
 
     // Folder re-added: distinct `Root` entity.
     let second = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root_b = second.root;
@@ -98,12 +97,12 @@ fn test_remove_then_readd_during_scan_uses_distinct_root_entities() {
 
     // First scan's result lands on the dead `Root` and gets dropped.
     let result_a = first.run();
-    let followups_a = scheduler.apply_scan_completed(&mut db, result_a, &HashSet::new());
+    let followups_a = scheduler.apply_scan_completed(&mut db, result_a);
     assert!(followups_a.is_empty());
 
     // Second scan applies normally.
     let result_b = second.run();
-    let followups_b = scheduler.apply_scan_completed(&mut db, result_b, &HashSet::new());
+    let followups_b = scheduler.apply_scan_completed(&mut db, result_b);
     assert!(followups_b.is_empty());
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     assert_eq!(pkg.name(&db), "pkg");
@@ -120,7 +119,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     let mut scheduler = ScanScheduler::new();
 
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
 
@@ -128,8 +127,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
     let new_path = tmp.path().join("pkg/R/b.R");
     fs::write(&new_path, "y <- 2\n").unwrap();
     let new_path = FilePath::from_path_buf(new_path.clone()).unwrap();
-    let event_followups =
-        scheduler.apply_watcher_events(&mut db, vec![new_path.clone()], &HashSet::new());
+    let event_followups = scheduler.apply_watcher_events(&mut db, vec![new_path.clone()]);
     // Event was buffered, not dispatched as a scan.
     assert!(event_followups.is_empty());
     // And not yet visible to the db: the scan that would create the
@@ -138,7 +136,7 @@ fn test_watcher_event_buffered_during_scan_and_replayed() {
 
     // Scan completes. Buffered event replays automatically.
     let result = request.run();
-    let followups = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+    let followups = scheduler.apply_scan_completed(&mut db, result);
     assert!(followups.is_empty());
 
     // Both files are now present in pkg.files.
@@ -159,7 +157,7 @@ fn test_description_event_during_scan_queues_rescan() {
     let mut scheduler = ScanScheduler::new();
 
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root = request.root;
@@ -171,22 +169,21 @@ fn test_description_event_during_scan_queues_rescan() {
     )
     .unwrap();
     let desc_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-    let watcher_followups =
-        scheduler.apply_watcher_events(&mut db, vec![desc_path], &HashSet::new());
+    let watcher_followups = scheduler.apply_watcher_events(&mut db, vec![desc_path]);
     assert!(watcher_followups.is_empty());
 
     // First scan applies. It saw no DESCRIPTION yet (was written after
     // walk started in this test, but our fake `ScanRequest::run` will pick it
     // up). The queued rescan should still kick off.
     let result = request.run();
-    let mut followups = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+    let mut followups = scheduler.apply_scan_completed(&mut db, result);
     assert_eq!(followups.len(), 1);
     assert_eq!(followups[0].root, root);
 
     // Drive the queued rescan to completion.
     let req2 = followups.pop().unwrap();
     let result2 = req2.run();
-    let final_followups = scheduler.apply_scan_completed(&mut db, result2, &HashSet::new());
+    let final_followups = scheduler.apply_scan_completed(&mut db, result2);
     assert!(final_followups.is_empty());
 
     // Package is now classified.
@@ -207,8 +204,8 @@ fn test_description_event_on_idle_root_returns_scan_request() {
     let mut scheduler = ScanScheduler::new();
 
     // Initial scan: no DESCRIPTION yet, so root has no packages.
-    let init = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-    drain_scheduler(&mut db, &mut scheduler, init, &HashSet::new());
+    let init = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
+    drain_scheduler(&mut db, &mut scheduler, init);
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.packages(&db).is_empty());
 
@@ -219,11 +216,11 @@ fn test_description_event_on_idle_root_returns_scan_request() {
     )
     .unwrap();
     let desc_path = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-    let followups = scheduler.apply_watcher_events(&mut db, vec![desc_path], &HashSet::new());
+    let followups = scheduler.apply_watcher_events(&mut db, vec![desc_path]);
     assert_eq!(followups.len(), 1);
     assert_eq!(followups[0].root, root);
 
-    drain_scheduler(&mut db, &mut scheduler, followups, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, followups);
     assert_eq!(root.packages(&db).len(), 1);
 }
 
@@ -233,18 +230,18 @@ fn test_failed_scan_clears_state_and_drains_buffer() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
 
     let script = tmp.path().join("script.R");
     fs::write(&script, "x <- 1\n").unwrap();
     let script = FilePath::from_path_buf(script).unwrap();
-    let requests = scheduler.apply_watcher_events(&mut db, vec![script.clone()], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![script.clone()]);
     assert!(requests.is_empty());
     assert!(db.file_by_path(&script).is_none());
 
-    let followups = scheduler.apply_scan_failed(&mut db, request.root, &HashSet::new());
+    let followups = scheduler.apply_scan_failed(&mut db, request.root);
     assert!(followups.is_empty());
     assert!(!scheduler.has_pending_scans());
     assert!(db.file_by_path(&script).is_some());
@@ -265,10 +262,10 @@ fn test_failed_scan_keeps_previous_root_contents() {
     assert_eq!(scripts.len(), 1);
 
     let description = watched_path(&tmp.path().join("pkg/DESCRIPTION"));
-    let mut requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![description]);
     let request = requests.pop().unwrap();
 
-    let followups = scheduler.apply_scan_failed(&mut db, request.root, &HashSet::new());
+    let followups = scheduler.apply_scan_failed(&mut db, request.root);
     assert!(followups.is_empty());
     assert!(!scheduler.has_pending_scans());
     assert_eq!(root.packages(&db), &packages);
@@ -282,15 +279,15 @@ fn test_failed_scan_of_removed_root_drops_its_state() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     assert!(scheduler.has_pending_scans());
 
-    let requests = scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
+    let requests = scheduler.set_workspace_paths(&mut db, &[]);
     assert!(requests.is_empty());
 
-    let followups = scheduler.apply_scan_failed(&mut db, request.root, &HashSet::new());
+    let followups = scheduler.apply_scan_failed(&mut db, request.root);
     assert!(followups.is_empty());
     assert!(!scheduler.has_pending_scans());
 }
@@ -301,7 +298,7 @@ fn test_failed_scan_keeps_buffered_paths_blocked_until_queued_rescan_finishes() 
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root = request.root;
@@ -311,19 +308,16 @@ fn test_failed_scan_keeps_buffered_paths_blocked_until_queued_rescan_finishes() 
     let script = tmp.path().join("script.R");
     fs::write(&script, "x <- 1\n").unwrap();
     let script = watched_path(&script);
-    let requests = scheduler.apply_watcher_events(
-        &mut db,
-        vec![watched_path(&description), script.clone()],
-        &HashSet::new(),
-    );
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description), script.clone()]);
     assert!(requests.is_empty());
 
-    let followups = scheduler.apply_scan_failed(&mut db, root, &HashSet::new());
+    let followups = scheduler.apply_scan_failed(&mut db, root);
     assert_eq!(followups.len(), 1);
     assert!(scheduler.has_pending_scans());
     assert!(db.file_by_path(&script).is_none());
 
-    drain_scheduler(&mut db, &mut scheduler, followups, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, followups);
     assert!(!scheduler.has_pending_scans());
     assert!(db.file_by_path(&script).is_some());
 }
@@ -334,7 +328,7 @@ fn test_failed_scan_starts_queued_rescan() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root = request.root;
@@ -342,13 +336,13 @@ fn test_failed_scan_starts_queued_rescan() {
     let description = tmp.path().join("DESCRIPTION");
     fs::write(&description, "Package: pkg\nVersion: 0.0.0\n").unwrap();
     let description = FilePath::from_path_buf(description).unwrap();
-    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description]);
     assert!(requests.is_empty());
 
-    let followups = scheduler.apply_scan_failed(&mut db, root, &HashSet::new());
+    let followups = scheduler.apply_scan_failed(&mut db, root);
     assert_eq!(followups.len(), 1);
     assert_eq!(followups[0].root, root);
-    drain_scheduler(&mut db, &mut scheduler, followups, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, followups);
     assert_eq!(root.packages(&db).len(), 1);
 }
 
@@ -371,8 +365,8 @@ fn scan_workspace(
     scheduler: &mut ScanScheduler,
     paths: &[PathBuf],
 ) -> Vec<Root> {
-    let requests = scheduler.set_workspace_paths(db, paths, &HashSet::new());
-    drain_scheduler(db, scheduler, requests, &HashSet::new());
+    let requests = scheduler.set_workspace_paths(db, paths);
+    drain_scheduler(db, scheduler, requests);
     db.workspace_roots().roots(db).clone()
 }
 
@@ -415,17 +409,15 @@ fn test_sentinel_events_on_idle_root_rescan() {
 
     let rprofile = sub.join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert_eq!(environment_dirs(&db, root), vec![sub.clone()]);
 
     fs::remove_file(&rprofile).unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(environment_dirs(&db, root).is_empty());
 }
 
@@ -441,11 +433,8 @@ fn test_deleting_one_of_two_sentinels_keeps_environment_dir() {
     assert_eq!(environment_dirs(&db, root), vec![dir.to_path_buf()]);
 
     fs::remove_file(dir.join(".Rprofile")).unwrap();
-    let requests = scheduler.apply_watcher_events(
-        &mut db,
-        vec![watched_path(&dir.join(".Rprofile"))],
-        &HashSet::new(),
-    );
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&dir.join(".Rprofile"))]);
     assert!(requests.is_empty());
     assert_eq!(environment_dirs(&db, root), vec![dir.to_path_buf()]);
 }
@@ -460,8 +449,7 @@ fn test_sentinel_edit_on_idle_root_skips_rescan() {
     let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
 
     fs::write(&rprofile, "options(foo = 1)\n").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert!(requests.is_empty());
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
 }
@@ -481,8 +469,7 @@ fn test_sentinel_edit_in_nested_dir_on_idle_root_skips_rescan() {
     assert_eq!(environment_dirs(&db, root), vec![sub.clone()]);
 
     fs::write(&rprofile, "options(foo = 1)\n").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert!(requests.is_empty());
     assert_eq!(environment_dirs(&db, root), vec![sub]);
 }
@@ -506,10 +493,9 @@ fn test_sentinel_deletion_under_other_case_spelling_rescans() {
 
     fs::remove_file(sub.join(".Rprofile")).unwrap();
     let rprofile = tmp.path().join("sub/.Rprofile");
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(environment_dirs(&db, root).is_empty());
 }
 
@@ -531,10 +517,9 @@ fn test_deleting_lowercase_sentinel_rescans() {
     assert_eq!(environment_dirs(&db, root), vec![sub]);
 
     fs::remove_file(&rprofile).unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(environment_dirs(&db, root).is_empty());
 }
 
@@ -558,10 +543,9 @@ fn test_sentinel_event_under_stale_case_spelling_rescans() {
     let new = tmp.path().join("sub");
     fs::rename(&old, &new).unwrap();
     let rprofile = old.join(".Rprofile");
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert_eq!(environment_dirs(&db, root), vec![new]);
 }
 
@@ -585,13 +569,10 @@ fn test_environment_dir_replaced_by_symlink_rescans() {
 
     fs::remove_dir_all(&sub).unwrap();
     std::os::unix::fs::symlink(&target, &sub).unwrap();
-    let requests = scheduler.apply_watcher_events(
-        &mut db,
-        vec![watched_path(&sub.join(".Rprofile"))],
-        &HashSet::new(),
-    );
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&sub.join(".Rprofile"))]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(environment_dirs(&db, root).is_empty());
 }
 
@@ -608,16 +589,14 @@ fn test_sentinel_edit_during_scan_queues_rescan() {
 
     let description = tmp.path().join("DESCRIPTION");
     fs::write(&description, "Package: pkg\nVersion: 0.0.0\n").unwrap();
-    let mut requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &HashSet::new());
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)]);
     assert_eq!(requests.len(), 1);
     let request = requests.pop().unwrap();
 
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert!(requests.is_empty());
 
-    let followups = scheduler.apply_scan_completed(&mut db, request.run(), &HashSet::new());
+    let followups = scheduler.apply_scan_completed(&mut db, request.run());
     assert_eq!(followups.len(), 1);
     assert_eq!(followups[0].root, root);
 }
@@ -630,7 +609,7 @@ fn test_sentinel_event_during_scan_queues_rescan() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
     let request = scheduler
-        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new())
+        .set_workspace_paths(&mut db, &[tmp.path().to_path_buf()])
         .pop()
         .unwrap();
     let root = request.root;
@@ -638,14 +617,13 @@ fn test_sentinel_event_during_scan_queues_rescan() {
 
     let rprofile = tmp.path().join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert!(requests.is_empty());
 
-    let followups = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+    let followups = scheduler.apply_scan_completed(&mut db, result);
     assert!(environment_dirs(&db, root).is_empty());
     assert_eq!(followups.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, followups, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, followups);
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
 }
 
@@ -662,13 +640,12 @@ fn test_sentinel_and_r_file_events_in_one_batch() {
     let script = tmp.path().join("script.R");
     fs::write(&rprofile, "").unwrap();
     fs::write(&script, "x <- 1\n").unwrap();
-    let requests = scheduler.apply_watcher_events(
-        &mut db,
-        vec![watched_path(&script), watched_path(&rprofile)],
-        &HashSet::new(),
-    );
+    let requests = scheduler.apply_watcher_events(&mut db, vec![
+        watched_path(&script),
+        watched_path(&rprofile),
+    ]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
     let script = FilePath::from_path_buf(script).unwrap();
@@ -686,11 +663,10 @@ fn test_editor_owned_sentinel_still_rescans() {
 
     let rprofile = tmp.path().join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let editor_owned = HashSet::from([FilePath::from_path_buf(rprofile.clone()).unwrap()]);
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &editor_owned);
+    db.upsert_editor(watched_path(&rprofile), String::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert_eq!(environment_dirs(&db, root), vec![tmp.path().to_path_buf()]);
 }
 
@@ -701,19 +677,18 @@ fn rescan_without_open_file(
     scheduler: &mut ScanScheduler,
     tmp: &Path,
     file_path: &Path,
-) -> (oak_db::File, HashSet<FilePath>) {
+) -> oak_db::File {
     let path = watched_path(file_path);
     let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-    let editor_owned = HashSet::from([path]);
 
     fs::remove_file(file_path).unwrap();
     let rprofile = tmp.join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let requests = scheduler.apply_watcher_events(db, vec![watched_path(&rprofile)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(db, scheduler, requests, &editor_owned);
+    drain_scheduler(db, scheduler, requests);
 
-    (file, editor_owned)
+    file
 }
 
 #[test]
@@ -725,7 +700,7 @@ fn test_rescan_moves_open_script_missing_on_disk_to_orphan() {
     let mut scheduler = ScanScheduler::new();
     let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
 
-    let (file, _) = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+    let file = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
     let path = watched_path(&script);
 
     assert!(root.scripts(&db).is_empty());
@@ -753,7 +728,7 @@ fn test_rescan_moves_open_package_file_missing_on_disk_to_orphan() {
     let pkg = root.packages(&db)[0];
 
     let a = tmp.path().join("pkg/R/a.R");
-    let (file, _) = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &a);
+    let file = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &a);
     let path = watched_path(&a);
 
     assert_eq!(root.packages(&db).clone(), vec![pkg]);
@@ -777,16 +752,14 @@ fn test_rescan_restores_orphaned_open_file_when_it_reappears_on_disk() {
     let mut scheduler = ScanScheduler::new();
     let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
 
-    let (file, editor_owned) =
-        rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+    let file = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
 
     fs::write(&script, "edited <- 1\n").unwrap();
     let rprofile = tmp.path().join(".Rprofile");
     fs::remove_file(&rprofile).unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     assert_eq!(root.scripts(&db).clone(), vec![file]);
     assert!(!db.orphan_root().files(&db).contains(&file));
@@ -804,13 +777,11 @@ fn test_saving_rescued_open_file_restores_it_without_rescan() {
     let mut scheduler = ScanScheduler::new();
     let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
 
-    let (file, editor_owned) =
-        rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
+    let file = rescan_without_open_file(&mut db, &mut scheduler, tmp.path(), &script);
     assert!(db.orphan_root().files(&db).contains(&file));
 
     fs::write(&script, "edited <- 1\n").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&script)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&script)]);
     assert!(requests.is_empty());
     assert_eq!(root.scripts(&db).clone(), vec![file]);
     assert!(!db.orphan_root().files(&db).contains(&file));
@@ -836,13 +807,11 @@ fn test_file_opened_before_creation_joins_its_container() {
         .file_by_path(&watched_path(&tmp.path().join("pkg/R/a.R")))
         .unwrap();
 
-    let mut editor_owned = HashSet::new();
     let mut opened = Vec::new();
     for new in ["pkg/R/b.R", "top.R"] {
         let path = watched_path(&tmp.path().join(new));
         let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
         assert!(db.orphan_root().files(&db).contains(&file));
-        editor_owned.insert(path.clone());
         opened.push((path, file));
     }
     let [(b_path, b), (top_path, top)] = opened.try_into().unwrap();
@@ -850,7 +819,7 @@ fn test_file_opened_before_creation_joins_its_container() {
     fs::write(tmp.path().join("pkg/R/b.R"), "").unwrap();
     fs::write(tmp.path().join("top.R"), "").unwrap();
     let events = vec![b_path.clone(), top_path.clone()];
-    let requests = scheduler.apply_watcher_events(&mut db, events, &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, events);
     assert!(requests.is_empty());
 
     assert_eq!(pkg.files(&db), &[a, b]);
@@ -877,9 +846,8 @@ fn test_deleting_open_file_keeps_it_registered() {
 
     let path = watched_path(&script);
     let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-    let editor_owned = HashSet::from([path.clone()]);
     fs::remove_file(&script).unwrap();
-    let requests = scheduler.apply_watcher_events(&mut db, vec![path], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path]);
     assert!(requests.is_empty());
     assert_eq!(root.scripts(&db).clone(), vec![file]);
 }
@@ -902,14 +870,12 @@ fn test_description_deletion_keeps_open_package_file_entity() {
         .file_by_path(&watched_path(&tmp.path().join("pkg/R/b.R")))
         .unwrap();
     let file = db.upsert_editor(a.clone(), "edited <- 1\n".to_string());
-    let editor_owned = HashSet::from([a.clone()]);
 
     let description = tmp.path().join("pkg/DESCRIPTION");
     fs::remove_file(&description).unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     assert!(root.packages(&db).is_empty());
     let scripts: HashSet<_> = root.scripts(&db).iter().copied().collect();
@@ -936,13 +902,12 @@ fn test_nested_root_scan_moves_open_file_missing_on_disk_to_orphan() {
     let a = pkg_dir.join("R/a.R");
     let path = watched_path(&a);
     let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-    let editor_owned = HashSet::from([path.clone()]);
     fs::remove_file(&a).unwrap();
 
     let paths = [tmp.path().to_path_buf(), pkg_dir];
-    let requests = scheduler.set_workspace_paths(&mut db, &paths, &editor_owned);
+    let requests = scheduler.set_workspace_paths(&mut db, &paths);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     let inner = db.workspace_roots().roots(&db)[1];
     assert_eq!(inner.packages(&db).clone(), vec![pkg]);
@@ -967,14 +932,12 @@ fn test_parent_description_keeps_open_child_package_file_entity() {
 
     let path = watched_path(&tmp.path().join("child/R/a.R"));
     let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-    let editor_owned = HashSet::from([path.clone()]);
 
     let description = tmp.path().join("DESCRIPTION");
     fs::write(&description, "Package: parent\nVersion: 0.0.0\n").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&description)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     let packages = root.packages(&db).clone();
     assert_eq!(packages.len(), 2);
@@ -1003,7 +966,7 @@ fn test_rescued_open_file_shared_with_evicted_root() {
     scan_workspace(&mut db, &mut scheduler, &[outer, inner.clone()]);
 
     let path = watched_path(&script);
-    let requests = scheduler.set_workspace_paths(&mut db, &[inner], &HashSet::new());
+    let requests = scheduler.set_workspace_paths(&mut db, &[inner]);
     assert_eq!(requests.len(), 1);
     let file = db.file_by_path(&path).unwrap();
 
@@ -1011,9 +974,8 @@ fn test_rescued_open_file_shared_with_evicted_root() {
         db.upsert_editor(path.clone(), "edited <- 1\n".to_string()),
         file
     );
-    let editor_owned = HashSet::from([path.clone()]);
     fs::remove_file(&script).unwrap();
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
 
     assert_eq!(db.file_by_path(&path), Some(file));
     assert!(db.orphan_root().files(&db).contains(&file));
@@ -1029,18 +991,16 @@ fn test_noop_rescan_with_open_buffer_does_not_bump_salsa_revision() {
     let mut scheduler = ScanScheduler::new();
     scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()]);
 
-    let mut editor_owned = HashSet::new();
     for open in ["pkg/R/a.R", "top.R"] {
         let path = watched_path(&tmp.path().join(open));
         db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-        editor_owned.insert(path);
     }
 
     let before = salsa::plumbing::current_revision(&db);
     let description = watched_path(&tmp.path().join("pkg/DESCRIPTION"));
-    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert_eq!(salsa::plumbing::current_revision(&db), before);
 }
 
@@ -1075,10 +1035,9 @@ fn test_sentinel_event_rescans_every_containing_root() {
 
         let rprofile = inner_dir.join(".Rprofile");
         fs::write(&rprofile, "").unwrap();
-        let requests =
-            scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+        let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
         assert_eq!(requests.len(), 2);
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         assert_eq!(environment_dirs(&db, inner), vec![inner_dir.clone()]);
         assert_eq!(environment_dirs(&db, outer), vec![inner_dir]);
@@ -1103,10 +1062,10 @@ fn test_removing_nested_root_keeps_shared_entities_in_survivor() {
             true => (inner.clone(), roots[1]),
             false => (outer.clone(), roots[0]),
         };
-        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path]);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].root, survivor);
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         let pkg = survivor.packages(&db)[0];
         let a = db
@@ -1139,9 +1098,9 @@ fn test_removing_nested_root_keeps_shared_scripts_in_survivor() {
             true => (sub.clone(), roots[1]),
             false => (tmp.path().to_path_buf(), roots[0]),
         };
-        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path]);
         assert_eq!(requests.len(), 1);
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         let script = db
             .file_by_path(&watched_path(&sub.join("script.R")))
@@ -1163,11 +1122,7 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
         let mut scheduler = ScanScheduler::new();
 
         // The shared `File` points at the package in either scan order.
-        let requests = scheduler.set_workspace_paths(
-            &mut db,
-            &[outer.clone(), inner.clone()],
-            &HashSet::new(),
-        );
+        let requests = scheduler.set_workspace_paths(&mut db, &[outer.clone(), inner.clone()]);
         let roots = db.workspace_roots().roots(&db).clone();
         let (outer_root, inner_root) = (roots[0], roots[1]);
         let (outer_req, inner_req): (Vec<_>, Vec<_>) =
@@ -1177,8 +1132,8 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
         } else {
             (outer_req, inner_req)
         };
-        drain_scheduler(&mut db, &mut scheduler, first, &HashSet::new());
-        drain_scheduler(&mut db, &mut scheduler, last, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, first);
+        drain_scheduler(&mut db, &mut scheduler, last);
 
         let pkg = outer_root.packages(&db)[0];
         let a = db.file_by_path(&watched_path(&inner.join("a.R"))).unwrap();
@@ -1191,9 +1146,9 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
         } else {
             outer.clone()
         };
-        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path], &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[survivor_path]);
         assert_eq!(requests.len(), 1);
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         if remove_outer {
             assert_eq!(inner_root.scripts(&db).as_slice(), &[a]);
@@ -1214,31 +1169,26 @@ fn test_r_file_event_waits_for_every_containing_root_scan() {
         let (tmp, outer, inner) = nested_roots(&mut db, &mut scheduler, inner_first);
         let pkg = tmp.path().join("outer/inner/pkg");
         write_package(&pkg, "pkg", &[("a.R", "x <- 1\n")]);
-        let requests = scheduler.apply_watcher_events(
-            &mut db,
-            vec![watched_path(&pkg.join("DESCRIPTION"))],
-            &HashSet::new(),
-        );
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        let requests =
+            scheduler.apply_watcher_events(&mut db, vec![watched_path(&pkg.join("DESCRIPTION"))]);
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         let rprofile = tmp.path().join("outer/inner/.Rprofile");
         fs::write(&rprofile, "").unwrap();
-        let requests =
-            scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+        let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
         assert_eq!(requests.len(), 2);
         let mut results: Vec<_> = requests.into_iter().map(|req| req.run()).collect();
 
         let new_file = pkg.join("R/new.R");
         fs::write(&new_file, "y <- 2\n").unwrap();
-        let followups =
-            scheduler.apply_watcher_events(&mut db, vec![watched_path(&new_file)], &HashSet::new());
+        let followups = scheduler.apply_watcher_events(&mut db, vec![watched_path(&new_file)]);
         assert!(followups.is_empty());
 
         let second = results.pop().unwrap();
         let first = results.pop().unwrap();
-        let followups = scheduler.apply_scan_completed(&mut db, first, &HashSet::new());
+        let followups = scheduler.apply_scan_completed(&mut db, first);
         assert!(followups.is_empty());
-        let followups = scheduler.apply_scan_completed(&mut db, second, &HashSet::new());
+        let followups = scheduler.apply_scan_completed(&mut db, second);
         assert!(followups.is_empty());
         assert!(!scheduler.has_pending_scans());
 
@@ -1260,8 +1210,7 @@ fn test_buffered_path_matches_disk_after_overlapping_rescans() -> io::Result<()>
     fs::write(&script, "x <- 1\n")?;
     let sentinel = inner_dir.join(".Rprofile");
     fs::write(&sentinel, "")?;
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)]);
     assert_eq!(requests.len(), 2);
     let mut results: Vec<_> = requests.into_iter().map(|request| request.run()).collect();
     let outer_result = results.remove(0);
@@ -1269,31 +1218,27 @@ fn test_buffered_path_matches_disk_after_overlapping_rescans() -> io::Result<()>
 
     fs::remove_file(&script)?;
     assert!(scheduler
-        .apply_watcher_events(&mut db, vec![watched_path(&script)], &HashSet::new(),)
+        .apply_watcher_events(&mut db, vec![watched_path(&script)])
         .is_empty());
     assert!(scheduler
-        .apply_scan_completed(&mut db, outer_result, &HashSet::new())
+        .apply_scan_completed(&mut db, outer_result)
         .is_empty());
 
     // Only the outer root rescans; its snapshot predates the recreation.
     let outer_sentinel = outer_dir.join(".Rprofile");
     fs::write(&outer_sentinel, "")?;
-    let mut requests = scheduler.apply_watcher_events(
-        &mut db,
-        vec![watched_path(&outer_sentinel)],
-        &HashSet::new(),
-    );
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&outer_sentinel)]);
     assert_eq!(requests.len(), 1);
     let outer_result = requests.remove(0).run();
     fs::write(&script, "x <- 2\n")?;
     assert!(scheduler
-        .apply_watcher_events(&mut db, vec![watched_path(&script)], &HashSet::new(),)
+        .apply_watcher_events(&mut db, vec![watched_path(&script)])
         .is_empty());
     assert!(scheduler
-        .apply_scan_completed(&mut db, inner_result, &HashSet::new())
+        .apply_scan_completed(&mut db, inner_result)
         .is_empty());
     assert!(scheduler
-        .apply_scan_completed(&mut db, outer_result, &HashSet::new())
+        .apply_scan_completed(&mut db, outer_result)
         .is_empty());
 
     assert!(!scheduler.has_pending_scans());
@@ -1317,26 +1262,23 @@ fn test_removing_blocking_root_preserves_events_for_surviving_root() -> io::Resu
         };
         let sentinel = sentinel_dir.join(".Rprofile");
         fs::write(&sentinel, "")?;
-        let requests =
-            scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)], &HashSet::new());
+        let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)]);
         assert_eq!(requests.len(), if inner_pending { 2 } else { 1 });
         let results: Vec<_> = requests.into_iter().map(|request| request.run()).collect();
         let script = inner_dir.join("new.R");
         fs::write(&script, "x <- 1\n")?;
         let path = watched_path(&script);
         assert!(scheduler
-            .apply_watcher_events(&mut db, vec![watched_path(&script)], &HashSet::new(),)
+            .apply_watcher_events(&mut db, vec![watched_path(&script)])
             .is_empty());
         assert!(db.file_by_path(&path).is_none());
 
         assert!(scheduler
-            .set_workspace_paths(&mut db, &[inner_dir], &HashSet::new())
+            .set_workspace_paths(&mut db, &[inner_dir])
             .is_empty());
         assert_eq!(db.file_by_path(&path).is_some(), !inner_pending);
         for result in results {
-            assert!(scheduler
-                .apply_scan_completed(&mut db, result, &HashSet::new())
-                .is_empty());
+            assert!(scheduler.apply_scan_completed(&mut db, result).is_empty());
         }
         assert!(!scheduler.has_pending_scans());
         assert_eq!(inner.scripts(&db).len(), 1);
@@ -1361,8 +1303,7 @@ fn test_blocked_events_do_not_delay_unrelated_roots() -> io::Result<()> {
     ]);
     let sentinel = blocked_dir.join(".Rprofile");
     fs::write(&sentinel, "")?;
-    let mut requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)], &HashSet::new());
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)]);
     assert_eq!(requests.len(), 1);
     let result = requests.remove(0).run();
     let blocked_script = blocked_dir.join("new.R");
@@ -1370,11 +1311,10 @@ fn test_blocked_events_do_not_delay_unrelated_roots() -> io::Result<()> {
     fs::write(&blocked_script, "x <- 1\n")?;
     fs::write(&ready_script, "y <- 1\n")?;
     assert!(scheduler
-        .apply_watcher_events(
-            &mut db,
-            vec![watched_path(&blocked_script), watched_path(&ready_script),],
-            &HashSet::new(),
-        )
+        .apply_watcher_events(&mut db, vec![
+            watched_path(&blocked_script),
+            watched_path(&ready_script),
+        ])
         .is_empty());
     let blocked_path = watched_path(&blocked_script);
     let ready_path = watched_path(&ready_script);
@@ -1382,9 +1322,7 @@ fn test_blocked_events_do_not_delay_unrelated_roots() -> io::Result<()> {
     assert!(db.file_by_path(&ready_path).is_some());
     assert!(scheduler.has_pending_scans());
 
-    assert!(scheduler
-        .apply_scan_completed(&mut db, result, &HashSet::new())
-        .is_empty());
+    assert!(scheduler.apply_scan_completed(&mut db, result).is_empty());
     assert!(db.file_by_path(&blocked_path).is_some());
     assert!(db.file_by_path(&ready_path).is_some());
     assert!(!scheduler.has_pending_scans());
@@ -1405,21 +1343,54 @@ fn test_blocked_deletion_survives_editor_open_and_close() -> io::Result<()> {
 
     let sentinel = tmp.path().join(".Rprofile");
     fs::write(&sentinel, "")?;
-    let mut requests =
-        scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)], &HashSet::new());
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)]);
+    assert_eq!(requests.len(), 1);
+    let result = requests.remove(0).run();
+
+    let path = watched_path(&script);
+    db.upsert_editor(path.clone(), "x <- 1\n".to_string());
+    fs::remove_file(&script)?;
+    assert!(scheduler
+        .apply_watcher_events(&mut db, vec![path.clone()])
+        .is_empty());
+    db.close_editor(&path);
+
+    assert!(scheduler.apply_scan_completed(&mut db, result).is_empty());
+    assert!(db.file_by_path(&watched_path(&script)).is_none());
+    Ok(())
+}
+
+#[test]
+fn test_buffered_deletion_of_open_file_keeps_it_in_its_package() -> io::Result<()> {
+    // A buffered deletion must not unlink an open file from the package that
+    // the pending scan listed it in, even though it is now absent from disk.
+    let tmp = tempfile::tempdir()?;
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+    let root = scan_workspace(&mut db, &mut scheduler, &[tmp.path().to_path_buf()])[0];
+    let pkg = root.packages(&db)[0];
+
+    let script = tmp.path().join("pkg/R/a.R");
+    let path = watched_path(&script);
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+
+    let sentinel = tmp.path().join(".Rprofile");
+    fs::write(&sentinel, "")?;
+    let mut requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&sentinel)]);
     assert_eq!(requests.len(), 1);
     let result = requests.remove(0).run();
 
     fs::remove_file(&script)?;
-    let open = HashSet::from([watched_path(&script)]);
     assert!(scheduler
-        .apply_watcher_events(&mut db, vec![watched_path(&script)], &open)
+        .apply_watcher_events(&mut db, vec![path.clone()])
         .is_empty());
 
-    assert!(scheduler
-        .apply_scan_completed(&mut db, result, &HashSet::new())
-        .is_empty());
-    assert!(db.file_by_path(&watched_path(&script)).is_none());
+    assert!(scheduler.apply_scan_completed(&mut db, result).is_empty());
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert_eq!(pkg.files(&db), &[file]);
+    assert_eq!(file.package(&db), Some(pkg));
+    assert!(!db.orphan_root().files(&db).contains(&file));
     Ok(())
 }
 
@@ -1443,7 +1414,7 @@ fn test_new_file_joins_only_the_package_of_its_directory() {
     let new = inner.join("R/new.R");
     fs::write(&new, "z <- 1\n").unwrap();
     let path = watched_path(&new);
-    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()]);
     assert!(requests.is_empty());
     let file = db.file_by_path(&path).unwrap();
     assert_eq!(file.package(&db), Some(pkg_b));
@@ -1451,7 +1422,7 @@ fn test_new_file_joins_only_the_package_of_its_directory() {
     assert!(!pkg_a.files(&db).contains(&file));
 
     fs::remove_file(&new).unwrap();
-    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()]);
     assert!(requests.is_empty());
     assert_eq!(db.file_by_path(&path), None);
 }
@@ -1474,7 +1445,7 @@ fn test_new_file_under_other_normalization_joins_its_package() {
 
     fs::write(tmp.path().join("cafe\u{301}/R/new.R"), "y <- 1\n").unwrap();
     let path = watched_path(&tmp.path().join("caf\u{e9}/R/new.R"));
-    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()], &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![path.clone()]);
     assert!(requests.is_empty());
     let file = db.file_by_path(&path).unwrap();
     assert_eq!(file.package(&db), Some(pkg));
@@ -1490,13 +1461,10 @@ fn test_description_event_rescans_every_containing_root() {
 
         let pkg = tmp.path().join("outer/inner/pkg");
         write_package(&pkg, "pkg", &[("a.R", "x <- 1\n")]);
-        let requests = scheduler.apply_watcher_events(
-            &mut db,
-            vec![watched_path(&pkg.join("DESCRIPTION"))],
-            &HashSet::new(),
-        );
+        let requests =
+            scheduler.apply_watcher_events(&mut db, vec![watched_path(&pkg.join("DESCRIPTION"))]);
         assert_eq!(requests.len(), 2);
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         assert_eq!(inner.packages(&db).len(), 1);
         assert_eq!(outer.packages(&db).len(), 1);
@@ -1515,8 +1483,7 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
 
-    let _requests =
-        scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let _requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     // Before any scan runs:
     let roots = db.workspace_roots().roots(&db).clone();

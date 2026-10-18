@@ -577,11 +577,6 @@ pub(crate) fn did_change_watched_files(
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) -> anyhow::Result<()> {
-    // Editor owns the contents of files it has open, which come from
-    // `did_open` / `did_change`. Disk events for those URLs can register the
-    // file in its container but never remove it.
-    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
-
     // The change type is dropped: the scheduler reconciles each path against
     // the disk when it applies.
     let paths: Vec<FilePath> = params
@@ -590,10 +585,9 @@ pub(crate) fn did_change_watched_files(
         .filter_map(|change| change.uri.to_document_path().log_err())
         .collect();
 
-    let requests =
-        lsp_state
-            .oak_scheduler
-            .apply_watcher_events(state.db_mut(), paths, &editor_owned);
+    let requests = lsp_state
+        .oak_scheduler
+        .apply_watcher_events(state.db_mut(), paths);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     Ok(())
@@ -641,16 +635,10 @@ fn dispatch_workspace_scan(
     lsp_state: &mut LspState,
     events_tx: &TokioUnboundedSender<Event>,
 ) {
-    // Editor-owned URLs survive eviction in `OrphanRoot` so the user's
-    // open buffers keep getting analysed even when their workspace
-    // folder goes away.
-    let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
-
     let folders = to_std_paths(&state.workspace.folders);
-    let requests =
-        lsp_state
-            .oak_scheduler
-            .set_workspace_paths(state.db_mut(), &folders, &editor_owned);
+    let requests = lsp_state
+        .oak_scheduler
+        .set_workspace_paths(state.db_mut(), &folders);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 }
 

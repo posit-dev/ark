@@ -40,7 +40,6 @@
 //! resolution remains pinned to the fixture library.
 
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -652,11 +651,10 @@ fn build_world_base(fixtures: &Fixtures, cache: &SourceCache) -> anyhow::Result<
     }
 
     let mut scheduler = ScanScheduler::new();
-    let editor_owned = HashSet::new();
-    let requests = scheduler.set_workspace_paths(&mut db, &[fixtures.dplyr()], &editor_owned);
+    let requests = scheduler.set_workspace_paths(&mut db, &[fixtures.dplyr()]);
     for request in requests {
         let completed = request.run();
-        scheduler.apply_scan_completed(&mut db, completed, &editor_owned);
+        scheduler.apply_scan_completed(&mut db, completed);
     }
 
     let mut world = LspHarness::new(db);

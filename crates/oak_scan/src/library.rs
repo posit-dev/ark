@@ -46,10 +46,9 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
         .map(|r| (r.path(db).clone(), *r))
         .collect();
 
-    // Library eviction has no editor-owned paths to preserve in `OrphanRoot`.
     for (old_path, &old_root) in &old {
         if !new_paths.contains(old_path) {
-            old_root.evict(db, None);
+            old_root.evict(db);
         }
     }
 

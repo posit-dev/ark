@@ -31,7 +31,6 @@ mod tests;
 
 pub use inputs::DbScan;
 pub use inputs::FileEntry;
-pub use inputs::RootExt;
 pub use scheduler::ScanCompleted;
 pub use scheduler::ScanRequest;
 pub use scheduler::ScanScheduler;

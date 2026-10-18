@@ -63,7 +63,9 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// - New paths: scanned and added.
     ///
-    /// - Removed paths have their roots evicted through [`RootExt::evict()`].
+    /// - Removed paths have their roots evicted.
+    ///   Open buffers no longer listed by a live root stay visible through
+    ///   [`OrphanRoot`](oak_db::OrphanRoot).
     ///   Re-adding a path reuses its `File` and `Package` entities through
     ///   [`oak_db::IdentityMap`].
     ///
@@ -87,7 +89,10 @@ pub trait DbScan: Db + DbInputs {
     ///
     /// Every call for the same path returns the same `File` through
     /// [`oak_db::IdentityMap`]. The supplied contents replace its editor
-    /// override, independently of container membership.
+    /// override and register it as an open buffer. The buffer remains visible
+    /// to [`file_by_path()`](oak_db::SourceDb::file_by_path) across scans,
+    /// watcher events, source replacements, and root eviction until
+    /// [`Self::close_editor()`].
     ///
     /// A file visible through a live root or `OrphanRoot` keeps its
     /// classification. Opening a buffer is a content event, not a
@@ -100,16 +105,14 @@ pub trait DbScan: Db + DbInputs {
 
     /// Release the editor buffer for this path.
     ///
-    /// Clears the entity's override even if it is outside all live containers,
-    /// making disk contents authoritative. Only [`Self::upsert_editor()`]
-    /// sets overrides in production, so an override implies an open buffer.
+    /// Clears the override and unregisters the open buffer even if the file
+    /// is outside all live containers, making disk contents authoritative.
     ///
-    /// If the file lives in [`OrphanRoot`](oak_db::OrphanRoot) (placed there by
-    /// [`Self::upsert_editor()`] because the path didn't belong to a live root,
-    /// or by eviction of an open buffer's workspace), its orphan membership is
-    /// removed. It becomes invisible to analysis if no live root lists it. A later [`Self::upsert_editor()`] for the
-    /// path gets the same entity back. Membership in a live workspace or
-    /// library container is unchanged.
+    /// Removes any membership in [`OrphanRoot`](oak_db::OrphanRoot), whether
+    /// opening the buffer or a later write placed it there. The file becomes
+    /// invisible to analysis if no live root lists it. Membership in live
+    /// workspace and library containers is unchanged, and a later
+    /// [`Self::upsert_editor()`] reuses the same entity.
     ///
     /// An unknown path is a no-op and creates no entity.
     fn close_editor(&mut self, path: &FilePath);
@@ -132,6 +135,9 @@ pub trait DbScan: Db + DbInputs {
     /// Used to ingest sources produced by an external tool into an already-registered
     /// library `Package` whose `files` start empty (the scanner registers installed
     /// packages without sources).
+    ///
+    /// Open buffers absent from the replacement sources stay visible through
+    /// [`OrphanRoot`](oak_db::OrphanRoot) if no other live container lists them.
     fn set_package_sources(&mut self, package: Package, directory: &Path);
 
     /// Replace generated files with the `.R` files directly under `directory`,
@@ -146,13 +152,14 @@ pub trait DbScan: Db + DbInputs {
 impl<DB: Db + DbInputs> DbScan for DB {
     fn set_library_paths(&mut self, paths: &[PathBuf]) {
         crate::library::set_library_paths(self, paths);
+        keep_open_files_visible(self);
     }
 
     fn upsert_editor(&mut self, path: FilePath, contents: String) -> File {
         let file = self.intern_file(path, FileRevision::zero(), None);
         let visible = self.file_by_path(file.path(self)).is_some();
 
-        file.set_source_text_override(self).to(Some(contents));
+        self.set_editor_buffer(file, contents);
 
         if !visible {
             // Files in `OrphanRoot` must have no package. This file can retain
@@ -171,14 +178,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
             return;
         };
 
-        // Clearing the override makes disk contents authoritative and
-        // invalidates queries that depend on `source_text()`. `IdentityMap`
-        // retains closed entities, so a repeated `close_editor()` finds one
-        // with no override. Skipping the write keeps that call from advancing
-        // the revision.
-        if file.source_text_override(self).is_some() {
-            file.set_source_text_override(self).to(None);
-        }
+        self.clear_editor_buffer(file);
 
         // A file in a workspace or library container keeps its placement.
         remove_from_orphan(self, file);
@@ -225,6 +225,7 @@ impl<DB: Db + DbInputs> DbScan for DB {
         let mut upserts = FileUpserts::new();
         set_package_source_entries(self, &mut upserts, package, files, scripts);
         upserts.finish(self);
+        keep_open_files_visible(self);
     }
 
     fn set_package_generated_files(&mut self, package: Package, directory: &Path) {
@@ -264,14 +265,56 @@ fn set_package_source_entries<DB: Db + DbInputs>(
     set_package_containers(db, package, files, scripts);
 }
 
+/// Keep open editor buffers reachable through
+/// [`OrphanRoot`](oak_db::OrphanRoot) when a write removes them from every live
+/// container, as happens when a scan no longer finds their files on disk or
+/// their root is evicted. Otherwise `file_by_path()` would miss an entity still
+/// held by the editor and analysis would lose the buffer.
+///
+/// Public entry points that can remove files from live containers call this
+/// after all placement updates and buffered watcher events. Internal helpers
+/// may leave open buffers temporarily invisible.
+///
+/// Files still reachable retain their container and package, including
+/// entities shared with another root. Calling `set_package()` on a shared
+/// `Package` can remove files from another root's view, so every open buffer
+/// is checked, not just those under the root a write touched.
+///
+/// Every lookup runs before the first write, so the orphan path index isn't
+/// invalidated and rebuilt once per rescued file.
+pub(crate) fn keep_open_files_visible<DB: Db + DbInputs>(db: &mut DB) {
+    let mut dropped: Vec<File> = Vec::new();
+    for file in db.editor_buffer_files() {
+        let path = file.path(db);
+        match db.file_by_path(path) {
+            None => dropped.push(file),
+            Some(current) => stdext::soft_assert!(
+                current == file,
+                "A second `File` is published for an open buffer: {path}"
+            ),
+        }
+    }
+    if dropped.is_empty() {
+        return;
+    }
+
+    for &file in &dropped {
+        if file.package(db).is_some() {
+            file.set_package(db).to(None);
+        }
+    }
+    let orphan = db.orphan_root();
+    let mut orphan_files = orphan.files(db).clone();
+    orphan_files.extend(dropped);
+    orphan.set_files(db).to(orphan_files);
+}
+
 /// Extension methods on [`Root`] for placement-aware updates.
 ///
-/// These are the public surface for scanners and the LSP to push their
-/// findings into the salsa input graph. Implementations live in
-/// `oak_scan` because they coordinate across multiple input fields
-/// (`Root.scripts`, `Package.files`, `File.package`) in ways the raw
-/// salsa setters can't express on their own.
-pub trait RootExt {
+/// These methods keep container membership and package backpointers consistent.
+/// They are crate-private because they may leave open buffers invisible until
+/// the public entry point calls [`keep_open_files_visible()`].
+pub(crate) trait RootExt {
     /// Create or update a package under this root. Atomic full-replacement of
     /// the package's source files and scripts. Generated files stay after the
     /// source files.
@@ -299,20 +342,13 @@ pub trait RootExt {
     /// the backpointers of the files they listed. Entities stay in
     /// [`oak_db::IdentityMap`], so re-adding the root later reuses them.
     ///
-    /// `editor_owned` is `None` for callers without an editor concept (the
-    /// library scanner) and `Some(&set)` for the workspace scanner. Files in
-    /// `editor_owned` go to `OrphanRoot` (still analysis-visible since the
-    /// buffer is open). Everything else becomes analysis-invisible, unless a
-    /// surviving nested root still lists it.
+    /// The files become analysis-invisible unless a surviving nested root
+    /// still lists them. The caller keeps open buffers visible with
+    /// [`keep_open_files_visible()`].
     ///
     /// Doesn't touch `LibraryRoots` / `WorkspaceRoots`. The caller is
     /// responsible for rebuilding those Vec inputs with `self` excluded.
-    fn evict<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>);
-
-    /// Replace `self.scripts` with `File` entities for `files`. Same identity
-    /// rules as [`set_package`](Self::set_package): existing `File` entities at
-    /// the given URLs are reused and have their `package` field cleared.
-    fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>);
+    fn evict<DB: Db + DbInputs>(self, db: &mut DB);
 }
 
 impl RootExt for Root {
@@ -343,14 +379,8 @@ impl RootExt for Root {
         pkg
     }
 
-    fn evict<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<FilePath>>) {
-        crate::eviction::evict_root(db, self, editor_owned);
-    }
-
-    fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>) {
-        let mut upserts = FileUpserts::new();
-        upsert_workspace_scripts(db, &mut upserts, self, files);
-        upserts.finish(db);
+    fn evict<DB: Db + DbInputs>(self, db: &mut DB) {
+        crate::eviction::evict_root(db, self);
     }
 }
 
@@ -443,8 +473,9 @@ fn replace_package_membership<DB: Db + DbInputs>(
     }
 }
 
-/// [`RootExt::set_workspace_scripts()`] with files resolved through `upserts`,
-/// which the caller finishes once every container is written.
+/// Replace `root.scripts` using the batch
+/// [`upserts`](FileUpserts). The caller must call [`FileUpserts::finish()`]
+/// after writing all containers to remove the files' orphan membership.
 ///
 /// A script that another live workspace root lists in a package keeps that
 /// package, both as backpointer and as membership. With nested roots `pkg` and

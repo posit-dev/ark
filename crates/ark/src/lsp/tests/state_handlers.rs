@@ -1,10 +1,8 @@
 //! Smoke tests for the LSP -> oak translator in [`crate::lsp::state_handlers`].
 //! Dispatch behaviour itself is covered by `oak_scan/tests/watch.rs`. The tests
 //! here go through [`did_change_watched_files`] end-to-end so they catch a
-//! regression in either the translation step or the `state.open_files` ->
-//! `editor_owned` conversion.
+//! regression in either the translation step or the handling of open buffers.
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -58,25 +56,12 @@ use crate::lsp::traits::url::UrlExt;
 /// because tests assert post-quiescent state; carrying scheduler
 /// state across calls only matters for mid-flight timing assertions,
 /// which live in `oak_scan`'s scheduler tests.
-fn set_workspace_paths(
-    state: &mut WorldState,
-    paths: &[PathBuf],
-    editor_owned: &HashSet<FilePath>,
-) {
+fn set_workspace_paths(state: &mut WorldState, paths: &[PathBuf]) {
     let mut lsp_state = test_lsp_state();
     let reqs = lsp_state
         .oak_scheduler
-        .set_workspace_paths(state.db_mut(), paths, editor_owned);
-    drain(
-        state.db_mut(),
-        &mut lsp_state.oak_scheduler,
-        reqs,
-        editor_owned,
-    );
-}
-
-fn editor_owned_of(state: &WorldState) -> HashSet<FilePath> {
-    state.open_files.keys().cloned().collect()
+        .set_workspace_paths(state.db_mut(), paths);
+    drain(state.db_mut(), &mut lsp_state.oak_scheduler, reqs);
 }
 
 fn did_change_watched_files(
@@ -123,15 +108,13 @@ where
 
     rt.block_on(async {
         handler(state, lsp_state, &events_tx)?;
-        let editor_owned = editor_owned_of(state);
         while lsp_state.oak_scheduler.has_pending_scans() {
             let Some(Event::OakScanCompleted(scan)) = events_rx.recv().await else {
                 panic!("Expected `OakScanCompleted`");
             };
-            let followups =
-                lsp_state
-                    .oak_scheduler
-                    .apply_scan_completed(state.db_mut(), scan, &editor_owned);
+            let followups = lsp_state
+                .oak_scheduler
+                .apply_scan_completed(state.db_mut(), scan);
             dispatch_scan_requests(&lsp_state.scan_pool, &events_tx, followups);
         }
         Ok(())
@@ -150,11 +133,10 @@ fn drain(
     db: &mut oak_db::OakDatabase,
     scheduler: &mut ScanScheduler,
     mut requests: Vec<ScanRequest>,
-    editor_owned: &HashSet<FilePath>,
 ) {
     while let Some(req) = requests.pop() {
         let result = req.run();
-        requests.extend(scheduler.apply_scan_completed(db, result, editor_owned));
+        requests.extend(scheduler.apply_scan_completed(db, result));
     }
 }
 
@@ -183,7 +165,7 @@ fn workspace_state(workspace: &Path) -> WorldState {
         .workspace
         .folders
         .push(AbsPathBuf::from_path_buf(workspace.to_path_buf()).unwrap());
-    set_workspace_paths(&mut state, &[workspace.to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut state, &[workspace.to_path_buf()]);
     state
 }
 
@@ -351,10 +333,8 @@ fn test_r_file_changed_for_unopened_file_updates_contents() {
 
 #[test]
 fn test_r_file_deleted_for_editor_open_file_keeps_buffer() {
-    // Mirror of `test_r_file_changed_for_editor_open_file_keeps_editor_contents`
-    // for the Deleted kind. `apply_watcher_events()` never removes paths in
-    // `editor_owned`, so the buffer stays visible to the user and queries keep
-    // resolving against the editor's last-pushed content.
+    // Deleting the disk file must not hide an open buffer or replace the
+    // editor contents used by analysis.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("a.R");
     fs::write(&path, "disk_v1\n").unwrap();
@@ -517,11 +497,10 @@ fn test_did_change_workspace_folders_removes_folder() {
         .workspace
         .folders
         .push(AbsPathBuf::from_path_buf(second.path().to_path_buf()).unwrap());
-    set_workspace_paths(
-        &mut state,
-        &[first.path().to_path_buf(), second.path().to_path_buf()],
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut state, &[
+        first.path().to_path_buf(),
+        second.path().to_path_buf(),
+    ]);
     assert_eq!(state.db().workspace_roots().roots(state.db()).len(), 2);
 
     let params = folders_change(vec![], vec![folder_for(first.path())]);
@@ -572,11 +551,8 @@ fn test_did_change_workspace_folders_handles_add_and_remove_in_one_event() {
 
 #[test]
 fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
-    // End-to-end check that `did_change_workspace_folders` threads
-    // `state.open_files` URLs through as `editor_owned` so an open buffer
-    // survives its workspace folder being removed and re-added: same
-    // `File` entity, editor contents preserved, file findable through
-    // both phases.
+    // `did_change_workspace_folders()` must preserve an open buffer's identity,
+    // contents, and analysis visibility across folder removal and re-addition.
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut state = workspace_state(tmp.path());
@@ -592,8 +568,8 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
 
     let file_before = state.db().file_by_path(&file_path).unwrap();
 
-    // `state.open_files.keys()` supplies the editor-owned paths, so removing
-    // the workspace folder keeps the buffer visible through `OrphanRoot`.
+    // Removing the workspace folder keeps the open buffer visible through
+    // `OrphanRoot`.
     let params = folders_change(vec![], vec![folder_for(tmp.path())]);
     did_change_workspace_folders(params, &mut state).unwrap();
 
@@ -646,7 +622,6 @@ fn test_did_close_releases_orphan_file() {
         .upsert_editor(file_path.clone(), "edited\n".to_string());
     state.insert_open_file(url.to_uri().unwrap(), FilePath::from_url(&url), file, None);
 
-    // Remove the workspace folder; file goes to orphan (editor-owned).
     did_change_workspace_folders(
         folders_change(vec![], vec![folder_for(tmp.path())]),
         &mut state,

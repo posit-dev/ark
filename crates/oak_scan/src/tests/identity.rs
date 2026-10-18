@@ -2,7 +2,6 @@
 //! same entity for a path independently of membership. Editor overrides exist
 //! only while their buffers are open.
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -38,14 +37,9 @@ fn file_path(path: &Path) -> FilePath {
     FilePath::from_path_buf(path.to_path_buf()).unwrap()
 }
 
-fn set_workspace_paths(
-    db: &mut OakDatabase,
-    scheduler: &mut ScanScheduler,
-    paths: &[PathBuf],
-    editor_owned: &HashSet<FilePath>,
-) {
-    let requests = scheduler.set_workspace_paths(db, paths, editor_owned);
-    drain_scheduler(db, scheduler, requests, editor_owned);
+fn set_workspace_paths(db: &mut OakDatabase, scheduler: &mut ScanScheduler, paths: &[PathBuf]) {
+    let requests = scheduler.set_workspace_paths(db, paths);
+    drain_scheduler(db, scheduler, requests);
 }
 
 #[test]
@@ -58,51 +52,34 @@ fn test_held_handle_stays_current() {
     write_package(&inner.join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let disk = inner.join("pkg/R/a.R");
     let path = file_path(&disk);
-    let editor_owned = HashSet::from([path.clone()]);
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
 
-    set_workspace_paths(
-        &mut db,
-        &mut scheduler,
-        slice::from_ref(&inner),
-        &editor_owned,
-    );
+    set_workspace_paths(&mut db, &mut scheduler, slice::from_ref(&inner));
     let held = db.upsert_editor(path.clone(), "v0\n".to_string());
 
     fs::remove_file(&disk).unwrap();
     let rprofile = inner.join(".Rprofile");
     fs::write(&rprofile, "").unwrap();
-    let requests =
-        scheduler.apply_watcher_events(&mut db, vec![file_path(&rprofile)], &editor_owned);
+    let requests = scheduler.apply_watcher_events(&mut db, vec![file_path(&rprofile)]);
     assert_eq!(requests.len(), 1);
-    drain_scheduler(&mut db, &mut scheduler, requests, &editor_owned);
+    drain_scheduler(&mut db, &mut scheduler, requests);
     // Each step asserts visibility before `upsert_editor()`, which restores
     // it by itself and would hide a missing rescue.
     assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v1\n".to_string()), held);
     fs::write(&disk, "x <- 1\n").unwrap();
 
-    set_workspace_paths(&mut db, &mut scheduler, &[], &editor_owned);
+    set_workspace_paths(&mut db, &mut scheduler, &[]);
     assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v2\n".to_string()), held);
 
-    set_workspace_paths(
-        &mut db,
-        &mut scheduler,
-        slice::from_ref(&inner),
-        &editor_owned,
-    );
+    set_workspace_paths(&mut db, &mut scheduler, slice::from_ref(&inner));
     assert_eq!(db.file_by_path(&path), Some(held));
     assert_eq!(db.upsert_editor(path.clone(), "v3\n".to_string()), held);
 
-    set_workspace_paths(
-        &mut db,
-        &mut scheduler,
-        &[outer.clone(), inner.clone()],
-        &editor_owned,
-    );
-    set_workspace_paths(&mut db, &mut scheduler, &[inner], &editor_owned);
+    set_workspace_paths(&mut db, &mut scheduler, &[outer.clone(), inner.clone()]);
+    set_workspace_paths(&mut db, &mut scheduler, &[inner]);
     // Eviction of `outer` orphaned the open file, and the survivor's repair
     // rescan must take it back out and restore its package.
     assert_eq!(db.file_by_path(&path), Some(held));
@@ -124,9 +101,9 @@ fn test_open_interned_unpublished_file() {
     let mut scheduler = ScanScheduler::new();
 
     let workspace = [tmp.path().to_path_buf()];
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
     let scanned = db.file_by_path(&path).unwrap();
-    set_workspace_paths(&mut db, &mut scheduler, &[], &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &[]);
     assert_eq!(db.file_by_path(&path), None);
 
     let opened = db.upsert_editor(path.clone(), "edited\n".to_string());
@@ -151,14 +128,14 @@ fn test_rescan_dropping_file_clears_its_package() {
     let mut scheduler = ScanScheduler::new();
 
     let workspace = [tmp.path().to_path_buf()];
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
     let scanned = db.file_by_path(&path).unwrap();
     let pkg = scanned.package(&db).unwrap();
 
     fs::remove_file(&disk).unwrap();
     let description = file_path(&tmp.path().join("pkg/DESCRIPTION"));
-    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(pkg.files(&db).is_empty());
     assert_eq!(db.file_by_path(&path), None);
     assert_eq!(scanned.package(&db), None);
@@ -182,14 +159,14 @@ fn test_open_file_of_dropped_package_clears_its_package() {
     let mut scheduler = ScanScheduler::new();
 
     let workspace = [tmp.path().to_path_buf()];
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
     let scanned = db.file_by_path(&path).unwrap();
     let pkg = scanned.package(&db).unwrap();
 
     fs::remove_dir_all(tmp.path().join("pkg")).unwrap();
     let description = file_path(&tmp.path().join("pkg/DESCRIPTION"));
-    let requests = scheduler.apply_watcher_events(&mut db, vec![description], &HashSet::new());
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    let requests = scheduler.apply_watcher_events(&mut db, vec![description]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
     assert!(db.workspace_roots().roots(&db)[0].packages(&db).is_empty());
     assert_eq!(db.file_by_path(&path), None);
     assert_eq!(scanned.package(&db), Some(pkg));
@@ -233,7 +210,7 @@ fn test_close_editor_in_container_reads_disk_and_keeps_placement() {
     let mut scheduler = ScanScheduler::new();
 
     let workspace = [tmp.path().to_path_buf()];
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
     let root = db.workspace_roots().roots(&db)[0];
     let file = db.upsert_editor(path.clone(), "buffer\n".to_string());
     assert_eq!(file.source_text(&db), "buffer\n");
@@ -269,6 +246,26 @@ fn test_close_editor_in_orphan_reads_disk_and_unpublishes() {
     assert_eq!(reopened, file);
     assert!(db.orphan_root().files(&db).contains(&file));
     assert_eq!(file.source_text(&db), "again\n");
+}
+
+#[test]
+fn test_closed_orphan_buffer_is_not_rescued_by_later_writes() {
+    // Later placement updates must not rescue a closed buffer back into
+    // `OrphanRoot`.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = file_path(&tmp.path().join("a.R"));
+    let mut db = OakDatabase::new();
+    let mut scheduler = ScanScheduler::new();
+
+    let file = db.upsert_editor(path.clone(), "buffer\n".to_string());
+    db.close_editor(&path);
+    assert_eq!(db.file_by_path(&path), None);
+
+    db.set_library_paths(&[]);
+    set_workspace_paths(&mut db, &mut scheduler, &[]);
+
+    assert_eq!(db.file_by_path(&path), None);
+    assert!(!db.orphan_root().files(&db).contains(&file));
 }
 
 #[test]
@@ -361,14 +358,14 @@ fn test_workspace_root_readd_reuses_entities_and_refreshes_metadata() {
     let mut scheduler = ScanScheduler::new();
 
     let workspace = [tmp.path().to_path_buf()];
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let file = db.file_by_path(&path).unwrap();
 
-    set_workspace_paths(&mut db, &mut scheduler, &[], &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &[]);
     let description = tmp.path().join("pkg/DESCRIPTION");
     fs::write(&description, "Package: renamed\nVersion: 0.0.1\n").unwrap();
-    set_workspace_paths(&mut db, &mut scheduler, &workspace, &HashSet::new());
+    set_workspace_paths(&mut db, &mut scheduler, &workspace);
 
     assert_eq!(
         db.workspace_roots().roots(&db)[0].packages(&db).clone(),
@@ -390,12 +387,7 @@ fn test_library_registration_shares_workspace_package() {
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
 
-    set_workspace_paths(
-        &mut db,
-        &mut scheduler,
-        slice::from_ref(&lib),
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &mut scheduler, slice::from_ref(&lib));
     let workspace_pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
 
     db.set_library_paths(&[lib]);

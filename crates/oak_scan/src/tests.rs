@@ -1,5 +1,6 @@
 mod eviction;
 mod identity;
+mod library;
 mod notebook;
 mod packages;
 mod scheduler;

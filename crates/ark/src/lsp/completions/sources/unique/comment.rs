@@ -212,8 +212,6 @@ fn test_roxygen_comment() {
 
 #[test]
 fn test_roxygen_comment_while_working_on_roxygen2() {
-    use std::collections::HashSet;
-
     use oak_scan::ScanScheduler;
     use tempfile::TempDir;
     use tree_sitter::Point;
@@ -244,12 +242,10 @@ fn test_roxygen_comment_while_working_on_roxygen2() {
     // Drive the workspace scanner to quiescence so `roxygen2` registers as a
     // workspace package
     let mut scheduler = ScanScheduler::new();
-    let editor_owned = HashSet::new();
-    let mut requests =
-        scheduler.set_workspace_paths(&mut db, &[workspace.path().to_path_buf()], &editor_owned);
+    let mut requests = scheduler.set_workspace_paths(&mut db, &[workspace.path().to_path_buf()]);
     while let Some(request) = requests.pop() {
         let completed = request.run();
-        requests.extend(scheduler.apply_scan_completed(&mut db, completed, &editor_owned));
+        requests.extend(scheduler.apply_scan_completed(&mut db, completed));
     }
 
     let point = Point { row: 0, column: 4 };

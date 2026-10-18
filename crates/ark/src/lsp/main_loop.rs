@@ -856,9 +856,7 @@ impl GlobalState {
                 //   serially, so it never wraps its own reads in
                 //   `catch_cancellation()`. A background write would cancel those
                 //   reads out from under it, causing a cancellation panic.
-                self.apply_scan_outcome(|scheduler, db, editor_owned| {
-                    scheduler.apply_scan_completed(db, scan, editor_owned)
-                });
+                self.apply_scan_outcome(|scheduler, db| scheduler.apply_scan_completed(db, scan));
             },
 
             Event::OakScanFailed(root) => {
@@ -866,9 +864,7 @@ impl GlobalState {
                     "Received `OakScanFailed` for {path}",
                     path = root.path(self.world.db())
                 );
-                self.apply_scan_outcome(|scheduler, db, editor_owned| {
-                    scheduler.apply_scan_failed(db, root, editor_owned)
-                });
+                self.apply_scan_outcome(|scheduler, db| scheduler.apply_scan_failed(db, root));
             },
 
             Event::SourceCompleted(SourceCompleted { package, response }) => {
@@ -1003,16 +999,9 @@ impl GlobalState {
     /// follow-up scans it requests.
     fn apply_scan_outcome(
         &mut self,
-        apply: impl FnOnce(&mut ScanScheduler, &mut OakDatabase, &HashSet<FilePath>) -> Vec<ScanRequest>,
+        apply: impl FnOnce(&mut ScanScheduler, &mut OakDatabase) -> Vec<ScanRequest>,
     ) {
-        // Recompute editor-owned files at apply time, not at spawn time: a
-        // buffer may have opened or closed since the scan kicked off.
-        let editor_owned: HashSet<FilePath> = self.world.open_files.keys().cloned().collect();
-        let followups = apply(
-            &mut self.lsp_state.oak_scheduler,
-            self.world.db_mut(),
-            &editor_owned,
-        );
+        let followups = apply(&mut self.lsp_state.oak_scheduler, self.world.db_mut());
         lsp::log_info!(
             "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
             n = followups.len(),
@@ -1712,7 +1701,6 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use std::time::Instant;
 
     use aether_path::FilePath;
@@ -1978,8 +1966,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut db = OakDatabase::new();
         let mut scheduler = ScanScheduler::new();
-        let requests =
-            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
         let request = requests.into_iter().next().unwrap();
         (request, tmp)
     }

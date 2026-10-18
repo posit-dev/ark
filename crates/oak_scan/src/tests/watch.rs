@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -31,35 +30,31 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
 
 /// Sync helper: set workspace paths and drive the scheduler to
 /// quiescence on the current thread.
-fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf], editor_owned: &HashSet<FilePath>) {
+fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf]) {
     let mut scheduler = ScanScheduler::new();
-    let reqs = scheduler.set_workspace_paths(db, paths, editor_owned);
-    drain_scheduler(db, &mut scheduler, reqs, editor_owned);
+    let reqs = scheduler.set_workspace_paths(db, paths);
+    drain_scheduler(db, &mut scheduler, reqs);
 }
 
 /// Sync helper: dispatch watcher events through the scheduler and
 /// drive it to quiescence.
-fn apply_watcher_events(
-    db: &mut OakDatabase,
-    paths: Vec<FilePath>,
-    editor_owned: &HashSet<FilePath>,
-) {
+fn apply_watcher_events(db: &mut OakDatabase, paths: Vec<FilePath>) {
     let mut scheduler = ScanScheduler::new();
-    let reqs = scheduler.apply_watcher_events(db, paths, editor_owned);
-    drain_scheduler(db, &mut scheduler, reqs, editor_owned);
+    let reqs = scheduler.apply_watcher_events(db, paths);
+    drain_scheduler(db, &mut scheduler, reqs);
 }
 
 /// Sync helper: report `path` to the watcher. The scheduler reads contents
 /// from disk, so callers must write the expected content to disk before
 /// calling.
 fn add_watched_file(db: &mut OakDatabase, path: FilePath) {
-    apply_watcher_events(db, vec![path], &HashSet::new());
+    apply_watcher_events(db, vec![path]);
 }
 
 /// Sync helper: report `path` to the watcher. The scheduler checks the disk,
 /// so callers must delete the file before calling.
 fn remove_watched_file(db: &mut OakDatabase, path: FilePath) {
-    apply_watcher_events(db, vec![path], &HashSet::new());
+    apply_watcher_events(db, vec![path]);
 }
 
 /// The global salsa revision. Bumps once per input setter that actually
@@ -74,15 +69,15 @@ fn rescan_workspace_root(db: &mut OakDatabase, root: Root) {
     let path = root.path(db).as_path().unwrap().to_path_buf();
     let result = ScanRequest { root, path }.run();
     let mut scheduler = ScanScheduler::new();
-    let reqs = scheduler.apply_scan_completed(db, result, &HashSet::new());
-    drain_scheduler(db, &mut scheduler, reqs, &HashSet::new());
+    let reqs = scheduler.apply_scan_completed(db, result);
+    drain_scheduler(db, &mut scheduler, reqs);
 }
 
 #[test]
 fn test_add_watched_file_new_top_level_script() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("new.R");
     fs::write(&path, "x <- 1\n").unwrap();
@@ -99,7 +94,7 @@ fn test_add_watched_file_into_existing_package() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("pkg/R/b.R");
     fs::write(&path, "y <- 2\n").unwrap();
@@ -123,7 +118,7 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
     fs::write(&path, "test code\n").unwrap();
@@ -149,7 +144,7 @@ fn test_add_watched_file_skips_nested_r_subdir() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     fs::create_dir_all(tmp.path().join("pkg/R/nested")).unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("pkg/R/nested/deep.R");
     fs::write(&path, "z <- 3\n").unwrap();
@@ -172,7 +167,7 @@ fn test_add_watched_file_updates_pkg_scripts_content_preserves_placement() {
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "v1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("pkg/tests/test-foo.R");
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
@@ -197,7 +192,7 @@ fn test_remove_watched_file_from_pkg_scripts() {
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "t\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("pkg/tests/test-foo.R");
     fs::remove_file(&path).unwrap();
@@ -215,11 +210,7 @@ fn test_add_watched_file_outside_workspace_is_skipped() {
     let workspace = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[workspace.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[workspace.path().to_path_buf()]);
 
     let path = outside.path().join("stray.R");
     fs::write(&path, "z <- 3\n").unwrap();
@@ -236,7 +227,7 @@ fn test_add_watched_file_updates_existing_content_preserves_placement() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "v1\n")]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("pkg/R/a.R");
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
@@ -261,7 +252,7 @@ fn test_remove_watched_file_from_package() {
         ("b.R", "y <- 2\n"),
     ]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("pkg/R/a.R");
     fs::remove_file(&path).unwrap();
@@ -281,7 +272,7 @@ fn test_remove_watched_file_from_workspace_scripts() {
     fs::write(tmp.path().join("a.R"), "x <- 1\n").unwrap();
     fs::write(tmp.path().join("b.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("a.R");
     fs::remove_file(&path).unwrap();
@@ -297,7 +288,7 @@ fn test_remove_watched_file_from_workspace_scripts() {
 fn test_remove_watched_file_unknown_url_is_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = FilePath::from_path_buf(tmp.path().join("ghost.R")).unwrap();
     remove_watched_file(&mut db, path);
@@ -312,7 +303,7 @@ fn test_rescan_workspace_root_picks_up_new_description() {
     fs::create_dir_all(tmp.path().join("pkg/R")).unwrap();
     fs::write(tmp.path().join("pkg/R/a.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     // No DESCRIPTION yet, so the R file came in as a script.
     let root = db.workspace_roots().roots(&db)[0];
@@ -338,7 +329,7 @@ fn test_rescan_workspace_root_drops_removed_pkg_scripts() {
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "t\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let root = db.workspace_roots().roots(&db)[0];
     let pkg = root.packages(&db)[0];
@@ -361,7 +352,7 @@ fn test_rescan_workspace_root_preserves_pkg_scripts_identity() {
     fs::create_dir_all(tmp.path().join("pkg/tests")).unwrap();
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "t\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let root = db.workspace_roots().roots(&db)[0];
     let pkg = root.packages(&db)[0];
@@ -379,7 +370,7 @@ fn test_rescan_workspace_root_demotes_removed_description() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 1);
@@ -403,18 +394,16 @@ fn test_apply_watcher_events_routes_description_to_rescan() {
     fs::create_dir_all(tmp.path().join("pkg/R")).unwrap();
     fs::write(tmp.path().join("pkg/R/a.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     fs::write(
         tmp.path().join("pkg/DESCRIPTION"),
         "Package: pkg\nVersion: 0.0.0\n",
     )
     .unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![watched_path(&tmp.path().join("pkg/DESCRIPTION"))],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![watched_path(
+        &tmp.path().join("pkg/DESCRIPTION"),
+    )]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 1);
@@ -429,16 +418,12 @@ fn test_apply_watcher_events_dedupes_descriptions_per_root() {
     write_package(&tmp.path().join("pkg1"), "pkg1", &[]);
     write_package(&tmp.path().join("pkg2"), "pkg2", &[]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
-    apply_watcher_events(
-        &mut db,
-        vec![
-            watched_path(&tmp.path().join("pkg1/DESCRIPTION")),
-            watched_path(&tmp.path().join("pkg2/DESCRIPTION")),
-        ],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![
+        watched_path(&tmp.path().join("pkg1/DESCRIPTION")),
+        watched_path(&tmp.path().join("pkg2/DESCRIPTION")),
+    ]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 2);
@@ -448,11 +433,11 @@ fn test_apply_watcher_events_dedupes_descriptions_per_root() {
 fn test_apply_watcher_events_routes_r_file_to_add() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let path = tmp.path().join("new.R");
     fs::write(&path, "x <- 1\n").unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&path)]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.scripts(&db).len(), 1);
@@ -463,12 +448,12 @@ fn test_apply_watcher_events_routes_r_file_to_remove() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("a.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("a.R");
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
     fs::remove_file(&fs_path).unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
@@ -481,7 +466,7 @@ fn test_apply_watcher_events_refreshes_revision_of_editor_owned_file() {
     let fs_path = tmp.path().join("a.R");
     fs::write(&fs_path, "disk_v1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     // Driver "owns" this URL (the editor has it open).
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
@@ -489,7 +474,6 @@ fn test_apply_watcher_events_refreshes_revision_of_editor_owned_file() {
     let file = db.file_by_path(&path).unwrap();
     let before = file.revision(&db);
 
-    let editor_owned = HashSet::from([path.clone()]);
     fs::write(&fs_path, "disk_v3\n").unwrap();
     // Make sure the mtime differs even on coarse-grained filesystems.
     filetime::set_file_mtime(
@@ -497,7 +481,7 @@ fn test_apply_watcher_events_refreshes_revision_of_editor_owned_file() {
         filetime::FileTime::from_unix_time(1_000_000_000, 0),
     )
     .unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &editor_owned);
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     assert_ne!(file.revision(&db), before);
     assert_eq!(file.source_text(&db), "editor_v2\n");
@@ -510,7 +494,7 @@ fn test_apply_watcher_events_rescans_editor_owned_description() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join("pkg/R")).unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     fs::write(
         tmp.path().join("pkg/DESCRIPTION"),
@@ -520,9 +504,10 @@ fn test_apply_watcher_events_rescans_editor_owned_description() {
 
     let desc_fs_path = tmp.path().join("pkg/DESCRIPTION");
     let desc_path = FilePath::from_path_buf(desc_fs_path.clone()).unwrap();
-    let editor_owned = HashSet::from([desc_path]);
+    let contents = fs::read_to_string(&desc_fs_path).unwrap();
+    db.upsert_editor(desc_path, contents);
 
-    apply_watcher_events(&mut db, vec![watched_path(&desc_fs_path)], &editor_owned);
+    apply_watcher_events(&mut db, vec![watched_path(&desc_fs_path)]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert_eq!(root.packages(&db).len(), 1);
@@ -541,17 +526,11 @@ fn test_apply_watcher_events_description_outside_any_workspace_is_noop() {
     )
     .unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[workspace.path().to_path_buf()],
-        &std::collections::HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[workspace.path().to_path_buf()]);
 
-    apply_watcher_events(
-        &mut db,
-        vec![watched_path(&outside.path().join("DESCRIPTION"))],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![watched_path(
+        &outside.path().join("DESCRIPTION"),
+    )]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.packages(&db).is_empty());
@@ -565,12 +544,12 @@ fn test_apply_watcher_events_ignores_non_r_files() {
     // landing them in the orphan bucket or some root container.
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("notes.txt");
     fs::write(&fs_path, "not R\n").unwrap();
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     assert!(db.file_by_path(&path).is_none());
     let root = db.workspace_roots().roots(&db)[0];
@@ -586,7 +565,7 @@ fn test_apply_watcher_events_tolerates_non_package_description() {
     // workspace unclassified rather than panicking or erroring.
     let tmp = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     fs::create_dir_all(tmp.path().join("not-a-pkg")).unwrap();
     fs::write(
@@ -594,11 +573,9 @@ fn test_apply_watcher_events_tolerates_non_package_description() {
         "Title: Some other project\nVersion: 1.0\n",
     )
     .unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![watched_path(&tmp.path().join("not-a-pkg/DESCRIPTION"))],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![watched_path(
+        &tmp.path().join("not-a-pkg/DESCRIPTION"),
+    )]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.packages(&db).is_empty());
@@ -617,7 +594,7 @@ fn test_noop_rescan_does_not_bump_salsa_revision() {
     fs::write(tmp.path().join("pkg/tests/test-foo.R"), "t\n").unwrap();
     fs::write(tmp.path().join("top.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
     let root = db.workspace_roots().roots(&db)[0];
 
     // Nothing changed on disk, so the rescan reuses every `Package` / `File`
@@ -639,7 +616,7 @@ fn test_rescan_refreshes_revision_of_known_file() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
     let root = db.workspace_roots().roots(&db)[0];
 
     let fs_path = tmp.path().join("pkg/R/a.R");
@@ -671,7 +648,7 @@ fn test_watcher_event_keeps_collate_omitted_file_in_pkg_scripts() {
     )
     .unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
     let b_path = pkg_dir.join("R/b.R");
@@ -699,11 +676,7 @@ fn test_watcher_add_lands_in_every_nested_root() {
     let sub = tmp.path().join("sub");
     fs::create_dir_all(&sub).unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[tmp.path().to_path_buf(), sub.clone()],
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf(), sub.clone()]);
 
     let fs_path = sub.join("new.R");
     fs::write(&fs_path, "x <- 1\n").unwrap();
@@ -723,11 +696,7 @@ fn test_watcher_add_of_known_file_lists_it_in_missing_nested_root() {
     let sub = tmp.path().join("sub");
     fs::create_dir_all(&sub).unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[tmp.path().to_path_buf(), sub.clone()],
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf(), sub.clone()]);
     let roots = db.workspace_roots().roots(&db).clone();
 
     let fs_path = sub.join("new.R");
@@ -751,11 +720,7 @@ fn test_watcher_remove_unlinks_from_every_nested_root() {
     let fs_path = sub.join("a.R");
     fs::write(&fs_path, "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[tmp.path().to_path_buf(), sub.clone()],
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf(), sub.clone()]);
     let roots = db.workspace_roots().roots(&db).clone();
     for root in &roots {
         assert_eq!(root.scripts(&db).len(), 1);
@@ -781,18 +746,14 @@ fn test_watcher_add_and_remove_file_held_by_package_and_nested_root() {
     )
     .unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(
-        &mut db,
-        &[pkg_dir.clone(), pkg_dir.join("R")],
-        &HashSet::new(),
-    );
+    set_workspace_paths(&mut db, &[pkg_dir.clone(), pkg_dir.join("R")]);
     let roots = db.workspace_roots().roots(&db).clone();
     let (outer, inner) = (roots[0], roots[1]);
     let pkg = outer.packages(&db)[0];
 
     let fs_path = pkg_dir.join("R/new.R");
     fs::write(&fs_path, "x <- 1\n").unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     let file = db.file_by_path(&watched_path(&fs_path)).unwrap();
     assert_eq!(pkg.files(&db), &vec![file]);
@@ -800,7 +761,7 @@ fn test_watcher_add_and_remove_file_held_by_package_and_nested_root() {
     assert_eq!(file.package(&db), Some(pkg));
 
     fs::remove_file(&fs_path).unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     assert!(pkg.files(&db).is_empty());
     assert!(inner.scripts(&db).is_empty());
@@ -813,12 +774,12 @@ fn test_watcher_parent_dir_replaced_by_file_unlinks_path() {
     fs::create_dir_all(tmp.path().join("sub")).unwrap();
     fs::write(tmp.path().join("sub/foo.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("sub/foo.R");
     fs::remove_dir_all(tmp.path().join("sub")).unwrap();
     fs::write(tmp.path().join("sub"), "").unwrap();
-    apply_watcher_events(&mut db, vec![watched_path(&fs_path)], &HashSet::new());
+    apply_watcher_events(&mut db, vec![watched_path(&fs_path)]);
 
     let root = db.workspace_roots().roots(&db)[0];
     assert!(root.scripts(&db).is_empty());
@@ -833,16 +794,15 @@ fn test_watcher_case_only_file_rename_unlinks_old_spelling() {
     }
     fs::write(tmp.path().join("foo.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let old_path = tmp.path().join("foo.R");
     let new_path = tmp.path().join("Foo.R");
     fs::rename(&old_path, &new_path).unwrap();
-    apply_watcher_events(
-        &mut db,
-        vec![watched_path(&old_path), watched_path(&new_path)],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![
+        watched_path(&old_path),
+        watched_path(&new_path),
+    ]);
 
     let root = db.workspace_roots().roots(&db)[0];
     let scripts = root.scripts(&db).clone();
@@ -860,16 +820,15 @@ fn test_watcher_case_only_dir_rename_unlinks_old_spelling() {
     fs::create_dir_all(tmp.path().join("scripts")).unwrap();
     fs::write(tmp.path().join("scripts/a.R"), "x <- 1\n").unwrap();
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     fs::rename(tmp.path().join("scripts"), tmp.path().join("Scripts")).unwrap();
     let old_path = tmp.path().join("scripts/a.R");
     let new_path = tmp.path().join("Scripts/a.R");
-    apply_watcher_events(
-        &mut db,
-        vec![watched_path(&old_path), watched_path(&new_path)],
-        &HashSet::new(),
-    );
+    apply_watcher_events(&mut db, vec![
+        watched_path(&old_path),
+        watched_path(&new_path),
+    ]);
 
     let root = db.workspace_roots().roots(&db)[0];
     let scripts = root.scripts(&db).clone();
@@ -887,7 +846,7 @@ fn test_watcher_reblip_same_mtime_does_not_bump_salsa_revision() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let mut db = OakDatabase::new();
-    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
 
     let fs_path = tmp.path().join("pkg/R/a.R");
     let path = FilePath::from_path_buf(fs_path.clone()).unwrap();

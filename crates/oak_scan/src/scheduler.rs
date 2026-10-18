@@ -71,6 +71,7 @@ use oak_db::RootKind;
 use salsa::Setter;
 
 use crate::eviction::root_files;
+use crate::inputs::keep_open_files_visible;
 use crate::inputs::upsert_package;
 use crate::inputs::upsert_workspace_scripts;
 use crate::inputs::FileEntry;
@@ -209,10 +210,11 @@ impl ScanScheduler {
     }
 
     /// Reconcile `WorkspaceRoots` to exactly `paths`. Returns one
-    /// [`ScanRequest`] per newly-added path; unchanged paths skip the
-    /// rescan, removed paths are evicted via
-    /// [`RootExt::evict()`]. A surviving nested root that shared packages
-    /// or scripts with a removed root also gets a rescan, to restore them.
+    /// [`ScanRequest`] per newly-added path. Unchanged paths skip the rescan,
+    /// removed paths are evicted. Open buffers no longer listed by a live
+    /// container stay visible through [`OrphanRoot`](oak_db::OrphanRoot).
+    /// Surviving nested roots that shared packages or scripts with an evicted
+    /// root are rescanned to restore containers and package backpointers.
     ///
     /// New roots are inserted into `workspace_roots` empty so watcher
     /// events can find them while their scan is in flight (the events
@@ -221,7 +223,6 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         paths: &[PathBuf],
-        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let new: Vec<(Utf8PathBuf, FilePath)> = paths
             .iter()
@@ -255,7 +256,7 @@ impl ScanScheduler {
             evicted_files.extend(root_files(db, old_root));
         }
         for &old_root in &removed {
-            old_root.evict(db, Some(editor_owned));
+            old_root.evict(db);
             self.state.remove(&old_root);
         }
 
@@ -312,7 +313,8 @@ impl ScanScheduler {
             }
         }
 
-        self.drain_buffered(db, editor_owned);
+        self.drain_buffered(db);
+        keep_open_files_visible(db);
 
         requests
     }
@@ -324,22 +326,21 @@ impl ScanScheduler {
     /// events that are coalesced, duplicated, or out of date by then.
     ///
     /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` paths rescan every
-    /// containing root, including when the editor owns them. Sentinel events
-    /// that leave an idle root's `environment_dirs()` accurate are skipped
-    /// (see `is_environment_dir_current()`). Idle roots return a
+    /// containing root, including when they are open in the editor. Sentinel
+    /// events that leave an idle root's `environment_dirs()` accurate are
+    /// skipped (see `is_environment_dir_current()`). Idle roots return a
     /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
     /// `apply_scan_completed()` to start.
     ///
     /// R-file paths apply directly only when no containing root has a pending
     /// scan. Otherwise they are buffered until all containing roots finish
-    /// scanning, so older scan results cannot overwrite their effects. Paths
-    /// in `editor_owned` are never removed, so an open buffer survives the
-    /// deletion of its file on disk.
+    /// scanning, so older scan results cannot overwrite their effects. Files
+    /// with an open editor buffer are never removed, so an open buffer
+    /// survives the deletion of its file on disk.
     pub fn apply_watcher_events<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
         paths: Vec<FilePath>,
-        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let roots = workspace_root_paths(db);
         let mut requests = Vec::new();
@@ -349,8 +350,8 @@ impl ScanScheduler {
         //
         // Rescan every containing root because nested roots keep separate
         // `packages` and `environment_dirs` lists for overlapping paths.
-        // Ignore `editor_owned` here because discovery depends on disk state
-        // even when the editor owns a file's contents.
+        // Open buffers do not suppress rescans. Package and environment
+        // discovery use disk state, not editor contents.
         let mut rescan_roots: Vec<Root> = Vec::new();
         let mut listings = DirListings::default();
         for path in &paths {
@@ -388,10 +389,11 @@ impl ScanScheduler {
             })
             .collect();
         for path in r_paths {
-            if reconcile_watched_path(db, &self.state, &roots, &mut listings, editor_owned, &path) {
+            if reconcile_watched_path(db, &self.state, &roots, &mut listings, &path) {
                 self.buffered.insert(path);
             }
         }
+        keep_open_files_visible(db);
 
         requests
     }
@@ -455,11 +457,13 @@ impl ScanScheduler {
     ///   `Scanning`, buffer preserved for the next round.
     /// - Untracked (`None`): unexpected, since dispatch always marks the root
     ///   `Scanning`. Logged as a warning, the result is still applied.
+    ///
+    /// Open editor buffers that the scan drops from every container stay
+    /// visible through `OrphanRoot`.
     pub fn apply_scan_completed<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
         result: ScanCompleted,
-        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let root = result.root;
 
@@ -472,8 +476,9 @@ impl ScanScheduler {
         }
 
         result.apply(db);
-        orphan_dropped_editor_files(db, editor_owned);
-        self.finish_scan(db, root, editor_owned)
+        let requests = self.finish_scan(db, root);
+        keep_open_files_visible(db);
+        requests
     }
 
     /// Release `root` from scanning after its task panics or is dropped without
@@ -488,22 +493,18 @@ impl ScanScheduler {
         &mut self,
         db: &mut DB,
         root: Root,
-        editor_owned: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
         let live = db.workspace_roots().roots(db).contains(&root);
         if !live {
             self.state.remove(&root);
             return Vec::new();
         }
-        self.finish_scan(db, root, editor_owned)
+        let requests = self.finish_scan(db, root);
+        keep_open_files_visible(db);
+        requests
     }
 
-    fn finish_scan<DB: Db + DbInputs>(
-        &mut self,
-        db: &mut DB,
-        root: Root,
-        editor_owned: &HashSet<FilePath>,
-    ) -> Vec<ScanRequest> {
+    fn finish_scan<DB: Db + DbInputs>(&mut self, db: &mut DB, root: Root) -> Vec<ScanRequest> {
         let prior = self.state.remove(&root);
         let requests = match prior {
             Some(ScanState::ScanningWithRescanQueued) => {
@@ -534,7 +535,7 @@ impl ScanScheduler {
                 Vec::new()
             },
         };
-        self.drain_buffered(db, editor_owned);
+        self.drain_buffered(db);
         requests
     }
 
@@ -544,22 +545,19 @@ impl ScanScheduler {
     /// spellings are removed (see [`is_file_on_disk()`]). Repeated events for
     /// one path collapse into its current disk state, so they need no ordered replay.
     ///
-    /// Paths in `editor_owned` are added but never removed: the open buffer
-    /// stays the source of truth until it closes. Adding them matters for a
-    /// buffer opened before its file existed on disk, or rescued to `OrphanRoot`
-    /// and then saved. Without it the file would stay out of every container,
-    /// and become invisible when the buffer closes.
+    /// Open buffers retain editor contents and are not unlinked when absent
+    /// from disk. Files that exist on disk are still added to their containers,
+    /// so saving a previously orphaned buffer keeps the file visible after close.
     ///
-    /// Editor ownership is checked only once a path is unblocked. A blocked
-    /// path must survive a buffer that opens and closes before its scan
-    /// completes, otherwise the scan's older listing would win.
-    fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
+    /// Buffer membership is checked when the path becomes unblocked, not when
+    /// the event arrives. If a buffer opens and closes during a scan, its
+    /// deletion event must remain buffered or the older scan listing would win.
+    fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB) {
         let roots = workspace_root_paths(db);
         let mut listings = DirListings::default();
         let state = &self.state;
-        self.buffered.retain(|path| {
-            reconcile_watched_path(db, state, &roots, &mut listings, editor_owned, path)
-        });
+        self.buffered
+            .retain(|path| reconcile_watched_path(db, state, &roots, &mut listings, path));
     }
 
     fn request_rescan<DB: Db + DbInputs>(
@@ -599,11 +597,10 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
     db: &mut DB,
     scheduler: &mut ScanScheduler,
     mut requests: Vec<ScanRequest>,
-    editor_owned: &HashSet<FilePath>,
 ) {
     while let Some(req) = requests.pop() {
         let result = req.run();
-        requests.extend(scheduler.apply_scan_completed(db, result, editor_owned));
+        requests.extend(scheduler.apply_scan_completed(db, result));
     }
 }
 
@@ -623,7 +620,6 @@ fn reconcile_watched_path<DB: Db + DbInputs>(
     state: &HashMap<Root, ScanState>,
     roots: &[(Utf8PathBuf, Root)],
     listings: &mut DirListings,
-    editor_owned: &HashSet<FilePath>,
     path: &FilePath,
 ) -> bool {
     let Some(fs_path) = path.as_path() else {
@@ -666,7 +662,15 @@ fn reconcile_watched_path<DB: Db + DbInputs>(
     };
     if on_disk {
         add_watched_file(db, path.clone());
-    } else if !editor_owned.contains(path) {
+        return false;
+    }
+
+    // `file_by_path()` misses open files dropped by the scan until
+    // `keep_open_files_visible()` runs. The identity map still finds them.
+    let open = db
+        .interned_file(path)
+        .is_some_and(|file| db.is_editor_buffer(file));
+    if !open {
         remove_watched_file(db, path.clone());
     }
     false
@@ -794,50 +798,6 @@ fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path, listings: &mut DirListi
     true
 }
 
-/// Keep editor-owned files reachable through
-/// [`OrphanRoot`](oak_db::OrphanRoot) when a scan removes them from every live
-/// container, as happens when their files are missing on disk. Otherwise
-/// `file_by_path()` would miss an entity still held by the editor and analysis
-/// would lose the buffer.
-///
-/// Files still reachable after the scan retain their container and package,
-/// including entities shared with another root. Calling `set_package()` on a
-/// shared `Package` can remove files from another root's view, so every
-/// editor-owned path is checked, not just those under the scanned root.
-///
-/// Every lookup runs before the first write, so the orphan path index isn't
-/// invalidated and rebuilt once per rescued file.
-fn orphan_dropped_editor_files<DB: Db + DbInputs>(db: &mut DB, editor_owned: &HashSet<FilePath>) {
-    let mut dropped: HashSet<File> = HashSet::new();
-    for path in editor_owned {
-        let Some(file) = db.interned_file(path) else {
-            continue;
-        };
-        match db.file_by_path(path) {
-            None => {
-                dropped.insert(file);
-            },
-            Some(current) => stdext::soft_assert!(
-                current == file,
-                "A second `File` is published for an open buffer: {path}"
-            ),
-        }
-    }
-    if dropped.is_empty() {
-        return;
-    }
-
-    for &file in &dropped {
-        if file.package(db).is_some() {
-            file.set_package(db).to(None);
-        }
-    }
-    let orphan = db.orphan_root();
-    let mut orphan_files = orphan.files(db).clone();
-    orphan_files.extend(dropped.iter().copied());
-    orphan.set_files(db).to(orphan_files);
-}
-
 fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
     db.workspace_roots()
         .roots(db)
@@ -891,7 +851,7 @@ mod tests {
             scripts: Vec::new(),
             environment_dirs: Vec::new(),
         };
-        let requests = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
+        let requests = scheduler.apply_scan_completed(&mut db, result);
 
         assert!(requests.is_empty());
         assert!(!scheduler.has_pending_scans());
@@ -908,17 +868,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut db = OakDatabase::new();
         let mut scheduler = ScanScheduler::new();
-        let requests =
-            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
+        drain_scheduler(&mut db, &mut scheduler, requests);
 
         let path = write_package_with_file(tmp.path());
         let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
-        let editor_owned = HashSet::from([path.clone()]);
 
         let description = FilePath::from_path_buf(tmp.path().join("pkg/DESCRIPTION")).unwrap();
-        let requests = scheduler.apply_watcher_events(&mut db, vec![description], &editor_owned);
-        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &editor_owned);
+        let requests = scheduler.apply_watcher_events(&mut db, vec![description]);
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests);
 
         let pkg = root.packages(&db)[0];
         assert!(pkg.files(&db).is_empty());
@@ -936,9 +894,8 @@ mod tests {
         let mut scheduler = ScanScheduler::new();
         let path = write_package_with_file(tmp.path());
 
-        let requests =
-            scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
-        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests);
 
         let pkg = root.packages(&db)[0];
         assert!(pkg.files(&db).is_empty());
@@ -955,16 +912,16 @@ mod tests {
         let mut scheduler = ScanScheduler::new();
         let path = write_package_with_file(tmp.path());
         let workspace = [tmp.path().to_path_buf()];
-        let requests = scheduler.set_workspace_paths(&mut db, &workspace, &HashSet::new());
-        drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &workspace);
+        drain_scheduler(&mut db, &mut scheduler, requests);
         let file = db.file_by_path(&path).unwrap();
 
-        let requests = scheduler.set_workspace_paths(&mut db, &[], &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &[]);
         assert!(requests.is_empty());
         assert!(db.file_by_path(&path).is_none());
 
-        let requests = scheduler.set_workspace_paths(&mut db, &workspace, &HashSet::new());
-        let root = apply_listed_twice(&mut db, &mut scheduler, requests, &HashSet::new());
+        let requests = scheduler.set_workspace_paths(&mut db, &workspace);
+        let root = apply_listed_twice(&mut db, &mut scheduler, requests);
 
         let pkg = root.packages(&db)[0];
         assert!(pkg.files(&db).is_empty());
@@ -994,7 +951,6 @@ mod tests {
         db: &mut OakDatabase,
         scheduler: &mut ScanScheduler,
         mut requests: Vec<ScanRequest>,
-        editor_owned: &HashSet<FilePath>,
     ) -> Root {
         assert_eq!(requests.len(), 1);
         let request = requests.remove(0);
@@ -1008,7 +964,7 @@ mod tests {
             scripts,
             environment_dirs: Vec::new(),
         };
-        let requests = scheduler.apply_scan_completed(db, result, editor_owned);
+        let requests = scheduler.apply_scan_completed(db, result);
         assert!(requests.is_empty());
         root
     }

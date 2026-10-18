@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use aether_path::FilePath;
+use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
 use oak_db::Package;
@@ -266,4 +267,28 @@ fn test_eviction_clears_generated_files() {
     for file in &files {
         assert_eq!(file.package(&db), Some(pkg));
     }
+}
+
+#[test]
+fn test_set_package_sources_keeps_dropped_open_buffer_visible() {
+    let lib = tempfile::tempdir().unwrap();
+    write_description(lib.path(), "mypkg", None);
+
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let pkg = db.package_by_name("mypkg").unwrap();
+
+    let src = tempfile::tempdir().unwrap();
+    write_source_directory(src.path(), &[("a.R", "a <- 1\n"), ("b.R", "b <- 1\n")]);
+    db.set_package_sources(pkg, src.path());
+    let path = FilePath::from_path_buf(src.path().join("b.R")).unwrap();
+    let file = db.upsert_editor(path.clone(), "edited <- 1\n".to_string());
+
+    fs::remove_file(src.path().join("b.R")).unwrap();
+    db.set_package_sources(pkg, src.path());
+
+    assert_eq!(basenames(&db, pkg.files(&db)), ["a.R"]);
+    assert_eq!(db.file_by_path(&path), Some(file));
+    assert!(db.orphan_root().files(&db).contains(&file));
+    assert_eq!(file.package(&db), None);
 }

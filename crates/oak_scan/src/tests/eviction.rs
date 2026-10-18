@@ -1,6 +1,5 @@
-//! Eviction routing tests through the public [`RootExt::evict()`] API.
-
-use std::collections::HashSet;
+//! Eviction routing and open-buffer visibility after [`RootExt::evict()`]
+//! and [`keep_open_files_visible()`], as used by public entry points.
 
 use aether_path::FilePath;
 use oak_db::DbInputs;
@@ -15,6 +14,7 @@ use oak_db::SourceDb;
 use salsa::Setter;
 use url::Url;
 
+use crate::inputs::keep_open_files_visible;
 use crate::inputs::RootExt;
 
 fn file_path(s: &str) -> FilePath {
@@ -42,9 +42,9 @@ fn test_evict_routes_editor_owned_to_orphan() {
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    let mut owned = HashSet::new();
-    owned.insert(file_path("/proj/foo.R"));
-    root.evict(&mut db, Some(&owned));
+    db.set_editor_buffer(file, "x".to_string());
+    root.evict(&mut db);
+    keep_open_files_visible(&mut db);
 
     assert!(db.orphan_root().files(&db).contains(&file));
     assert!(root.scripts(&db).is_empty());
@@ -72,8 +72,9 @@ fn test_evict_unpublishes_non_editor_owned() {
     root.set_scripts(&mut db).to(vec![file]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    root.evict(&mut db, None);
+    root.evict(&mut db);
     db.workspace_roots().set_roots(&mut db).to(vec![]);
+    keep_open_files_visible(&mut db);
 
     assert!(!db.orphan_root().files(&db).contains(&file));
     assert!(root.scripts(&db).is_empty());
@@ -113,9 +114,9 @@ fn test_evict_clears_package_on_editor_owned_package_file() {
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    let mut owned = HashSet::new();
-    owned.insert(file_path("/proj/R/a.R"));
-    root.evict(&mut db, Some(&owned));
+    db.set_editor_buffer(file, "x".to_string());
+    root.evict(&mut db);
+    keep_open_files_visible(&mut db);
 
     assert!(db.orphan_root().files(&db).contains(&file));
     assert_eq!(file.package(&db), None);
@@ -156,7 +157,7 @@ fn test_evict_unpublishes_pkg_scripts() {
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    root.evict(&mut db, None);
+    root.evict(&mut db);
 
     assert!(!db.orphan_root().files(&db).contains(&test_file));
     assert!(pkg.scripts(&db).is_empty());
@@ -199,9 +200,9 @@ fn test_evict_routes_editor_owned_pkg_scripts_to_orphan() {
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    let mut owned = HashSet::new();
-    owned.insert(file_path("/proj/tests/test-foo.R"));
-    root.evict(&mut db, Some(&owned));
+    db.set_editor_buffer(test_file, "t\n".to_string());
+    root.evict(&mut db);
+    keep_open_files_visible(&mut db);
 
     assert!(db.orphan_root().files(&db).contains(&test_file));
     assert_eq!(test_file.package(&db), None);

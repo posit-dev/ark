@@ -4,7 +4,6 @@
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 
-use std::collections::HashSet;
 use std::path::Path;
 
 use aether_path::FilePath;
@@ -135,12 +134,10 @@ pub(crate) fn state_with_workspace_package(
 
     let mut db = OakDatabase::new();
     let mut scheduler = ScanScheduler::new();
-    let editor_owned = HashSet::new();
-    let mut requests =
-        scheduler.set_workspace_paths(&mut db, &[workspace.to_path_buf()], &editor_owned);
+    let mut requests = scheduler.set_workspace_paths(&mut db, &[workspace.to_path_buf()]);
     while let Some(request) = requests.pop() {
         let completed = request.run();
-        requests.extend(scheduler.apply_scan_completed(&mut db, completed, &editor_owned));
+        requests.extend(scheduler.apply_scan_completed(&mut db, completed));
     }
 
     WorldState::with_db(db)
