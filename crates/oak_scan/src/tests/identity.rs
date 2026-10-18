@@ -15,6 +15,8 @@ use oak_db::OakDatabase;
 use oak_db::SourceDb;
 use salsa::Setter;
 
+use crate::inputs::FileEntry;
+use crate::inputs::FileUpserts;
 use crate::packages::file_revision;
 use crate::scheduler::drain_scheduler;
 use crate::DbScan;
@@ -402,4 +404,16 @@ fn test_library_registration_shares_workspace_package() {
         db.library_roots().roots(&db)[0].packages(&db).clone(),
         vec![workspace_pkg]
     );
+}
+
+#[test]
+#[should_panic(expected = "`FileUpserts` dropped without `finish()`")]
+fn test_file_upserts_dropped_without_finish_panics_in_debug() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let mut upserts = FileUpserts::new();
+    upserts.upsert(&mut db, None, FileEntry {
+        path: file_path(&tmp.path().join("a.R")),
+        revision: FileRevision::zero(),
+    });
 }

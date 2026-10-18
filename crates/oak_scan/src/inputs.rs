@@ -16,8 +16,10 @@
 
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
+use std::thread;
 
 use aether_path::FilePath;
 use oak_db::Db;
@@ -532,8 +534,25 @@ impl FileUpserts {
     }
 
     /// Remove the batch from `OrphanRoot` with at most one membership write.
-    pub(crate) fn finish<DB: Db + DbInputs>(self, db: &mut DB) {
-        remove_all_from_orphan(db, &self.leaving_orphan);
+    pub(crate) fn finish<DB: Db + DbInputs>(mut self, db: &mut DB) {
+        let leaving_orphan = mem::take(&mut self.leaving_orphan);
+        remove_all_from_orphan(db, &leaving_orphan);
+    }
+}
+
+/// A batch dropped before `finish()` leaves its files listed in both their new
+/// container and `OrphanRoot`, and no query reports the duplicate.
+impl Drop for FileUpserts {
+    fn drop(&mut self) {
+        // A panic mid-batch already unwinds past `finish()`. Panicking again
+        // here would abort the process.
+        if thread::panicking() {
+            return;
+        }
+        stdext::soft_assert!(
+            self.leaving_orphan.is_empty(),
+            "`FileUpserts` dropped without `finish()`"
+        );
     }
 }
 
