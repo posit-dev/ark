@@ -104,7 +104,7 @@ pub trait DbScan: Db + DbInputs {
     /// making disk contents authoritative. Only [`Self::upsert_editor()`]
     /// sets overrides in production, so an override implies an open buffer.
     ///
-    /// If the file lives in [`OrphanRoot`] (placed there by
+    /// If the file lives in [`OrphanRoot`](oak_db::OrphanRoot) (placed there by
     /// [`Self::upsert_editor()`] because the path didn't belong to a live root,
     /// or by eviction of an open buffer's workspace), its orphan membership is
     /// removed. It becomes invisible to analysis if no live root lists it. A later [`Self::upsert_editor()`] for the
@@ -481,11 +481,13 @@ pub(crate) fn upsert_workspace_scripts<DB: Db + DbInputs>(
     }
 }
 
-/// Upsert a single `File` for the watcher's [`add_watched_file()`](watch::add_watched_file).
-/// See [`FileUpserts`] for the identity rules.
+/// Upsert a single `File` for the watcher's
+/// [`add_watched_file()`](crate::watch::add_watched_file). See [`FileUpserts`]
+/// for the identity rules.
 ///
 /// The caller must insert the returned file into a root or package container
-/// for analysis to see it. This function removes it from [`OrphanRoot`].
+/// for analysis to see it. This function removes it from
+/// [`OrphanRoot`](oak_db::OrphanRoot).
 pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
     db: &mut DB,
     package: Option<Package>,
@@ -498,7 +500,7 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 }
 
 /// Upserts `File` entities for a batch of entries and batches their removal
-/// from [`OrphanRoot`].
+/// from [`OrphanRoot`](oak_db::OrphanRoot).
 ///
 /// Identity comes from [`oak_db::IdentityMap`], so the entity for a path
 /// doesn't depend on which containers hold it or on the order the batch
@@ -506,7 +508,8 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 ///
 /// Callers must insert each returned [`File`] into `Package.files`,
 /// `Package.scripts`, or `Root.scripts` for analysis visibility.
-/// [`finish()`](Self::finish) removes the files from [`OrphanRoot`]. A file
+/// [`finish()`](Self::finish) removes the files from
+/// [`OrphanRoot`](oak_db::OrphanRoot). A file
 /// outside all live containers is invisible to `file_by_path()`, but the next
 /// writer for its path still gets the same entity.
 ///
@@ -580,7 +583,7 @@ impl Drop for FileUpserts {
 /// Remove `file` from whichever of `pkg.files` / `pkg.scripts` holds it.
 /// Used during cross-package moves: if a file's owning package changed,
 /// the old package's containers still reference it until we drop the
-/// entry. Also used by [`watch::remove_watched_file`] when a file
+/// entry. Also used by [`crate::watch::remove_watched_file()`] when a file
 /// disappears from disk.
 pub(crate) fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
     if pkg.remove_file(db, file) {

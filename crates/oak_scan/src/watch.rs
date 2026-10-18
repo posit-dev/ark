@@ -133,7 +133,7 @@ fn root_script_set(db: &dyn Db, root: Root) -> FxHashSet<File> {
     root.scripts(db).iter().copied().collect()
 }
 
-/// Unlink a deleted file so [`oak_db::Db::file_by_path()`] no longer finds it.
+/// Unlink a deleted file so [`oak_db::SourceDb::file_by_path()`] no longer finds it.
 ///
 /// Package removal relies on the file's package backpointer. Other packages
 /// are not searched. Root script memberships and orphan membership are removed

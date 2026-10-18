@@ -326,7 +326,7 @@ impl ScanScheduler {
     /// `DESCRIPTION`, `.Rprofile`, and `.Renviron` paths rescan every
     /// containing root, including when the editor owns them. Sentinel events
     /// that leave an idle root's `environment_dirs()` accurate are skipped
-    /// (see [`Self::is_environment_dir_current()`]). Idle roots return a
+    /// (see `is_environment_dir_current()`). Idle roots return a
     /// [`ScanRequest`]. Roots with an in-flight scan queue a rescan for
     /// `apply_scan_completed()` to start.
     ///
@@ -794,10 +794,11 @@ fn is_walkable_dir(root_path: &Utf8Path, dir: &Utf8Path, listings: &mut DirListi
     true
 }
 
-/// Keep editor-owned files reachable through [`OrphanRoot`] when a scan removes
-/// them from every live container, as happens when their files are missing on disk.
-/// Otherwise `file_by_path()` would miss an entity still held by the editor and
-/// analysis would lose the buffer.
+/// Keep editor-owned files reachable through
+/// [`OrphanRoot`](oak_db::OrphanRoot) when a scan removes them from every live
+/// container, as happens when their files are missing on disk. Otherwise
+/// `file_by_path()` would miss an entity still held by the editor and analysis
+/// would lose the buffer.
 ///
 /// Files still reachable after the scan retain their container and package,
 /// including entities shared with another root. Calling `set_package()` on a
