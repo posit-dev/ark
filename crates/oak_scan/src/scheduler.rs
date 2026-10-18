@@ -134,7 +134,8 @@ impl ScanCompleted {
     /// A path the scan lists in several containers ends up in the last one
     /// written: workspace scripts win over package files (the script walk runs
     /// after the package walk, so it saw the later disk state), and among
-    /// packages the one listed last wins.
+    /// packages the one listed last wins. Across nested roots, a package
+    /// listed by another root wins instead (see [`upsert_workspace_scripts()`]).
     fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
         let ScanCompleted {
             root,

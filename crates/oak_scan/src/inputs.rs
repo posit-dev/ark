@@ -445,15 +445,36 @@ fn replace_package_membership<DB: Db + DbInputs>(
 
 /// [`RootExt::set_workspace_scripts()`] with files resolved through `upserts`,
 /// which the caller finishes once every container is written.
+///
+/// A script that another live workspace root lists in a package keeps that
+/// package, both as backpointer and as membership. With nested roots `pkg` and
+/// `pkg/R`, the inner root can't see `DESCRIPTION` and lists `R/a.R` as a
+/// script. Without this rule, whichever scan applies last would decide whether
+/// `pkg` lists the file, and pool completion order isn't fixed. The watcher
+/// places new files the same way.
 pub(crate) fn upsert_workspace_scripts<DB: Db + DbInputs>(
     db: &mut DB,
     upserts: &mut FileUpserts,
     root: Root,
     files: Vec<FileEntry>,
 ) {
+    let other_packages: HashSet<Package> = db
+        .workspace_roots()
+        .roots(db)
+        .iter()
+        .filter(|&&other| other != root)
+        .flat_map(|other| other.packages(db).iter().copied())
+        .collect();
+
     let scripts: Vec<File> = files
         .into_iter()
-        .map(|entry| upserts.upsert(db, None, entry))
+        .map(|entry| {
+            let package = db
+                .interned_file(&entry.path)
+                .and_then(|file| file.package(db))
+                .filter(|pkg| other_packages.contains(pkg));
+            upserts.upsert(db, package, entry)
+        })
         .collect();
     if root.scripts(db) != &scripts {
         root.set_scripts(db).to(scripts);

@@ -1154,7 +1154,7 @@ fn test_removing_nested_root_keeps_shared_scripts_in_survivor() {
 fn test_removing_nested_root_repairs_file_held_in_different_containers() {
     // With roots `pkg` and `pkg/R`, the outer root lists `a.R` in `pkg.files`
     // and the inner root, which can't see `DESCRIPTION`, in its `scripts`.
-    for remove_outer in [false, true] {
+    for (remove_outer, outer_last) in [(false, false), (false, true), (true, false), (true, true)] {
         let tmp = tempfile::tempdir().unwrap();
         let outer = tmp.path().join("pkg");
         let inner = outer.join("R");
@@ -1162,7 +1162,7 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
         let mut db = OakDatabase::new();
         let mut scheduler = ScanScheduler::new();
 
-        // Apply the outer scan last, so the shared `File` points at the package.
+        // The shared `File` points at the package in either scan order.
         let requests = scheduler.set_workspace_paths(
             &mut db,
             &[outer.clone(), inner.clone()],
@@ -1172,8 +1172,13 @@ fn test_removing_nested_root_repairs_file_held_in_different_containers() {
         let (outer_root, inner_root) = (roots[0], roots[1]);
         let (outer_req, inner_req): (Vec<_>, Vec<_>) =
             requests.into_iter().partition(|req| req.root == outer_root);
-        drain_scheduler(&mut db, &mut scheduler, inner_req, &HashSet::new());
-        drain_scheduler(&mut db, &mut scheduler, outer_req, &HashSet::new());
+        let (first, last) = if outer_last {
+            (inner_req, outer_req)
+        } else {
+            (outer_req, inner_req)
+        };
+        drain_scheduler(&mut db, &mut scheduler, first, &HashSet::new());
+        drain_scheduler(&mut db, &mut scheduler, last, &HashSet::new());
 
         let pkg = outer_root.packages(&db)[0];
         let a = db.file_by_path(&watched_path(&inner.join("a.R"))).unwrap();
