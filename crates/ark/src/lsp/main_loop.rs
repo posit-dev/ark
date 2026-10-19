@@ -510,8 +510,8 @@ impl GlobalState {
                         Ok(Ok(())) => {},
                         Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
-                            // The unwind skipped `handle_event()`'s refresh check.
-                            EventUnwind::Cancelled => self.refresh_if_due(),
+                            // `handle_event()` absorbs cancellation from handlers.
+                            EventUnwind::Cancelled => {},
                             EventUnwind::Panicked(payload) => {
                                 // `report_crash()` reads only the `Client` handle. Drop `self` after
                                 // the panic because a handler may have partially written its state.
@@ -543,11 +543,25 @@ impl GlobalState {
             .watchdog
             .tick(self.world.db().outstanding_holds());
 
-        let result = self.dispatch_event(event).await;
+        // Recover handler cancellation here so `refresh_if_due()` still runs
+        // inside the caller's panic boundary, as Salsa access requires. Recovering
+        // in `main_loop()` would put the refresh outside its per-event boundary.
+        // Other panics skip the refresh because the handler may have partially
+        // written its state.
+        let result =
+            match panic::catch_unwind_async_payload(Recovery::Always, self.dispatch_event(event))
+                .await
+            {
+                Ok(result) => result,
+                Err(payload) => match classify_event_unwind(payload) {
+                    EventUnwind::Cancelled => Ok(()),
+                    EventUnwind::Panicked(payload) => std::panic::resume_unwind(payload),
+                },
+            };
 
-        // Check for deferred refreshes even when dispatch returns an error.
-        // Otherwise, a failing event that drains the queue could leave
-        // diagnostics waiting indefinitely for another event.
+        // An event that empties the queue must trigger any deferred refresh,
+        // even if its handler returns an error or is cancelled. Otherwise,
+        // diagnostics could wait indefinitely for another event.
         self.refresh_if_due();
 
         result
@@ -1452,14 +1466,11 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
     use std::time::Instant;
 
     use aether_path::FilePath;
     use oak_scan::DbScan;
     use serde_json::Value;
-    use tokio::sync::oneshot;
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
@@ -1649,49 +1660,30 @@ mod tests {
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
     }
 
-    /// Exercise `main_loop()` because harness pumps call `handle_event()`
-    /// directly and bypass cancellation recovery. Cancellation skips the normal
-    /// refresh check, so recovery must refresh without waiting for another event.
+    /// Cancellation of the last queued event must still trigger the refresh
+    /// deferred while that event was queued. No further event may arrive to
+    /// trigger it.
     #[tokio::test]
     async fn test_cancelled_event_still_runs_a_deferred_refresh() {
-        let mut aux_rx = init_aux_for_test();
-        let state = global_state();
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
         let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("script.R");
 
-        let events_tx = state.events_tx();
-        events_tx.send(did_open(&script, "x <- 1\n")).unwrap();
-        events_tx
+        state
+            .events_tx
             .send(Event::Lsp(LspMessage::Notification(
                 LspNotification::TestCancelRTask,
             )))
             .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
 
-        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
-        let (server_shutdown_tx, _server_shutdown_rx) = tokio::sync::mpsc::channel(1);
-        let main_loop = state.main_loop(
-            shutdown_rx,
-            server_shutdown_tx,
-            Arc::new(LspServiceContext::new()),
-        );
-
-        let published = async {
-            loop {
-                match aux_rx.recv().await {
-                    Some(AuxiliaryEvent::PublishDiagnostics(publication)) => return publication,
-                    Some(_) => {},
-                    None => panic!("The auxiliary channel closed"),
-                }
-            }
-        };
-
-        let publication = tokio::select! {
-            _ = main_loop => panic!("The main loop exited"),
-            publication = tokio::time::timeout(Duration::from_secs(10), published) => {
-                publication.unwrap()
-            },
-        };
-        assert_eq!(publication.path, FilePath::from_path_buf(script).unwrap());
+        let cancelled = state.next_event().await;
+        state.handle_event(cancelled).await.unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
     }
 
     fn global_state() -> GlobalState {
