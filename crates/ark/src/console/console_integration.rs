@@ -240,6 +240,12 @@ impl Console {
     }
 }
 
+/// Result of a frontend method call that wasn't an error.
+pub(crate) enum FrontendCallOutcome {
+    Reply(RObject),
+    Interrupted,
+}
+
 /// Reference to the UI comm. Returned by `Console::ui_comm()`.
 ///
 /// Existence of this value guarantees the comm is connected.
@@ -262,10 +268,25 @@ impl UiCommRef<'_> {
         self.send_event(&UiFrontendEvent::ShowMessage(ShowMessageParams { message }));
     }
 
+    /// Calls a frontend method for callers running inside an R context frame
+    /// (e.g. `.Call()`). If an interrupt cancelled the request, returns `NULL`.
+    /// This is not visible to the caller since `r_unwrap()` (called e.g. by
+    /// `harp::register`) triggers an interrupt jump right away. Other callers
+    /// must use `call_frontend_method_interruptible()`.
     pub(crate) fn call_frontend_method(
         &self,
         request: UiFrontendRequest,
     ) -> anyhow::Result<RObject> {
+        Ok(match self.call_frontend_method_interruptible(request)? {
+            FrontendCallOutcome::Reply(reply) => reply,
+            FrontendCallOutcome::Interrupted => RObject::null(),
+        })
+    }
+
+    pub(crate) fn call_frontend_method_interruptible(
+        &self,
+        request: UiFrontendRequest,
+    ) -> anyhow::Result<FrontendCallOutcome> {
         log::trace!("Calling frontend method {request:?}");
 
         let (reply_tx, reply_rx) = bounded(1);
@@ -301,7 +322,7 @@ impl UiCommRef<'_> {
                     }
 
                     // Now deserialize to an R object
-                    Ok(RObject::try_from(reply.result)?)
+                    Ok(FrontendCallOutcome::Reply(RObject::try_from(reply.result)?))
                 },
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
@@ -312,10 +333,7 @@ impl UiCommRef<'_> {
                     ))
                 },
             },
-            // If an interrupt was signalled, return `NULL`. This should not be
-            // visible to the caller since `r_unwrap()` (called e.g. by
-            // `harp::register`) will trigger an interrupt jump right away.
-            StdInRpcReply::Interrupt => Ok(RObject::null()),
+            StdInRpcReply::Interrupt => Ok(FrontendCallOutcome::Interrupted),
         }
     }
 }

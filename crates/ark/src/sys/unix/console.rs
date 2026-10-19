@@ -43,6 +43,7 @@ use crate::console::r_show_message;
 use crate::console::r_suicide;
 use crate::console::r_write_console;
 use crate::console::Console;
+use crate::console::FrontendCallOutcome;
 use crate::signals::initialize_signal_handlers;
 
 type ChooseFileFn = unsafe extern "C-unwind" fn(c_int, *mut c_char, c_int) -> c_int;
@@ -146,7 +147,11 @@ unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_i
             existing: new == 0,
             default_dir: std::env::current_dir()?.to_string_lossy().to_string(),
         };
-        let path = ui.call_frontend_method(UiFrontendRequest::SelectFile(params))?;
+        let path =
+            match ui.call_frontend_method_interruptible(UiFrontendRequest::SelectFile(params))? {
+                FrontendCallOutcome::Reply(path) => path,
+                FrontendCallOutcome::Interrupted => return Ok(None),
+            };
         if r_is_null(path.sexp) {
             return Ok(None);
         }
