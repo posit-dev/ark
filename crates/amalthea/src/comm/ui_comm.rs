@@ -290,6 +290,21 @@ pub struct AskForPasswordParams {
 	pub prompt: String,
 }
 
+/// Parameters for the SelectFile method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SelectFileParams {
+	/// The title of the file dialog
+	pub title: String,
+
+	/// Whether the file must already exist. If false, the user may also enter
+	/// the name of a new file.
+	pub existing: bool,
+
+	/// The directory the file dialog starts in. If omitted, defaults to the
+	/// session's working directory.
+	pub default_dir: Option<String>,
+}
+
 /// Parameters for the PromptState method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
@@ -491,6 +506,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "ask_for_password")]
 	AskForPassword(AskForPasswordParams),
 
+	/// Ask the user to select a file
+	///
+	/// Use this to show a file dialog where the user can select a file
+	#[serde(rename = "select_file")]
+	SelectFile(SelectFileParams),
+
 	/// Sleep for n seconds
 	///
 	/// Useful for testing in the backend a long running frontend method
@@ -559,6 +580,9 @@ pub enum UiFrontendReply {
 
 	/// The input from the user
 	AskForPasswordReply(Option<String>),
+
+	/// The path of the selected file, or null if the user cancelled
+	SelectFileReply(Option<String>),
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
@@ -681,6 +705,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::ShowPrompt(_) => Ok(UiFrontendReply::ShowPromptReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::AskForPassword(_) => Ok(UiFrontendReply::AskForPasswordReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::SelectFile(_) => Ok(UiFrontendReply::SelectFileReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),
