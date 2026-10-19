@@ -35,6 +35,7 @@ pub use session::RequestHandle;
 use crate::console::console_scopes;
 pub use crate::lsp::analysis::DiagnosticsMetrics;
 pub use crate::lsp::analysis::PoolMetrics;
+pub use crate::lsp::analysis::MAX_ANALYSIS_THREADS_ENV_VAR;
 use crate::lsp::config::LspSettings;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;

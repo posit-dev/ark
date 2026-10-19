@@ -16,6 +16,7 @@
 use std::time::Duration;
 use std::time::Instant;
 
+use ark::lsp::harness::MAX_ANALYSIS_THREADS_ENV_VAR;
 use burst_replay::BurstConfig;
 use burst_replay::Fixture;
 use burst_replay::Replay;
@@ -30,8 +31,6 @@ const REPORT_ENV_VAR: &str = "ARK_BURST_REPORT";
 const TEMPORARIES_ENV_VAR: &str = "ARK_BURST_TEMPORARIES";
 
 const PADDING_ENV_VAR: &str = "ARK_BURST_PADDING";
-
-const MAX_ANALYSIS_THREADS_ENV_VAR: &str = "OAK_MAX_ANALYSIS_THREADS";
 
 /// Abort a stalled replay. [`ark::lsp::harness::LspSession::is_settled()`] is
 /// counter-based, not time-based.

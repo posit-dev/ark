@@ -28,7 +28,7 @@ use crate::panic::Recovery;
 const MAX_ANALYSIS_THREADS: usize = 4;
 
 /// Overrides the default worker count when set to a positive integer.
-pub(crate) const MAX_ANALYSIS_THREADS_ENV_VAR: &str = "OAK_MAX_ANALYSIS_THREADS";
+pub const MAX_ANALYSIS_THREADS_ENV_VAR: &str = "OAK_MAX_ANALYSIS_THREADS";
 
 /// A fixed set of OS threads running analysis tasks over a db snapshot.
 ///
