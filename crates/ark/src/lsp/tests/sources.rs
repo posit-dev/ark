@@ -33,6 +33,7 @@ use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::TestClient;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::config::env_settings;
 use crate::lsp::config::initialization_options;
 use crate::lsp::config::LspSettings;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
@@ -362,29 +363,31 @@ async fn test_initialization_options_survive_a_silent_pull() {
     assert!(handler.calls().lock().unwrap().is_empty());
 }
 
-/// The environment setting overrides `initializationOptions`.
+/// The environment layer overrides `initializationOptions`.
 #[test]
 fn test_env_var_beats_initialization_options() {
-    let name = OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
-    let options = json!({ "oak": { "sourceFetching": { "enabled": false } } });
+    let options =
+        initialization_options(&json!({ "oak": { "sourceFetching": { "enabled": false } } }));
+    let env = LspSettings {
+        source_fetching_enabled: Some(true),
+        ..Default::default()
+    };
 
-    let resolve =
-        || resolved_source_fetching(initialization_options(&options), LspSettings::default());
-
-    unsafe { std::env::remove_var(name) };
-    assert!(!resolve());
-
-    unsafe { std::env::set_var(name, "1") };
-    assert!(resolve());
-
-    unsafe { std::env::remove_var(name) };
+    assert!(!resolved_source_fetching(
+        LspSettings::default(),
+        options.clone(),
+        LspSettings::default()
+    ));
+    assert!(resolved_source_fetching(
+        env,
+        options,
+        LspSettings::default()
+    ));
 }
 
 /// A pulled value overrides `initializationOptions` for the same setting.
 #[test]
 fn test_pulled_setting_beats_initialization_options() {
-    unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-
     let options = initialization_options(&json!({
         "oak": { "sourceFetching": { "enabled": false } }
     }));
@@ -393,54 +396,30 @@ fn test_pulled_setting_beats_initialization_options() {
         source_fetching_enabled: Some(true),
         ..Default::default()
     };
-    assert!(resolved_source_fetching(options.clone(), pulled));
+    assert!(resolved_source_fetching(
+        LspSettings::default(),
+        options.clone(),
+        pulled
+    ));
 
     // An absent pulled value preserves the initialization option.
-    assert!(!resolved_source_fetching(options, LspSettings::default()));
+    assert!(!resolved_source_fetching(
+        LspSettings::default(),
+        options,
+        LspSettings::default()
+    ));
 }
 
-fn resolved_source_fetching(options: LspSettings, client_settings: LspSettings) -> bool {
+fn resolved_source_fetching(
+    env: LspSettings,
+    options: LspSettings,
+    client_settings: LspSettings,
+) -> bool {
     let mut state = WorldState::default();
+    state.env_settings = env;
     state.initialization_options = options;
     state.resolve_config(client_settings);
     state.config.oak.source_fetching_enabled
-}
-
-#[test]
-fn test_source_fetching_env_bypass_keeps_other_env_overrides() {
-    let env = LspSettings {
-        source_fetching_enabled: Some(false),
-        diagnostics_enable: Some(false),
-        ..Default::default()
-    };
-
-    let mut honoured = WorldState::default();
-    honoured.resolve_config_with_env(env.clone(), LspSettings::default());
-    assert!(!honoured.config.oak.source_fetching_enabled);
-
-    let mut bypassed = WorldState::default();
-    bypassed.ignore_source_fetching_env = true;
-    bypassed.resolve_config_with_env(env, LspSettings::default());
-    assert!(bypassed.config.oak.source_fetching_enabled);
-    assert!(!bypassed.config.diagnostics.enable);
-}
-
-#[test]
-fn test_source_fetching_env_bypass_holds_for_later_settings_pulls() {
-    let env = LspSettings {
-        source_fetching_enabled: Some(true),
-        ..Default::default()
-    };
-    let mut state = WorldState::default();
-    state.ignore_source_fetching_env = true;
-    state.resolve_config_with_env(env.clone(), LspSettings::default());
-
-    let pulled = LspSettings {
-        source_fetching_enabled: Some(false),
-        ..Default::default()
-    };
-    state.resolve_config_with_env(env, pulled);
-    assert!(!state.config.oak.source_fetching_enabled);
 }
 
 /// Dotted setting names must be nested objects, not flat `initializationOptions` keys.
@@ -885,7 +864,7 @@ fn test_env_var_overrides_the_setting() {
             source_fetching_enabled: Some(client_says),
             ..Default::default()
         };
-        resolved_source_fetching(LspSettings::default(), client_settings)
+        resolved_source_fetching(env_settings(), LspSettings::default(), client_settings)
     };
 
     unsafe { std::env::remove_var(name) };

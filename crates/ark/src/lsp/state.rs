@@ -81,10 +81,11 @@ pub(crate) struct WorldState {
     /// fall through to it.
     pub(crate) initialization_options: LspSettings,
 
-    /// Let tests control source fetching without mutating the process environment.
-    /// Persist this choice because settings pulls reapply environment overrides.
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) ignore_source_fetching_env: bool,
+    /// Captured once by [`Self::new()`]. These values override pulled client
+    /// settings and `initializationOptions` whenever [`Self::resolve_config()`]
+    /// runs, without rereading the environment. Tests can set or clear this
+    /// layer without changing the process environment.
+    pub(crate) env_settings: LspSettings,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -96,9 +97,21 @@ impl WorldState {
     pub(crate) fn new(db: OakDatabase) -> Self {
         let mut state = Self {
             db,
+            env_settings: env_settings(),
             ..Default::default()
         };
 
+        state.resolve_config(LspSettings::default());
+        state
+    }
+
+    /// Ignore `OAK_SOURCE_FETCHING_ENABLED`, including on later settings pulls,
+    /// so client settings or the default control source fetching. Other
+    /// environment overrides still apply, and the process environment is unchanged.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn with_default_source_fetching(db: OakDatabase) -> Self {
+        let mut state = Self::new(db);
+        state.env_settings.source_fetching_enabled = None;
         state.resolve_config(LspSettings::default());
         state
     }
@@ -127,27 +140,9 @@ impl WorldState {
     /// initialization options. Earlier layers override later ones, and missing
     /// values use defaults.
     pub(crate) fn resolve_config(&mut self, client_settings: LspSettings) {
-        self.resolve_config_with_env(env_settings(), client_settings);
-    }
-
-    /// Accept the environment layer as data so tests can check precedence
-    /// without mutating the process environment.
-    pub(crate) fn resolve_config_with_env(
-        &mut self,
-        env: LspSettings,
-        client_settings: LspSettings,
-    ) {
-        #[cfg(any(test, feature = "testing"))]
-        let env = if self.ignore_source_fetching_env {
-            LspSettings {
-                source_fetching_enabled: None,
-                ..env
-            }
-        } else {
-            env
-        };
-
-        env.or(client_settings)
+        self.env_settings
+            .clone()
+            .or(client_settings)
             .or(self.initialization_options.clone())
             .resolve_into(&mut self.config);
     }

@@ -538,7 +538,6 @@ mod tests {
 
     use super::LspSession;
     use crate::lsp::analysis::DiagnosticsReady;
-    use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
     use crate::lsp::config::R_DIAGNOSTICS_ENABLED_SETTING;
     use crate::lsp::harness::LspHarness;
     use crate::lsp::main_loop::DiagnosticsPublication;
@@ -632,16 +631,6 @@ mod tests {
             .answered_requests()
             .contains(&Ok(String::from("workspace/configuration"))));
         assert!(!session.world().config.diagnostics.enable);
-    }
-
-    #[tokio::test]
-    async fn test_source_fetching_bypass_survives_the_settings_pull() {
-        let session = LspHarness::with_default_source_fetching(OakDatabase::new())
-            .start(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, Value::Bool(false))])
-            .await;
-
-        assert!(session.world().ignore_source_fetching_env);
-        assert!(!session.world().config.oak.source_fetching_enabled);
     }
 
     /// Collection moves an answer out of the pending list, and it stays

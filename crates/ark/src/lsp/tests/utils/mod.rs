@@ -17,7 +17,6 @@ use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
 
-use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 pub(super) use crate::lsp::harness::editor::client::test_client;
 pub(super) use crate::lsp::harness::editor::client::TestClient;
 pub(super) use crate::lsp::harness::editor::notifications::did_change;
@@ -43,11 +42,11 @@ pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> Sour
     scheduler
 }
 
-/// Creates a [`WorldState`] with default source fetching by removing the ambient
-/// `OAK_SOURCE_FETCHING_ENABLED`. Tests disable it through [`TestClient`].
+/// Keep source fetching enabled by default regardless of
+/// `OAK_SOURCE_FETCHING_ENABLED`, without changing the process environment.
+/// Tests can disable fetching through [`TestClient`], including on later pulls.
 pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
-    unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-    WorldState::new(db)
+    WorldState::with_default_source_fetching(db)
 }
 
 pub(super) fn make_state(wire: &str, contents: &str) -> (WorldState, Uri) {

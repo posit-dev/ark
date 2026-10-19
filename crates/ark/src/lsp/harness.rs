@@ -36,7 +36,6 @@ use crate::console::console_scopes;
 pub use crate::lsp::analysis::DiagnosticsMetrics;
 pub use crate::lsp::analysis::PoolMetrics;
 pub use crate::lsp::analysis::MAX_ANALYSIS_THREADS_ENV_VAR;
-use crate::lsp::config::LspSettings;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
 
@@ -57,10 +56,9 @@ impl LspHarness {
     /// configuration controls source fetching. Other environment overrides
     /// still apply, and the process environment is unchanged.
     pub fn with_default_source_fetching(db: OakDatabase) -> Self {
-        let mut state = WorldState::new(db);
-        state.ignore_source_fetching_env = true;
-        state.resolve_config(LspSettings::default());
-        Self { state }
+        Self {
+            state: WorldState::with_default_source_fetching(db),
+        }
     }
 
     pub fn set_workspace_folders(&mut self, folders: Vec<AbsPathBuf>) {
