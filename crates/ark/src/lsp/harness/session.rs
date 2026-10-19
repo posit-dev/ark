@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
-use oak_db::Db;
+use oak_db::SourceDb;
 use package_sources::PackageSources;
 pub use requests::RequestAnswer;
 pub use requests::RequestHandle;
