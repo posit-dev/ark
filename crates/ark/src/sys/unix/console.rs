@@ -145,7 +145,7 @@ unsafe extern "C-unwind" fn r_choose_file(new: c_int, buf: *mut c_char, len: c_i
         let params = SelectFileParams {
             title: String::from("Select File"),
             existing: new == 0,
-            default_dir: std::env::current_dir()?.to_string_lossy().to_string(),
+            default_dir: Some(std::env::current_dir()?.to_string_lossy().to_string()),
         };
         let path =
             match ui.call_frontend_method_interruptible(UiFrontendRequest::SelectFile(params))? {

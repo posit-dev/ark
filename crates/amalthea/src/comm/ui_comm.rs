@@ -300,8 +300,9 @@ pub struct SelectFileParams {
 	/// the name of a new file.
 	pub existing: bool,
 
-	/// The directory the file dialog starts in
-	pub default_dir: String,
+	/// The directory the file dialog starts in. If omitted, defaults to the
+	/// session's working directory.
+	pub default_dir: Option<String>,
 }
 
 /// Parameters for the PromptState method.

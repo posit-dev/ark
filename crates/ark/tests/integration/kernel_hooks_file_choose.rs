@@ -39,10 +39,12 @@ fn send_file_choose(frontend: &DummyArkFrontend, code: &str, existing: bool, rep
         UiFrontendRequest::SelectFile(SelectFileParams {
             title: String::from("Select File"),
             existing,
-            default_dir: std::env::current_dir()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
+            default_dir: Some(
+                std::env::current_dir()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            ),
         })
     );
 
@@ -111,7 +113,7 @@ fn test_file_choose_starts_in_working_directory() {
 
     let request = assert_matches!(frontend.recv_stdin(), Message::CommRequest(msg) => msg.content);
     let params = assert_matches!(request, UiFrontendRequest::SelectFile(params) => params);
-    assert_eq!(params.default_dir, "/");
+    assert_eq!(params.default_dir.as_deref(), Some("/"));
 
     frontend.send_stdin(result(Value::from("/file.csv")));
 
