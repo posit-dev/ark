@@ -87,6 +87,7 @@ file_source_site.rs: fn File::source_sites(self, db: &dyn Db) -> Vec<SourceSite>
 file_source_site.rs: fn File::source_targets(self, db: &dyn Db) -> Vec<File> [returns(ref)]
 file_source_site.rs: fn File::sourced_by(self, db: &dyn Db) -> Vec<File> [returns(ref)]
 file_source_site.rs: fn sourcing_files_by_target(db: &dyn Db) -> FxHashMap<File, Vec<File>> [returns(ref)]
+imports.rs: fn base_binds(db: &'db dyn Db, base: Package, name: Name<'db>) -> bool [cycle_result = base_binds_cycle_result]
 imports.rs: fn source_dir_scripts(db: &dyn SourceDb, file: File, path: String, walk: DirWalk) -> Vec<File> [returns(ref)]
 load_context/contrib/shiny.rs: fn is_shiny_entry_file(db: &dyn SourceDb, file: File) -> bool [returns(copy)]
 load_context/contrib/shiny.rs: fn shiny_autoload(db: &dyn SourceDb, file: File) -> Option<Vec<File>> [returns(ref)]
@@ -112,4 +113,5 @@ file.rs: File::semantic_index -> semantic_index_cycle_result
 file_exports.rs: File::exports -> exports_cycle_result
 file_imports.rs: File::cross_file_layers -> cross_file_layers_cycle_result
 file_imports.rs: File::inherited_layers -> inherited_layers_cycle_result
+imports.rs: base_binds -> base_binds_cycle_result
 package_resolve.rs: Package::resolve -> resolve_cycle_result

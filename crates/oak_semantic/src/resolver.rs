@@ -32,7 +32,7 @@ pub struct SourceResolution {
 ///   for isolated indexing (CLI tools, unit tests).
 /// - `oak_db::SalsaImportsResolver`: salsa-backed lookup against the source graph.
 ///
-/// The trait has four queries:
+/// The builder uses these queries:
 ///
 /// - [`resolve_source`](ImportsResolver::resolve_source) is the bulk
 ///   query, "enumerate every name this `source("path")` brings in," used
@@ -43,6 +43,9 @@ pub struct SourceResolution {
 /// - [`resolve_qualified_effects`](ImportsResolver::resolve_qualified_effects)
 ///   resolves the handlers of a `pkg::fn` or `pkg:::fn` callee against a named
 ///   package.
+/// - [`binding_package()`](ImportsResolver::binding_package) names the
+///   package supplying the first cross-file binding of a name on the search
+///   path.
 /// - [`package_exists`](ImportsResolver::package_exists) tells whether a
 ///   `library()`/`require()` target resolves to an installed package.
 pub trait ImportsResolver {
@@ -76,6 +79,18 @@ pub trait ImportsResolver {
     /// `:::`) to its handlers.
     fn resolve_qualified_effects(&mut self, package: &str, name: &str) -> Option<FunctionHandlers> {
         effects::lookup(package, name).copied()
+    }
+
+    /// The package supplying the first cross-file binding of `name` on the
+    /// search path. For a name imported through NAMESPACE `importFrom`, this
+    /// is the package it's imported from. `None` when a file binding comes
+    /// first or nothing binds `name`. `attached` is as for
+    /// [`resolve_effects`](ImportsResolver::resolve_effects).
+    ///
+    /// Defaults to `None`, making no claim without export data.
+    fn binding_package(&mut self, name: &str, attached: &[String]) -> Option<String> {
+        let _ = (name, attached);
+        None
     }
 
     /// Whether `package` resolves to an installed package. Defaults to
@@ -115,5 +130,16 @@ mod tests {
         assert!(resolver.resolve_source("relative.R").is_none());
         assert!(resolver.resolve_source("/abs/path.R").is_none());
         assert!(resolver.resolve_source("../../up.R").is_none());
+    }
+
+    #[test]
+    fn test_noop_imports_resolver_has_no_binding_package() {
+        // Without export data, no `<<-` target is reported as locked, even for
+        // base names.
+        let mut resolver = NoopImportsResolver;
+        assert!(resolver.binding_package("local", &[]).is_none());
+        assert!(resolver
+            .binding_package("runApp", &["shiny".to_string()])
+            .is_none());
     }
 }

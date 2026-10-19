@@ -171,6 +171,12 @@ struct ScanState {
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
+    // The package supplying the first search-path binding of each `<<-`
+    // target, keyed by the assigned name's range. Recorded by the scan because
+    // only the scan sees the attaches made before the site. By the time the
+    // walk reaches the site, `attached_so_far` also holds later attaches in the
+    // unit. Sites whose name no package binds have no entry.
+    super_binding_packages: FxHashMap<TextRange, String>,
     // `Current + Lazy` bodies (e.g. `rlang::on_load()`) queued at their call
     // sites, scanned when their enclosing scan unit finishes.
     deferred_bodies: Vec<DeferredBody>,
@@ -232,6 +238,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             scan: ScanState {
                 bound_anywhere,
                 call_resolutions: FxHashMap::default(),
+                super_binding_packages: FxHashMap::default(),
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
                 attached_so_far: FlowAttaches::default(),

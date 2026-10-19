@@ -6,10 +6,10 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 use stdext::SortedVec;
 
+use crate::test_path::file_path;
 use crate::tests::diagnostic_render::render;
 use crate::tests::file_imports::shape;
 use crate::tests::resolver::install_packages;
-use crate::tests::test_db::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;

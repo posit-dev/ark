@@ -22,6 +22,8 @@ pub mod event;
 #[rustfmt::skip]
 pub mod help_comm;
 #[rustfmt::skip]
+pub mod object_explorer_comm;
+#[rustfmt::skip]
 pub mod plot_comm;
 pub mod server_comm;
 #[rustfmt::skip]

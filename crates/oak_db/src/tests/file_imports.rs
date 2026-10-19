@@ -4,7 +4,7 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::file_imports::CollationView;
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
@@ -1110,6 +1110,25 @@ fn test_shiny_autoload_survives_an_explicit_source() {
         "Package(shiny)".to_string(),
         "Package(base)".to_string(),
     ]);
+}
+
+/// A cross-file query can name a file without analyzing its body. This is why
+/// the fuzz history heuristic cannot treat every file-keyed query as an observer.
+#[test]
+fn test_cross_file_layers_does_not_demand_a_single_file_packages_index() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let (pkg, files) = make_package(&mut db, "mypkg", Namespace::default(), &[(
+        "ws/mypkg/R/a.R",
+        "library(base)\nsource(\"other.R\")\nval <- 1\n",
+    )]);
+    let root = workspace_root(&db, "ws/mypkg");
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let _ = files[0].cross_file_layers(&db, CollationView::Eager);
+
+    assert_eq!(db.executions_for("File::semantic_index", files[0]), 0);
 }
 
 #[test]

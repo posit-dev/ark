@@ -88,8 +88,14 @@ impl<'a> MarkdownConverter<'a> {
 
     pub fn convert(&self) -> String {
         let mut buffer = String::new();
-        self.convert_node(self.node, &mut buffer);
+        self.convert_into(&mut buffer);
         buffer
+    }
+
+    /// Append to existing markdown, so that block elements like lists can
+    /// tell whether they start on a new line
+    pub fn convert_into(&self, buffer: &mut String) {
+        self.convert_node(self.node, buffer);
     }
 
     fn convert_node(&self, node: NodeRef<'a, Node>, buffer: &mut String) {
@@ -128,25 +134,9 @@ impl<'a> MarkdownConverter<'a> {
                 self.convert_node(*cell, buffer);
             }),
 
-            "ol" => {
-                for child in element.children() {
-                    if child.value().is_element() {
-                        let child = ElementRef::wrap(child).unwrap();
-                        buffer.push_str("1. ");
-                        self.convert_element(child, buffer);
-                    }
-                }
-            },
+            "ol" => self.convert_list(element, buffer, true),
 
-            "ul" => {
-                for child in element.children() {
-                    if child.value().is_element() {
-                        let child = ElementRef::wrap(child).unwrap();
-                        buffer.push_str("- ");
-                        self.convert_element(child, buffer);
-                    }
-                }
-            },
+            "ul" => self.convert_list(element, buffer, false),
 
             _ => {
                 self.convert_children(element, buffer);
@@ -158,6 +148,48 @@ impl<'a> MarkdownConverter<'a> {
         for child in node.children() {
             self.convert_node(child, buffer)
         }
+    }
+
+    fn convert_list(&self, element: ElementRef<'a>, buffer: &mut String, ordered: bool) {
+        // A list marker is only recognized at the start of a line
+        if !buffer.is_empty() && !buffer.ends_with('\n') {
+            buffer.push('\n');
+        }
+
+        let items = element.children().filter_map(ElementRef::wrap);
+        for (index, item) in items.enumerate() {
+            let marker = if ordered {
+                format!("{}. ", index + 1)
+            } else {
+                String::from("- ")
+            };
+
+            // R wraps item contents in `<p>`, which adds surrounding newlines.
+            // Item text has to start on the marker's line, and continuation
+            // lines have to be indented to the marker's width, or the text
+            // falls out of the list item.
+            let mut contents = String::new();
+            if item.value().name() == "li" {
+                self.convert_children(item, &mut contents);
+            } else {
+                self.convert_element(item, &mut contents);
+            }
+
+            let indent = " ".repeat(marker.len());
+            buffer.push_str(&marker);
+            for (line_index, line) in contents.trim().lines().enumerate() {
+                if line_index > 0 {
+                    buffer.push('\n');
+                    if !line.is_empty() {
+                        buffer.push_str(&indent);
+                    }
+                }
+                buffer.push_str(line);
+            }
+            buffer.push('\n');
+        }
+
+        buffer.push('\n');
     }
 
     fn convert_text(&self, text: &Text, buffer: &mut String) {
@@ -188,5 +220,76 @@ impl<'a> MarkdownConverter<'a> {
             }
         }
         buffer.pop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use scraper::Html;
+
+    use crate::lsp::markdown::MarkdownConverter;
+
+    fn convert(html: &str) -> String {
+        let html = Html::parse_fragment(html);
+        MarkdownConverter::new(*html.root_element()).convert()
+    }
+
+    #[test]
+    fn test_unordered_list_items_with_paragraphs() {
+        // The shape `tools::Rd2HTML()` produces for `\itemize{}`
+        let html = r#"<ul>
+<li> <p><code>a()</code> is the first item, which
+wraps onto a second line.
+</p>
+</li>
+<li> <p><code>b()</code> is the second item.
+</p>
+</li></ul>"#;
+
+        assert_eq!(
+            convert(html),
+            "- `a()` is the first item, which\n  wraps onto a second line.\n- `b()` is the second item.\n\n"
+        );
+    }
+
+    #[test]
+    fn test_ordered_list_items_are_numbered() {
+        let html = r#"<ol>
+<li> <p>First
+step.</p>
+</li>
+<li> <p>Second step.</p>
+</li></ol>"#;
+
+        assert_eq!(convert(html), "1. First\n   step.\n2. Second step.\n\n");
+    }
+
+    #[test]
+    fn test_list_starts_on_its_own_line() {
+        let html = r#"Some text:<ul>
+<li> <p>Item.</p>
+</li></ul>"#;
+
+        assert_eq!(convert(html), "Some text:\n- Item.\n\n");
+    }
+
+    #[test]
+    fn test_nested_lists_are_indented() {
+        let html = r#"<ul>
+<li> <p>Outer.</p>
+<ul>
+<li> <p>Inner.</p>
+</li></ul>
+</li></ul>"#;
+
+        assert_eq!(convert(html), "- Outer.\n\n  - Inner.\n\n");
+    }
+
+    #[test]
+    fn test_list_directly_inside_list_is_kept() {
+        // Malformed, but the inner list should still be rendered as a list
+        let html = r#"<ul><ul><li>A</li><li>B</li></ul></ul>"#;
+
+        assert_eq!(convert(html), "- - A\n  - B\n\n");
     }
 }

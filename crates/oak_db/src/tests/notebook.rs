@@ -3,9 +3,9 @@ use biome_rowan::TextSize;
 use salsa::Setter;
 use url::Url;
 
+use crate::test_path::file_path;
 use crate::tests::file_imports::install_packages;
 use crate::tests::file_imports::shape;
-use crate::tests::test_db::file_path;
 use crate::tests::test_db::TestDb;
 use crate::DbInputs;
 use crate::File;
