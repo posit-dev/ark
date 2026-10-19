@@ -104,9 +104,9 @@ impl WorkspaceVariableDisplayValue {
             LANGSXP => Self::from_language(value),
             CHARSXP => Self::from_charsxp(value),
             _ if r_is_matrix(value) => Self::from_matrix(value)?,
+            _ if is_s7_value(value) => Self::from_s7(value)?,
             RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value)?,
             _ if r_is_s4(value) => Self::from_s4(value)?,
-            _ if is_s7_value(value) => Self::from_s7(value),
             _ => Self::from_error(Error::Anyhow(anyhow!(
                 "Unexpected type {}",
                 r_type2char(r_typeof(value))
@@ -346,13 +346,24 @@ impl WorkspaceVariableDisplayValue {
         Ok(Self::new(display_value, false))
     }
 
-    fn from_s7(value: SEXP) -> Self {
+    fn from_s7(value: SEXP) -> anyhow::Result<Self> {
+        if matches!(
+            r_typeof(value),
+            RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP
+        ) {
+            // `s7_data()` returns `None` for empty vectors
+            let Some(data) = s7_data(value) else {
+                return Ok(Self::empty());
+            };
+            return Self::from_default(data.sexp);
+        }
+
         let properties = s7_properties(value);
-        Self::from_entries(
+        Ok(Self::from_entries(
             properties
                 .iter()
                 .map(|(name, property)| (name, property.sexp)),
-        )
+        ))
     }
 
     fn from_charsxp(_: SEXP) -> Self {
@@ -2656,6 +2667,7 @@ mod tests {
             let path = vec![];
             let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
             let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+            assert_eq!(x.display_value, "");
             assert!(!x.has_children);
 
             let path = vec![String::from("x")];
@@ -2756,6 +2768,34 @@ mod tests {
                 .try_into()
                 .unwrap();
             assert_eq!(class, vec!["Store", "Env", "S7_object"]);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_atomic_base_type_shows_data() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Measure <- S7::new_class("Measure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                x <- Measure(c(1.5, 2.5), units = "cm")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+            assert_eq!(x.display_value, "1.5 2.5");
+            assert!(!x.is_truncated);
         })
     }
 
