@@ -253,7 +253,7 @@ impl LspClient {
 
     /// Wire-level request send. Allocates an id, frames the message, ships
     /// it, and returns the id so the caller can await a matching response.
-    fn send_request_raw(&mut self, method: &str, params: Value) -> i64 {
+    pub fn send_request_raw(&mut self, method: &str, params: Value) -> i64 {
         self.next_id += 1;
         let id = self.next_id;
 
@@ -281,6 +281,83 @@ impl LspClient {
         }
 
         self.send_raw(&message);
+    }
+
+    /// Send a response to a server-to-client request.
+    pub fn send_server_response(&mut self, id: Value, result: Value) {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        });
+        self.send_raw(&response);
+    }
+
+    /// Receive responses for `ids` before one shared deadline.
+    ///
+    /// Buffers diagnostics notifications for later assertion via
+    /// `diagnostics()`. Returns successful results in `ids` order even when
+    /// the server sends responses out of order.
+    pub fn recv_responses(&mut self, ids: &[i64], timeout: Duration) -> anyhow::Result<Vec<Value>> {
+        let result = (|| {
+            let mut positions = std::collections::HashMap::new();
+            for (position, id) in ids.iter().enumerate() {
+                if positions.insert(*id, position).is_some() {
+                    return Err(anyhow::anyhow!("Duplicate expected response id: {id}"));
+                }
+            }
+
+            let deadline = std::time::Instant::now() + timeout;
+            let mut results = vec![None; ids.len()];
+
+            while results.iter().any(Option::is_none) {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(anyhow::anyhow!(
+                        "Timed out waiting for LSP responses within {timeout:?}"
+                    ));
+                }
+                self.reader.get_ref().set_read_timeout(Some(remaining))?;
+
+                match self.try_recv_any()? {
+                    LspMessage::Response { id, result, error } => {
+                        let Some(position) = positions.get(&id) else {
+                            return Err(anyhow::anyhow!("Unexpected LSP response id: {id}"));
+                        };
+                        if results[*position].is_some() {
+                            return Err(anyhow::anyhow!("Duplicate LSP response id: {id}"));
+                        }
+                        if let Some(error) = error {
+                            return Err(anyhow::anyhow!("LSP error response for id {id}: {error}"));
+                        }
+                        results[*position] = Some(match result {
+                            Some(result) => result,
+                            None => Value::Null,
+                        });
+                    },
+                    LspMessage::ServerRequest { method, .. } => {
+                        return Err(anyhow::anyhow!(
+                            "Unexpected LSP server request `{method}` while waiting for responses"
+                        ));
+                    },
+                    LspMessage::Notification { diagnostics, .. } => {
+                        if let Some(params) = diagnostics {
+                            self.diagnostics.insert(params.uri, params.diagnostics);
+                        }
+                    },
+                }
+            }
+
+            results
+                .into_iter()
+                .collect::<Option<Vec<Value>>>()
+                .ok_or_else(|| anyhow::anyhow!("Missing LSP response result"))
+        })();
+
+        self.reader
+            .get_ref()
+            .set_read_timeout(Some(DEFAULT_TIMEOUT))?;
+        result
     }
 
     /// Send the `shutdown` request followed by the `exit` notification.
@@ -488,6 +565,16 @@ impl LspClient {
     /// Skips benign server notifications. Panics on unexpected messages.
     #[track_caller]
     pub fn recv_server_request(&mut self, expected_method: &str) {
+        let (id, params) = self.recv_server_request_without_reply(expected_method);
+        self.send_server_response(id, Self::reply_to_server_request(expected_method, &params));
+    }
+
+    /// Receive the next server-to-client request, assert its method, and leave
+    /// its response to the caller.
+    ///
+    /// Skips benign server notifications. Panics on unexpected messages.
+    #[track_caller]
+    pub fn recv_server_request_without_reply(&mut self, expected_method: &str) -> (Value, Value) {
         loop {
             match self.recv_any() {
                 LspMessage::ServerRequest { id, method, params } => {
@@ -495,13 +582,7 @@ impl LspClient {
                         method, expected_method,
                         "Expected server request `{expected_method}`, got `{method}`"
                     );
-                    let response = json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": Self::reply_to_server_request(&method, &params),
-                    });
-                    self.send_raw(&response);
-                    return;
+                    return (id, params);
                 },
                 LspMessage::Notification { diagnostics, .. } => {
                     if let Some(params) = diagnostics {
