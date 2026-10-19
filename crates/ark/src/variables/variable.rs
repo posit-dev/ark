@@ -21,8 +21,10 @@ use harp::environment::EnvironmentFilter;
 use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::r_chr_get;
 use harp::object::r_dim;
 use harp::object::r_length;
+use harp::object::r_str_na;
 use harp::object::RObject;
 use harp::r_null;
 use harp::r_symbol;
@@ -638,12 +640,16 @@ fn r_is_atomic(value: SEXP) -> bool {
 
 /// Whether a plain, non-empty character vector gets a viewer button in the
 /// Variables pane. Full text search makes the Object Explorer most useful for
-/// these, unlike other atomic vectors.
+/// these, unlike other atomic vectors. A lone `NA` isn't viewable.
 pub(crate) fn is_viewable_character(value: SEXP) -> bool {
     r_typeof(value) == STRSXP &&
         !r_is_object(value) &&
         r_dim(value) == r_null() &&
-        r_length(value) > 0
+        match r_length(value) {
+            0 => false,
+            1 => r_chr_get(value, 0) != r_str_na(),
+            _ => true,
+        }
 }
 
 /// Try to view an object using a custom view method.

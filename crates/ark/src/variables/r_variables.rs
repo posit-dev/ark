@@ -27,9 +27,7 @@ use harp::environment::EnvironmentFilter;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::get_option;
-use harp::object::r_chr_get;
 use harp::object::r_length;
-use harp::object::r_str_na;
 use harp::object::RObject;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_function;
@@ -360,10 +358,7 @@ impl RVariables {
                 return Ok(None);
             }
 
-            if is_viewable_character(obj.sexp) &&
-                r_length(obj.sexp) == 1 &&
-                r_chr_get(obj.sexp, 0) != r_str_na()
-            {
+            if is_viewable_character(obj.sexp) && r_length(obj.sexp) == 1 {
                 RFunction::new("", "view_string")
                     .add(obj.sexp)
                     .call_in(ARK_ENVS.positron_ns)?;
