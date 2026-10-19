@@ -1033,6 +1033,12 @@ impl GlobalState {
             return false;
         }
 
+        // A refresh deferred by `refresh_if_due()` is pending work even though
+        // nothing has been queued for it yet.
+        if salsa::plumbing::current_revision(self.world.db()) != self.last_refreshed_revision {
+            return false;
+        }
+
         self.lsp_state.analysis_pool.is_idle() && self.events_rx.is_empty()
     }
 }
