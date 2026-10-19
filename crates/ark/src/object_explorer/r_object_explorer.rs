@@ -55,10 +55,12 @@ use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::variables::variable::is_explorable;
+use crate::variables::variable::is_s7_value;
 use crate::variables::variable::parse_custom_access_key;
 use crate::variables::variable::parse_index;
 use crate::variables::variable::EnvironmentVariableNode;
 use crate::variables::variable::PositronVariable;
+use crate::variables::variable::S7_PROPERTY_ACCESS_KEY_PREFIX;
 
 pub const OBJECT_EXPLORER_COMM_NAME: &str = "positron.objectExplorer";
 pub const POSITRON_OBJECT_EXPLORER_MIME: &str = "application/vnd.positron.objectExplorer+json";
@@ -577,7 +579,8 @@ impl Search {
 /// Builds an R expression that selects children of an object, following the
 /// conventions R users write by hand: `[["name"]]` / `[[i]]` for list elements
 /// and bindings, `["name"]` / `[i]` for vector elements, `[, j]` for matrix
-/// columns, `$name` for R6 fields, and `@name` for S4 slots.
+/// columns, `$name` for R6 fields, and `@name` for S4 slots and S7
+/// properties.
 /// `$` is never used for lists because it matches partially.
 enum ChildSelector {
     /// A list or atomic vector, whose elements are selected by name when the
@@ -600,6 +603,10 @@ enum ChildSelector {
     R6,
     /// An S4 object, whose slots are selected with `@`.
     S4,
+    /// An S7 object, whose properties are selected with `@`. Its `.data`
+    /// child has no selector, since `S7::S7_data()` wraps the parent's
+    /// accessor rather than extending it.
+    S7,
     /// Children that no R code selects, such as R6 private fields.
     None,
 }
@@ -612,6 +619,9 @@ impl ChildSelector {
             _ => return Self::None,
         };
 
+        if is_s7_value(object.sexp) {
+            return Self::S7;
+        }
         if r_is_s4(object.sexp) {
             return Self::S4;
         }
@@ -670,6 +680,10 @@ impl ChildSelector {
             Self::R6 if access_key.starts_with('<') => None,
             Self::R6 => Some(format!("${}", sym_quote_invalid(access_key))),
             Self::S4 => Some(format!("@{}", sym_quote_invalid(access_key))),
+            Self::S7 => {
+                let name = access_key.strip_prefix(S7_PROPERTY_ACCESS_KEY_PREFIX)?;
+                Some(format!("@{}", sym_quote_invalid(name)))
+            },
             Self::None => None,
         }
     }
@@ -978,6 +992,93 @@ mod tests {
                 accessors(&children(&explorer, &[])),
                 some(&["x@x", "x@`bad name`"])
             );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_s7_properties() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+            harp::parse_eval_global(
+                r#"
+                OETagged <- S7::new_class("OETagged", parent = S7::class_list, properties = list(
+                    label = S7::class_character,
+                    `bad name` = S7::class_numeric
+                ))
+                OEEnv <- S7::new_S3_class("OEEnv", constructor = function(.data = new.env()) {
+                    structure(.data, class = "OEEnv")
+                })
+                OEStore <- S7::new_class("OEStore", parent = OEEnv, properties = list(
+                    tag = S7::class_character
+                ))
+                OEMeasure <- S7::new_class("OEMeasure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                OEDog <- S7::new_class("OEDog", properties = list(name = S7::class_character))
+            "#,
+            )
+            .unwrap();
+
+            // `.data` has no accessor, and neither do its children
+            let tagged = explorer(r#"OETagged(list(a = 1, b = 2), label = "hi", `bad name` = 1)"#);
+            let nodes = children(&tagged, &[]);
+            assert_eq!(names(&nodes), vec![".data", "label", "bad name"]);
+            assert_eq!(accessors(&nodes), vec![
+                None,
+                Some(String::from("x@label")),
+                Some(String::from("x@`bad name`"))
+            ]);
+            assert_eq!(
+                accessors(&children(&tagged, &[&nodes[0].access_key])),
+                vec![None, None]
+            );
+
+            let store = explorer(r#"local({ x <- OEStore(tag = "abc"); x$count <- 1; x })"#);
+            let nodes = children(&store, &[]);
+            assert_eq!(names(&nodes), vec![".data", "tag"]);
+            assert_eq!(accessors(&nodes), vec![None, Some(String::from("x@tag"))]);
+
+            let measure = explorer(r#"OEMeasure(c(1.5, 2.5), units = "cm")"#);
+            let nodes = children(&measure, &[]);
+            assert_eq!(names(&nodes), vec![".data", "units"]);
+            assert_eq!(accessors(&nodes), vec![None, Some(String::from("x@units"))]);
+
+            let dog = explorer(r#"OEDog(name = "Rex")"#);
+            let nodes = children(&dog, &[]);
+            assert_eq!(names(&nodes), vec!["name"]);
+            assert_eq!(accessors(&nodes), some(&["x@name"]));
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_s7_is_explorable() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+            harp::parse_eval_global(
+                r#"
+                OEMeasure <- S7::new_class("OEMeasure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                OEDog <- S7::new_class("OEDog", properties = list(name = S7::class_character))
+                OETagged <- S7::new_class("OETagged", parent = S7::class_list)
+                OEFrame <- S7::new_class("OEFrame", parent = S7::class_data.frame)
+                OEFun <- S7::new_class("OEFun", parent = S7::class_function)
+            "#,
+            )
+            .unwrap();
+
+            let explorable =
+                |code: &str| is_explorable(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(explorable(r#"OEMeasure(1, units = "cm")"#));
+            assert!(explorable(r#"OEDog(name = "Rex")"#));
+            assert!(explorable("OETagged(list(1))"));
+            assert!(!explorable("OEFrame(data.frame(a = 1))"));
+            assert!(!explorable("OEFun(function(x) x)"));
+            assert!(!explorable("OEDog"));
         })
     }
 

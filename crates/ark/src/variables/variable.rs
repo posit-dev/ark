@@ -643,11 +643,14 @@ fn has_viewer(value: SEXP, has_children: bool) -> bool {
 }
 
 /// Whether the Object Explorer can show an object: a list (but not a data
-/// frame or matrix), an environment, an S4 object, a pairlist, or an
-/// expression vector.
+/// frame or matrix), an environment, an S4 object, an S7 object (but not one
+/// that extends a function), a pairlist, or an expression vector.
 pub(crate) fn is_explorable(value: SEXP) -> bool {
     if r_is_null(value) || r_is_data_frame(value) || r_is_matrix(value) {
         return false;
+    }
+    if is_s7_value(value) {
+        return r_typeof(value) != CLOSXP;
     }
     r_is_s4(value) || matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
 }
@@ -1861,16 +1864,16 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
 }
 
 /// Access key of the `.data` child of S7 objects that extend a base type.
-const S7_DATA_ACCESS_KEY: &str = "<data>";
+pub(crate) const S7_DATA_ACCESS_KEY: &str = "<data>";
 
 /// Prefix of the access keys of S7 properties. Property names can be any
 /// string, so the prefix keeps them from clashing with `S7_DATA_ACCESS_KEY`
 /// and other special keys such as `.Last.value`.
-const S7_PROPERTY_ACCESS_KEY_PREFIX: &str = "@";
+pub(crate) const S7_PROPERTY_ACCESS_KEY_PREFIX: &str = "@";
 
 /// S7 classes, generics, and methods are themselves S7 objects. They are
 /// shown as plain functions, so they don't get the S7 treatment.
-fn is_s7_value(x: SEXP) -> bool {
+pub(crate) fn is_s7_value(x: SEXP) -> bool {
     r_is_s7(x) && !is_s7_metaobject(x)
 }
 
