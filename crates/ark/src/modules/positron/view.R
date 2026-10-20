@@ -85,7 +85,7 @@ view <- function(
         return(view_function(x, title, var, env, top_level = top_level))
     }
 
-    if (is_single_string(x)) {
+    if (is_string(x)) {
         return(view_string(x))
     }
 
@@ -97,14 +97,6 @@ view <- function(
         "Can't `View()` an object of class `%s`",
         paste(class(x), collapse = "/")
     ))
-}
-
-is_single_string <- function(x) {
-    is.character(x) &&
-        length(x) == 1 &&
-        !is.na(x) &&
-        is.null(dim(x)) &&
-        !is.object(x)
 }
 
 # A single string opens in an untitled editor.
