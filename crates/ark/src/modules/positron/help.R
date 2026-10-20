@@ -104,6 +104,7 @@ help <- function(topic, package = NULL) {
 # search settings change. This avoids
 # per-package filesystem calls on every keystroke, especially on network libraries.
 # In-place updates may take a minute to appear, on the next request after expiry.
+# Failed rebuilds use the same cooldown, then retry even if metadata is unchanged.
 .ps.help.searchIndex <- local({
     signature <- NULL
     metadata_signature <- NULL
@@ -140,24 +141,29 @@ help <- function(topic, package = NULL) {
                 c("size", "mtime", "ctime"),
                 drop = FALSE
             ]
+            last_checked <<- now
             if (
                 !identical(current, signature) ||
-                    !identical(current_metadata, metadata_signature)
+                    !identical(current_metadata, metadata_signature) ||
+                    is.null(matches)
             ) {
-                matches <<- utils::help.search(
-                    ".",
-                    fields = "alias",
-                    package = NULL,
-                    rebuild = TRUE
-                )$matches
-                index <<- NULL
+                # Record the attempt before rebuilding so errors cannot bypass the cooldown.
                 signature <<- current
                 metadata_signature <<- current_metadata
+                index <<- NULL
+                matches <<- tryCatch(
+                    utils::help.search(
+                        ".",
+                        fields = "alias",
+                        package = NULL,
+                        rebuild = TRUE
+                    )$matches,
+                    error = function(err) NULL
+                )
             }
-            last_checked <<- now
         }
 
-        if (!build) {
+        if (!build || is.null(matches)) {
             return(invisible(NULL))
         }
         if (is.null(index)) {
@@ -186,6 +192,9 @@ help <- function(topic, package = NULL) {
         return(data.frame(package = character(), label = character()))
     }
     index <- .ps.help.searchIndex()
+    if (is.null(index)) {
+        return(data.frame(package = character(), label = character()))
+    }
     hits <- which(grepl(query, index$labels, fixed = TRUE))
     labels <- index$labels[hits]
     rank <- ifelse(
