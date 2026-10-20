@@ -3019,7 +3019,7 @@ mod tests {
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(fields[0].display_name, ".data");
             assert_eq!(fields[0].display_type, "dbl [1000000]");
-            assert!(fields[0].type_info.contains("wrap_real"));
+            assert_eq!(fields[0].type_info, "dbl [1000000]base::wrap_real");
 
             let path = vec![String::from("x"), fields[0].access_key.clone()];
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
