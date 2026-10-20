@@ -90,6 +90,45 @@ fn test_object_explorer_follows_environment_mutation() {
     assert_eq!(get_children(&frontend, &comm_id).total, 2);
 }
 
+/// An explorer on an S7 object that extends an environment is updated when a
+/// property changes. The property is an attribute that is set in place on the
+/// same environment.
+#[test]
+fn test_object_explorer_follows_s7_environment_property() {
+    let frontend = DummyArkFrontend::lock();
+    execute(
+        &frontend,
+        r#"
+        OEEnv <- S7::new_S3_class("OEEnv", constructor = function(.data = new.env()) {
+            structure(.data, class = "OEEnv")
+        })
+        OEStore <- S7::new_class("OEStore", parent = OEEnv, properties = list(
+            tag = S7::class_character
+        ))
+        oe_store <- OEStore(tag = "abc")
+        "#,
+    );
+
+    frontend.send_execute_request("View(oe_store)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let comm_id = frontend.recv_iopub_comm_open().comm_id;
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // An unrelated execution doesn't update the explorer.
+    execute(&frontend, "oe_y <- 1");
+
+    frontend.send_execute_request("oe_store@tag <- 'new'", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, comm_id);
+    assert_eq!(update.data["method"], "update");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// An explorer on an active binding never calls the binding's function.
 #[test]
 fn test_object_explorer_does_not_run_active_binding() {

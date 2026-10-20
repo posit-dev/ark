@@ -31,6 +31,7 @@ use harp::environment::Environment;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::r::attrib_for_each;
 use harp::syntax::str_quote;
 use harp::syntax::sym_quote_invalid;
 use harp::utils::r_chr_get_owned_utf8;
@@ -98,9 +99,9 @@ pub struct RObjectExplorer {
     /// Whether the explorer is shown inline only, rather than in an editor.
     inline: bool,
 
-    /// The bindings reachable from the explored object if it is an
-    /// environment, to detect changes made in place.
-    fingerprint: Vec<Binding>,
+    /// The bindings and attributes reachable from the explored object if it
+    /// is an environment, to detect changes made in place.
+    fingerprint: EnvironmentFingerprint,
 }
 
 impl std::fmt::Debug for RObjectExplorer {
@@ -131,7 +132,7 @@ impl RObjectExplorer {
             Some((binding, path)) => (Some(binding), path),
             None => (None, vec![]),
         };
-        let fingerprint = environment_fingerprint(root.sexp);
+        let fingerprint = EnvironmentFingerprint::new(root.sexp);
         Self {
             title,
             root,
@@ -175,12 +176,8 @@ impl RObjectExplorer {
             return Ok(false);
         }
 
-        let fingerprint = environment_fingerprint(object.sexp);
-        let unchanged = fingerprint
-            .iter()
-            .map(Binding::id)
-            .eq(self.fingerprint.iter().map(Binding::id));
-        if object.sexp == self.root.sexp && unchanged {
+        let fingerprint = EnvironmentFingerprint::new(object.sexp);
+        if object.sexp == self.root.sexp && fingerprint.is_same(&self.fingerprint) {
             return Ok(true);
         }
 
@@ -733,34 +730,68 @@ fn is_cycle(parent: &Resolved, child: &Variable) -> bool {
     }
 }
 
-/// Collects the bindings of an environment and of the environments
-/// reachable through them, such as an R6 object's private fields. Empty for
-/// other objects. Global, package, and namespace environments aren't
-/// entered. Stops after `FINGERPRINT_BINDING_BUDGET` bindings.
-fn environment_fingerprint(value: SEXP) -> Vec<Binding> {
-    let mut bindings = vec![];
-    let mut visited = HashSet::new();
-    let mut pending = vec![value];
-    while let Some(env) = pending.pop() {
-        if r_typeof(env) != ENVSXP ||
-            env == unsafe { R_GlobalEnv } ||
-            r_env_is_pkg_env(env) ||
-            r_env_is_ns_env(env) ||
-            !visited.insert(env)
-        {
-            continue;
-        }
-        for binding in Environment::view(env).iter().filter_map(Result::ok) {
-            if bindings.len() == FINGERPRINT_BINDING_BUDGET {
-                return bindings;
+/// What an explored environment holds, to detect changes made in place.
+struct EnvironmentFingerprint {
+    /// The bindings of the environment and of the environments reachable
+    /// through them, such as an R6 object's private fields.
+    bindings: Vec<Binding>,
+
+    /// The attributes of the same environments, as `(tag, value)` pairs.
+    /// Setting a property of an S7 object that extends an environment sets
+    /// an attribute in place, without changing any binding.
+    attributes: Vec<(RObject, RObject)>,
+}
+
+impl EnvironmentFingerprint {
+    /// Empty for objects that aren't environments. Global, package, and
+    /// namespace environments aren't entered. Stops after
+    /// `FINGERPRINT_BINDING_BUDGET` bindings.
+    fn new(value: SEXP) -> Self {
+        let mut fingerprint = Self {
+            bindings: vec![],
+            attributes: vec![],
+        };
+        let mut visited = HashSet::new();
+        let mut pending = vec![value];
+        while let Some(env) = pending.pop() {
+            if r_typeof(env) != ENVSXP ||
+                env == unsafe { R_GlobalEnv } ||
+                r_env_is_pkg_env(env) ||
+                r_env_is_ns_env(env) ||
+                !visited.insert(env)
+            {
+                continue;
             }
-            if let BindingValue::Standard { object } = &binding.value {
-                pending.push(object.sexp);
+            attrib_for_each(env, |tag, value| {
+                fingerprint
+                    .attributes
+                    .push((RObject::from(tag), RObject::from(value)));
+            });
+            for binding in Environment::view(env).iter().filter_map(Result::ok) {
+                if fingerprint.bindings.len() == FINGERPRINT_BINDING_BUDGET {
+                    return fingerprint;
+                }
+                if let BindingValue::Standard { object } = &binding.value {
+                    pending.push(object.sexp);
+                }
+                fingerprint.bindings.push(binding);
             }
-            bindings.push(binding);
         }
+        fingerprint
     }
-    bindings
+
+    /// Compares bindings and attributes by their pointers.
+    fn is_same(&self, other: &Self) -> bool {
+        let attribute_id = |(tag, value): &(RObject, RObject)| (tag.sexp, value.sexp);
+        self.bindings
+            .iter()
+            .map(Binding::id)
+            .eq(other.bindings.iter().map(Binding::id)) &&
+            self.attributes
+                .iter()
+                .map(attribute_id)
+                .eq(other.attributes.iter().map(attribute_id))
+    }
 }
 
 /// Builds an object explorer node from a Variables pane variable.
