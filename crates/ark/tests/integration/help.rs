@@ -560,6 +560,11 @@ local({
     now <- 100
     scans <- 0L
     metadata_checks <- 0L
+    builds <- 0L
+    cache$unique <- function(...) {
+        builds <<- builds + 1L
+        base::unique(...)
+    }
     cache$proc.time <- function() c(elapsed = now)
     cache$list.dirs <- function(...) {
         scans <<- scans + 1L
@@ -571,8 +576,14 @@ local({
         }
         base::file.info(paths, ...)
     }
-    on.exit(rm(list = c("proc.time", "list.dirs", "file.info"), envir = cache), add = TRUE)
-    .ps.help.searchIndex()
+    on.exit(rm(list = c("proc.time", "list.dirs", "file.info", "unique"), envir = cache), add = TRUE)
+    stopifnot(.ps.help.searchHelp("lm"))
+    stopifnot(is.null(cache$index), builds == 0L)
+    expected <- .ps.help.getHelpTopics("lm", 5L)
+    stopifnot(builds == 1L)
+    stopifnot(.ps.help.searchHelp("lm"))
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), expected))
+    stopifnot(builds == 1L)
     old_paths <- .libPaths()
     library <- tempfile("ark-help-index-")
     dir.create(library)
@@ -585,6 +596,7 @@ local({
     stopifnot(nrow(.ps.help.getHelpTopics("lm", 1L)) == 1L)
     stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
     stopifnot(scans == before_paths_change + length(.libPaths()))
+    stopifnot(builds == 2L)
     initial_scans <- scans
     initial_checks <- metadata_checks
     marker <- "zzzz_ark_help_cache_alias"
@@ -602,12 +614,14 @@ local({
     stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     stopifnot(scans == initial_scans, metadata_checks == initial_checks)
     now <- 160
+    stopifnot(.ps.help.searchHelp(marker))
+    stopifnot(is.null(cache$index), builds == 2L)
     stopifnot(identical(unname(as.list(.ps.help.getHelpTopics(marker, 50L))), list("stats", marker)))
     stopifnot(scans == initial_scans + length(.libPaths()))
-    stopifnot(metadata_checks == initial_checks + 1L)
+    stopifnot(metadata_checks == initial_checks + 1L, builds == 3L)
     # Repeated requests do not repeat the full scan after expiry has been handled.
     .ps.help.getHelpTopics(marker, 50L)
-    stopifnot(metadata_checks == initial_checks + 1L)
+    stopifnot(metadata_checks == initial_checks + 1L, builds == 3L)
     stopifnot(nrow(utils::help.search(marker, agrep = FALSE)$matches) > 0L)
     unlink(file.path(library, "stats"), recursive = TRUE)
     Sys.setFileTime(library, Sys.time() + 4)
