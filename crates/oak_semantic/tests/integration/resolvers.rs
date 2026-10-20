@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use oak_semantic::effects;
-use oak_semantic::EffectsHandlers;
+use oak_semantic::effects::DirWalk;
+use oak_semantic::FunctionHandlers;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -23,6 +24,12 @@ pub struct TestImportsResolver {
     consultations: Rc<Cell<usize>>,
     /// `source()` paths this resolver knows, mapped to the names they export.
     sources: HashMap<String, SourceResolution>,
+    /// Directory listings keyed by path and walk mode, so a handler that asks
+    /// for the wrong `DirWalk` gets no files rather than a silent match.
+    source_dirs: HashMap<(String, DirWalk), Vec<SourceResolution>>,
+    /// Explicit exports keep locked-binding checks independent of the effects
+    /// registry, which describes call semantics rather than binding existence.
+    exports: HashMap<String, Vec<String>>,
 }
 
 impl TestImportsResolver {
@@ -42,18 +49,39 @@ impl TestImportsResolver {
             always_attached,
             consultations: Rc::new(Cell::new(0)),
             sources: HashMap::new(),
+            source_dirs: HashMap::new(),
+            exports: HashMap::new(),
         }
+    }
+
+    /// Declare that `package` exports `names`, making them locked `<<-`
+    /// targets when `package` is on the search path.
+    pub fn with_exports(mut self, package: &str, names: &[&str]) -> Self {
+        self.exports.insert(
+            package.to_string(),
+            names.iter().map(|name| name.to_string()).collect(),
+        );
+        self
     }
 
     /// Register a sourced file at `path` exporting `names`, so `resolve_source`
     /// returns a resolution for it. The URL is synthesized from the path.
     pub fn with_source(mut self, path: &str, names: &[&str]) -> Self {
-        let resolution = SourceResolution {
-            url: Url::parse(&format!("file:///{path}")).unwrap(),
-            names: names.iter().map(|name| name.to_string()).collect(),
-            packages: vec![],
-        };
-        self.sources.insert(path.to_string(), resolution);
+        self.sources
+            .insert(path.to_string(), source_resolution(path, names));
+        self
+    }
+
+    /// Register a directory at `path` listed with `walk`, so
+    /// `resolve_source_dir` returns one resolution per `(file_path,
+    /// exported_names)` entry, in order. URLs are synthesized from the paths.
+    pub fn with_source_dir(mut self, path: &str, walk: DirWalk, files: &[(&str, &[&str])]) -> Self {
+        let resolutions = files
+            .iter()
+            .map(|(file, names)| source_resolution(file, names))
+            .collect();
+        self.source_dirs
+            .insert((path.to_string(), walk), resolutions);
         self
     }
 
@@ -69,13 +97,41 @@ impl ImportsResolver for TestImportsResolver {
         self.sources.get(path).cloned()
     }
 
-    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_source_dir(&mut self, path: &str, walk: DirWalk) -> Vec<SourceResolution> {
+        self.source_dirs
+            .get(&(path.to_string(), walk))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn resolve_effects(&mut self, name: &str, attached: &[String]) -> Option<FunctionHandlers> {
         self.consultations.set(self.consultations.get() + 1);
         attached
             .iter()
             .rev()
             .chain(self.always_attached.iter())
             .find_map(|pkg| effects::lookup(pkg, name).copied())
+    }
+
+    fn binding_package(&mut self, name: &str, attached: &[String]) -> Option<String> {
+        attached
+            .iter()
+            .rev()
+            .chain(self.always_attached.iter())
+            .find(|pkg| {
+                self.exports
+                    .get(*pkg)
+                    .is_some_and(|names| names.iter().any(|export| export == name))
+            })
+            .cloned()
+    }
+}
+
+fn source_resolution(path: &str, names: &[&str]) -> SourceResolution {
+    SourceResolution {
+        url: Url::parse(&format!("file:///{path}")).unwrap(),
+        names: names.iter().map(|name| name.to_string()).collect(),
+        packages: vec![],
     }
 }
 
@@ -89,7 +145,7 @@ impl ImportsResolver for MissingPackageResolver {
         None
     }
 
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
+    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<FunctionHandlers> {
         effects::lookup("base", name).copied()
     }
 

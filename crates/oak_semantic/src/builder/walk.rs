@@ -39,6 +39,8 @@ use crate::effects::ResolvedArgumentEffects;
 use crate::effects::TargetAccess;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AttachRegion;
+use crate::semantic_index::CalleeDependency;
+use crate::semantic_index::CalleeUsage;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -51,6 +53,7 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticCall;
 use crate::semantic_index::SemanticCallKind;
+use crate::semantic_index::SemanticDiagnostic;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolId;
 use crate::semantic_index::Use;
@@ -319,26 +322,30 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         // them upon leaving the lazy context.
         let attached = self.scan.attached_so_far.len();
 
-        if let Ok(params) = fun.parameters() {
-            // Scan the default values before collecting them. R binds all
-            // formals into the frame at once, so a default sees every parameter
-            // name regardless of position: `function(local, b = local(...))` is
-            // not NSE. So we seed the whole formal set into `bound_so_far`
-            // up front rather than flow-ordered, then scan each default.
-            self.begin_scan();
-            self.scan_parameter_defaults(&params);
+        let params = fun.parameters().ok();
+        let body = fun.body().ok();
 
-            // `walk_parameters` adds the parameter definitions and walks
-            // each default in source order, finding the NSE decisions the scan
-            // above recorded.
-            self.walk_parameters(&params);
+        // Approximate lazy evaluation by assuming all defaults are forced in
+        // parameter order before the body. Keep their flow state so a binding
+        // made on only some paths of a default stays conditional in the body.
+        self.begin_scan();
+        if let Some(params) = &params {
+            self.scan_parameter_defaults(params);
+        }
+        if let Some(body) = &body {
+            self.scan_expression(body);
         }
 
-        if let Ok(body) = fun.body() {
-            self.begin_scan();
-            self.scan_expression(&body);
-            self.scan_deferred_bodies(watermark);
-            self.walk_expression(&body);
+        // Deferred bodies must be scanned before walking the defaults, or
+        // calls such as `library()` inside a default's `on.exit()` body have
+        // no recorded semantic decision for the walk to consume.
+        self.scan_deferred_bodies(watermark);
+
+        if let Some(params) = &params {
+            self.walk_parameters(params);
+        }
+        if let Some(body) = &body {
+            self.walk_expression(body);
         }
 
         // Discard attaches made in the lazy context.
@@ -512,8 +519,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: SemanticCallKind::Attach { package, region },
             range,
             scope: self.current_scope,
-            callee: bare_callee_name(call),
         });
+        self.record_effects_callee(call, range);
     }
 
     /// Where the attach of `package` at `offset` holds, as the scan recorded
@@ -547,7 +554,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn walk_source_call(&mut self, call: &aether_syntax::RCall) {
         let range = call.syntax().text_trimmed_range();
         let call_offset = range.start();
-        let callee = bare_callee_name(call);
 
         // Read back what the scan cached: the sourced files, each with its
         // resolution. The scan is the single point that extracts the paths and
@@ -556,6 +562,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             Some(resolution) => resolution.source.clone(),
             None => return,
         };
+        self.record_effects_callee(call, range);
 
         // Only a call that runs at load time pins down what the sourced
         // file's top level can see. One inside a function body might never
@@ -583,7 +590,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 kind: SemanticCallKind::Source { path, resolved },
                 range,
                 scope: self.current_scope,
-                callee: callee.clone(),
             });
 
             let Some(resolution) = resolution else {
@@ -622,13 +628,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                     },
                     range,
                     scope: self.current_scope,
-                    // No callee: nothing is written at `range` under this name.
-                    // The `source()` call that forwarded these carries it, so a
-                    // consumer keying on the callee sees the site once.
-                    callee: None,
                 });
             }
         }
+    }
+
+    /// Record the bare callee of an attach or source call. A qualified callee
+    /// like `base::source()` can't be shadowed, so there's nothing to record.
+    fn record_effects_callee(&mut self, call: &aether_syntax::RCall, range: TextRange) {
+        let Some(name) = bare_callee_name(call) else {
+            return;
+        };
+        self.callee_dependencies.push(CalleeDependency {
+            name,
+            range,
+            usage: CalleeUsage::Effects,
+        });
     }
 
     // `assign("x", value)` binds `x` in the current scope, the same as `x <-
@@ -840,28 +855,45 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     //
     // R's `<<-` walks up the environment chain from the parent, targeting
     // the first scope where the symbol is already bound. If no binding is
-    // found, it assigns in the global (file) scope.
+    // found, R assigns in the global environment. If the first binding is
+    // locked, the assignment errors instead. `resolve_super_target()`
+    // approximates this search using lexical scopes and package bindings.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
-        let Some(parent) = self.scopes[self.current_scope].parent else {
-            // A top-level `<<-` has no enclosing frame to walk to, so it binds
-            // in the file scope it already sits in. The marker scope and the
-            // binding scope coincide, so record one definition carrying both
-            // flags rather than pushing two coinciding entries.
-            let symbol_id = self.walk.symbol_tables[self.current_scope].intern(
-                name,
-                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND),
-            );
-            let def_id = self.walk.definitions[self.current_scope].push(Definition {
+        // Start the search outside the execution frame because `<<-` skips
+        // that frame's bindings. `Current + Lazy` bodies such as `on.exit()`
+        // and `on_load()` execute in their owner's frame, not a separate one.
+        let frame = if self.scopes[self.current_scope].kind.owns_bindings() {
+            self.current_scope
+        } else {
+            let Some(owner) = self.enclosing_owner() else {
+                stdext::debug_panic!("`Current + Lazy` scope has no owner");
+                return;
+            };
+            owner
+        };
+
+        let Some(start) = self.scopes[frame].parent else {
+            // At file scope, the assignment site and global fallback share
+            // one definition, carrying both flags. A locked package binding
+            // prevents the global assignment, leaving only the site marker.
+            let locked = self.super_name_is_locked(name, range);
+            let flags = if locked {
+                SymbolFlags::IS_SUPER_BOUND
+            } else {
+                SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
+            };
+            let symbol_id = self.walk.symbol_tables[frame].intern(name, flags);
+            let def_id = self.walk.definitions[frame].push(Definition {
                 symbol: symbol_id,
                 kind,
                 range,
             });
-            self.walk.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
-            self.walk.use_def_maps[self.current_scope].record_super_definition(symbol_id, def_id);
+            self.walk.use_def_maps[frame].ensure_symbol(symbol_id);
+            self.walk.use_def_maps[frame].record_super_definition(symbol_id, def_id);
             return;
         };
 
-        let target_scope = self.resolve_super_target(name, parent);
+        let target_scope = self.resolve_super_target(name, start, range);
 
         let symbol_id =
             self.walk.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
@@ -870,6 +902,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             kind: kind.clone(),
             range,
         });
+
+        // Keep the assignment-site marker even when a locked package binding
+        // prevents the assignment from creating or updating a target.
+        let Some(target_scope) = target_scope else {
+            return;
+        };
 
         let target_symbol =
             self.walk.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
@@ -902,12 +940,83 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    // R's `<<-` targets the first ancestor with an `IS_BOUND` binding. Without
-    // one, it assigns in the global, file scope.
-    fn resolve_super_target(&self, name: &str, start: ScopeId) -> ScopeId {
-        self.ancestor_scope_ids(start)
-            .find(|&scope| self.walked_binding(scope, name).is_some())
-            .unwrap_or(ScopeId::from(0))
+    // Use bindings already walked within the same execution unit (the file
+    // or one lazy body), so later assignments cannot become targets. Across
+    // a lazy boundary, consider bindings anywhere in the ancestor because
+    // invocation can follow its later assignments. Report timing dependence
+    // when the selected binding has not been walked at the assignment site.
+    //
+    // With no lexical target, known locked package bindings prevent assignment.
+    // Otherwise, the file scope represents R's global fallback.
+    fn resolve_super_target(
+        &mut self,
+        name: &str,
+        start: ScopeId,
+        range: TextRange,
+    ) -> Option<ScopeId> {
+        let site_unit = self.enclosing_lazy_scope(self.current_scope);
+
+        let mut target: Option<ScopeId> = None;
+        let mut timing_dependent = false;
+
+        for ancestor in self.ancestor_scope_ids(start) {
+            let same_unit = self.enclosing_lazy_scope(ancestor) == site_unit;
+            let bound = if same_unit {
+                self.walked_binding(ancestor, name).is_some()
+            } else {
+                self.scope_binds_anywhere(ancestor, name)
+            };
+
+            if !bound {
+                continue;
+            }
+
+            timing_dependent = !same_unit && self.walked_binding(ancestor, name).is_none();
+            target = Some(ancestor);
+            break;
+        }
+
+        let Some(target) = target else {
+            if self.super_name_is_locked(name, range) {
+                return None;
+            }
+            return Some(ScopeId::from(0));
+        };
+
+        if timing_dependent {
+            if let Some(binding_range) = self.scope_binding_range(target, name) {
+                self.diagnostics
+                    .push(SemanticDiagnostic::AmbiguousSuperAssignment {
+                        name: name.to_string(),
+                        range,
+                        binding_range,
+                    });
+            }
+        }
+        Some(target)
+    }
+
+    /// A locked package target prevents the global fallback and produces a
+    /// diagnostic. R locks package and imports environments, so a name whose
+    /// first search-path binding comes from a package can't be assigned with
+    /// `<<-`. A spurious `None` from the resolver records a global binding
+    /// that R never creates, while a spurious package reports a locked-binding
+    /// error R never raises.
+    ///
+    /// The scan recorded the package at the site (`scan_super_binding_package()`),
+    /// since by now `attached_so_far` also holds attaches made later in the unit.
+    fn super_name_is_locked(&mut self, name: &str, range: TextRange) -> bool {
+        let Some(package) = self.scan.super_binding_packages.remove(&range) else {
+            return false;
+        };
+
+        self.diagnostics
+            .push(SemanticDiagnostic::LockedSuperAssignment {
+                name: name.to_string(),
+                package,
+                range,
+            });
+        true
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
@@ -1017,10 +1126,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 }
 
-/// The callee of `call` when it's written as a bare identifier. `None` for
-/// anything else, including a `pkg::fn` callee: `::` names the package outright,
-/// so no binding can shadow it. Mirrors the two cases
-/// `resolve_effects_handlers` recognizes.
+/// Only bare callees can be shadowed by bindings. Qualified callees such as
+/// `pkg::fn` name the package explicitly and are excluded.
 fn bare_callee_name(call: &RCall) -> Option<String> {
     match call.function().ok()? {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text().to_string()),

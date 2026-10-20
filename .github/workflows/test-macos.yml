@@ -13,7 +13,7 @@ jobs:
       matrix:
         config:
           - { rust: 'nightly', r: 'release', runs_on: 'macos-latest' }
-          - { rust: 'stable', r: '4.2', runs_on: 'macos-14' }
+          - { rust: 'stable', r: '4.2', runs_on: 'macos-15' }
     timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

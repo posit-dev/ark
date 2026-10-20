@@ -85,6 +85,10 @@ pub struct SemanticIndex {
     // attachments or `source()` injections.
     semantic_calls: Vec<SemanticCall>,
 
+    // Imported callees whose resolution influenced effect recognition or
+    // static evaluation, including lookups that found no applicable handler.
+    callee_dependencies: Vec<CalleeDependency>,
+
     // Namespace accesses recorded during indexing, i.e. `package::symbol` or
     // `package:::symbol`
     namespace_accesses: Vec<NamespaceAccess>,
@@ -230,6 +234,7 @@ impl SemanticIndex {
             SmallVec<[(ScopeId, EnclosingSnapshotId); 1]>,
         >,
         semantic_calls: Vec<SemanticCall>,
+        callee_dependencies: Vec<CalleeDependency>,
         namespace_accesses: Vec<NamespaceAccess>,
         diagnostics: Vec<SemanticDiagnostic>,
         final_bindings: IndexVec<SymbolId, Bindings>,
@@ -245,6 +250,7 @@ impl SemanticIndex {
             use_def_maps,
             enclosing_snapshots,
             semantic_calls,
+            callee_dependencies,
             namespace_accesses,
             diagnostics,
             final_bindings,
@@ -395,6 +401,13 @@ impl SemanticIndex {
     /// during indexing.
     pub fn semantic_calls(&self) -> &[SemanticCall] {
         &self.semantic_calls
+    }
+
+    /// Imported callees whose resolution influenced effect recognition or
+    /// static evaluation, in source order: by range start, then range end. A
+    /// call site can appear more than once.
+    pub fn callee_dependencies(&self) -> &[CalleeDependency] {
+        &self.callee_dependencies
     }
 
     /// Namespace accesses recorded during indexing, i.e. `package::symbol` or
@@ -686,6 +699,7 @@ pub enum ScopeKind {
 
 /// Where definitions in an NSE scope land.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EvalEnv {
     /// Definitions go to the current (parent) environment.
     /// e.g. `rlang::on_load()`
@@ -698,6 +712,7 @@ pub enum EvalEnv {
 /// Whether an NSE scope evaluates eagerly (at the call site) or lazily
 /// (at an unknown later time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EvalTiming {
     /// Expression that runs at the call site. Free variables resolve against
     /// the linear state right there. E.g. `local()`, `evalq()`, `test_that()`.
@@ -1019,7 +1034,6 @@ pub struct SemanticCall {
     pub(crate) kind: SemanticCallKind,
     pub(crate) range: TextRange,
     pub(crate) scope: ScopeId,
-    pub(crate) callee: Option<String>,
 }
 
 /// Where an attach is known to hold.
@@ -1085,14 +1099,43 @@ impl SemanticCall {
         self.range.start()
     }
 
-    /// The callee as written, when it was a bare identifier. `None` for a
-    /// qualified callee like `base::source()`, which no binding can shadow.
-    pub fn callee(&self) -> Option<&str> {
-        self.callee.as_deref()
-    }
-
     pub fn scope(&self) -> ScopeId {
         self.scope
+    }
+}
+
+/// An imported bare callee whose resolution informed an indexing decision.
+/// Sourcing files can supply different imports, so inherited-shadow checks
+/// resolve `name` in each sourcing context and compare the handlers used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalleeDependency {
+    pub(crate) name: String,
+    pub(crate) range: TextRange,
+    pub(crate) usage: CalleeUsage,
+}
+
+/// Which part of the callee's handlers the indexing decision used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalleeUsage {
+    /// The call's own effects, for an attach or source call.
+    Effects,
+    /// The callee's value handler, consulted to statically evaluate an
+    /// argument of an effect call (`c()` in `source(c("a.R"))`).
+    Value,
+}
+
+impl CalleeDependency {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The whole call's trimmed range.
+    pub fn range(&self) -> TextRange {
+        self.range
+    }
+
+    pub fn usage(&self) -> CalleeUsage {
+        self.usage
     }
 }
 
@@ -1150,14 +1193,37 @@ pub enum NamespaceAccessKind {
 /// consumers to turn into user-facing diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticDiagnostic {
-    /// An effect decision (NSE scope or attach) settled on the eager-linear
-    /// reading even though another reading was possible. `call_range` points at
-    /// the call we decided about, which may or may not have come out effectful;
-    /// `reason` says what made it ambiguous and where the competing site is.
-    AmbiguousEffect {
+    /// A callee resolution settled on the eager-linear reading even though
+    /// another reading was possible. The callee is consulted either for its
+    /// effects (NSE scope or attach) or for its static value (a nested `c()`
+    /// in `source(c("a.R"))`). `call_range` points at the call we decided
+    /// about, which may or may not have come out effectful or statically
+    /// evaluated; `reason` says what made it ambiguous and where the competing
+    /// site is.
+    AmbiguousCalleeResolution {
         name: String,
         call_range: TextRange,
         reason: AmbiguityReason,
+    },
+    /// The selected `<<-` target may not exist when the assignment runs. It
+    /// belongs to an ancestor in another execution unit and has not been
+    /// walked at the assignment site. Earlier invocation may search farther
+    /// up the environment chain instead.
+    /// `range` points at the assigned name, and `binding_range` at the selected
+    /// target binding.
+    AmbiguousSuperAssignment {
+        name: String,
+        range: TextRange,
+        binding_range: TextRange,
+    },
+    /// A `<<-` found no lexical target and its name is bound in a locked
+    /// package environment, so R errors with "cannot change value of locked
+    /// binding" instead of assigning. `package` supplies the binding, and
+    /// `range` points at the assigned name.
+    LockedSuperAssignment {
+        name: String,
+        package: String,
+        range: TextRange,
     },
     /// Both `if` arms attach the same packages in different orders. The scanner
     /// retains the `else` arm's order in `packages`, but R searches the most recent
@@ -1181,8 +1247,8 @@ pub enum SemanticDiagnostic {
     SourceCycle,
 }
 
-/// Why an [`AmbiguousEffect`](SemanticDiagnostic::AmbiguousEffect) could have
-/// read the other way, and where the competing site is.
+/// Why an [`AmbiguousCalleeResolution`](SemanticDiagnostic::AmbiguousCalleeResolution)
+/// could have read the other way, and where the competing site is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmbiguityReason {
     /// The callee is bound by a lazy-crossed ancestor with undetermined
@@ -1196,10 +1262,10 @@ pub enum AmbiguityReason {
     /// scope shape is condition-dependent. `binding_range` points at the
     /// conditional binding.
     ConditionalShadow { binding_range: TextRange },
-    /// The callee would have been effectful, but the `library()`/`require()`
-    /// that annotates it was attached on only some paths and dropped at a
-    /// branch or loop join, so we read the call as plain. `attach_range` points
-    /// at that conditional attach.
+    /// The callee would have been effectful or statically evaluated, but the
+    /// `library()`/`require()` that annotates it was attached on only some
+    /// paths and dropped at a branch or loop join, so we read the call as
+    /// plain. `attach_range` points at that conditional attach.
     ConditionalAttach {
         package: String,
         attach_range: TextRange,

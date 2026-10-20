@@ -174,14 +174,14 @@ pub enum IopubExpectation {
     /// `Status(Idle)` whose parent is a shell-channel message
     /// (`execute_request`).
     IdleShell,
-    /// A `CommMsg` message.
-    CommMsg,
     /// A `DebugEvent` message.
     DebugEvent,
     /// An `ExecuteInput` message.
     ExecuteInput,
     /// An `ExecuteResult` message.
     ExecuteResult,
+    /// Any `CommMsg` message.
+    CommMsg,
 }
 
 fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
@@ -225,10 +225,10 @@ fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
                 Message::Status(data) if data.content.execution_state == ExecutionState::Idle
             ) && is_shell_parent
         },
-        IopubExpectation::CommMsg => matches!(msg, Message::CommMsg(_)),
         IopubExpectation::DebugEvent => matches!(msg, Message::DebugEvent(_)),
         IopubExpectation::ExecuteInput => matches!(msg, Message::ExecuteInput(_)),
         IopubExpectation::ExecuteResult => matches!(msg, Message::ExecuteResult(_)),
+        IopubExpectation::CommMsg => matches!(msg, Message::CommMsg(_)),
     }
 }
 
@@ -1732,7 +1732,8 @@ impl DummyArkFrontend {
         let total_expected: usize = sequences.iter().map(|s| s.len()).sum();
 
         while collected.len() < total_expected {
-            let msg = match self.recv_iopub_with_timeout(RECV_TIMEOUT) {
+            let pending = self.pending_iopub_messages.borrow_mut().pop_front();
+            let msg = match pending.or_else(|| self.recv_iopub_with_timeout(RECV_TIMEOUT)) {
                 Some(msg) => msg,
                 None => {
                     let mut status = String::new();

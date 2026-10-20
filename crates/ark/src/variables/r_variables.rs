@@ -48,9 +48,13 @@ use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
+use crate::object_explorer::r_object_explorer::path_accessor;
+use crate::object_explorer::r_object_explorer::RObjectExplorer;
+use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
 use crate::r_task;
 use crate::r_task::RTask;
 use crate::thread::RThreadSafe;
+use crate::variables::variable::is_explorable;
 use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
@@ -324,7 +328,7 @@ impl RVariables {
         })
     }
 
-    fn inspect(&mut self, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
+    fn inspect(&mut self, path: &[String]) -> anyhow::Result<Vec<Variable>> {
         r_task(|| {
             let env = self.env.get().clone();
             PositronVariable::inspect(env, path)
@@ -351,6 +355,10 @@ impl RVariables {
                 return Ok(None);
             }
 
+            if is_explorable(obj.sexp) {
+                return self.view_object(obj, path, env).map(Some);
+            }
+
             let name = unsafe { path.get_unchecked(path.len() - 1) };
 
             let binding = DataObjectEnvInfo {
@@ -366,6 +374,38 @@ impl RVariables {
                 .map_err(harp::Error::Anyhow)?;
             Ok(Some(viewer_id))
         })
+    }
+
+    /// Opens an object explorer on the object at `path`, watching the
+    /// top-level variable it was read from for changes.
+    fn view_object(
+        &self,
+        obj: RObject,
+        path: &[String],
+        env: RObject,
+    ) -> Result<String, harp::error::Error> {
+        let (name, path_in_binding) = match path.split_first() {
+            Some(split) => split,
+            None => return Err(harp::Error::Anyhow(anyhow!("Can't view an empty path"))),
+        };
+        let value = PositronVariable::resolve_data_object(env.clone(), std::slice::from_ref(name))?;
+        let accessor = path_accessor(name, value, path_in_binding);
+        let title = accessor.clone().unwrap_or_else(|| name.clone());
+        let binding = DataObjectEnvInfo {
+            name: name.clone(),
+            env,
+        };
+
+        let explorer = RObjectExplorer::new(
+            title,
+            obj,
+            accessor,
+            Some((binding, path_in_binding.to_vec())),
+            false,
+        );
+        Console::get_mut()
+            .comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))
+            .map_err(harp::Error::Anyhow)
     }
 
     /// Query table summary for the given variable.

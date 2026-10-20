@@ -1,63 +1,16 @@
-use aether_parser::parse;
-use aether_parser::RParserOptions;
-use oak_semantic::build_index;
-use oak_semantic::effects;
 use oak_semantic::effects::DirWalk;
 use oak_semantic::semantic_index::SemanticCallKind;
-use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::EffectsHandlers;
-use oak_semantic::ImportsResolver;
-use oak_semantic::SourceResolution;
 use url::Url;
 
+use crate::common::build_with;
 use crate::common::semantic_call_kinds;
+use crate::resolvers::TestImportsResolver;
 
-/// Resolves `tar_source` against the targets registry entry, and stands in for
-/// the workspace listing: `files` are what a directory expands to, `file` is
-/// what a path resolving to a script gives.
-struct TargetsResolver {
-    file: Option<SourceResolution>,
-    files: Vec<SourceResolution>,
-}
-
-impl TargetsResolver {
-    fn with_dir(files: Vec<SourceResolution>) -> Self {
-        Self { file: None, files }
-    }
-}
-
-impl ImportsResolver for TargetsResolver {
-    fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
-        self.file.clone()
-    }
-
-    fn resolve_source_dir(&mut self, _path: &str, walk: DirWalk) -> Vec<SourceResolution> {
-        // `tar_source()` lists directory arguments with `recursive = TRUE`.
-        assert_eq!(walk, DirWalk::Recursive);
-        self.files.clone()
-    }
-
-    fn resolve_effects(&mut self, name: &str, _: &[String]) -> Option<EffectsHandlers> {
-        effects::lookup("targets", name)
-            .or_else(|| effects::lookup("base", name))
-            .copied()
-    }
-}
-
-fn index(source: &str, resolver: TargetsResolver) -> SemanticIndex {
-    let parsed = parse(source, RParserOptions::default());
-    if parsed.has_error() {
-        panic!("source has syntax errors: {source}");
-    }
-    build_index(&parsed.tree(), resolver)
-}
-
-fn resolution(url: &str, name: &str) -> SourceResolution {
-    SourceResolution {
-        url: Url::parse(url).unwrap(),
-        names: vec![name.to_string()],
-        packages: vec![],
-    }
+/// Resolver with targets on the search path. `tar_source()` lists directory
+/// arguments with `recursive = TRUE`, so directories are registered with
+/// `DirWalk::Recursive` and a handler asking for a shallow listing finds none.
+fn targets_resolver() -> TestImportsResolver {
+    TestImportsResolver::with_attached(&["targets"])
 }
 
 fn sourced(path: &str, url: &str) -> SemanticCallKind {
@@ -71,11 +24,11 @@ fn sourced(path: &str, url: &str) -> SemanticCallKind {
 fn test_tar_source_no_arguments_uses_the_default_directory() {
     // The bare `tar_source()` that most `_targets.R` pipelines write relies on
     // `files = "R"`, so the default has to stand in for an absent argument.
-    let files = vec![
-        resolution("file:///R/a.R", "a_name"),
-        resolution("file:///R/b.R", "b_name"),
-    ];
-    let index = index("tar_source()\n", TargetsResolver::with_dir(files));
+    let resolver = targets_resolver().with_source_dir("R", DirWalk::Recursive, &[
+        ("R/a.R", &["a_name"]),
+        ("R/b.R", &["b_name"]),
+    ]);
+    let index = build_with("tar_source()\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [
         &sourced("R", "file:///R/a.R"),
@@ -85,8 +38,9 @@ fn test_tar_source_no_arguments_uses_the_default_directory() {
 
 #[test]
 fn test_tar_source_positional_directory() {
-    let files = vec![resolution("file:///code/a.R", "a_name")];
-    let index = index("tar_source(\"code\")\n", TargetsResolver::with_dir(files));
+    let resolver = targets_resolver()
+        .with_source_dir("code", DirWalk::Recursive, &[("code/a.R", &["a_name"])]);
+    let index = build_with("tar_source(\"code\")\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [&sourced(
         "code",
@@ -96,8 +50,10 @@ fn test_tar_source_positional_directory() {
 
 #[test]
 fn test_tar_source_qualified_call_is_recognized() {
-    let files = vec![resolution("file:///R/a.R", "a_name")];
-    let index = index("targets::tar_source()\n", TargetsResolver::with_dir(files));
+    // targets is not attached, so only the `targets::` qualifier can resolve the callee.
+    let resolver = TestImportsResolver::with_base()
+        .with_source_dir("R", DirWalk::Recursive, &[("R/a.R", &["a_name"])]);
+    let index = build_with("targets::tar_source()\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [&sourced(
         "R",
@@ -108,12 +64,14 @@ fn test_tar_source_qualified_call_is_recognized() {
 #[test]
 fn test_tar_source_path_naming_a_script_resolves_as_a_file() {
     // `files` takes scripts as well as directories, so a `FileOrDir` target
-    // tries the file first and only falls back to a listing.
-    let resolver = TargetsResolver {
-        file: Some(resolution("file:///R/utils.R", "util")),
-        files: vec![resolution("file:///unused.R", "unused")],
-    };
-    let index = index("tar_source(\"R/utils.R\")\n", resolver);
+    // tries the file first and only falls back to a listing. The decoy
+    // directory entry must not be reached.
+    let resolver = targets_resolver()
+        .with_source("R/utils.R", &["util"])
+        .with_source_dir("R/utils.R", DirWalk::Recursive, &[("unused.R", &[
+            "unused",
+        ])]);
+    let index = build_with("tar_source(\"R/utils.R\")\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [&sourced(
         "R/utils.R",
@@ -123,11 +81,9 @@ fn test_tar_source_path_naming_a_script_resolves_as_a_file() {
 
 #[test]
 fn test_tar_source_named_files_argument_is_recognized() {
-    let files = vec![resolution("file:///code/a.R", "a_name")];
-    let index = index(
-        "tar_source(files = \"code\")\n",
-        TargetsResolver::with_dir(files),
-    );
+    let resolver = targets_resolver()
+        .with_source_dir("code", DirWalk::Recursive, &[("code/a.R", &["a_name"])]);
+    let index = build_with("tar_source(files = \"code\")\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [&sourced(
         "code",
@@ -138,11 +94,9 @@ fn test_tar_source_named_files_argument_is_recognized() {
 #[test]
 fn test_tar_source_change_directory_false_uses_the_default_directory() {
     // `change_directory` does not bind `files`, so `files` uses its `"R"` default.
-    let files = vec![resolution("file:///R/a.R", "a_name")];
-    let index = index(
-        "tar_source(change_directory = FALSE)\n",
-        TargetsResolver::with_dir(files),
-    );
+    let resolver =
+        targets_resolver().with_source_dir("R", DirWalk::Recursive, &[("R/a.R", &["a_name"])]);
+    let index = build_with("tar_source(change_directory = FALSE)\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), [&sourced(
         "R",
@@ -151,13 +105,37 @@ fn test_tar_source_change_directory_false_uses_the_default_directory() {
 }
 
 #[test]
+fn test_tar_source_c_of_script_and_directory() {
+    let resolver = targets_resolver()
+        .with_source("packages.R", &["packages"])
+        .with_source_dir("R", DirWalk::Recursive, &[
+            ("R/a.R", &["a_name"]),
+            ("R/b.R", &["b_name"]),
+        ]);
+    let index = build_with("tar_source(c(\"packages.R\", \"R\"))\n", resolver);
+
+    assert_eq!(semantic_call_kinds(&index), [
+        &sourced("packages.R", "file:///packages.R"),
+        &sourced("R", "file:///R/a.R"),
+        &sourced("R", "file:///R/b.R"),
+    ]);
+}
+
+#[test]
+fn test_tar_source_c_with_dynamic_element_is_not_recognized() {
+    let resolver =
+        targets_resolver().with_source_dir("R", DirWalk::Recursive, &[("R/a.R", &["a_name"])]);
+    let index = build_with("tar_source(c(\"R\", other_dir))\n", resolver);
+
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
 fn test_tar_source_dynamic_files_argument_is_not_recognized() {
     // A dynamic `files` value overrides the `"R"` default but produces no source call.
-    let files = vec![resolution("file:///R/a.R", "a_name")];
-    let index = index(
-        "tar_source(files = some_var)\n",
-        TargetsResolver::with_dir(files),
-    );
+    let resolver =
+        targets_resolver().with_source_dir("R", DirWalk::Recursive, &[("R/a.R", &["a_name"])]);
+    let index = build_with("tar_source(files = some_var)\n", resolver);
 
     assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }

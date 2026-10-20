@@ -7,7 +7,7 @@ use url::Url;
 use crate::all_known_files;
 use crate::all_used_files;
 use crate::db::notebook_by_cell;
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;

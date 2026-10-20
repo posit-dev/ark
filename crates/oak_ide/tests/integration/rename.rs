@@ -1,4 +1,7 @@
 //! Rename at the ide layer.
+//!
+//! The notebook section pins which cells a rename edits, since that is
+//! user-visible behavior that the Positron e2e tests rely on.
 
 use aether_path::FilePath;
 use oak_db::DbInputs;
@@ -18,6 +21,7 @@ use crate::support::edit_ranges;
 use crate::support::install_library_package;
 use crate::support::install_workspace_package;
 use crate::support::offset;
+use crate::support::open_notebook;
 use crate::support::place_in_workspace_scripts;
 use crate::support::range;
 use crate::support::upsert;
@@ -173,6 +177,86 @@ fn test_rename_assign_call_keeps_quotes() {
         (range(7, 12), "\"bar\""),
         (range(17, 20), "bar"),
     ]);
+}
+
+#[test]
+fn test_rename_refuses_computed_assign_name() {
+    // Replacing the computed name `c("x")` with `y` would make `assign()`
+    // look up a variable rather than bind the literal name `y`.
+    let mut db = OakDatabase::new();
+    let source = "assign(c(\"x\"), 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let use_start = source.rfind('x').unwrap() as u32;
+    let err = rename(&db, file, offset(use_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_rename_refuses_computed_assign_name_in_another_file() {
+    // Renaming only the sourcing script would leave its uses pointing to a
+    // name that the sourced file does not bind.
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "assign(c(\"x\"), 1)\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nx\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, script]);
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let err = rename(&db, script, offset(use_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_prepare_rename_refuses_computed_assign_name() {
+    // Refused up front, so the client doesn't ask for a new name that
+    // `rename()` would then reject.
+    let mut db = OakDatabase::new();
+    let source = "assign(c(\"x\"), 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let use_start = source.rfind('x').unwrap() as u32;
+    let err = prepare_rename(&db, file, offset(use_start)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_prepare_rename_refuses_computed_assign_name_in_another_file() {
+    let mut db = OakDatabase::new();
+    let helpers = upsert(&mut db, "helpers.R", "assign(c(\"x\"), 1)\n");
+    let script = upsert(&mut db, "script.R", "source(\"helpers.R\")\nx\n");
+    place_in_workspace_scripts(&mut db, vec![helpers, script]);
+
+    let use_start = "source(\"helpers.R\")\n".len() as u32;
+    let err = prepare_rename(&db, script, offset(use_start)).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a computed name (`c(\"x\")`)."
+    );
+}
+
+#[test]
+fn test_rename_refuses_raw_string_name() {
+    // A raw string is a single string token, but rendering it as a bare
+    // identifier would turn the name into a variable lookup.
+    let mut db = OakDatabase::new();
+    let source = "assign(r\"(x)\", 1)\nx\n";
+    let file = upsert(&mut db, "test.R", source);
+
+    let def_start = source.find('r').unwrap() as u32;
+    let err = rename(&db, file, offset(def_start), "y").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Can't rename: symbol is bound by a raw string (`r\"(x)\"`)."
+    );
 }
 
 #[test]
@@ -364,6 +448,36 @@ fn test_rename_succeeds_for_workspace_package_export_via_library() {
     ]);
 }
 
+// --- rename: notebooks ---
+
+#[test]
+fn test_notebook_rename_edits_across_cells() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &[
+        "helper <- function() 1\n",
+        "helper()\n",
+    ]);
+
+    let targets = rename(&db, cells[1], offset(0), "util").unwrap();
+    // Cell 1 (cursor's file) first, then cell 0.
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[1], range(0, 6)),
+        (cells[0], range(0, 6)),
+    ]);
+}
+
+#[test]
+fn test_notebook_rename_respects_shadowing_cell() {
+    let mut db = OakDatabase::new();
+    let cells = open_notebook(&mut db, "nb.ipynb", &["x <- 1\n", "x\n", "x <- 2\n", "x\n"]);
+
+    let targets = rename(&db, cells[0], offset(0), "y").unwrap();
+    assert_eq!(edit_pairs(&targets), vec![
+        (cells[0], range(0, 1)),
+        (cells[1], range(0, 1)),
+    ]);
+}
+
 // --- helpers for root / package wiring ---
 
 /// Build a workspace package holding `files` (name, contents), each with the
@@ -388,7 +502,7 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
     pkg.set_files(db).to(created.clone());
 
     let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg], vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
     created
 }
@@ -407,7 +521,7 @@ fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
     pkg.set_files(db).to(vec![file]);
 
     let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());
-    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg]);
+    let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg], vec![]);
     db.library_roots().set_roots(db).to(vec![root]);
     file
 }

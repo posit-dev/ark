@@ -38,6 +38,13 @@ pub(crate) fn index_with_attached(source: &str, packages: &[&str]) -> SemanticIn
     build_with(source, TestImportsResolver::with_attached(packages))
 }
 
+pub(crate) fn index_with_base_exporting_local(source: &str) -> SemanticIndex {
+    build_with(
+        source,
+        TestImportsResolver::with_base().with_exports("base", &["local"]),
+    )
+}
+
 /// Build with an arbitrary resolver, for cases the helpers above don't cover.
 pub(crate) fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
@@ -77,7 +84,7 @@ pub(crate) static COLLATION_HANDLER: CollationHandler = CollationHandler;
 impl EffectHandler for CollationHandler {
     type Output = Vec<SourcePath>;
 
-    fn resolve(&self, _call: &RCall, _ctx: &CallContext<'_>) -> Option<Vec<SourcePath>> {
+    fn resolve(&self, _call: &RCall, _ctx: &mut CallContext<'_>) -> Option<Vec<SourcePath>> {
         Some(vec![
             SourcePath {
                 path: "a.R".into(),
@@ -99,7 +106,7 @@ pub(crate) struct MultiAssignHandler;
 pub(crate) static MULTI_ASSIGN_HANDLER: MultiAssignHandler = MultiAssignHandler;
 
 impl AssignHandler for MultiAssignHandler {
-    fn resolve(&self, site: EffectSite, _ctx: &CallContext<'_>) -> Option<Vec<AssignBinding>> {
+    fn resolve(&self, site: EffectSite, _ctx: &mut CallContext<'_>) -> Option<Vec<AssignBinding>> {
         let EffectSite::Call(call) = site else {
             return None;
         };

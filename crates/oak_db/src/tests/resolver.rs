@@ -8,10 +8,12 @@ use oak_semantic::semantic_index::EvalTiming;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
 use oak_semantic::semantic_index::SemanticCallKind;
+use oak_semantic::semantic_index::SemanticDiagnostic;
+use oak_semantic::semantic_index::SemanticIndex;
 use salsa::Setter;
 use stdext::SortedVec;
 
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
@@ -863,11 +865,8 @@ fn test_closure_capture_with_source_after_function() {
 
 #[test]
 fn test_source_anchors_relative_to_workspace_root() {
-    // Calling file sits in a subdir of the workspace. `source("b.R")`
-    // anchors against the workspace root, not against the calling
-    // file's directory: the target is `proj/b.R`, not `proj/sub/b.R`.
-    // Matches R's `getwd()` semantics under RStudio / Positron, where
-    // the project root is the working directory.
+    // With no enclosing environment directory, assume a session started at
+    // the workspace root. `source("b.R")` targets `proj/b.R`, not `proj/sub/b.R`.
     let mut db = TestDb::new();
     let root = workspace_root(&db, "proj");
     let a = File::new(
@@ -918,6 +917,124 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     assert!(index.exports().contains_key("x"));
 }
 
+/// Distinct function names in the two `utils.R` files identify which anchor
+/// resolved the source path. The caller supplies any environment directories.
+fn setup_subproject(db: &mut TestDb, script: &str) -> (Root, File) {
+    let root = workspace_root(db, "proj");
+    let top = make_script(db, "proj/utils.R", "top_fn <- function() 1\n");
+    let sub = make_script(db, "proj/sub/utils.R", "sub_fn <- function() 1\n");
+    let script = make_script(db, "proj/sub/script.R", script);
+    root.set_scripts(db).to(vec![top, sub, script]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    (root, script)
+}
+
+#[test]
+fn test_source_anchors_at_environment_dir() {
+    // Starting the session in `proj/sub` makes `../utils.R` target `proj/utils.R`.
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"../utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_in_environment_dir_does_not_fall_back_to_workspace_root() {
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_in_environment_dir_misses_workspace_root_paths() {
+    // `sub/utils.R` written against the workspace root doesn't resolve from
+    // the environment directory `proj/sub` (it would be `proj/sub/sub/utils.R`).
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"sub/utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(!index.exports().contains_key("sub_fn"));
+}
+
+#[test]
+fn test_source_anchors_at_nearest_environment_dir() {
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj"), file_path("proj/sub")]);
+
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_chain_anchors_each_file_separately() {
+    // Per-file anchoring makes the nested `source("utils.R")` load
+    // `proj/sub/utils.R`, exporting `sub_fn` through `main.R`. R would load
+    // `proj/utils.R` and define `top_fn` in a session whose working directory
+    // remains `proj`, because these `source()` calls do not change `getwd()`.
+    let mut db = TestDb::new();
+    let (root, _) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    let main = make_script(&mut db, "proj/main.R", "source(\"sub/script.R\")\n");
+    let mut scripts = root.scripts(&db).clone();
+    scripts.push(main);
+    root.set_scripts(&mut db).to(scripts);
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+
+    let index = main.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
+#[test]
+fn test_source_anchor_follows_environment_dir_changes() {
+    // Changing `environment_dirs` must invalidate the cached `semantic_index()`
+    // even though the source text is unchanged.
+    let mut db = TestDb::new();
+    let (root, script) = setup_subproject(&mut db, "source(\"utils.R\")\n");
+    assert!(script.semantic_index(&db).exports().contains_key("top_fn"));
+
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+
+    root.set_environment_dirs(&mut db).to(vec![]);
+    let index = script.semantic_index(&db);
+    assert!(index.exports().contains_key("top_fn"));
+    assert!(!index.exports().contains_key("sub_fn"));
+}
+
+#[test]
+fn test_source_dir_anchors_at_environment_dir() {
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "proj");
+    let main = make_script(&mut db, "proj/sub/main.R", "sourceDir(\"R\")\n");
+    let top = make_script(&mut db, "proj/R/top.R", "top_fn <- function() 1\n");
+    let sub = make_script(&mut db, "proj/sub/R/sub.R", "sub_fn <- function() 1\n");
+    root.set_scripts(&mut db).to(vec![main, top, sub]);
+    root.set_environment_dirs(&mut db)
+        .to(vec![file_path("proj/sub")]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = main.semantic_index(&db);
+    assert!(index.exports().contains_key("sub_fn"));
+    assert!(!index.exports().contains_key("top_fn"));
+}
+
 #[test]
 fn test_source_path_with_parent_dir_segments() {
     // `source("../b.R")` from `dir/sub/a.R` normalises to `dir/b.R`.
@@ -963,4 +1080,241 @@ fn test_sourced_names_are_minted_in_sorted_order() {
 
     assert!(def_id("alpha") < def_id("mu"));
     assert!(def_id("mu") < def_id("zeta"));
+}
+
+#[test]
+fn test_super_assignment_to_attached_export_is_locked() {
+    // `helper` has no registry annotation, so only `pkgx`'s NAMESPACE says
+    // it's bound. R errors on the locked binding instead of assigning.
+    let mut db = TestDb::new();
+    let (pkgx, _) = make_package(&mut db, "pkgx", exporting(&["helper"]), &[]);
+    install(&mut db, &[pkgx]);
+    let (_, scripts) = setup_workspace(&mut db, &[(
+        "script.R",
+        "library(pkgx)\nf <- function() helper <<- 1\n",
+    )]);
+
+    let index = scripts[0].semantic_index(&db);
+    assert!(index.symbols(ScopeId::from(0)).get("helper").is_none());
+    assert_locked_super_assignment(index, "helper", "pkgx");
+}
+
+#[test]
+fn test_super_assignment_to_unattached_export_assigns_globally() {
+    let mut db = TestDb::new();
+    let (pkgx, _) = make_package(&mut db, "pkgx", exporting(&["helper"]), &[]);
+    install(&mut db, &[pkgx]);
+    let (_, scripts) = setup_workspace(&mut db, &[("script.R", "f <- function() helper <<- 1\n")]);
+
+    let index = scripts[0].semantic_index(&db);
+    assert!(index.symbols(ScopeId::from(0)).get("helper").is_some());
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_to_default_search_path_export_is_locked() {
+    // `stats` is attached at startup, so `median` is locked without any
+    // `library()` call.
+    let mut db = TestDb::new();
+    let (stats, _) = make_package(&mut db, "stats", exporting(&["median"]), &[]);
+    install(&mut db, &[stats]);
+    let (_, scripts) = setup_workspace(&mut db, &[("script.R", "f <- function() median <<- 1\n")]);
+
+    let index = scripts[0].semantic_index(&db);
+    assert!(index.symbols(ScopeId::from(0)).get("median").is_none());
+    assert_locked_super_assignment(index, "median", "stats");
+}
+
+#[test]
+fn test_super_assignment_to_base_definition_is_locked() {
+    // Base has no NAMESPACE, so its top-level definitions count as exports.
+    let mut db = TestDb::new();
+    let (base, _) = make_package(&mut db, "base", Namespace::default(), &[(
+        "ws/base/R/eval.R",
+        "local <- function(expr) expr\n",
+    )]);
+    install(&mut db, &[base]);
+    let (_, scripts) = setup_workspace(&mut db, &[("script.R", "f <- function() local <<- 1\n")]);
+
+    let index = scripts[0].semantic_index(&db);
+    assert!(index.symbols(ScopeId::from(0)).get("local").is_none());
+    assert_locked_super_assignment(index, "local", "base");
+}
+
+#[test]
+fn test_super_assignment_in_base_to_own_definition_is_not_locked() {
+    // Base's own files skip the base layer, which would otherwise read the
+    // index being built. `local` is defined in a collation successor, which
+    // the eager view omits, so the walk reaches the `base` package layer
+    // itself.
+    let mut db = TestDb::new();
+    let (base, files) = make_package(&mut db, "base", Namespace::default(), &[
+        ("ws/base/R/a.R", "f <- function() local <<- 1\n"),
+        ("ws/base/R/b.R", "local <- function(expr) expr\n"),
+    ]);
+    install(&mut db, &[base]);
+
+    let index = files[0].semantic_index(&db);
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_to_import_from_is_locked() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["shiny"]);
+    let root = workspace_root(&db, "ws");
+    let namespace = Namespace {
+        imports: vec![Import {
+            name: "reactive".to_string(),
+            package: "shiny".to_string(),
+        }],
+        ..Default::default()
+    };
+    let (pkg, files) = make_package(&mut db, "pkg", namespace, &[(
+        "ws/pkg/R/a.R",
+        "f <- function() reactive <<- 1\n",
+    )]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[0].semantic_index(&db);
+    // Names the package `reactive` comes from, not the importer `pkg`.
+    assert_locked_super_assignment(index, "reactive", "shiny");
+}
+
+#[test]
+fn test_super_assignment_to_namespace_sibling_is_not_locked() {
+    // The sibling's `cache` shadows `other`'s export. Namespace bindings are
+    // treated as assignable, which allows the `.onLoad` pattern.
+    let mut db = TestDb::new();
+    let (other, _) = make_package(&mut db, "other", exporting(&["cache"]), &[]);
+    install(&mut db, &[other]);
+    let root = workspace_root(&db, "ws");
+    let namespace = Namespace {
+        package_imports: vec!["other".to_string()],
+        ..Default::default()
+    };
+    let (pkg, files) = make_package(&mut db, "pkg", namespace, &[
+        ("ws/pkg/R/a.R", "cache <- NULL\n"),
+        (
+            "ws/pkg/R/b.R",
+            ".onLoad <- function(libname, pkgname) cache <<- 1\n",
+        ),
+    ]);
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = files[1].semantic_index(&db);
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_from_package_script_to_own_export_is_locked() {
+    // A `data-raw/` script belongs to `mypkg` but isn't loaded into its
+    // namespace. Attaching `mypkg` gives it a locked package environment.
+    let mut db = TestDb::new();
+    let (mypkg, script) = package_with_script(
+        &mut db,
+        exporting(&["helper"]),
+        "library(mypkg)\nf <- function() helper <<- 1\n",
+    );
+    install(&mut db, &[]);
+    attach_to_workspace(&mut db, mypkg);
+
+    let index = script.semantic_index(&db);
+    assert_locked_super_assignment(index, "helper", "mypkg");
+}
+
+#[test]
+fn test_super_assignment_from_package_script_continues_past_own_package() {
+    let mut db = TestDb::new();
+    let (base, _) = make_package(&mut db, "base", Namespace::default(), &[(
+        "ws/base/R/eval.R",
+        "local <- function(expr) expr\n",
+    )]);
+    install(&mut db, &[base]);
+    let (mypkg, script) = package_with_script(
+        &mut db,
+        exporting(&["helper"]),
+        "library(mypkg)\nf <- function() local <<- 1\n",
+    );
+    attach_to_workspace(&mut db, mypkg);
+
+    let index = script.semantic_index(&db);
+    assert_locked_super_assignment(index, "local", "base");
+}
+
+#[test]
+fn test_fixme_top_level_super_assignment_to_shiny_sibling_binding_is_not_locked() {
+    // FIXME This should report `LockedSuperAssignment`. Shiny's `R/` files
+    // share an environment, which top-level `<<-` in `b.R` skips to reach
+    // base's locked `local` binding. The resolver stops at `a.R` instead
+    // because `File` layers do not identify shared environments.
+    let mut db = TestDb::new();
+    let (base, _) = make_package(&mut db, "base", Namespace::default(), &[(
+        "ws/base/R/eval.R",
+        "local <- function(expr) expr\n",
+    )]);
+    install(&mut db, &[base]);
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("app.R", "shinyApp(ui, server)\n"),
+        ("R/a.R", "local <- 0\n"),
+        ("R/b.R", "local <<- 1\n"),
+    ]);
+
+    let index = scripts[2].semantic_index(&db);
+    assert!(index.diagnostics().is_empty());
+}
+
+fn package_with_script(db: &mut TestDb, namespace: Namespace, contents: &str) -> (Package, File) {
+    let (mypkg, _) = make_package(db, "mypkg", namespace, &[]);
+    let script = File::new(
+        db,
+        file_path("ws/mypkg/data-raw/script.R"),
+        FileRevision::zero(),
+        Some(contents.to_string()),
+        Some(mypkg),
+    );
+    mypkg.set_scripts(db).to(vec![script]);
+    (mypkg, script)
+}
+
+fn attach_to_workspace(db: &mut TestDb, package: Package) {
+    let root = workspace_root(db, "ws");
+    root.set_packages(db).to(vec![package]);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+}
+
+fn exporting(names: &[&str]) -> Namespace {
+    Namespace {
+        exports: SortedVec::from_vec(names.iter().map(|name| name.to_string()).collect()),
+        ..Default::default()
+    }
+}
+
+/// Install each of `packages` on its own library root, replacing any
+/// previously installed packages.
+fn install(db: &mut TestDb, packages: &[Package]) {
+    let roots: Vec<Root> = packages
+        .iter()
+        .map(|package| {
+            let root = library_root(db, &format!("libs/{}", package.name(db)));
+            root.set_packages(db).to(vec![*package]);
+            root
+        })
+        .collect();
+    db.library_roots().set_roots(db).to(roots);
+}
+
+fn assert_locked_super_assignment(
+    index: &SemanticIndex,
+    expected_name: &str,
+    expected_package: &str,
+) {
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == expected_name && package == expected_package
+    ));
 }
