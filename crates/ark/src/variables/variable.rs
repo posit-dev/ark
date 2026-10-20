@@ -1985,7 +1985,9 @@ mod tests {
             assert!(viewable("strrep('a', 101)"));
             assert!(!viewable("NA_character_"));
             assert!(viewable("c(a = 'a', b = 'b')"));
-            assert!(viewable("structure(c('a', 'b'), class = c('glue', 'character'))"));
+            assert!(viewable(
+                "structure(c('a', 'b'), class = c('glue', 'character'))"
+            ));
             assert!(!viewable("structure(c('a', 'b'), class = 'foo')"));
             assert!(!viewable("character()"));
             assert!(!viewable("matrix(letters[1:4], 2)"));
