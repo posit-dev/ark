@@ -10,8 +10,8 @@
 //! ```
 //!
 //! nextest uses the dev profile. Use `--cargo-profile release` for
-//! release-profile measurements, or the `burst` benchmark case for the
-//! fixed default size.
+//! release-profile measurements, or the `burst` benchmark case, which
+//! runs 1000 temporary documents.
 
 use std::time::Duration;
 use std::time::Instant;

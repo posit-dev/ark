@@ -26,7 +26,7 @@
 //! The `ctl.*` and `one.*` cases target `R/mutate.R`, with the remaining dplyr
 //! files as workspace context. The `all.*` cases cover every `.R` file under
 //! `R/`. `burst` replays a burst of document churn over a small temporary
-//! fixture instead of the corpus.
+//! fixture instead of the corpus, with 1000 temporary documents.
 //!
 //! Case IDs are limited to 11 characters. Criterion wraps `id` onto its own
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
@@ -99,6 +99,14 @@ const TARGET: &str = "R/mutate.R";
 
 /// A file changed by cases that must not edit the diagnostic target.
 const UNRELATED: &str = "R/across.R";
+
+/// At `BurstConfig::DEFAULT` size the replay finishes in a few milliseconds,
+/// too little backlog for refresh scheduling to dominate the timing. 1000
+/// temporaries queue 3000 revision-advancing events ahead of the main loop.
+const BURST: burst_replay::BurstConfig = burst_replay::BurstConfig {
+    temporaries: 1000,
+    ..burst_replay::BurstConfig::DEFAULT
+};
 
 type KeyDiagnosticFields<'a> = (&'a str, Option<DiagnosticSeverity>, (u32, u32), (u32, u32));
 
@@ -436,10 +444,7 @@ fn bench_burst(group: &mut BenchmarkGroup<'_, WallTime>, runtime: &Runtime) {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let fixture = burst_replay::Fixture::new();
-                let mut replay = runtime.block_on(burst_replay::Replay::start(
-                    &fixture,
-                    burst_replay::BurstConfig::DEFAULT,
-                ));
+                let mut replay = runtime.block_on(burst_replay::Replay::start(&fixture, BURST));
                 replay.enqueue_burst(&fixture);
 
                 let start = Instant::now();

@@ -69,6 +69,7 @@ pub struct BurstConfig {
 }
 
 impl BurstConfig {
+    /// Small enough for `test_burst_replay` to run quickly in dev-profile CI.
     pub const DEFAULT: Self = Self {
         temporaries: 8,
         padding_ratio: 40,
