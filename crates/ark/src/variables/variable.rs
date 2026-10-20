@@ -1988,8 +1988,12 @@ fn s7_has_vector_data(x: SEXP) -> bool {
     is_vector && r_length(x) > 0
 }
 
-/// Returns the data of an S7 object without its properties and class, like
-/// `S7::S7_data()`. Other attributes, such as `names` and `dim`, are kept.
+/// Returns the data of an S7 object without its properties and S7 classes.
+/// Other attributes, such as `names` and `dim`, are kept.
+///
+/// Unlike `S7::S7_data()`, the class of an S3 parent such as `class_factor`
+/// or `class_Date` is kept, so the data is formatted as a factor or a date
+/// instead of as raw codes or numbers.
 ///
 /// `unclass()` returns a new object, so we can remove attributes from it
 /// without affecting `x`. For large vectors that new object is an ALTREP
@@ -2006,7 +2010,30 @@ fn s7_data(x: SEXP) -> Option<RObject> {
     }
     data.set_attribute("S7_class", r_null());
 
+    if let Some(class) = s7_s3_parent_class(x) {
+        data.set_attribute("class", class.sexp);
+    }
+
     Some(data)
+}
+
+/// Returns the S3 class vector of the S3 class that an S7 object extends,
+/// such as `"factor"` or `c("POSIXct", "POSIXt")`. Returns `None` if the
+/// object extends a base type or no parent at all.
+///
+/// The parent chain starts at the `S7_class` attribute of the object and
+/// follows the `parent` attribute of each S7 class. An S3 parent is an
+/// `S7_S3_class`, a list with the class vector in its `class` element.
+fn s7_s3_parent_class(x: SEXP) -> Option<RObject> {
+    let mut class = RObject::view(x).get_attribute("S7_class")?;
+    while r_inherits(class.sexp, "S7_class") {
+        class = class.get_attribute("parent")?;
+    }
+
+    if !r_inherits(class.sexp, "S7_S3_class") {
+        return None;
+    }
+    list_get_by_name(&class, "class")
 }
 
 /// Takes the elements of `items` in `range`, returning them with the total
@@ -2799,6 +2826,53 @@ mod tests {
             let x = vars.iter().find(|var| var.display_name == "x").unwrap();
             assert_eq!(x.display_value, "1.5 2.5");
             assert!(!x.is_truncated);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_s3_parent_keeps_s3_class() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Lvl <- S7::new_class("Lvl", parent = S7::class_factor)
+                SubLvl <- S7::new_class("SubLvl", parent = Lvl, properties = list(
+                    note = S7::class_character
+                ))
+                Day <- S7::new_class("Day", parent = S7::class_Date)
+                lvl <- Lvl(factor(c("lo", "hi", "lo")))
+                sub <- SubLvl(factor(c("a", "b")), note = "x")
+                day <- Day(as.Date("2026-10-20"))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let display_value = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.display_value.clone()
+            };
+            assert_eq!(display_value("lvl"), r#""lo" "hi" "lo""#);
+            assert_eq!(display_value("sub"), r#""a" "b""#);
+            assert_eq!(display_value("day"), r#""2026-10-20""#);
+
+            // The `.data` child keeps the S3 class too
+            let path = vec![String::from("sub")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].display_value, r#""a" "b""#);
+
+            let path = vec![String::from("day")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].display_value, r#""2026-10-20""#);
         })
     }
 
