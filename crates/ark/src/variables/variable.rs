@@ -883,17 +883,19 @@ impl PositronVariable {
             return VariableKind::Map;
         }
 
-        if r_inherits(x, "factor") {
-            return VariableKind::Other;
-        }
-
         if r_is_data_frame(x) {
             return VariableKind::Table;
         }
 
-        // Function-based S7 objects are still functions
+        // Function-based S7 objects are still functions. This check comes
+        // before the factor check so S7 objects that extend `class_factor`
+        // are explorable like other S7 objects.
         if is_s7_value(x) && r_typeof(x) != CLOSXP {
             return VariableKind::Map;
+        }
+
+        if r_inherits(x, "factor") {
+            return VariableKind::Other;
         }
 
         // TODO: generic S3 object, not sure what it should be
@@ -2873,6 +2875,42 @@ mod tests {
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(fields[0].display_name, ".data");
             assert_eq!(fields[0].display_value, r#""2026-10-20""#);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_factor_parent_is_map() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Lvl <- S7::new_class("Lvl", parent = S7::class_factor)
+                lvl <- Lvl(factor(c("lo", "hi", "lo")))
+                f <- factor(c("lo", "hi", "lo"))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let kind = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.kind.clone()
+            };
+            assert_eq!(kind("lvl"), VariableKind::Map);
+            assert_eq!(kind("f"), VariableKind::Other);
+
+            // The `.data` child is a plain factor
+            let path = vec![String::from("lvl")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].kind, VariableKind::Other);
         })
     }
 
