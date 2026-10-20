@@ -60,17 +60,19 @@ fuzz-explore: fuzz-corpus
   cd crates/oak_db/fuzz && cargo +nightly fuzz run -s none scenario corpus/scenario -- -runs=100000 -max_len=32768 -timeout=20
 
 # Run the diagnostics benchmark without retaining a Criterion baseline.
-bench *ARGS:
+bench *ARGS: bench-fixtures
   @cargo bench --quiet -p ark --bench diagnostics -- --quiet --discard-baseline --warm-up-time 1 --measurement-time 3 {{ARGS}}
 
 # Run with explicit Criterion comparison arguments, for example:
 # `just bench-compare -- --save-baseline main` or
 # `just bench-compare -- --baseline main`.
-bench-compare *ARGS:
+bench-compare *ARGS: bench-fixtures
   @cargo bench --quiet -p ark --bench diagnostics {{ARGS}}
 
 # Populate `target/bench-fixtures/` with the pinned dplyr corpus and its CRAN
-# imports. This is the only benchmark command that uses the network.
+# imports. `bench` and `bench-compare` run this first, as a separate process,
+# so measured runs never use the network. Fixtures that are already present
+# are not downloaded again.
 bench-fixtures:
   @cargo bench --quiet -p ark --bench diagnostics -- --populate
 

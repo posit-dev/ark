@@ -2,8 +2,9 @@
 //!
 //! Run `just bench` for unretained measurements or `just bench-compare` with
 //! Criterion baseline arguments for comparisons. All cases use the optimised
-//! `bench` profile without debug assertions. Populate fixtures with
-//! `just bench-fixtures` first.
+//! `bench` profile without debug assertions. Both recipes first populate the
+//! fixtures through `just bench-fixtures`, in a separate process that only
+//! uses the network for fixtures that are missing.
 //!
 //! The dplyr v1.1.4 corpus contains 109 files and 19k lines under `R/`.
 //! It and its eleven CRAN imports live under `target/bench-fixtures/`, so
@@ -53,8 +54,8 @@ use criterion::BenchmarkGroup;
 use criterion::Criterion;
 use criterion::SamplingMode;
 use oak_core::is_r_file;
-use oak_db::SourceDb;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use oak_scan::ScanScheduler;
 use oak_source::SourceCache;
@@ -830,9 +831,12 @@ impl Fixtures {
         for (name, version) in PACKAGES {
             let root = match cache.get_cran(name, version) {
                 Some(root) => root,
-                None => cache
-                    .insert_cran(name, version)
-                    .ok_or_else(|| anyhow!("Can't download {name} {version} from CRAN"))?,
+                None => {
+                    eprintln!("Downloading {name} {version} from CRAN");
+                    cache
+                        .insert_cran(name, version)
+                        .ok_or_else(|| anyhow!("Can't download {name} {version} from CRAN"))?
+                },
             };
 
             let package = self.library().join(name);
@@ -849,6 +853,7 @@ impl Fixtures {
     /// can drift.
     fn clone_dplyr(&self) -> anyhow::Result<()> {
         if !self.dplyr().is_dir() {
+            eprintln!("Cloning dplyr {DPLYR_TAG}");
             run_git(&[
                 "clone",
                 "--filter=blob:none",
