@@ -108,7 +108,7 @@ view_string <- function(x, var = "", env = NULL) {
 
     uri <- ark_uri(sprintf("%s/%s.txt", env_name, var))
     insert_virtual_document(uri, x)
-    .ps.ui.navigateToFile(uri)
+    .ps.ui.navigateToFile(uri, pinned = FALSE)
 
     invisible()
 }

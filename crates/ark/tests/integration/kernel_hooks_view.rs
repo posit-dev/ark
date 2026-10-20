@@ -73,6 +73,7 @@ fn test_view_string_generates_vdoc() {
         format!("ark:ark-{pid}/global/view_string_test.txt")
     );
     assert_eq!(params["kind"], "uri");
+    assert_eq!(params["pinned"], false);
 
     frontend.recv_ui_prompt_state(&comm_id);
     frontend.recv_iopub_idle();
