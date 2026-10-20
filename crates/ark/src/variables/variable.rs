@@ -638,12 +638,13 @@ fn r_is_atomic(value: SEXP) -> bool {
     )
 }
 
-/// Whether a plain, non-empty character vector gets a viewer button in the
-/// Variables pane. Full text search makes the Object Explorer most useful for
-/// these, unlike other atomic vectors. A lone `NA` isn't viewable.
+/// Whether a non-empty character vector gets a viewer button in the Variables
+/// pane. Full text search makes the Object Explorer most useful for these,
+/// unlike other atomic vectors. Classed vectors qualify only if they inherit
+/// from `character` (e.g. `glue`, `fs_path`). A lone `NA` isn't viewable.
 pub(crate) fn is_viewable_character(value: SEXP) -> bool {
     r_typeof(value) == STRSXP &&
-        !r_is_object(value) &&
+        (!r_is_object(value) || r_inherits(value, "character")) &&
         r_dim(value) == r_null() &&
         match r_length(value) {
             0 => false,
@@ -1978,6 +1979,8 @@ mod tests {
                 |code: &str| is_viewable_character(harp::parse_eval_global(code).unwrap().sexp);
             assert!(viewable("'a'"));
             assert!(viewable("c(a = 'a', b = 'b')"));
+            assert!(viewable("structure('a', class = c('glue', 'character'))"));
+            assert!(!viewable("structure('a', class = 'foo')"));
             assert!(!viewable("character()"));
             assert!(!viewable("matrix(letters[1:4], 2)"));
             assert!(!viewable("factor('a')"));
