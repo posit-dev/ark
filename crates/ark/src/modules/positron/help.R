@@ -64,7 +64,8 @@ help <- function(topic, package = NULL) {
 # Search all installed help documentation and show R's native HTML results page.
 #' @export
 .ps.help.searchHelp <- function(query) {
-    if (!nzchar(trimws(query))) {
+    query <- trimws(query)
+    if (!nzchar(query)) {
         return(FALSE)
     }
 

@@ -191,6 +191,39 @@ fn test_help_search_empty_query() {
 }
 
 #[test]
+fn test_help_search_padded_query() {
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    # Capture native results while exercising normalization at the search entry point.
+    search <- .ps.help.searchHelp
+    environment(search) <- new.env(parent = environment(search))
+    results <- NULL
+    environment(search)$.ps.help.searchResults <- function(query) {
+        results <<- .ps.help.searchResults(query)
+        results
+    }
+
+    stopifnot(search("lm"))
+    expected <- results
+    stopifnot(nrow(expected$matches) > 0L)
+    for (query in c(" lm ", "\tlm\n")) {
+        stopifnot(search(query))
+        stopifnot(identical(results, expected))
+    }
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
+    }));
+}
+
+#[test]
 fn test_help_search_query_edge_cases() {
     let r_help = TestRHelp::new();
     for query in [
