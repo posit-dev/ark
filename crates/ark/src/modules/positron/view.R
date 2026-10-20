@@ -86,7 +86,7 @@ view <- function(
     }
 
     if (is_string(x)) {
-        return(view_string(x))
+        return(view_string(x, var, env))
     }
 
     if (is_explorable_object(x)) {
@@ -99,9 +99,17 @@ view <- function(
     ))
 }
 
-# A single string opens in an untitled editor.
-view_string <- function(x) {
-    .ps.ui.newDocument(x, "plaintext")
+# A single string opens in a read-only virtual document.
+view_string <- function(x, var = "", env = NULL) {
+    env_name <- .ps.env_name(env) %||% obj_address(env)
+    if (!nzchar(var)) {
+        var <- "unknown"
+    }
+
+    uri <- ark_uri(sprintf("%s/%s.txt", env_name, var))
+    insert_virtual_document(uri, x)
+    .ps.ui.navigateToFile(uri)
+
     invisible()
 }
 

@@ -49,7 +49,6 @@ use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
-use crate::modules::ARK_ENVS;
 use crate::object_explorer::r_object_explorer::path_accessor;
 use crate::object_explorer::r_object_explorer::RObjectExplorer;
 use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
@@ -353,15 +352,11 @@ impl RVariables {
                 return Ok(None);
             }
 
-            if r_is_function(obj.sexp) {
+            // Functions and single strings open in an editor
+            if r_is_function(obj.sexp) ||
+                (is_viewable_character(obj.sexp) && r_length(obj.sexp) == 1)
+            {
                 harp::as_result(view(&obj, path, &env))?;
-                return Ok(None);
-            }
-
-            if is_viewable_character(obj.sexp) && r_length(obj.sexp) == 1 {
-                RFunction::new("", "view_string")
-                    .add(obj.sexp)
-                    .call_in(ARK_ENVS.positron_ns)?;
                 return Ok(None);
             }
 
