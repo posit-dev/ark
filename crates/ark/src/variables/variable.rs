@@ -673,11 +673,27 @@ pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
 
 #[derive(Clone)]
 pub(crate) enum EnvironmentVariableNode {
-    Concrete { object: RObject },
-    R6Node { object: RObject, name: String },
-    S7EnvironmentData { object: RObject },
-    Matrixcolumn { object: RObject, index: isize },
-    AtomicVectorElement { object: RObject, index: isize },
+    Concrete {
+        object: RObject,
+    },
+    R6Node {
+        object: RObject,
+        name: String,
+    },
+    S7EnvironmentData {
+        object: RObject,
+    },
+    /// A dynamic S7 property. Its value is computed by a getter, which we
+    /// don't run, so it has no value and no children.
+    S7DynamicProperty,
+    Matrixcolumn {
+        object: RObject,
+        index: isize,
+    },
+    AtomicVectorElement {
+        object: RObject,
+        index: isize,
+    },
 }
 
 pub struct PositronVariable {
@@ -1030,6 +1046,8 @@ impl PositronVariable {
                 Ok(Self::inspect_environment(object, range)?)
             },
 
+            EnvironmentVariableNode::S7DynamicProperty => Ok((vec![], 0)),
+
             EnvironmentVariableNode::Concrete { object } => {
                 // First try to dispatch GetChildren method and construct
                 // variables from it.
@@ -1104,6 +1122,7 @@ impl PositronVariable {
             },
             EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
             EnvironmentVariableNode::S7EnvironmentData { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::S7DynamicProperty => Ok(String::from("")),
             EnvironmentVariableNode::AtomicVectorElement { object, index } => {
                 let formatted = FormattedVector::new(object)?;
                 Ok(formatted.format_elt(index)?)
@@ -1221,9 +1240,11 @@ impl PositronVariable {
                 }
                 s7_data(object.sexp)
             } else {
-                access_key
-                    .strip_prefix(S7_PROPERTY_ACCESS_KEY_PREFIX)
-                    .and_then(|name| s7_property(object.sexp, name))
+                let name = access_key.strip_prefix(S7_PROPERTY_ACCESS_KEY_PREFIX);
+                if name.is_some_and(|name| s7_property_is_dynamic_by_name(object.sexp, name)) {
+                    return Ok(EnvironmentVariableNode::S7DynamicProperty);
+                }
+                name.and_then(|name| s7_property(object.sexp, name))
             };
             let Some(child) = child else {
                 return Err(harp::Error::Anyhow(anyhow!(
@@ -1315,6 +1336,10 @@ impl PositronVariable {
             EnvironmentVariableNode::S7EnvironmentData { object } => {
                 Self::get_envsxp_child_node_at(object, path_elt)
             },
+
+            EnvironmentVariableNode::S7DynamicProperty => Err(harp::Error::Anyhow(anyhow!(
+                "Can't get children of a dynamic property, got {path_elt}"
+            ))),
 
             EnvironmentVariableNode::AtomicVectorElement { .. } => Err(harp::Error::Anyhow(
                 anyhow!("Can't subset an atomic vector even further, got {path_elt}"),
@@ -1925,12 +1950,21 @@ fn s7_property_entries(x: SEXP) -> Vec<(String, Option<RObject>)> {
 /// Returns the value of a static property. Returns `None` for dynamic or
 /// unknown properties.
 fn s7_property(x: SEXP, name: &str) -> Option<RObject> {
-    let specs = s7_property_specs(x)?;
-    let spec = list_get_by_name(&specs, name)?;
+    let spec = s7_property_spec(x, name)?;
     if s7_property_is_dynamic(&spec) {
         return None;
     }
     Some(s7_property_value(x, name))
+}
+
+/// Whether `name` is a dynamic property of `x`. False for unknown properties.
+fn s7_property_is_dynamic_by_name(x: SEXP, name: &str) -> bool {
+    s7_property_spec(x, name).is_some_and(|spec| s7_property_is_dynamic(&spec))
+}
+
+fn s7_property_spec(x: SEXP, name: &str) -> Option<RObject> {
+    let specs = s7_property_specs(x)?;
+    list_get_by_name(&specs, name)
 }
 
 fn s7_has_properties(x: SEXP) -> bool {
@@ -2481,6 +2515,52 @@ mod tests {
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(fields.len(), 2);
             assert_eq!(fields[1].display_value, r#""rope""#);
+        })
+    }
+
+    #[test]
+    fn test_s7_dynamic_property_is_not_evaluated() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Dog <- S7::new_class("Dog", properties = list(
+                    name = S7::class_character,
+                    age_months = S7::new_property(getter = function(self) {
+                        stop("Variables pane should not evaluate dynamic properties.")
+                    })
+                ))
+                x <- Dog(name = "Lola")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[1].display_name, "age_months");
+
+            let path = vec![String::from("x"), fields[1].access_key.clone()];
+            let clipped =
+                PositronVariable::clip(env.clone(), &path, &ClipboardFormatFormat::TextPlain)
+                    .unwrap();
+            assert_eq!(clipped, "");
+            let (children, total) =
+                PositronVariable::inspect_children(env.clone(), &path, 0..10).unwrap();
+            assert!(children.is_empty());
+            assert_eq!(total, 0);
+
+            // A property that doesn't exist is still an error
+            let path = vec![
+                String::from("x"),
+                format!("{S7_PROPERTY_ACCESS_KEY_PREFIX}unknown"),
+            ];
+            assert!(PositronVariable::resolve_object_from_path(env.clone(), &path).is_err());
         })
     }
 
