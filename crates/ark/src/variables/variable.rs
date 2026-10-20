@@ -600,7 +600,7 @@ fn has_children(value: SEXP) -> bool {
             names.len() > 0
         }
     } else if is_s7_value(value) {
-        s7_has_properties(value) || s7_has_data(value)
+        s7_has_properties(value) || s7_data_has_children(value)
     } else {
         match r_typeof(value) {
             VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
@@ -2008,10 +2008,17 @@ fn list_get_by_name(list: &RObject, name: &str) -> Option<RObject> {
     Some(RObject::view(harp::list_get(list.sexp, index as isize)))
 }
 
-/// S7 objects that extend a non-empty vector or list, or an environment, have
-/// a `.data` child.
-fn s7_has_data(x: SEXP) -> bool {
-    s7_has_vector_data(x) || r_typeof(x) == ENVSXP
+/// Whether the data of an S7 object has children of its own, by the same
+/// rules as a plain vector, list, or environment. Without properties, a
+/// `.data` child that can't be expanded would only repeat the summary row.
+fn s7_data_has_children(x: SEXP) -> bool {
+    match r_typeof(x) {
+        VECSXP | EXPRSXP => r_length(x) > 0,
+        LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => r_length(x) > 1,
+        ENVSXP => !Environment::new_filtered(RObject::view(x), EnvironmentFilter::ExcludeHidden)
+            .is_empty(),
+        _ => false,
+    }
 }
 
 /// For an environment, removing attributes would modify the original object,
@@ -2785,6 +2792,47 @@ mod tests {
             let path = vec![String::from("x")];
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert!(fields.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_s7_has_children_only_if_data_or_properties_do() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Num <- S7::new_class("Num", parent = S7::class_double)
+                Labeled <- S7::new_class("Labeled", parent = S7::class_double, properties = list(
+                    label = S7::class_character
+                ))
+                Env <- S7::new_S3_class("Env", constructor = function(.data = new.env()) {
+                    structure(.data, class = "Env")
+                })
+                Store <- S7::new_class("Store", parent = Env)
+                scalar <- Num(1)
+                pair <- Num(c(1, 2))
+                labeled <- Labeled(1, label = "a")
+                store <- Store()
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let has_children = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.has_children
+            };
+            assert!(!has_children("scalar"));
+            assert!(has_children("pair"));
+            assert!(has_children("labeled"));
+            assert!(!has_children("store"));
         })
     }
 
