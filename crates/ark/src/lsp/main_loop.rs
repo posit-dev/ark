@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::Db;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
@@ -373,8 +374,15 @@ impl LspState {
     /// Whether neither the source fetch nor the sidecar job can still change
     /// `package`. A `pkg::` completion list stays incomplete until its package
     /// settles, since either job can add names or determine item kinds.
-    pub(crate) fn package_settled(&self, config: &OakConfig, package: Package) -> bool {
-        !self.source_scheduler.sources_may_arrive(config, package) &&
+    pub(crate) fn package_settled(
+        &self,
+        db: &dyn Db,
+        config: &OakConfig,
+        package: Package,
+    ) -> bool {
+        !self
+            .source_scheduler
+            .sources_may_arrive(db, config, package) &&
             !self.sidecar_scheduler.may_change(package)
     }
 }
@@ -868,12 +876,21 @@ impl GlobalState {
                 self.apply_scan_outcome(|scheduler, db| scheduler.apply_scan_failed(db, root));
             },
 
-            Event::SourceCompleted(SourceCompleted { package, response }) => {
+            Event::SourceCompleted(SourceCompleted {
+                package,
+                description_revision,
+                response,
+            }) => {
                 self.log_source_completed(package, &response);
 
                 let skipped = matches!(response, SourceResponse::Skipped);
 
-                if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
+                if let Some(directory) = self.lsp_state.source_scheduler.finish(
+                    self.world.db(),
+                    package,
+                    description_revision,
+                    response,
+                ) {
                     // Ignore sources for a `package` no live root holds. A library
                     // rescan may have dropped it during the fetch. Ingesting a
                     // late result would list files under a package analysis
@@ -885,7 +902,7 @@ impl GlobalState {
                 }
 
                 // Schedule a skipped package immediately. `finish()` removes it
-                // without advancing the revision, so tick-end scheduling cannot
+                // without advancing the Salsa revision, so tick-end scheduling cannot
                 // retry it after fetching is re-enabled.
                 if skipped {
                     self.schedule_sources();

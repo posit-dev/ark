@@ -83,6 +83,25 @@ pub struct Package {
     #[default]
     #[returns(ref)]
     lazy_data_names: Vec<String>,
+    /// The [`Self::description_revision`] that the source files in
+    /// [`Self::files`] and [`Self::scripts`] were fetched for, or [None] when
+    /// they don't hold fetched sources: workspace packages, and library
+    /// packages whose fetch hasn't landed or whose sources were cleared. The
+    /// LSP source scheduler fetches whenever this differs from the current
+    /// `description_revision`. Generated files don't count: they come from a
+    /// separate job.
+    ///
+    /// The db holds this rather than the scheduler because
+    /// [`IdentityMap`](crate::IdentityMap) hands back the same `Package` when
+    /// a removed package is reinstalled or a library root is re-added. The
+    /// helper that empties the package's lists resets this field, so the
+    /// revived package is fetched again without the scheduler being told.
+    ///
+    /// Written only by `oak_scan`: set by `set_package_sources()`, reset by
+    /// every other writer of the source files and `scripts`.
+    #[default]
+    #[returns(copy)]
+    pub sources_revision: Option<FileRevision>,
 }
 
 impl Package {

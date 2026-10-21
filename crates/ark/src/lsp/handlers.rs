@@ -186,7 +186,7 @@ pub(crate) fn handle_completion(
     let incomplete = completions
         .incomplete_until_packages_settle()
         .iter()
-        .any(|package| !lsp_state.package_settled(&state.config.oak, *package));
+        .any(|package| !lsp_state.package_settled(db, &state.config.oak, *package));
 
     // Without session slots the static items are the whole answer. Skipping
     // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event

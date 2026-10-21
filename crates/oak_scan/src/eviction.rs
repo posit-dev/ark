@@ -51,12 +51,21 @@ pub(crate) fn evict_root<DB: Db + DbInputs>(db: &mut DB, root: Root) {
 /// association is `None`, and a file must not point to a package that no
 /// longer lists it.
 ///
-/// Used when packages leave their root: eviction, or a library rescan that no
-/// longer lists them. The files become invisible to analysis unless
-/// another live container lists them. Public entry points keep open buffers
-/// visible with [`crate::inputs::keep_open_files_visible()`].
+/// Also resets [`Package::sources_revision()`], so the LSP fetches sources
+/// again if the package returns to a library root.
+///
+/// Used when eviction or a library rescan removes packages from their root.
+/// The files become invisible to analysis unless another live container lists
+/// them. Public entry points keep open buffers visible with
+/// [`crate::inputs::keep_open_files_visible()`].
 pub(crate) fn clear_package_sources<DB: Db + DbInputs>(db: &mut DB, packages: &[Package]) {
     for &pkg in packages {
+        // Reset even when the lists are already empty: a fetch can succeed
+        // with no files, and its revision must not survive the package.
+        if pkg.sources_revision(db).is_some() {
+            pkg.set_sources_revision(db).to(None);
+        }
+
         let files: Vec<File> = pkg
             .files(db)
             .iter()

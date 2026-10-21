@@ -1,5 +1,6 @@
 ---
 source: crates/oak_db/src/tests/tidy.rs
+assertion_line: 8
 description: "Updating this snapshot means the Salsa query surface changed. Before accepting it, review the changed query by following `doc/oak/salsa.md`."
 expression: "oak_tidy::salsa_inventory(&source_dir)"
 ---
@@ -36,6 +37,7 @@ package.rs: struct Package [debug]
   membership: PackageFiles [returns(ref)]
   scripts: Vec<File> [returns(ref)]
   lazy_data_names: Vec<String> [default, returns(ref)]
+  sources_revision: Option<FileRevision> [default, returns(copy)]
 
 == interned ==
 name.rs: struct Name<'db> [debug]

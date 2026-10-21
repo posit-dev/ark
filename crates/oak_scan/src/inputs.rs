@@ -219,6 +219,15 @@ impl<DB: Db + DbInputs> DbScan for DB {
         let (files, scripts) = read_package_sources(directory, package.collation(self).as_deref());
         let mut upserts = FileUpserts::new();
         set_package_source_entries(self, &mut upserts, package, files, scripts);
+
+        // The LSP drops completions fetched for an older `DESCRIPTION`
+        // revision (`SourceScheduler::finish()`), so these sources are for the
+        // current one.
+        let revision = Some(package.description_revision(self));
+        if package.sources_revision(self) != revision {
+            package.set_sources_revision(self).to(revision);
+        }
+
         upserts.finish(self);
         keep_open_files_visible(self);
     }
@@ -409,6 +418,14 @@ pub(crate) fn upsert_package<DB: Db + DbInputs>(
     );
 
     set_package_source_entries(db, upserts, pkg, files, scripts);
+
+    // Workspace files are not fetched sources. A `Package` that was installed
+    // before becoming a source checkout must not keep its fetched revision,
+    // or a later reinstall with the same `DESCRIPTION` revision would keep
+    // these lists as its sources.
+    if pkg.sources_revision(db).is_some() {
+        pkg.set_sources_revision(db).to(None);
+    }
     pkg
 }
 
@@ -473,7 +490,7 @@ fn set_package_containers<DB: Db + DbInputs>(
 /// [`oak_db::IdentityMap`] retains these files even when they are invisible to
 /// analysis, so a later writer can reuse them without inheriting a backpointer
 /// to a package that does not list them.
-fn replace_package_membership<DB: Db + DbInputs>(
+pub(crate) fn replace_package_membership<DB: Db + DbInputs>(
     db: &mut DB,
     pkg: Package,
     write: impl FnOnce(&mut DB),

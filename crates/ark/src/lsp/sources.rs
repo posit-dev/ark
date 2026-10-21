@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use aether_path::FilePath;
 use oak_db::Db;
+use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
@@ -167,24 +168,33 @@ impl SourceResponse {
 #[derive(Debug)]
 pub(crate) struct SourceCompleted {
     pub(crate) package: Package,
+
+    /// The request's `DESCRIPTION` revision lets [`SourceScheduler::finish()`]
+    /// reject a completion after a request for a newer revision is recorded.
+    pub(crate) description_revision: FileRevision,
+
     pub(crate) response: SourceResponse,
 }
 
-/// State of a particular [Package]'s [SourceRequest]
-///
-/// There is also a 3rd implied state of "we've never seen this package before" if it
-/// isn't in the `state` hash map.
+/// State of a particular [Package]'s [SourceRequest] at one `DESCRIPTION`
+/// revision. Fetched sources are recorded in the db as
+/// [`Package::sources_revision()`], not here.
 enum SourceState {
     /// The [SourceRequest] is in flight
     Pending,
 
-    /// A success or failure response has arrived. Neither outcome is retried.
-    Finished,
+    /// A failed fetch or an invalid request prevents retries for the same
+    /// `DESCRIPTION` revision.
+    Failed,
 }
 
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
-    state: HashMap<Package, SourceState>,
+
+    /// One entry per [`Package`], tagged with the `DESCRIPTION` revision it was
+    /// recorded for. Replacing the entry on a new revision avoids accumulating
+    /// state for older revisions.
+    state: HashMap<Package, (FileRevision, SourceState)>,
 
     /// Blocks initial fetches until client configuration is resolved.
     awaiting_config: bool,
@@ -216,9 +226,10 @@ impl SourceScheduler {
         self.handler.is_some()
     }
 
-    /// Run a fetch for each package we haven't seen before on `pool`, shipping
-    /// each [`SourceResponse`] back to the main loop as
-    /// [`Event::SourceCompleted`]. [`Self::finish()`] records the outcome and
+    /// On `pool`, run a fetch for each package that has no sources for its
+    /// current `DESCRIPTION` revision and no fetch in flight or failed at that
+    /// revision, shipping each [`SourceResponse`] back to the main loop as
+    /// [`Event::SourceCompleted`]. [`Self::finish()`] settles the request and
     /// returns the source directory for the main loop to ingest.
     ///
     /// The job owns no db handle. A download can't be interrupted by a Salsa
@@ -250,20 +261,27 @@ impl SourceScheduler {
             return;
         };
 
-        // For each package used across all of the workspace roots, request its sources if
-        // we have never seen it before
         for package in oak_db::all_package_dependencies(db) {
-            if self.state.contains_key(package) {
-                // If we've seen this package before, don't request sources again!
+            let package = *package;
+            let description_revision = package.description_revision(db);
+
+            if package.sources_revision(db) == Some(description_revision) {
+                continue;
+            }
+            if self
+                .state
+                .get(&package)
+                .is_some_and(|(revision, _)| *revision == description_revision)
+            {
+                // In flight or failed at this `DESCRIPTION` revision
                 continue;
             }
 
-            let package = *package;
-
             let Some(request) = SourceRequest::from_package(db, &package).log_err() else {
-                // Go straight to `Finished` if we can't generate the source request,
+                // Go straight to `Failed` if we can't generate the source request,
                 // something is structurally wrong
-                self.state.insert(package, SourceState::Finished);
+                self.state
+                    .insert(package, (description_revision, SourceState::Failed));
                 continue;
             };
 
@@ -271,8 +289,10 @@ impl SourceScheduler {
             let enabled_rx = self.enabled_tx.subscribe();
             let tx = events_tx.clone();
 
-            // Mark as `Pending` just before launching the job
-            self.state.insert(package, SourceState::Pending);
+            // An older fetch may still be in flight. Replacing its recorded
+            // revision makes `finish()` discard its completion without cancelling it.
+            self.state
+                .insert(package, (description_revision, SourceState::Pending));
 
             pool.submit(move || {
                 // Copy the value before fetching so the `borrow()` guard does
@@ -287,6 +307,7 @@ impl SourceScheduler {
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
                     package,
+                    description_revision,
                     response,
                 }))
                 .log_err();
@@ -296,35 +317,78 @@ impl SourceScheduler {
 
     /// Whether `package`'s sources may still arrive, so that an answer computed
     /// without them can change. True unless fetching is off, there is no
-    /// handler, or the package's request settled, whether it succeeded or
+    /// handler, or the request for the current `DESCRIPTION` revision settled:
+    /// its sources were ingested ([`Package::sources_revision()`]) or it
     /// failed.
     ///
-    /// A package not seen yet counts as pending: if a file uses it, the next
-    /// tick-end scheduling queues it. A job that panicked stays `Pending`, which
-    /// costs only extra requests from an editor that re-asks while the user
-    /// types in an open completion popup.
-    pub(crate) fn sources_may_arrive(&self, config: &OakConfig, package: Package) -> bool {
-        config.source_fetching_enabled &&
-            self.handler.is_some() &&
-            !matches!(self.state.get(&package), Some(SourceState::Finished))
+    /// A package not requested yet at its current revision counts as pending:
+    /// if a file uses it, the next tick-end scheduling queues it. A job that
+    /// panicked stays `Pending`, which costs only extra requests from an
+    /// editor that re-asks while the user types in an open completion popup.
+    pub(crate) fn sources_may_arrive(
+        &self,
+        db: &dyn Db,
+        config: &OakConfig,
+        package: Package,
+    ) -> bool {
+        if !config.source_fetching_enabled || self.handler.is_none() {
+            return false;
+        }
+
+        let description_revision = package.description_revision(db);
+        if package.sources_revision(db) == Some(description_revision) {
+            return false;
+        }
+
+        !matches!(
+            self.state.get(&package),
+            Some((revision, SourceState::Failed)) if *revision == description_revision
+        )
     }
 
+    /// Settle a completion's request, returning successful sources for
+    /// ingestion only if its `description_revision` is still the package's
+    /// current revision in `db`. Ingesting them records that revision as
+    /// [`Package::sources_revision()`], which stops further requests.
+    ///
+    /// A missing entry or a mismatch with the recorded revision returns `None`
+    /// without changing state, so an older completion cannot settle a newer
+    /// request.
+    ///
+    /// The recorded revision alone is not enough: a library rescan can apply an
+    /// upgrade before `schedule()` records the new revision, because
+    /// `refresh_if_due()` defers scheduling while events are queued, and
+    /// `schedule()` records nothing while fetching is disabled. Such a
+    /// completion is dropped and its entry removed, so the next `schedule()`
+    /// requests the current revision.
     #[must_use]
-    pub(crate) fn finish(&mut self, package: Package, response: SourceResponse) -> Option<PathBuf> {
+    pub(crate) fn finish(
+        &mut self,
+        db: &dyn Db,
+        package: Package,
+        description_revision: FileRevision,
+        response: SourceResponse,
+    ) -> Option<PathBuf> {
+        let (recorded, _) = self.state.get(&package)?;
+        if *recorded != description_revision {
+            return None;
+        }
+        self.state.remove(&package);
+
+        if package.description_revision(db) != description_revision {
+            return None;
+        }
+
         match response {
-            SourceResponse::Success { directory, .. } => {
-                self.state.insert(package, SourceState::Finished);
-                Some(directory)
-            },
+            SourceResponse::Success { directory, .. } => Some(directory),
             SourceResponse::Failure => {
-                self.state.insert(package, SourceState::Finished);
+                self.state
+                    .insert(package, (description_revision, SourceState::Failed));
                 None
             },
-            SourceResponse::Skipped => {
-                // Forget the package, so turning fetching back on queues it again.
-                self.state.remove(&package);
-                None
-            },
+            // Without an entry or a `sources_revision`, turning fetching back
+            // on queues the package again.
+            SourceResponse::Skipped => None,
         }
     }
 
@@ -334,7 +398,7 @@ impl SourceScheduler {
     pub(crate) fn has_pending(&self) -> bool {
         self.state
             .values()
-            .any(|state| matches!(state, SourceState::Pending))
+            .any(|(_, state)| matches!(state, SourceState::Pending))
     }
 }
 

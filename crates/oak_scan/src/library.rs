@@ -26,6 +26,7 @@ use salsa::Setter;
 use walkdir::WalkDir;
 
 use crate::eviction::clear_package_sources;
+use crate::inputs::replace_package_membership;
 use crate::inputs::upsert_package_metadata;
 use crate::inputs::RootExt;
 use crate::packages::file_revision;
@@ -160,10 +161,18 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// [`Package`] entities by `DESCRIPTION` path through [`oak_db::IdentityMap`]
 /// and writing only changed inputs.
 ///
-/// Preserve fetched sources in `files` and `scripts`, which the listing cannot
-/// reconstruct. [`upsert_package()`](crate::inputs::upsert_package) would replace
+/// Preserve `files` and `scripts` fetched for the current `DESCRIPTION`
+/// revision ([`Package::sources_revision()`]). The listing cannot reconstruct
+/// them, and [`upsert_package()`](crate::inputs::upsert_package) would replace
 /// them with empty lists.
-/// This also preserves old sources when an upgrade reuses the same entity.
+///
+/// When [`Package::sources_revision()`] is `None` or differs from the
+/// current `DESCRIPTION` revision, [`clear_outdated_sources()`] clears source
+/// files and scripts but preserves generated files. This discards sources
+/// from an older installation after an in-place upgrade. The LSP source
+/// scheduler requests sources for the current revision. Packages held by a
+/// workspace root keep their files because the workspace scan owns those
+/// source lists.
 ///
 /// Removed packages leave `root.packages`. Their sources are cleared with
 /// [`clear_package_sources()`] unless another live root still holds the
@@ -175,19 +184,28 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
     root: Root,
     entries: Vec<InstalledPackageEntry>,
 ) {
-    let packages: Vec<Package> = entries
-        .into_iter()
-        .map(|entry| {
-            upsert_package_metadata(
-                db,
-                entry.description_path,
-                entry.name,
-                entry.description_revision,
-                entry.namespace_revision,
-                Some(entry.index_revision),
-            )
-        })
-        .collect();
+    let mut outdated: Vec<Package> = Vec::new();
+    let mut packages: Vec<Package> = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let package = upsert_package_metadata(
+            db,
+            entry.description_path,
+            entry.name,
+            entry.description_revision,
+            entry.namespace_revision,
+            Some(entry.index_revision),
+        );
+
+        if package.sources_revision(db) != Some(entry.description_revision) &&
+            !is_workspace_package(db, package)
+        {
+            outdated.push(package);
+        }
+        packages.push(package);
+    }
+
+    clear_outdated_sources(db, &outdated);
 
     if root.packages(db) == &packages {
         return;
@@ -208,4 +226,34 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .filter(|package| db.root_by_package(*package).is_none())
         .collect();
     clear_package_sources(db, &dropped);
+}
+
+fn is_workspace_package(db: &dyn Db, package: Package) -> bool {
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .any(|root| root.packages(db).contains(&package))
+}
+
+/// Clear source files and scripts and reset [`Package::sources_revision()`],
+/// preserving generated files.
+///
+/// Generated files have a separate writer, so a source revision mismatch does
+/// not invalidate them. Until sources are fetched,
+/// [`Package::sources_revision()`] is `None` on every listing. Clearing
+/// generated files in that case would discard `base`'s primitive stubs on
+/// every library rescan.
+fn clear_outdated_sources<DB: Db + DbInputs>(db: &mut DB, packages: &[Package]) {
+    for &pkg in packages {
+        if pkg.sources_revision(db).is_some() {
+            pkg.set_sources_revision(db).to(None);
+        }
+
+        replace_package_membership(db, pkg, |db| {
+            pkg.set_source_files(db, Vec::new());
+            if !pkg.scripts(db).is_empty() {
+                pkg.set_scripts(db).to(Vec::new());
+            }
+        });
+    }
 }
