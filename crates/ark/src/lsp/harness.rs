@@ -79,24 +79,26 @@ impl LspHarness {
     /// Register an editor buffer without scheduling the work that a `didOpen`
     /// notification would trigger.
     pub fn prepare_document(&mut self, path: &FilePath, contents: String) -> anyhow::Result<()> {
-        panic::within_boundary(|| {
-            let file = self.state.db_mut().upsert_editor(path.clone(), contents);
-            let uri = self.state.wire_uri(file)?;
-            self.state.insert_open_file(uri, path.clone(), file, None);
-            Ok(())
-        })
+        let _boundary = panic::test_boundary();
+
+        let file = self.state.db_mut().upsert_editor(path.clone(), contents);
+        let uri = self.state.wire_uri(file)?;
+        self.state.insert_open_file(uri, path.clone(), file, None);
+        Ok(())
     }
 
     pub fn close_document(&mut self, path: &FilePath) {
+        let _boundary = panic::test_boundary();
+
         self.state.open_files.remove(path);
-        panic::within_boundary(|| self.state.db_mut().close_editor(path));
+        self.state.db_mut().close_editor(path);
     }
 
     pub fn source_text(&self, path: &FilePath) -> anyhow::Result<&str> {
+        let _boundary = panic::test_boundary();
+
         let file = self.state.open_file(path)?.file();
-        Ok(panic::within_boundary(|| {
-            file.source_text(self.state.db()).as_str()
-        }))
+        Ok(file.source_text(self.state.db()).as_str())
     }
 }
 

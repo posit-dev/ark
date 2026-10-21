@@ -502,7 +502,11 @@ impl GlobalState {
                         panic!("Test panic outside the event recovery boundary");
                     }
 
-                    match self.handle_event_in_boundary(event).await {
+                    let outcome =
+                        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event))
+                            .await;
+
+                    match outcome {
                         Ok(Ok(())) => {},
                         Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
@@ -531,16 +535,6 @@ impl GlobalState {
     #[cfg(any(test, feature = "testing"))]
     pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
-    }
-
-    /// Run `handle_event()` inside its per-event panic boundary, as Salsa access
-    /// requires. The harness pumps go through here too, so they exercise the same
-    /// boundary as `main_loop()`.
-    async fn handle_event_in_boundary(
-        &mut self,
-        event: Event,
-    ) -> Result<anyhow::Result<()>, panic::PanicPayload> {
-        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
 
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
@@ -1016,15 +1010,13 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
 impl GlobalState {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
+    /// Panics unwind to the test runner rather than shutting down the LSP.
     pub(crate) async fn handle_event_once(&mut self, event: Event) {
-        self.handle_event_or_resume(event).await;
-    }
-
-    /// Run `event` through [`Self::handle_event_in_boundary()`] like
-    /// `main_loop()` does, but resume a panic so it fails the calling test.
-    async fn handle_event_or_resume(&mut self, event: Event) {
-        match self.handle_event_in_boundary(event).await {
-            Ok(result) => result.unwrap(),
+        let outcome =
+            panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await;
+        match outcome {
+            Ok(Ok(())) => {},
+            Ok(Err(err)) => panic!("Failure while handling event: {err:?}"),
             Err(payload) => match classify_event_unwind(payload) {
                 EventUnwind::Cancelled => {},
                 EventUnwind::Panicked(payload) => std::panic::resume_unwind(payload),
@@ -1045,6 +1037,8 @@ impl GlobalState {
     /// and re-check it while waiting, since the pool can go idle without
     /// sending an event.
     pub(crate) fn is_settled(&self) -> bool {
+        let _boundary = panic::test_boundary();
+
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
         {
@@ -1053,8 +1047,7 @@ impl GlobalState {
 
         // A refresh deferred by `refresh_if_due()` is pending work even though
         // nothing has been queued for it yet.
-        let revision =
-            panic::within_boundary(|| salsa::plumbing::current_revision(self.world.db()));
+        let revision = salsa::plumbing::current_revision(self.world.db());
         if revision != self.last_refreshed_revision {
             return false;
         }
@@ -1071,12 +1064,12 @@ impl GlobalState {
     /// - Pending oak scans
     /// - Pending source requests
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
-        self.handle_event_or_resume(event).await;
+        self.handle_event_once(event).await;
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
         {
             let event = self.next_event().await;
-            self.handle_event_or_resume(event).await;
+            self.handle_event_once(event).await;
         }
     }
 
@@ -1085,7 +1078,7 @@ impl GlobalState {
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() {
             let event = self.next_event().await;
-            self.handle_event_or_resume(event).await;
+            self.handle_event_once(event).await;
         }
     }
 
@@ -1093,7 +1086,7 @@ impl GlobalState {
     pub(crate) async fn pump_sources_to_quiescence(&mut self) {
         while self.lsp_state.source_scheduler.has_pending() {
             let event = self.next_event().await;
-            self.handle_event_or_resume(event).await;
+            self.handle_event_once(event).await;
         }
     }
 
@@ -1106,7 +1099,7 @@ impl GlobalState {
             if wanted(&event) {
                 return event;
             }
-            self.handle_event_or_resume(event).await;
+            self.handle_event_once(event).await;
         }
     }
 }

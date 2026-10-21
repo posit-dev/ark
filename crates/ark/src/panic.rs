@@ -117,20 +117,21 @@ fn in_catch_boundary() -> bool {
 /// Unit tests invoke handlers without their normal boundaries, so `cfg!(test)` exempts
 /// them. The `testing` feature gets no exemption because Ark's own dev-dependency
 /// enables it for every integration test and benchmark. The LSP harness enters
-/// boundaries instead, see [`within_boundary()`].
+/// boundaries instead, see [`test_boundary()`].
 pub(crate) fn assert_in_catch_boundary() {
     debug_assert!(cfg!(test) || in_catch_boundary());
 }
 
-/// Runs `f` inside a recovering boundary and resumes any panic, so the caller sees the
-/// panic as if no boundary were there. Lets test harnesses access Salsa the way
-/// production code does without an exemption from [`assert_in_catch_boundary()`].
+/// Allow synchronous harness code to unwind to the test or benchmark runner
+/// instead of aborting in Ark's panic hook. This guard does not catch panics;
+/// dropping it restores the previous boundary state.
+///
+/// Never hold this guard across `.await`: its state is thread-local, so unrelated
+/// tasks could inherit it and the guard could be dropped on a different thread.
 #[cfg(any(test, feature = "testing"))]
-pub(crate) fn within_boundary<T>(f: impl FnOnce() -> T) -> T {
-    match catch_unwind_payload(Recovery::Always, f) {
-        Ok(value) => value,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
+#[must_use]
+pub(crate) fn test_boundary() -> impl Drop {
+    catch_boundary(Recovery::Always)
 }
 
 /// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
@@ -266,6 +267,42 @@ mod tests {
 
         let _boundary = catch_boundary(Recovery::ReleaseOnly);
         assert!(in_catch_boundary());
+    }
+
+    #[test]
+    fn test_test_boundary_restores_scope() {
+        assert!(!in_catch_boundary());
+        {
+            let _boundary = test_boundary();
+            assert!(recovers_panic());
+        }
+        assert!(!in_catch_boundary());
+    }
+
+    #[test]
+    fn test_test_boundary_restores_outer_boundary() {
+        let _outer = catch_boundary(Recovery::ReleaseOnly);
+        {
+            let _boundary = test_boundary();
+            assert!(recovers_panic());
+        }
+        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
+    }
+
+    #[test]
+    #[expect(clippy::disallowed_methods)]
+    fn test_test_boundary_propagates_panic_and_restores_outer_boundary() {
+        let _outer = catch_boundary(Recovery::ReleaseOnly);
+        let result = std::panic::catch_unwind(|| {
+            let _boundary = test_boundary();
+            assert!(recovers_panic());
+            panic!("harness panic");
+        });
+        let Err(payload) = result else {
+            panic!("Expected a panic payload");
+        };
+        assert_eq!(message(&payload), "harness panic");
+        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
     }
 
     #[test]

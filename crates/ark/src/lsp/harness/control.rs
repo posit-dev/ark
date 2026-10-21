@@ -17,7 +17,8 @@ pub struct HarnessSnapshot(WorldStateSnapshot);
 
 impl LspHarness {
     pub fn snapshot(&self) -> HarnessSnapshot {
-        HarnessSnapshot(panic::within_boundary(|| self.state.snapshot()))
+        let _boundary = panic::test_boundary();
+        HarnessSnapshot(self.state.snapshot())
     }
 
     /// Generate diagnostics synchronously, without the auxiliary channel used
@@ -27,14 +28,14 @@ impl LspHarness {
         path: &FilePath,
         snapshot: HarnessSnapshot,
     ) -> anyhow::Result<Vec<Diagnostic>> {
+        let _boundary = panic::test_boundary();
+
         let open_file = self.state.open_file(path)?;
-        Ok(panic::within_boundary(|| {
-            generate_diagnostics(
-                open_file.file(),
-                snapshot.0,
-                is_testthat_path(path),
-                open_file.wire_uri(),
-            )
-        }))
+        Ok(generate_diagnostics(
+            open_file.file(),
+            snapshot.0,
+            is_testthat_path(path),
+            open_file.wire_uri(),
+        ))
     }
 }

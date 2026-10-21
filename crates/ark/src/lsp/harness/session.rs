@@ -104,7 +104,8 @@ impl LspHarness {
             .map(|folder| folder.to_url().to_uri().unwrap())
             .collect();
 
-        let state = panic::within_boundary(|| {
+        let state = {
+            let _boundary = panic::test_boundary();
             GlobalState::from_parts(
                 client.client(),
                 self.state,
@@ -113,7 +114,7 @@ impl LspHarness {
                     SourceScheduler::new(source_handler),
                 ),
             )
-        });
+        };
 
         let mut session = LspSession {
             state,
@@ -233,7 +234,10 @@ impl LspSession {
 
         self.collect_auxiliary();
 
-        let holds = panic::within_boundary(|| self.state.world().db().outstanding_holds());
+        let holds = {
+            let _boundary = panic::test_boundary();
+            self.state.world().db().outstanding_holds()
+        };
         self.peak_outstanding_holds = self.peak_outstanding_holds.max(holds);
     }
 
@@ -427,17 +431,17 @@ impl LspSession {
     /// database has no such package. Empty until the package's sources have
     /// been fetched and ingested.
     pub fn package_sources(&self, name: &str) -> Option<Vec<&str>> {
-        panic::within_boundary(|| {
-            let db = self.state.world().db();
-            let package = db.package_by_name(name)?;
-            Some(
-                package
-                    .files(db)
-                    .iter()
-                    .map(|file| file.source_text(db).as_str())
-                    .collect(),
-            )
-        })
+        let _boundary = panic::test_boundary();
+
+        let db = self.state.world().db();
+        let package = db.package_by_name(name)?;
+        Some(
+            package
+                .files(db)
+                .iter()
+                .map(|file| file.source_text(db).as_str())
+                .collect(),
+        )
     }
 
     pub fn diagnostics_metrics(&self) -> DiagnosticsMetrics {
