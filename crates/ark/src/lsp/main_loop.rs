@@ -543,6 +543,12 @@ impl GlobalState {
         panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
 
+    /// The `handle_event` span groups one main-loop tick for profiling. Its
+    /// children are the instrumented handler and, when a refresh fires,
+    /// `refresh_if_due`, so dispatch time is the span minus that refresh.
+    /// `DispatchTiming` is measured separately so harness timings don't depend
+    /// on which tracing layers are installed.
+    #[tracing::instrument(level = "info", skip_all)]
     async fn handle_event(&mut self, event: Event) -> (anyhow::Result<()>, DispatchTiming) {
         let _tick = self
             .lsp_state
@@ -883,6 +889,11 @@ impl GlobalState {
         if !self.events_rx.is_empty() && deferred_since.elapsed() < MAX_REFRESH_DELAY {
             return;
         }
+
+        // Entered only once a refresh fires. Most events return early above,
+        // and a span per skipped check would bury the real refreshes in
+        // profiles.
+        let _span = tracing::info_span!("refresh_if_due").entered();
 
         lsp::log_info!("World state revision advanced");
         self.last_refreshed_revision = revision;
