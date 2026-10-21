@@ -92,12 +92,17 @@ yaml-rust2.workspace = true
 ark = { workspace = true, features = ["testing"] }
 ark_test.workspace = true
 assert_matches.workspace = true
+criterion.workspace = true
 insta.workspace = true
 oak_r_process.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
 oak_package_metadata = { workspace = true, features = ["testing"] }
 stdext = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
+
+[[bench]]
+name = "diagnostics"
+harness = false
 
 [build-dependencies]
 cc.workspace = true
