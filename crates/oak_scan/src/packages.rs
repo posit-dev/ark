@@ -441,10 +441,14 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 ///
 /// Uses the `ignore` crate's default `WalkBuilder`, which honours `.gitignore`
 /// / `.ignore` and skips hidden directories. Matches the ty / Astral / ruff
-/// convention. The concrete payoff for R is `renv/library/` exclusion. Renv
-/// snapshots each installed package with its own `DESCRIPTION` and `R/`, so
-/// walking into them would surface vendored packages and vendored R files as
-/// workspace content.
+/// convention.
+///
+/// The walker also prunes installed packages ([`is_installed_package()`]), so a
+/// library inside the workspace contributes no workspace packages or scripts
+/// even when nothing ignores it: `renv/library/` in a project without git, or a
+/// project-local `lib/`. Such packages then belong to library roots only, which
+/// is what they need: an installed `R/` holds a lazy-load database rather than
+/// `.R` files, so their sources come from the LSP source fetcher.
 ///
 /// rust-analyzer takes the opposite approach: walk everything, hardcoded
 /// exclusions for `.git` and `target`. We may want to revisit if the implicit
@@ -452,5 +456,19 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 /// is an opt-out config (similar to ty's `respect-ignore-files`) and / or a
 /// hardcoded exclusion list.
 fn workspace_walker(root: &Path) -> ignore::Walk {
-    WalkBuilder::new(root).build()
+    WalkBuilder::new(root)
+        .filter_entry(|entry| {
+            let is_dir = entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_dir());
+            !(is_dir && is_installed_package(entry.path()))
+        })
+        .build()
+}
+
+/// Whether `dir` is an installed package rather than package sources.
+/// `library()` rejects a directory without `Meta/package.rds` as "not a valid
+/// installed package", so this is R's own criterion.
+fn is_installed_package(dir: &Path) -> bool {
+    dir.join("Meta").join("package.rds").is_file()
 }

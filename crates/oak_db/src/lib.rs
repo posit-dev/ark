@@ -90,3 +90,4 @@ pub use package_names::PackageNames;
 pub use package_roxygen::RoxygenTag;
 pub use storage::OakDatabase;
 pub use workspace::all_package_dependencies;
+pub use workspace::is_workspace_package;
