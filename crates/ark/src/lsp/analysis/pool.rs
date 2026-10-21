@@ -137,6 +137,21 @@ impl AnalysisPool {
     pub(crate) fn metrics(&self) -> PoolMetrics {
         self.shared.lock().metrics
     }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn is_idle(&self) -> bool {
+        let metrics = self.metrics();
+        metrics.waiting() == 0 && metrics.running() == 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spawn_test_task(
+        &self,
+        snapshot: WorldStateSnapshot,
+        task: impl FnOnce(WorldStateSnapshot) + Send + 'static,
+    ) {
+        self.spawn(snapshot, task)
+    }
 }
 
 /// Analysis tasks are CPU-bound, so don't run more of them than the machine can
@@ -263,34 +278,31 @@ fn run_entry(entry: Entry, shared: &Shared, service_context: &LspServiceContext)
     // query, so go straight to dropping the snapshot. This is what lets a
     // backlog drain in one pass while a writer waits.
     if snapshot.is_cancelled() {
-        trace_metrics(shared, |metrics| metrics.cancelled_queued += 1);
+        record_metrics(shared, |metrics| metrics.cancelled_queued += 1);
         return;
     }
 
-    trace_metrics(shared, |metrics| metrics.started += 1);
+    record_metrics(shared, |metrics| metrics.started += 1);
 
     match panic::catch_unwind(Recovery::Always, || catch_cancellation(|| run(snapshot))) {
         Ok(Some(())) => {
-            trace_metrics(shared, |metrics| metrics.completed += 1);
+            record_metrics(shared, |metrics| metrics.completed += 1);
         },
         Ok(None) => {
-            trace_metrics(shared, |metrics| metrics.cancelled_running += 1);
+            record_metrics(shared, |metrics| metrics.cancelled_running += 1);
         },
         Err(message) => {
-            trace_metrics(shared, |metrics| metrics.panicked += 1);
+            record_metrics(shared, |metrics| metrics.panicked += 1);
             lsp::log_error!("An analysis task panicked: {message}");
             service_context.report_background_panic();
         },
     }
 }
 
-/// Updates and snapshots the pool's counters under one lock acquisition. This
-/// trace is internally consistent, unlike [`super::metrics::DiagnosticsMetrics::log_snapshot`],
-/// which reads counters written by separate threads.
-fn trace_metrics(shared: &Shared, increment: impl FnOnce(&mut PoolMetrics)) {
+fn record_metrics(shared: &Shared, update: impl FnOnce(&mut PoolMetrics)) {
     let metrics = {
         let mut queue = shared.lock();
-        increment(&mut queue.metrics);
+        update(&mut queue.metrics);
         queue.metrics
     };
     lsp::log_trace!("Analysis queue: {metrics:?}");
@@ -377,6 +389,46 @@ mod tests {
         let counts = pool.metrics();
         assert_eq!(counts.started, 2);
         assert_eq!(counts.panicked, 1);
+    }
+
+    /// Panics when dropped, so a task panicking with it as payload makes
+    /// `run_entry()` panic again when it drops the payload after its own
+    /// `catch_unwind()` returns.
+    struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("Test panic while dropping a task's panic payload");
+        }
+    }
+
+    /// Install the production hook so a panic that escapes the worker's
+    /// boundary aborts the test process. Two workers, so the one left after
+    /// the other exits must still run tasks.
+    #[test]
+    fn test_pool_survives_panic_outside_a_task() {
+        crate::panic::install();
+
+        let state = WorldState::default();
+        let context = Arc::new(LspServiceContext::new());
+        let pool = AnalysisPool::with_threads(2, Arc::clone(&context));
+        pool.spawn(state.snapshot(), |_snapshot| {
+            std::panic::panic_any(PanicOnDrop)
+        });
+
+        // Each worker holds a clone of `context` and drops it when its thread
+        // returns through the boundary. An escaped panic aborts before that.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while Arc::strong_count(&context) > 2 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
+        pool.spawn(state.snapshot(), move |_snapshot| ran_tx.send(()).unwrap());
+        ran_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
     }
 
     /// Cancellation after a task starts increments `cancelled_running`, rather
@@ -534,43 +586,99 @@ mod tests {
         release_tx.send(()).unwrap();
     }
 
-    /// Panics when dropped, so a task panicking with it as payload makes
-    /// `run_entry()` panic again when it drops the payload after its own
-    /// `catch_unwind()` returns.
-    struct PanicOnDrop;
-
-    impl Drop for PanicOnDrop {
-        fn drop(&mut self) {
-            panic!("Test panic while dropping a task's panic payload");
+    /// Poll until `done` holds, reporting pool counters if it never does.
+    fn wait_for_pool(pool: &AnalysisPool, done: impl Fn(&AnalysisPool) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !done(pool) {
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "The pool never reached the expected state: {:?}",
+                    pool.metrics()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
-    /// Install the production hook so a panic that escapes the worker's
-    /// boundary aborts the test process. Two workers, so the one left after
-    /// the other exits must still run tasks.
+    fn test_pool(threads: usize) -> AnalysisPool {
+        AnalysisPool::with_threads(threads, Arc::new(LspServiceContext::new()))
+    }
+
     #[test]
-    fn test_pool_survives_panic_outside_a_task() {
+    fn test_pool_is_idle_after_completed_task() {
+        let state = WorldState::default();
+        let pool = test_pool(1);
+
+        pool.spawn(state.snapshot(), |_snapshot| {});
+
+        wait_for_pool(&pool, AnalysisPool::is_idle);
+        assert_eq!(pool.metrics().completed, 1);
+    }
+
+    #[test]
+    fn test_pool_is_idle_after_task_cancelled_before_starting() {
+        let state = WorldState::default();
+        let pool = test_pool(1);
+
+        let cancelled = state.snapshot();
+        cancelled.cancellation_token().cancel();
+        pool.spawn(cancelled, |_snapshot| {});
+
+        wait_for_pool(&pool, AnalysisPool::is_idle);
+        assert_eq!(pool.metrics().cancelled_queued, 1);
+    }
+
+    #[test]
+    fn test_pool_is_idle_after_task_cancelled_while_running() {
+        let state = WorldState::default();
+        let pool = test_pool(1);
+
+        pool.spawn(state.snapshot(), |snapshot| {
+            snapshot.cancellation_token().cancel();
+            salsa::Database::unwind_if_revision_cancelled(snapshot.db());
+        });
+
+        wait_for_pool(&pool, AnalysisPool::is_idle);
+        assert_eq!(pool.metrics().cancelled_running, 1);
+    }
+
+    /// Install the production hook so an uncaught worker panic aborts the test
+    /// process instead of being ignored.
+    #[test]
+    fn test_pool_is_idle_after_panicking_task() {
         crate::panic::install();
 
         let state = WorldState::default();
-        let context = Arc::new(LspServiceContext::new());
-        let pool = AnalysisPool::with_threads(2, Arc::clone(&context));
+        let pool = test_pool(1);
+
         pool.spawn(state.snapshot(), |_snapshot| {
-            std::panic::panic_any(PanicOnDrop)
+            panic!("Test panic in an analysis task")
         });
 
-        // Each worker holds a clone of `context` and drops it when its thread
-        // returns through the boundary. An escaped panic aborts before that.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while Arc::strong_count(&context) > 2 {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        wait_for_pool(&pool, AnalysisPool::is_idle);
+        assert_eq!(pool.metrics().panicked, 1);
+    }
 
-        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
-        pool.spawn(state.snapshot(), move |_snapshot| ran_tx.send(()).unwrap());
-        ran_rx
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap();
+    /// A finished task must not make the pool look idle while another task is
+    /// still running.
+    #[test]
+    fn test_pool_is_not_idle_while_a_task_runs() {
+        let state = WorldState::default();
+        let pool = test_pool(2);
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        pool.spawn(state.snapshot(), move |_snapshot| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+
+        pool.spawn(state.snapshot(), |_snapshot| {});
+        wait_for_pool(&pool, |pool| pool.metrics().completed == 1);
+        assert!(!pool.is_idle());
+
+        release_tx.send(()).unwrap();
+        wait_for_pool(&pool, AnalysisPool::is_idle);
     }
 }

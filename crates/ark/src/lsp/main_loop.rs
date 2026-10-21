@@ -319,7 +319,6 @@ impl LspState {
 /// - Background task panic reports.
 struct AuxiliaryState {
     client: Client,
-    auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     /// Last non-empty diagnostics published per file. A refresh re-runs every
     /// open file, but most runs produce the same result, so we skip the publish
     /// when it matches what the client already has.
@@ -403,10 +402,13 @@ impl GlobalState {
     pub(crate) fn start(self, server_shutdown_tx: Sender<()>) -> LoopHandles {
         let mut aux = tokio::task::JoinSet::<()>::new();
 
-        // The auxiliary loop is fully async and never blocks. Must be started
-        // first to initialise the global transmission channel.
+        // The main loop can publish on its first tick, so register the
+        // process-global auxiliary sender before starting it.
+        let (auxiliary_event_tx, auxiliary_event_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+        register_auxiliary_tx(auxiliary_event_tx);
+
         let aux_state = AuxiliaryState::new(self.client.clone());
-        aux.spawn(async move { aux_state.start().await });
+        aux.spawn(async move { aux_state.start(auxiliary_event_rx).await });
 
         // Since the main loop owns the Salsa DB and writes to it, we run on its
         // own thread instead of a Tokio worker. Salsa writes are potentially
@@ -511,11 +513,11 @@ impl GlobalState {
         }
     }
 
-    /// Pull the next event off the channel. Only the test pump uses this; the
-    /// running loop selects on the channel directly so it can also watch for
-    /// shutdown.
-    #[cfg(test)]
-    async fn next_event(&mut self) -> Event {
+    /// Pull the next event off the channel. Only the harness session and test
+    /// pumps use this; the running loop selects on the channel directly so it
+    /// can also watch for shutdown.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
     }
 
@@ -938,9 +940,39 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     }
 }
 
-/// Test-only methods for driving the main loop without R or a live LSP
-/// connection. Kept here, next to the loop they exercise, so the pump uses the
-/// real `handle_event()` and the private channels rather than a reconstruction.
+/// Harness access to the main loop without R or a live LSP connection.
+///
+/// These methods require private channels and dispatch through the real
+/// `handle_event()`. [`crate::lsp::harness::LspSession`] builds on them, so
+/// benchmarks built with the `testing` feature need them too.
+#[cfg(any(test, feature = "testing"))]
+impl GlobalState {
+    /// Run one `event` through `handle_event()` without pumping follow-up work.
+    /// This allows callers to inspect or gate a subsystem before it settles.
+    pub(crate) async fn handle_event_once(&mut self, event: Event) {
+        self.handle_event(event).await.unwrap();
+    }
+
+    pub(crate) fn lsp_state(&self) -> &LspState {
+        &self.lsp_state
+    }
+
+    /// Report whether no scheduler, analysis, or main-loop work is pending.
+    /// This is only a predicate, so callers must still check background failures
+    /// and re-check it while waiting, since the pool can go idle without
+    /// sending an event.
+    pub(crate) fn is_settled(&self) -> bool {
+        if self.lsp_state.oak_scheduler.has_pending_scans() ||
+            self.lsp_state.source_scheduler.has_pending()
+        {
+            return false;
+        }
+
+        self.lsp_state.analysis_pool.is_idle() && self.events_rx.is_empty()
+    }
+}
+
+/// Test-only pumps for driving the main loop to a chosen point.
 #[cfg(test)]
 impl GlobalState {
     /// Run `event` through the real `handle_event`, then pump any pending
@@ -955,13 +987,6 @@ impl GlobalState {
             let event = self.next_event().await;
             self.handle_event(event).await.unwrap();
         }
-    }
-
-    /// Run a single `event` through the real `handle_event`, without pumping
-    /// followups. Tests that gate a subsystem need this because
-    /// `handle_event_to_quiescence` would wait for the gated work to finish.
-    pub(crate) async fn handle_event_once(&mut self, event: Event) {
-        self.handle_event(event).await.unwrap();
     }
 
     /// Pump events until no oak scan is pending, ignoring pending source
@@ -1140,36 +1165,23 @@ fn send_response(
 }
 
 impl AuxiliaryState {
+    /// Create the event handler without binding it to a receiver. Tests can
+    /// then drive production publication and deduplication one event at a time.
     fn new(client: Client) -> Self {
-        // Channels for communication with the auxiliary loop
-        let (auxiliary_event_tx, auxiliary_event_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
-
-        // Set global instance of this channel. This is used for interacting with the
-        // auxiliary loop (logging messages or spawning a task) from free functions.
-        // Unfortunately this can theoretically be reset at any time, i.e. on reconnection
-        // after a refresh, which is why we need an RwLock. This is the only place we take
-        // a write lock though. We panic if we can't access the write lock, as that implies
-        // the auxiliary loop has gone down and something is very wrong. We hold the lock
-        // for as short as possible, hence the extra scope.
-        {
-            let mut tx = AUXILIARY_EVENT_TX.write().unwrap();
-            *tx = Some(auxiliary_event_tx);
-        }
-
         Self {
             client,
-            auxiliary_event_rx,
             published_diagnostics: HashMap::new(),
         }
     }
 
-    /// Start the auxiliary loop
-    ///
-    /// Takes ownership of auxiliary state and start the low-latency auxiliary
-    /// loop.
-    async fn start(mut self) {
+    async fn start(mut self, mut auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>) {
         loop {
-            match panic::catch_unwind_async(Recovery::Always, self.handle_next_event()).await {
+            match panic::catch_unwind_async(
+                Recovery::Always,
+                self.handle_next_event(&mut auxiliary_event_rx),
+            )
+            .await
+            {
                 Ok(ControlFlow::Continue(())) => {},
                 Ok(ControlFlow::Break(())) => break,
                 // Use `log::error!()` instead of `lsp::log_error!()`, which queues another event
@@ -1179,8 +1191,11 @@ impl AuxiliaryState {
         }
     }
 
-    async fn handle_next_event(&mut self) -> ControlFlow<()> {
-        match self.next_event().await {
+    async fn handle_next_event(
+        &mut self,
+        auxiliary_event_rx: &mut TokioUnboundedReceiver<AuxiliaryEvent>,
+    ) -> ControlFlow<()> {
+        match next_auxiliary_event(auxiliary_event_rx).await {
             AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
             AuxiliaryEvent::PublishDiagnostics(publication) => {
                 self.publish_diagnostics(publication).await
@@ -1192,20 +1207,6 @@ impl AuxiliaryState {
         }
 
         ControlFlow::Continue(())
-    }
-
-    async fn next_event(&mut self) -> AuxiliaryEvent {
-        match self.auxiliary_event_rx.recv().await {
-            // Because of the way we communicate with the auxiliary loop
-            // via global state, the channel may become closed if a new
-            // LSP session is started in the process. This normally
-            // should not happen but for now we have to be defensive
-            // against this situation, see:
-            // https://github.com/posit-dev/ark/issues/622
-            // https://github.com/posit-dev/positron/issues/5321
-            Some(event) => event,
-            None => AuxiliaryEvent::Shutdown,
-        }
     }
 
     async fn report_background_panic(&self) {
@@ -1261,6 +1262,22 @@ impl AuxiliaryState {
     }
 }
 
+/// Treat a closed receiver as shutdown. Replacing the process-global sender
+/// drops the previous sender and closes an older session's receiver.
+async fn next_auxiliary_event(rx: &mut TokioUnboundedReceiver<AuxiliaryEvent>) -> AuxiliaryEvent {
+    match rx.recv().await {
+        Some(event) => event,
+        None => AuxiliaryEvent::Shutdown,
+    }
+}
+
+/// Install the process-global sender used for logs and diagnostics. Replacing
+/// it closes the previous receiver, which shuts down the older auxiliary loop.
+pub(crate) fn register_auxiliary_tx(tx: TokioUnboundedSender<AuxiliaryEvent>) {
+    let mut global = AUXILIARY_EVENT_TX.write().unwrap();
+    *global = Some(tx);
+}
+
 fn with_auxiliary_tx<F, T>(f: F) -> T
 where
     F: FnOnce(&TokioUnboundedSender<AuxiliaryEvent>) -> T,
@@ -1311,7 +1328,7 @@ fn report_background_panic() {
 #[cfg(test)]
 pub(crate) fn init_aux_for_test() -> TokioUnboundedReceiver<AuxiliaryEvent> {
     let (tx, rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
-    *AUXILIARY_EVENT_TX.write().unwrap() = Some(tx);
+    register_auxiliary_tx(tx);
     rx
 }
 
@@ -1390,32 +1407,38 @@ pub(crate) struct DiagnosticsPublication {
 mod tests {
     use aether_path::FilePath;
     use oak_scan::DbScan;
+    use serde_json::Value;
     use tower_lsp_server::jsonrpc;
     use url::Url;
 
     use super::classify_event_unwind;
+    use super::register_auxiliary_tx;
     use super::respond;
     use super::send_auxiliary;
     use super::tokio_unbounded_channel;
     use super::AuxiliaryEvent;
     use super::AuxiliaryState;
+    use super::Diagnostic;
+    use super::DiagnosticsPublication;
     use super::EventUnwind;
     use super::LspServiceContext;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::harness::editor::client::TestClient;
     use crate::lsp::state::WorldState;
-    use crate::lsp::tests::utils::client::TestClient;
     use crate::lsp::traits::url::UrlExt;
 
     #[tokio::test]
     async fn test_background_panic_is_reported_once_per_session() {
         let client = TestClient::new(&[]).await;
+        let (auxiliary_event_tx, auxiliary_event_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+        register_auxiliary_tx(auxiliary_event_tx);
         let auxiliary = AuxiliaryState::new(client.client());
         // Keep an unexpected loop panic visible through `auxiliary_loop.await`.
         // `panic::spawn()` would log it and return a successful `JoinHandle`.
         #[allow(clippy::disallowed_methods)]
-        let auxiliary_loop = tokio::spawn(auxiliary.start());
+        let auxiliary_loop = tokio::spawn(auxiliary.start(auxiliary_event_rx));
         let first_session = LspServiceContext::new();
         let second_session = LspServiceContext::new();
 
@@ -1424,10 +1447,7 @@ mod tests {
         second_session.report_background_panic();
         send_auxiliary(AuxiliaryEvent::Shutdown);
         auxiliary_loop.await.unwrap();
-
-        // The socket is FIFO, so a round-trip flushes the notifications the peer
-        // has not read yet.
-        let _ = client.client().configuration(vec![]).await;
+        client.flush().await;
 
         let notifications = client.notifications();
         assert_eq!(notifications.len(), 2);
@@ -1435,6 +1455,88 @@ mod tests {
         assert_eq!(notifications[1].0, "window/showMessage");
         let message = notifications[0].1["message"].as_str().unwrap();
         assert!(message.contains("background task encountered an internal error"));
+    }
+
+    #[tokio::test]
+    async fn test_registering_a_sender_retires_the_previous_receiver() {
+        let (first_tx, mut first_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+        register_auxiliary_tx(first_tx);
+
+        let (second_tx, mut second_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
+        register_auxiliary_tx(second_tx);
+
+        assert!(first_rx.recv().await.is_none());
+
+        send_auxiliary(AuxiliaryEvent::Shutdown);
+        assert!(matches!(
+            second_rx.recv().await,
+            Some(AuxiliaryEvent::Shutdown)
+        ));
+    }
+
+    /// Unchanged diagnostics are suppressed, so notification counts cannot
+    /// signal that refresh work completed. Empty results publish only to clear
+    /// diagnostics the client is showing.
+    #[tokio::test]
+    async fn test_only_changed_diagnostics_reach_the_client() {
+        let client = TestClient::new(&[]).await;
+        let mut auxiliary = AuxiliaryState::new(client.client());
+
+        for diagnostics in [
+            vec![diagnostic("first")],
+            vec![diagnostic("first")],
+            vec![diagnostic("second")],
+            vec![],
+            vec![],
+        ] {
+            auxiliary
+                .publish_diagnostics(publication(diagnostics))
+                .await;
+        }
+        client.flush().await;
+
+        let notifications = client.notifications();
+        let methods: Vec<&str> = notifications
+            .iter()
+            .map(|(method, _params)| method.as_str())
+            .collect();
+        assert_eq!(methods, vec![
+            "textDocument/publishDiagnostics",
+            "textDocument/publishDiagnostics",
+            "textDocument/publishDiagnostics",
+        ]);
+
+        let published: Vec<Vec<&str>> = notifications
+            .iter()
+            .map(|(_method, params)| messages(params))
+            .collect();
+        assert_eq!(published, vec![vec!["first"], vec!["second"], vec![]]);
+    }
+
+    fn messages(params: &Value) -> Vec<&str> {
+        params["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["message"].as_str().unwrap())
+            .collect()
+    }
+
+    fn diagnostic(message: &str) -> Diagnostic {
+        Diagnostic {
+            message: String::from(message),
+            ..Default::default()
+        }
+    }
+
+    fn publication(diagnostics: Vec<Diagnostic>) -> DiagnosticsPublication {
+        let url = Url::parse("file:///test.R").unwrap();
+        DiagnosticsPublication {
+            path: FilePath::from_url(&url),
+            uri: url.to_uri().unwrap(),
+            diagnostics,
+            version: None,
+        }
     }
 
     #[test]

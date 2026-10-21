@@ -190,8 +190,8 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     state.handle_event_to_quiescence(initialized()).await;
 
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
     assert!(handler.calls().lock().unwrap().is_empty());
 
@@ -245,9 +245,9 @@ async fn test_configuration_not_pulled_without_capability() {
     state.handle_event_to_quiescence(event).await;
     state.handle_event_to_quiescence(initialized()).await;
 
-    assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability"
-    ]);
+    assert_eq!(client.answered_requests(), vec![Ok::<_, String>(
+        String::from("client/registerCapability")
+    )]);
     assert!(state.world().config.oak.source_fetching_enabled);
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
 }
@@ -355,8 +355,8 @@ async fn test_initialization_options_survive_a_silent_pull() {
     state.handle_event_to_quiescence(initialized()).await;
 
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
     assert!(!state.world().config.oak.source_fetching_enabled);
     assert!(handler.calls().lock().unwrap().is_empty());
@@ -492,9 +492,9 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
 
     // Each configuration pull consumes one client response.
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
 }
 
