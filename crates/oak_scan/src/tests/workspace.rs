@@ -10,9 +10,9 @@ use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::RootKind;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 
 use crate::scheduler::drain_scheduler;
-use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 
@@ -476,10 +476,10 @@ fn test_scan_workspace_skips_installed_packages() {
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("mypkg"), "mypkg", &[("a.R", "x <- 1\n")]);
     let installed = tmp.path().join("lib/dplyr");
-    write_package(&installed, "dplyr", &[("dplyr.R", "vendored <- 1\n")]);
+    write_package(&installed, "dplyr", &[]);
     mark_installed(&installed);
     let shipped = ["R/dplyr.R", "doc/intro.R", "demo/demo.R"];
-    for path in &shipped[1..] {
+    for path in shipped {
         let path = installed.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "shipped <- 1\n").unwrap();

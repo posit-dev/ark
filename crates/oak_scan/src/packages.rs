@@ -342,11 +342,11 @@ pub(crate) fn scan_workspace_environment_dirs(root: &Path) -> Vec<FilePath> {
 /// Keep the first occurrence of each `Package:` name, dropping duplicates with
 /// a warn log naming both directories.
 ///
-/// `Package` identity in oak is keyed on `(root, name)`, so two same-name
-/// DESCRIPTIONs in one workspace would otherwise collapse into one `Package`
-/// entity with the loser's files clobbering the winner's and the duplicate
-/// appearing twice in `root.packages`. First-wins gives a stable, predictable
-/// outcome at the cost of ignoring one of the two.
+/// `Package` identity is the `DESCRIPTION` path, so two same-name packages
+/// would get two entities, but name lookup (`package_by_name()`) indexes one
+/// package per name in a root and would silently keep the later one. Dropping
+/// the duplicate here makes the choice explicit and logged. First-wins gives a
+/// stable, predictable outcome at the cost of ignoring one of the two.
 fn dedup_packages_by_name(pairs: Vec<(PathBuf, PackageEntry)>) -> Vec<PackageEntry> {
     let mut winners: HashMap<String, PathBuf> = HashMap::new();
     let mut packages: Vec<PackageEntry> = Vec::with_capacity(pairs.len());
@@ -440,10 +440,8 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 /// no workspace packages or scripts even when nothing ignores it: a
 /// project-local `lib/`, or a copied `renv/library/` in a project without git.
 /// Symlinked package entries, as renv creates by default, are never walked
-/// because the walker doesn't follow links. Installed packages are held by the
-/// library roots on the library paths, if any, and their sources come from the
-/// LSP source fetcher, because an installed `R/` holds a lazy-load database
-/// rather than `.R` files.
+/// because the walker doesn't follow links. Pruned packages belong to no root
+/// when their library isn't on the library paths.
 ///
 /// rust-analyzer takes the opposite approach: walk everything, hardcoded
 /// exclusions for `.git` and `target`. We may want to revisit if the implicit
@@ -469,13 +467,20 @@ fn workspace_walker(root: &Path) -> ignore::Walk {
     builder.build()
 }
 
-/// Whether `dir` is an installed package rather than package sources.
-/// `library()` rejects a directory without `Meta/package.rds` as "not a valid
-/// installed package", so this is R's own criterion.
+/// Whether `dir` is an installed package rather than package sources: it has a
+/// `DESCRIPTION` and `Meta/package.rds`. `library()` rejects a directory
+/// without `Meta/package.rds` as "not a valid installed package", so this is
+/// R's own criterion.
 ///
-/// Library listing ([`crate::library::list_library()`]) accepts and the
-/// workspace walk prunes on this one predicate, so each `DESCRIPTION` belongs
-/// to either a library root or a workspace root, never both.
+/// This predicate partitions packages between root kinds. Library listing
+/// ([`crate::library::list_library()`]) accepts exactly these directories and
+/// the workspace walk ([`workspace_walker()`]) prunes exactly these, so each
+/// `DESCRIPTION` belongs to either library roots or workspace roots. Installed
+/// packages get their sources from the LSP source fetcher, because an installed
+/// `R/` holds a lazy-load database rather than `.R` files.
+///
+/// Requiring `DESCRIPTION` keeps the prune in step with the watcher's
+/// `classify()`, which places a file by its nearest `DESCRIPTION` ancestor.
 pub(crate) fn is_installed_package(dir: &Path) -> bool {
-    dir.join("Meta").join("package.rds").is_file()
+    dir.join("DESCRIPTION").is_file() && dir.join("Meta").join("package.rds").is_file()
 }

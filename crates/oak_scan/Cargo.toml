@@ -33,5 +33,6 @@ walkdir.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+oak_package_metadata = { workspace = true, features = ["testing"] }
 oak_tidy.workspace = true
 tempfile.workspace = true

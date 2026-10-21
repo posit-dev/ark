@@ -19,12 +19,12 @@ use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 
 use crate::library::list_library;
 use crate::library::set_installed_packages;
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
-use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 

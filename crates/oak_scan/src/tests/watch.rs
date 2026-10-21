@@ -10,9 +10,9 @@ use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 
 use crate::scheduler::drain_scheduler;
-use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanRequest;
 use crate::ScanScheduler;
@@ -138,6 +138,30 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
 }
 
 #[test]
+fn test_add_watched_file_under_marker_without_description_is_a_script() {
+    // `Meta/package.rds` alone isn't an installed package, so the bulk scan
+    // walks the directory and the watcher places its files the same way.
+    let tmp = tempfile::tempdir().unwrap();
+    let broken = tmp.path().join("lib/broken");
+    fs::create_dir_all(broken.join("Meta")).unwrap();
+    fs::write(broken.join("Meta/package.rds"), "").unwrap();
+    fs::write(broken.join("old.R"), "old <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+    let root = db.workspace_roots().roots(&db)[0];
+    assert_eq!(root.scripts(&db).len(), 1);
+
+    let path = broken.join("new.R");
+    fs::write(&path, "new <- 1\n").unwrap();
+    let path = FilePath::from_path_buf(path).unwrap();
+    add_watched_file(&mut db, path.clone());
+
+    let file = db.file_by_path(&path).unwrap();
+    assert_eq!(root.scripts(&db).len(), 2);
+    assert!(root.scripts(&db).contains(&file));
+}
+
+#[test]
 fn test_add_watched_file_skips_installed_copy_of_workspace_package() {
     // Installing the package under development into a project-local library
     // writes shipped scripts under a directory the bulk scan prunes. They
@@ -160,6 +184,28 @@ fn test_add_watched_file_skips_installed_copy_of_workspace_package() {
     let pkg = root.packages(&db)[0];
     assert!(pkg.scripts(&db).is_empty());
     assert!(root.scripts(&db).is_empty());
+    assert!(db.file_by_path(&path).is_none());
+}
+
+#[test]
+fn test_add_watched_file_skips_dropped_same_name_package() {
+    // The bulk scan keeps the first of two same-name packages (`aaa` sorts
+    // first). A file added to the dropped one doesn't join the kept one.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("aaa"), "pkg", &[("a.R", "x <- 1\n")]);
+    write_package(&tmp.path().join("bbb"), "pkg", &[("b.R", "y <- 2\n")]);
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let path = tmp.path().join("bbb/R/new.R");
+    fs::write(&path, "z <- 3\n").unwrap();
+    let path = FilePath::from_path_buf(path).unwrap();
+    add_watched_file(&mut db, path.clone());
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let pkg = root.packages(&db)[0];
+    assert_eq!(root.packages(&db).len(), 1);
+    assert_eq!(pkg.files(&db).len(), 1);
     assert!(db.file_by_path(&path).is_none());
 }
 

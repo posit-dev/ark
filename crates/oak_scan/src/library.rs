@@ -106,14 +106,10 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
 ///
 /// R uses the package name as the directory basename, so no file contents need
 /// reading. A directory qualifies when it is an installed package
-/// ([`is_installed_package()`]) with a `DESCRIPTION` file. The mtimes of
-/// `DESCRIPTION`, `NAMESPACE`, and `INDEX` drive lazy metadata queries, which
-/// parse their contents on demand. Install locks, source directories, and
-/// directories with non-UTF8 names are skipped.
-///
-/// The workspace walk prunes every directory [`is_installed_package()`]
-/// accepts, a superset of what this listing returns, so a library nested in a
-/// workspace never shares a [`Package`] with it.
+/// ([`is_installed_package()`], which also decides what workspace scans skip).
+/// The mtimes of `DESCRIPTION`, `NAMESPACE`, and `INDEX` drive lazy metadata
+/// queries, which parse their contents on demand. Install locks, source
+/// directories, and directories with non-UTF8 names are skipped.
 ///
 /// Stable directory-name order lets [`set_installed_packages()`] skip the
 /// `root.packages` write on unchanged rescans. Filesystem iteration order alone
@@ -147,10 +143,10 @@ pub(crate) fn list_library(path: &Path) -> Vec<InstalledPackageEntry> {
 }
 
 fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
-    let description_file = package_dir.join("DESCRIPTION");
-    if !is_installed_package(package_dir) || !description_file.is_file() {
+    if !is_installed_package(package_dir) {
         return None;
     }
+    let description_file = package_dir.join("DESCRIPTION");
 
     let name = package_dir.file_name()?.to_str()?.to_string();
     let description_revision = file_revision(&description_file);

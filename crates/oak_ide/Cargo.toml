@@ -25,7 +25,7 @@ url.workspace = true
 [dev-dependencies]
 aether_parser.workspace = true
 aether_path.workspace = true
-oak_package_metadata.workspace = true
+oak_package_metadata = { workspace = true, features = ["testing"] }
 oak_scan.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
 oak_source.workspace = true
