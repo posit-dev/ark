@@ -20,6 +20,8 @@ use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
 
+use crate::library::list_library;
+use crate::library::set_installed_packages;
 use crate::scheduler::drain_scheduler;
 use crate::tests::is_case_insensitive;
 use crate::tests::is_normalization_insensitive;
@@ -1601,6 +1603,106 @@ fn test_library_entry_events_inside_workspace_also_update_workspace() {
     assert_eq!(library.packages(&db)[0].name(&db), "pkg");
     let helper_file = db.file_by_path(&watched_path(&helper)).unwrap();
     assert_eq!(workspace.scripts(&db), &vec![helper_file]);
+}
+
+#[test]
+fn test_installed_package_replaced_by_source_keeps_workspace_files() {
+    // The workspace rescan applies first and adopts the library's `Package`,
+    // so both roots hold it until the library rescan drops it.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    let pkg_dir = lib.join("pkg");
+    write_installed_package(&lib, "pkg");
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
+    let workspace = roots[0];
+    assert!(workspace.packages(&db).is_empty());
+
+    fs::remove_dir_all(pkg_dir.join("Meta")).unwrap();
+    write_package(&pkg_dir, "pkg", &[("a.R", "a <- 1\n")]);
+    let rprofile = workspace_dir.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    let pkg = workspace.packages(&db)[0];
+    assert_eq!(library.packages(&db), &vec![pkg]);
+    let files = pkg.files(&db).to_vec();
+    assert_eq!(files.len(), 1);
+
+    set_installed_packages(&mut db, library, list_library(&lib));
+
+    assert!(library.packages(&db).is_empty());
+    assert_eq!(pkg.files(&db), files.as_slice());
+    assert_eq!(files[0].package(&db), Some(pkg));
+}
+
+#[test]
+fn test_workspace_adoption_resets_sources_revision() {
+    // A reinstall with the same `DESCRIPTION` revision would otherwise keep
+    // the workspace files as fetched sources.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    let pkg_dir = lib.join("pkg");
+    write_installed_package(&lib, "pkg");
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("f.R"), "f <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
+    let workspace = roots[0];
+    let pkg = db.package_by_name("pkg").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    assert_eq!(
+        pkg.sources_revision(&db),
+        Some(pkg.description_revision(&db))
+    );
+
+    fs::remove_dir_all(pkg_dir.join("Meta")).unwrap();
+    write_package(&pkg_dir, "pkg", &[("a.R", "a <- 1\n")]);
+    let rprofile = workspace_dir.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+
+    assert_eq!(workspace.packages(&db), &vec![pkg]);
+    assert_eq!(pkg.sources_revision(&db), None);
+}
+
+#[test]
+fn test_source_package_that_becomes_installed_drops_workspace_files() {
+    // Installing doesn't touch `DESCRIPTION`, so its revision is unchanged
+    // when the library rescan adopts the workspace's `Package`.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    let pkg_dir = lib.join("pkg");
+    write_package(&pkg_dir, "pkg", &[("a.R", "a <- 1\n")]);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
+    let workspace = roots[0];
+    let pkg = workspace.packages(&db)[0];
+    let files = pkg.files(&db).to_vec();
+    assert_eq!(files.len(), 1);
+    assert!(library.packages(&db).is_empty());
+
+    mark_installed(&pkg_dir);
+    set_installed_packages(&mut db, library, list_library(&lib));
+
+    assert_eq!(library.packages(&db), &vec![pkg]);
+    assert!(pkg.files(&db).is_empty());
+    assert_eq!(files[0].package(&db), None);
 }
 
 #[test]

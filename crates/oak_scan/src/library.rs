@@ -179,9 +179,10 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// became installed. The LSP source scheduler requests sources for the
 /// current revision.
 ///
-/// Removed packages leave `root.packages` and their sources are cleared with
-/// [`clear_package_sources()`]. The cleared files become invisible to
-/// analysis, and the caller keeps open buffers visible with
+/// Removed packages leave `root.packages`. Their sources are cleared with
+/// [`clear_package_sources()`] unless another live root still holds the
+/// package. The cleared files become invisible to analysis, and the caller
+/// keeps open buffers visible with
 /// [`crate::inputs::keep_open_files_visible()`].
 pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
     db: &mut DB,
@@ -221,7 +222,17 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .collect();
     root.set_packages(db).to(packages);
 
-    clear_package_sources(db, &removed);
+    // Library and workspace roots list disjoint directories (see
+    // `is_installed_package()`), but a directory that turns from an installed
+    // package into a source checkout is held by both for a while: the
+    // workspace rescan adopts the library's `Package` through
+    // `oak_db::IdentityMap` and fills its files, and only this rescan drops it
+    // from the library. Those files belong to the workspace scan.
+    let dropped: Vec<Package> = removed
+        .into_iter()
+        .filter(|package| db.root_by_package(*package).is_none())
+        .collect();
+    clear_package_sources(db, &dropped);
 }
 
 /// Clear source files and scripts and reset [`Package::sources_revision()`],
