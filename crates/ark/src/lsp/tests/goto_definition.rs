@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use aether_path::FilePath;
@@ -28,6 +30,7 @@ use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UrlExt;
 use crate::lsp::util::test_path;
@@ -485,6 +488,181 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         goto_definition(make_params(&use_uri, 3, 6), world).unwrap(),
         None
     );
+}
+
+/// The `_targets.R` layout from posit-dev/positron#16523: `tar_source()` loads
+/// `R/`, and a function in one sourced file calls one defined in another. The
+/// effect only applies once `tar_source` resolves to the attached `targets`
+/// package, so `targets` must be discovered even though its library entry is a
+/// link, as in an renv library.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_goto_definition_through_tar_source_from_symlinked_library() {
+    let _aux = init_aux_for_test();
+
+    let cache = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("targets")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&cache.path().join("targets"));
+    NamespaceWriter::new()
+        .export("tar_source")
+        .write(&cache.path().join("targets"));
+
+    let library = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(cache.path().join("targets"), library.path().join("targets"))
+        .unwrap();
+
+    let mut state = state_without_source_fetching(library.path());
+
+    let workspace = tempfile::tempdir().unwrap();
+    write_targets_project(workspace.path());
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    assert_targets_project_definitions(state.world(), workspace.path());
+}
+
+/// Real renv: `renv::hydrate()` installs `targets` into an isolated renv cache
+/// and links it into the project library (symlinks on Unix, junctions on
+/// Windows). Covers whatever link layout the installed renv produces, which the
+/// hand-built symlink test above can't.
+#[tokio::test]
+async fn test_goto_definition_through_tar_source_from_renv_library() {
+    let _aux = init_aux_for_test();
+
+    // The renv project is also the workspace folder, like a user opening their
+    // project in Positron
+    let scratch = tempfile::tempdir().unwrap();
+    let project = scratch.path().join("project");
+    let library = renv_project_with_targets(&project, &scratch.path().join("cache"));
+
+    // Guard against renv silently copying instead of linking, which would turn
+    // this into a plain-library test
+    let targets_entry = std::fs::symlink_metadata(library.join("targets")).unwrap();
+    assert!(targets_entry.file_type().is_symlink());
+
+    let mut state = state_without_source_fetching(&library);
+
+    write_targets_project(&project);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(&project))
+        .await;
+
+    assert_targets_project_definitions(state.world(), &project);
+}
+
+/// Resolving `tar_source` needs only the `targets` `NAMESPACE`, not its
+/// sources. Without a source handler, the real `targets` in the renv test
+/// doesn't trigger fetches for its dependencies.
+fn state_without_source_fetching(library: &Path) -> GlobalState {
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[library.to_path_buf()]);
+
+    GlobalState::from_parts(
+        test_client(),
+        WorldState::new(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            SourceScheduler::new(None),
+        ),
+    )
+}
+
+/// Write the `_targets.R` layout from posit-dev/positron#16523 into `dir`.
+fn write_targets_project(dir: &Path) {
+    write_sources(dir, &[(
+        "_targets.R",
+        "library(targets)\ntar_source(\"R\")\ntargets_main()\n",
+    )]);
+    write_sources(&dir.join("R"), &[
+        ("func.R", "bar <- function() {\n  \"Hello\"\n}\n"),
+        (
+            "targets.R",
+            "targets_main <- function() {\n  list(foo = bar())\n}\n",
+        ),
+    ]);
+}
+
+#[track_caller]
+fn assert_targets_project_definitions(world: &WorldState, dir: &Path) {
+    let uri = |path: PathBuf| -> Uri { Url::from_file_path(path).unwrap().to_uri().unwrap() };
+    let file = |path: PathBuf| {
+        world
+            .db()
+            .file_by_path(&FilePath::from_path_buf(path).unwrap())
+            .unwrap()
+    };
+
+    let main_uri = uri(dir.join("_targets.R"));
+    let targets_uri = uri(dir.join("R").join("targets.R"));
+    let func_file = file(dir.join("R").join("func.R"));
+    let targets_file = file(dir.join("R").join("targets.R"));
+
+    // `targets_m<@>ain()` in `_targets.R`
+    assert_matches!(
+        goto_definition(make_params(&main_uri, 2, 0), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_uri(targets_file).unwrap());
+            assert_eq!(links[0].target_range, range((0, 0), (0, 12)));
+        }
+    );
+
+    // `b<@>ar()` in `R/targets.R`, defined in sibling `R/func.R`
+    assert_matches!(
+        goto_definition(make_params(&targets_uri, 1, 13), world).unwrap(),
+        Some(GotoDefinitionResponse::Link(ref links)) => {
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].target_uri, world.wire_uri(func_file).unwrap());
+            assert_eq!(links[0].target_range, range((0, 0), (0, 3)));
+        }
+    );
+}
+
+/// Create an renv project at `project` whose library links `targets` (and its
+/// dependencies) from an renv cache at `cache`. Returns the project library.
+///
+/// `renv::hydrate()` copies from the libraries of the R that runs it, so this
+/// needs no network but does need `renv` and `targets` installed. The cache is
+/// isolated so the test never writes to the user's renv cache.
+fn renv_project_with_targets(project: &Path, cache: &Path) -> PathBuf {
+    std::fs::create_dir_all(project).unwrap();
+
+    let script = r#"
+        project <- commandArgs(trailingOnly = TRUE)[[1]]
+        renv::init(project = project, bare = TRUE, load = FALSE, restart = FALSE)
+        library <- renv::paths$library(project = project)
+        dir.create(library, recursive = TRUE, showWarnings = FALSE)
+        renv::hydrate(packages = "targets", library = library, project = project, prompt = FALSE)
+        writeLines(library, file.path(project, "library-path"))
+    "#;
+    let script_path = project.join("setup.R");
+    std::fs::write(&script_path, script).unwrap();
+
+    let output = std::process::Command::new("Rscript")
+        .arg(&script_path)
+        .arg(project)
+        .env("RENV_PATHS_CACHE", cache)
+        .env("RENV_CONFIG_CACHE_SYMLINKS", "TRUE")
+        .output()
+        .unwrap();
+    if !output.status.success() {
+        panic!(
+            "renv setup failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let library = std::fs::read_to_string(project.join("library-path")).unwrap();
+    std::fs::remove_file(project.join("library-path")).unwrap();
+    std::fs::remove_file(&script_path).unwrap();
+
+    PathBuf::from(library.trim())
 }
 
 /// `.Rprofile` makes `subproject/` the assumed session directory, so

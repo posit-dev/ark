@@ -64,8 +64,10 @@ jobs:
             R6
             ragg
             readr
+            renv
             rstudioapi
             S7
+            targets
             tibble
 
       - name: Build

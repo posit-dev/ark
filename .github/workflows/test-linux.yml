@@ -90,8 +90,10 @@ jobs:
             R6
             ragg
             readr
+            renv
             rstudioapi
             S7
+            targets
             tibble
 
       - name: Set LD_LIBRARY_PATH
