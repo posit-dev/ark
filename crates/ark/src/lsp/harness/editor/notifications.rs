@@ -1,5 +1,4 @@
-//! The simulated editor's sending end: the lifecycle and document messages it
-//! sends to the server, as main-loop [`Event`]s.
+//! Editor notifications and requests represented as main-loop [`Event`]s.
 //!
 //! The session brings the server up with these, then drives documents through
 //! the same handlers a real editor would. `lsp::tests::utils::events` builds
@@ -11,17 +10,22 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::ClientCapabilities;
 use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::InitializedParams;
+use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentItem;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tower_lsp_server::ls_types::WorkspaceClientCapabilities;
 use tower_lsp_server::ls_types::WorkspaceFolder;
+use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -91,6 +95,39 @@ pub(crate) fn did_change(path: &Path, contents: &str, version: i32) -> Event {
             }],
         }),
     ))
+}
+
+pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidChangeWorkspaceFolders(DidChangeWorkspaceFoldersParams {
+            event: WorkspaceFoldersChangeEvent {
+                added: vec![WorkspaceFolder {
+                    uri: Uri::from_file_path(path).unwrap(),
+                    name: String::new(),
+                }],
+                removed: vec![],
+            },
+        }),
+    ))
+}
+
+pub(crate) fn goto_definition(
+    path: &Path,
+    position: Position,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    let params = GotoDefinitionParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: Uri::from_file_path(path).unwrap(),
+            },
+            position,
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let event = Event::Lsp(LspMessage::Request(LspRequest::GotoDefinition(params), tx));
+    (event, rx)
 }
 
 pub(crate) fn did_close(path: &Path) -> Event {

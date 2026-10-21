@@ -137,6 +137,23 @@ pub(crate) enum Event {
     TestPanicMainLoop,
 }
 
+impl Event {
+    /// Label for the `handle_event` tracing span. Coarse on purpose: LSP
+    /// handlers are instrumented and name themselves as child spans, and the
+    /// variants' payloads can carry document contents.
+    fn kind(&self) -> &'static str {
+        match self {
+            Event::Lsp(_) => "lsp",
+            Event::Kernel(_) => "kernel",
+            Event::OakScanCompleted(_) => "oak_scan_completed",
+            Event::SourceCompleted(_) => "source_completed",
+            Event::DiagnosticsReady(_) => "diagnostics_ready",
+            #[cfg(feature = "testing")]
+            Event::TestPanicMainLoop => "test_panic_main_loop",
+        }
+    }
+}
+
 #[derive(Debug)]
 #[expect(clippy::enum_variant_names)]
 pub(crate) enum KernelNotification {
@@ -200,7 +217,19 @@ pub(crate) struct GlobalState {
     /// `Event::Task`.
     events_tx: TokioUnboundedSender<Event>,
     events_rx: TokioUnboundedReceiver<Event>,
+
+    /// Diagnostics need a refresh whenever the current oak revision differs.
+    last_refreshed_revision: salsa::plumbing::Revision,
+
+    /// Preserved across intervening writes so a steady backlog cannot reset
+    /// the refresh deadline.
+    refresh_deferred_since: Option<std::time::Instant>,
 }
+
+/// Refresh diagnostics after this delay even if more events are queued.
+/// The check runs between event handlers, so a long-running handler can delay
+/// the refresh further. This does not bound diagnostics completion time.
+const MAX_REFRESH_DELAY: Duration = Duration::from_millis(50);
 
 /// Owns the running LSP loops. Dropping it shuts them down.
 ///
@@ -375,6 +404,7 @@ impl GlobalState {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
+        let last_refreshed_revision = salsa::plumbing::current_revision(world.db());
 
         Self {
             world,
@@ -383,6 +413,8 @@ impl GlobalState {
             reported_request_panics: HashSet::new(),
             events_tx,
             events_rx,
+            last_refreshed_revision,
+            refresh_deferred_since: None,
         }
     }
 
@@ -487,14 +519,11 @@ impl GlobalState {
                         panic!("Test panic outside the event recovery boundary");
                     }
 
-                    let outcome =
-                        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event))
-                            .await;
-
-                    match outcome {
-                        Ok(Ok(())) => {},
-                        Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
+                    match self.handle_event_in_boundary(event).await {
+                        Ok((Ok(()), _span)) => {},
+                        Ok((Err(err), _span)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
+                            // `handle_event()` absorbs cancellation from handlers.
                             EventUnwind::Cancelled => {},
                             EventUnwind::Panicked(payload) => {
                                 // `report_crash()` reads only the `Client` handle. Drop `self` after
@@ -521,11 +550,60 @@ impl GlobalState {
         self.events_rx.recv().await.unwrap()
     }
 
+    /// Keep event handling and its deferred refresh inside the same recovery
+    /// boundary in production and the harness. Callers decide whether a panic
+    /// shuts down the LSP or fails a test.
+    async fn handle_event_in_boundary(
+        &mut self,
+        event: Event,
+    ) -> Result<(anyhow::Result<()>, DispatchTiming), panic::PanicPayload> {
+        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
+    }
+
+    /// The `handle_event` span groups one main-loop tick for profiling, labelled
+    /// with [`Event::kind()`]. Its children are the instrumented handler and,
+    /// when a refresh fires, `refresh_if_due`. The span minus that refresh is
+    /// the tick time outside the refresh: dispatch plus the watchdog, boundary,
+    /// and refresh-eligibility checks. `DispatchTiming` is measured separately
+    /// so harness timings don't depend on which tracing layers are installed.
+    #[tracing::instrument(level = "info", skip_all, fields(kind = event.kind()))]
+    async fn handle_event(&mut self, event: Event) -> (anyhow::Result<()>, DispatchTiming) {
+        let _tick = self
+            .lsp_state
+            .watchdog
+            .tick(self.world.db().outstanding_holds());
+
+        // Recover handler cancellation here so `refresh_if_due()` still runs
+        // inside the caller's panic boundary, as Salsa access requires. Recovering
+        // in `main_loop()` would put the refresh outside its per-event boundary.
+        // Other panics skip the refresh because the handler may have partially
+        // written its state.
+        let start = std::time::Instant::now();
+        let result =
+            match panic::catch_unwind_async_payload(Recovery::Always, self.dispatch_event(event))
+                .await
+            {
+                Ok(result) => result,
+                Err(payload) => match classify_event_unwind(payload) {
+                    EventUnwind::Cancelled => Ok(()),
+                    EventUnwind::Panicked(payload) => std::panic::resume_unwind(payload),
+                },
+            };
+        let timing = DispatchTiming {
+            start,
+            end: std::time::Instant::now(),
+        };
+
+        // An event that empties the queue must trigger any deferred refresh,
+        // even if its handler returns an error or is cancelled. Otherwise,
+        // diagnostics could wait indefinitely for another event.
+        self.refresh_if_due();
+
+        (result, timing)
+    }
+
     #[rustfmt::skip]
-    /// Handle event of main loop
-    ///
-    /// The events are attached to _exclusive_, _sharing_, or _concurrent_
-    /// handlers.
+    /// Events use _exclusive_, _sharing_, or _concurrent_ handlers.
     ///
     /// - Exclusive handlers are passed an `&mut` to the world state so they can
     ///   update it.
@@ -535,18 +613,8 @@ impl GlobalState {
     ///   of the main loop should be as fast as possible to increase throughput)
     ///   they run on the [`crate::lsp::analysis`] pool over a snapshot of the
     ///   state.
-    async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+    async fn dispatch_event(&mut self, event: Event) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
-        let _tick = self.lsp_state.watchdog.tick(self.world.db().outstanding_holds());
-
-        // Diagnostics read the oak database (workspace symbols, imports,
-        // resolved definitions), so any handler that writes to oak invalidates
-        // them. Rather than have each write site remember to refresh, we watch
-        // the oak revision across the whole tick: if a handler advanced it,
-        // refresh centrally. Config and console state live outside oak, so the
-        // handlers that mutate those advance the revision synthetically (see
-        // `WorldState::bump_revision`) to route through this same path.
-        let old_revision = salsa::plumbing::current_revision(self.world.db());
 
         match event {
             Event::Lsp(msg) => match msg {
@@ -753,8 +821,8 @@ impl GlobalState {
                 dispatch_scan_requests(&self.lsp_state.scan_pool, &self.events_tx, followups);
 
                 // Warm the workspace symbol index once the scan settles. The
-                // oak semantic index is warmed separately on every revision (see
-                // the revision-advanced block below).
+                // oak semantic index is warmed separately, as a side effect of
+                // the diagnostics refresh in `refresh_if_due()`.
                 if !self.lsp_state.oak_scheduler.has_pending_scans() {
                     analysis::warm_workspace_index(&self.world, &self.lsp_state.analysis_pool);
                 }
@@ -810,26 +878,59 @@ impl GlobalState {
             lsp::log_info!("Handler took more than 50ms");
         }
 
-        if salsa::plumbing::current_revision(self.world.db()) != old_revision {
-            lsp::log_info!("World state revision advanced");
+        Ok(())
+    }
 
-            let tasks = self.lsp_state.diagnostics.refresh_all(
-                &self.world,
-                &self.lsp_state.analysis_pool,
-                &self.events_tx,
-            );
-            self.lsp_state.diagnostics_metrics.record_batch(tasks);
-
-            // Empty batches emit no `DiagnosticsReady`, so log their initial
-            // snapshot here.
-            self.lsp_state
-                .diagnostics_metrics
-                .log_snapshot(&self.lsp_state.analysis_pool);
-
-            self.schedule_sources();
+    /// Coalesce refreshes while events are queued to avoid starting diagnostics
+    /// that subsequent writes would cancel. This is not debouncing. A revision
+    /// change refreshes immediately if the queue is empty, and
+    /// [`MAX_REFRESH_DELAY`] limits deferral while a backlog remains.
+    ///
+    /// Revision tracking covers writes to diagnostics dependencies, including
+    /// workspace symbols, imports, and resolved definitions, without requiring
+    /// each writer to request a refresh. Config and console state live outside
+    /// oak, so their handlers call [`WorldState::bump_revision()`] to invalidate
+    /// diagnostics through the same mechanism.
+    ///
+    /// Tracking the last refreshed revision keeps deferred work pending across
+    /// failed or interrupted events and prevents duplicate refreshes when the
+    /// revision is unchanged.
+    fn refresh_if_due(&mut self) {
+        let revision = salsa::plumbing::current_revision(self.world.db());
+        if revision == self.last_refreshed_revision {
+            return;
         }
 
-        Ok(())
+        let deferred_since = *self
+            .refresh_deferred_since
+            .get_or_insert_with(std::time::Instant::now);
+        if !self.events_rx.is_empty() && deferred_since.elapsed() < MAX_REFRESH_DELAY {
+            return;
+        }
+
+        // Entered only once a refresh fires. Most events return early above,
+        // and a span per skipped check would bury the real refreshes in
+        // profiles.
+        let _span = tracing::info_span!("refresh_if_due").entered();
+
+        lsp::log_info!("World state revision advanced");
+        self.last_refreshed_revision = revision;
+        self.refresh_deferred_since = None;
+
+        let tasks = self.lsp_state.diagnostics.refresh_all(
+            &self.world,
+            &self.lsp_state.analysis_pool,
+            &self.events_tx,
+        );
+        self.lsp_state.diagnostics_metrics.record_batch(tasks);
+
+        // Empty batches emit no `DiagnosticsReady`, so log their initial
+        // snapshot here.
+        self.lsp_state
+            .diagnostics_metrics
+            .log_snapshot(&self.lsp_state.analysis_pool);
+
+        self.schedule_sources();
     }
 
     fn schedule_sources(&mut self) {
@@ -949,12 +1050,24 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
 impl GlobalState {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
-    pub(crate) async fn handle_event_once(&mut self, event: Event) {
-        self.handle_event(event).await.unwrap();
+    /// Panics unwind to the test runner rather than shutting down the LSP.
+    ///
+    /// `handle_event()` absorbs handler cancellation. Any other unwind fails the
+    /// test, including a cancellation that `main_loop()` would ignore.
+    pub(crate) async fn handle_event_once(&mut self, event: Event) -> DispatchTiming {
+        match self.handle_event_in_boundary(event).await {
+            Ok((Ok(()), timing)) => timing,
+            Ok((Err(err), _timing)) => panic!("Failure while handling event: {err:?}"),
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     pub(crate) fn lsp_state(&self) -> &LspState {
         &self.lsp_state
+    }
+
+    pub(crate) fn world(&self) -> &WorldState {
+        &self.world
     }
 
     /// Report whether no scheduler, analysis, or main-loop work is pending.
@@ -962,9 +1075,18 @@ impl GlobalState {
     /// and re-check it while waiting, since the pool can go idle without
     /// sending an event.
     pub(crate) fn is_settled(&self) -> bool {
+        let _boundary = panic::test_boundary();
+
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
         {
+            return false;
+        }
+
+        // A refresh deferred by `refresh_if_due()` is pending work even though
+        // nothing has been queued for it yet.
+        let revision = salsa::plumbing::current_revision(self.world.db());
+        if revision != self.last_refreshed_revision {
             return false;
         }
 
@@ -980,12 +1102,12 @@ impl GlobalState {
     /// - Pending oak scans
     /// - Pending source requests
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
-        self.handle_event(event).await.unwrap();
+        self.handle_event_once(event).await;
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
         {
             let event = self.next_event().await;
-            self.handle_event(event).await.unwrap();
+            self.handle_event_once(event).await;
         }
     }
 
@@ -994,7 +1116,7 @@ impl GlobalState {
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() {
             let event = self.next_event().await;
-            self.handle_event(event).await.unwrap();
+            self.handle_event_once(event).await;
         }
     }
 
@@ -1002,7 +1124,7 @@ impl GlobalState {
     pub(crate) async fn pump_sources_to_quiescence(&mut self) {
         while self.lsp_state.source_scheduler.has_pending() {
             let event = self.next_event().await;
-            self.handle_event(event).await.unwrap();
+            self.handle_event_once(event).await;
         }
     }
 
@@ -1015,13 +1137,22 @@ impl GlobalState {
             if wanted(&event) {
                 return event;
             }
-            self.handle_event(event).await.unwrap();
+            self.handle_event_once(event).await;
         }
     }
+}
 
-    pub(crate) fn world(&self) -> &WorldState {
-        &self.world
-    }
+/// When `dispatch_event()` started and returned for one event. Captured in
+/// `handle_event()` so the `refresh_if_due()` that follows dispatch is
+/// excluded from handler timings.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(
+    not(any(test, feature = "testing")),
+    expect(dead_code, reason = "only the harness reads the timing")
+)]
+pub(crate) struct DispatchTiming {
+    pub(crate) start: std::time::Instant,
+    pub(crate) end: std::time::Instant,
 }
 
 enum EventUnwind {
@@ -1405,6 +1536,8 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use aether_path::FilePath;
     use oak_scan::DbScan;
     use serde_json::Value;
@@ -1412,6 +1545,7 @@ mod tests {
     use url::Url;
 
     use super::classify_event_unwind;
+    use super::init_aux_for_test;
     use super::register_auxiliary_tx;
     use super::respond;
     use super::send_auxiliary;
@@ -1420,12 +1554,22 @@ mod tests {
     use super::AuxiliaryState;
     use super::Diagnostic;
     use super::DiagnosticsPublication;
+    use super::Event;
     use super::EventUnwind;
+    use super::GlobalState;
     use super::LspServiceContext;
+    use super::LspState;
+    use super::MAX_REFRESH_DELAY;
     use crate::lsp::backend::LspError;
+    use crate::lsp::backend::LspMessage;
+    use crate::lsp::backend::LspNotification;
     use crate::lsp::backend::LspResponse;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::harness::editor::client::test_client;
     use crate::lsp::harness::editor::client::TestClient;
+    use crate::lsp::harness::editor::notifications::did_change;
+    use crate::lsp::harness::editor::notifications::did_open;
+    use crate::lsp::sources::SourceScheduler;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
@@ -1537,6 +1681,90 @@ mod tests {
             diagnostics,
             version: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_failing_event_still_runs_a_deferred_refresh() {
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+        let unopened = dir.path().join("unopened.R");
+
+        state
+            .events_tx
+            .send(did_change(&unopened, "y <- 2\n", 1))
+            .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .0
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
+
+        let failing = state.next_event().await;
+        assert!(state.handle_event(failing).await.0.is_err());
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+    }
+
+    #[tokio::test]
+    async fn test_owed_refresh_runs_after_the_delay_despite_queued_events() {
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+
+        state
+            .events_tx
+            .send(did_change(&dir.path().join("queued.R"), "y <- 2\n", 1))
+            .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .0
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
+
+        state.refresh_deferred_since = Some(Instant::now() - MAX_REFRESH_DELAY);
+        state.refresh_if_due();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+        assert!(!state.events_rx.is_empty());
+
+        state.refresh_if_due();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+    }
+
+    /// Cancellation of the last queued event must still trigger the refresh
+    /// deferred while that event was queued. No further event may arrive to
+    /// trigger it.
+    #[tokio::test]
+    async fn test_cancelled_event_still_runs_a_deferred_refresh() {
+        let _aux = init_aux_for_test();
+        let mut state = global_state();
+        let dir = tempfile::tempdir().unwrap();
+
+        state
+            .events_tx
+            .send(Event::Lsp(LspMessage::Notification(
+                LspNotification::TestCancelRTask,
+            )))
+            .unwrap();
+        state
+            .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
+            .await
+            .0
+            .unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
+
+        let cancelled = state.next_event().await;
+        state.handle_event(cancelled).await.0.unwrap();
+        assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
+    }
+
+    fn global_state() -> GlobalState {
+        GlobalState::from_parts(
+            test_client(),
+            WorldState::default(),
+            LspState::new(tokio_unbounded_channel().0, SourceScheduler::new(None)),
+        )
     }
 
     #[test]

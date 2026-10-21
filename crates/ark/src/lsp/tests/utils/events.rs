@@ -3,10 +3,7 @@ use std::path::Path;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
-use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::Uri;
-use tower_lsp_server::ls_types::WorkspaceFolder;
-use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -51,20 +48,6 @@ pub(crate) fn did_change_configuration() -> Event {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeConfiguration(DidChangeConfigurationParams {
             settings: serde_json::Value::Null,
-        }),
-    ))
-}
-
-pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
-    Event::Lsp(LspMessage::Notification(
-        LspNotification::DidChangeWorkspaceFolders(DidChangeWorkspaceFoldersParams {
-            event: WorkspaceFoldersChangeEvent {
-                added: vec![WorkspaceFolder {
-                    uri: Uri::from_file_path(path).unwrap(),
-                    name: String::new(),
-                }],
-                removed: vec![],
-            },
         }),
     ))
 }

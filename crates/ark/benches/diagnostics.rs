@@ -25,11 +25,15 @@
 //!
 //! The `ctl.*` and `one.*` cases target `R/mutate.R`, with the remaining dplyr
 //! files as workspace context. The `all.*` cases cover every `.R` file under
-//! `R/`.
+//! `R/`. `burst` replays a burst of document churn over a small temporary
+//! fixture instead of the corpus, with 1000 temporary documents.
 //!
 //! Case IDs are limited to 11 characters. Criterion wraps `id` onto its own
 //! line when `"diagnostics/".len() + id.len()` exceeds 23, breaking the
 //! one-line-per-case output from `just bench`.
+//!
+//! `OAK_MAX_ANALYSIS_THREADS` pins the analysis pool's worker count for the
+//! end-to-end cases. The `ctl.*` cases run on the bench thread and ignore it.
 //!
 //! Diagnostics resolve base symbols through the `ReadConsole` scopes. The
 //! benchmark starts one R session to obtain those scopes, while package
@@ -64,6 +68,9 @@ use tower_lsp_server::ls_types::Diagnostic;
 use tower_lsp_server::ls_types::DiagnosticSeverity;
 use walkdir::WalkDir;
 
+#[path = "../tests/support/burst_replay.rs"]
+mod burst_replay;
+
 /// dplyr v1.1.4. Cloned by tag and checked against this SHA, so the corpus
 /// can't drift under a moved tag.
 const DPLYR_URL: &str = "https://github.com/tidyverse/dplyr";
@@ -92,6 +99,14 @@ const TARGET: &str = "R/mutate.R";
 
 /// A file changed by cases that must not edit the diagnostic target.
 const UNRELATED: &str = "R/across.R";
+
+/// At `BurstConfig::DEFAULT` size the replay finishes in a few milliseconds,
+/// too little backlog for refresh scheduling to dominate the timing. 1000
+/// temporaries queue 3000 revision-advancing events ahead of the main loop.
+const BURST: burst_replay::BurstConfig = burst_replay::BurstConfig {
+    temporaries: 1000,
+    ..burst_replay::BurstConfig::DEFAULT
+};
 
 type KeyDiagnosticFields<'a> = (&'a str, Option<DiagnosticSeverity>, (u32, u32), (u32, u32));
 
@@ -173,6 +188,7 @@ fn main() {
     bench_edit(&mut group, &runtime, &fixtures, &cache);
     bench_open(&mut group, &runtime, &fixtures, &cache);
     bench_symbol(&mut group, &runtime, &fixtures, &cache);
+    bench_burst(&mut group, &runtime);
     group.finish();
 
     let mut group = criterion.benchmark_group("diagnostics");
@@ -413,6 +429,32 @@ fn bench_symbol(
                 close_document(runtime, &mut session, &path);
             }
             end_session(runtime, session);
+            total
+        });
+    });
+}
+
+/// Measure final recurring-document diagnostics and probe completion, not full
+/// settlement. Concurrent workspace scans and source ingestion may outlast
+/// this endpoint. The `burst` integration test reports settlement time as well
+/// so work outside the measured interval remains visible.
+fn bench_burst(group: &mut BenchmarkGroup<'_, WallTime>, runtime: &Runtime) {
+    group.bench_function("burst", |bencher| {
+        bencher.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let fixture = burst_replay::Fixture::new();
+                let mut replay = runtime.block_on(burst_replay::Replay::start(&fixture, BURST));
+                replay.enqueue_burst(&fixture);
+
+                let start = Instant::now();
+                runtime.block_on(replay.drive_to_endpoint(&fixture));
+                total += start.elapsed();
+
+                runtime.block_on(replay.settle());
+                replay.assert_final_state(&fixture);
+                end_session(runtime, replay.session);
+            }
             total
         });
     });

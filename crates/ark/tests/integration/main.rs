@@ -1,3 +1,4 @@
+mod burst;
 mod connections;
 mod dap;
 mod dap_breakpoints;

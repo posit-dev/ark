@@ -9,22 +9,36 @@
 //! process-global. Starting a new session retires the previous one's auxiliary
 //! receiver, so sessions must run one after another.
 
+mod package_sources;
+mod requests;
 #[cfg(test)]
 mod test_access;
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use aether_path::FilePath;
+use anyhow::anyhow;
+use oak_db::SourceDb;
+use package_sources::PackageSources;
+pub use requests::RequestAnswer;
+pub use requests::RequestHandle;
+use requests::Requests;
 use serde_json::Value;
 use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::Uri;
 
 use super::editor::client::TestClient;
 use super::editor::notifications;
 use super::LspHarness;
+use crate::lsp::analysis::DiagnosticsMetrics;
 use crate::lsp::analysis::PoolMetrics;
+use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::main_loop::register_auxiliary_tx;
@@ -34,9 +48,11 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
+use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::traits::url::UrlExt;
+use crate::panic;
 
 impl LspHarness {
     /// Start the main loop against a simulated editor that serves `settings`
@@ -49,6 +65,19 @@ impl LspHarness {
     /// starts.
     pub async fn start(self, settings: &[(&str, Value)]) -> LspSession {
         self.start_with(settings, None).await
+    }
+
+    /// Serve source requests from prewritten `R/` directories, keyed by package
+    /// name. Requests use the source scheduler, I/O pool, and ingestion path,
+    /// but do not download or write source files. Unknown packages return a
+    /// source-fetch failure.
+    pub async fn start_with_package_sources(
+        self,
+        settings: &[(&str, Value)],
+        directories: HashMap<String, PathBuf>,
+    ) -> LspSession {
+        let handler = Arc::new(PackageSources::new(directories));
+        self.start_with(settings, Some(handler)).await
     }
 
     async fn start_with(
@@ -74,20 +103,25 @@ impl LspHarness {
             .map(|folder| folder.to_url().to_uri().unwrap())
             .collect();
 
-        let state = GlobalState::from_parts(
-            client.client(),
-            self.state,
-            LspState::new(
-                tokio::sync::mpsc::unbounded_channel().0,
-                SourceScheduler::new(source_handler),
-            ),
-        );
+        let state = {
+            let _boundary = panic::test_boundary();
+            GlobalState::from_parts(
+                client.client(),
+                self.state,
+                LspState::new(
+                    tokio::sync::mpsc::unbounded_channel().0,
+                    SourceScheduler::new(source_handler),
+                ),
+            )
+        };
 
         let mut session = LspSession {
             state,
             client,
             auxiliary_rx,
             raw_publications: Vec::new(),
+            definitions: Requests::new(definition_response),
+            peak_outstanding_holds: 0,
             background_panics: 0,
         };
 
@@ -121,7 +155,38 @@ pub struct LspSession {
     /// Main-loop publications before unchanged diagnostics are suppressed.
     raw_publications: Vec<DiagnosticsPublication>,
 
+    definitions: Requests<DefinitionResult>,
+
+    peak_outstanding_holds: usize,
+
     background_panics: usize,
+}
+
+pub type DefinitionResult = anyhow::Result<Option<GotoDefinitionResponse>>;
+
+/// Identifies a request sent with [`LspSession::send_goto_definition()`].
+pub type DefinitionRequest = RequestHandle<DefinitionResult>;
+
+/// A `textDocument/definition` answer as the session observed it.
+pub type DefinitionAnswer = RequestAnswer<DefinitionResult>;
+
+/// A publication before unchanged diagnostic sets are suppressed, including
+/// accepted diagnostics and the empty sets sent by `didClose`.
+#[derive(Debug, Clone, Copy)]
+pub struct Publication<'session>(&'session DiagnosticsPublication);
+
+impl<'session> Publication<'session> {
+    pub fn uri(&self) -> &'session Uri {
+        &self.0.uri
+    }
+
+    pub fn version(&self) -> Option<i32> {
+        self.0.version
+    }
+
+    pub fn diagnostics(&self) -> &'session [Diagnostic] {
+        &self.0.diagnostics
+    }
 }
 
 impl LspSession {
@@ -156,8 +221,21 @@ impl LspSession {
     /// The main loop only publishes diagnostics while handling an event, so
     /// collecting auxiliary events here records every publication.
     pub(crate) async fn handle_once(&mut self, event: Event) {
-        self.state.handle_event_once(event).await;
+        let definition = response_tx(&event).and_then(|tx| self.definitions.find(tx));
+
+        let timing = self.state.handle_event_once(event).await;
+
+        if let Some(definition) = definition {
+            self.definitions.collect(definition, timing);
+        }
+
         self.collect_auxiliary();
+
+        let holds = {
+            let _boundary = panic::test_boundary();
+            self.state.world().db().outstanding_holds()
+        };
+        self.peak_outstanding_holds = self.peak_outstanding_holds.max(holds);
     }
 
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
@@ -179,6 +257,30 @@ impl LspSession {
 
     pub fn send_did_close(&self, path: &Path) {
         self.enqueue(notifications::did_close(path));
+    }
+
+    /// Queue a `didChangeWorkspaceFolders` adding `path`, which schedules a
+    /// workspace scan once handled.
+    pub fn send_did_change_workspace_folders(&self, path: &Path) {
+        self.enqueue(notifications::did_change_workspace_folders(path));
+    }
+
+    /// Queue a `textDocument/definition` request. Read its answer with
+    /// [`Self::definition_answer()`] once the loop has handled it.
+    pub fn send_goto_definition(&mut self, path: &Path, position: Position) -> DefinitionRequest {
+        let (event, response_rx) = notifications::goto_definition(path, position);
+        let Some(tx) = response_tx(&event) else {
+            panic!("A goto-definition event carries no reply sender");
+        };
+        let request = self.definitions.track(tx, response_rx);
+        self.enqueue(event);
+        request
+    }
+
+    /// Return the observed answer, or `None` until the session collects it.
+    /// Panics if `request` was sent by another session.
+    pub fn definition_answer(&self, request: DefinitionRequest) -> Option<&DefinitionAnswer> {
+        self.definitions.answer(request)
     }
 
     /// Queue an event without handling it, to model a busy main loop.
@@ -307,8 +409,51 @@ impl LspSession {
         }
     }
 
-    pub(crate) fn analysis_metrics(&self) -> PoolMetrics {
+    /// Diagnostics publications in the order the main loop made them.
+    pub fn publications(&self) -> impl DoubleEndedIterator<Item = Publication<'_>> {
+        self.raw_publications.iter().map(Publication)
+    }
+
+    /// Wire URIs of the documents the server holds open.
+    pub fn open_documents(&self) -> Vec<&Uri> {
+        self.state
+            .world()
+            .open_files
+            .values()
+            .map(|open_file| open_file.wire_uri())
+            .collect()
+    }
+
+    /// Source texts ingested for the library package `name`, or `None` if the
+    /// database has no such package. Empty until the package's sources have
+    /// been fetched and ingested.
+    pub fn package_sources(&self, name: &str) -> Option<Vec<&str>> {
+        let _boundary = panic::test_boundary();
+
+        let db = self.state.world().db();
+        let package = db.package_by_name(name)?;
+        Some(
+            package
+                .files(db)
+                .iter()
+                .map(|file| file.source_text(db).as_str())
+                .collect(),
+        )
+    }
+
+    pub fn diagnostics_metrics(&self) -> DiagnosticsMetrics {
+        self.state.lsp_state().diagnostics_metrics
+    }
+
+    pub fn analysis_metrics(&self) -> PoolMetrics {
         self.state.lsp_state().analysis_pool.metrics()
+    }
+
+    /// Maximum database-handle count sampled after event handling. Peaks within
+    /// a handler or between samples are not captured. Counts above 1 mean a
+    /// database write must wait for other handles to drop.
+    pub fn peak_outstanding_holds(&self) -> usize {
+        self.peak_outstanding_holds
     }
 
     fn collect_auxiliary(&mut self) {
@@ -361,6 +506,30 @@ impl LspSession {
     }
 }
 
+/// The reply sender of a request event, which identifies the request.
+fn response_tx(event: &Event) -> Option<&TokioUnboundedSender<RequestResponse>> {
+    match event {
+        Event::Lsp(LspMessage::Request(_request, response_tx)) => Some(response_tx),
+        _ => None,
+    }
+}
+
+fn definition_response(response: Option<RequestResponse>) -> DefinitionResult {
+    match response {
+        Some(RequestResponse::Result(Ok(LspResponse::GotoDefinition(response)))) => Ok(response),
+        Some(RequestResponse::Result(Ok(response))) => Err(anyhow!(
+            "Unexpected response to a definition request: {response:?}"
+        )),
+        Some(RequestResponse::Result(Err(err))) => {
+            Err(anyhow!("The definition request failed: {err:?}"))
+        },
+        Some(RequestResponse::Disabled) => Err(anyhow!("The definition request is disabled")),
+        None => Err(anyhow!(
+            "The main loop dropped a definition request without answering"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::Sender;
@@ -370,6 +539,7 @@ mod tests {
     use oak_db::OakDatabase;
     use serde_json::Value;
     use tower_lsp_server::ls_types::Diagnostic;
+    use tower_lsp_server::ls_types::Position;
 
     use super::LspSession;
     use crate::lsp::analysis::DiagnosticsReady;
@@ -466,6 +636,50 @@ mod tests {
             .answered_requests()
             .contains(&Ok(String::from("workspace/configuration"))));
         assert!(!session.world().config.diagnostics.enable);
+    }
+
+    /// Collection moves an answer out of the pending list, and it stays
+    /// readable after later events are handled.
+    #[tokio::test]
+    async fn test_definition_answer_stays_readable_after_collection() {
+        let workspace = tempfile::tempdir().unwrap();
+        let script = workspace.path().join("script.R");
+        let mut session = session().await;
+
+        session.send_did_open(&script, "f <- function() 1\nf()\n");
+        let request = session.send_goto_definition(&script, Position::new(1, 0));
+        tokio::time::timeout(TIMEOUT, session.settle())
+            .await
+            .unwrap();
+
+        session.send_did_change(&script, "f <- function() 2\nf()\n", 1);
+        tokio::time::timeout(TIMEOUT, session.settle())
+            .await
+            .unwrap();
+
+        assert!(!session.definitions.has_pending());
+        let Some(answer) = session.definition_answer(request) else {
+            panic!("The definition request was never answered");
+        };
+        assert!(matches!(answer.response, Ok(Some(_))));
+    }
+
+    /// Handles are indices into the sending session's answers, so another
+    /// session must reject them rather than read an unrelated answer at the
+    /// same index.
+    #[tokio::test]
+    #[should_panic(expected = "was sent by another session")]
+    async fn test_definition_answer_rejects_another_sessions_request() {
+        let workspace = tempfile::tempdir().unwrap();
+        let script = workspace.path().join("script.R");
+
+        let mut first = session().await;
+        let request = first.send_goto_definition(&script, Position::new(0, 0));
+        drop(first);
+
+        let mut second = session().await;
+        second.send_goto_definition(&script, Position::new(0, 0));
+        second.definition_answer(request);
     }
 
     /// The queued notifications and the wait cover one complete round trip
