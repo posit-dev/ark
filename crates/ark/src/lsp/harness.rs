@@ -38,6 +38,7 @@ pub use crate::lsp::analysis::PoolMetrics;
 pub use crate::lsp::analysis::MAX_ANALYSIS_THREADS_ENV_VAR;
 use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
+use crate::panic;
 
 /// Owns the analysis inputs a diagnostics pass reads, with no executor
 /// attached.
@@ -78,20 +79,24 @@ impl LspHarness {
     /// Register an editor buffer without scheduling the work that a `didOpen`
     /// notification would trigger.
     pub fn prepare_document(&mut self, path: &FilePath, contents: String) -> anyhow::Result<()> {
-        let file = self.state.db_mut().upsert_editor(path.clone(), contents);
-        let uri = self.state.wire_uri(file)?;
-        self.state.insert_open_file(uri, path.clone(), file, None);
-        Ok(())
+        panic::within_boundary(|| {
+            let file = self.state.db_mut().upsert_editor(path.clone(), contents);
+            let uri = self.state.wire_uri(file)?;
+            self.state.insert_open_file(uri, path.clone(), file, None);
+            Ok(())
+        })
     }
 
     pub fn close_document(&mut self, path: &FilePath) {
         self.state.open_files.remove(path);
-        self.state.db_mut().close_editor(path);
+        panic::within_boundary(|| self.state.db_mut().close_editor(path));
     }
 
     pub fn source_text(&self, path: &FilePath) -> anyhow::Result<&str> {
         let file = self.state.open_file(path)?.file();
-        Ok(file.source_text(self.state.db()).as_str())
+        Ok(panic::within_boundary(|| {
+            file.source_text(self.state.db()).as_str()
+        }))
     }
 }
 

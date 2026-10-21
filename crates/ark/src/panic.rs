@@ -114,10 +114,23 @@ fn in_catch_boundary() -> bool {
 /// Assert that Salsa database access runs inside a declared `catch_unwind()` boundary.
 /// Salsa queries can panic on cycles.
 ///
-/// Tests and the LSP test harness invoke handlers without their normal boundaries, so
-/// `cfg!(any(test, feature = "testing"))` exempts them.
+/// Unit tests invoke handlers without their normal boundaries, so `cfg!(test)` exempts
+/// them. The `testing` feature gets no exemption because Ark's own dev-dependency
+/// enables it for every integration test and benchmark. The LSP harness enters
+/// boundaries instead, see [`within_boundary()`].
 pub(crate) fn assert_in_catch_boundary() {
-    debug_assert!(cfg!(any(test, feature = "testing")) || in_catch_boundary());
+    debug_assert!(cfg!(test) || in_catch_boundary());
+}
+
+/// Runs `f` inside a recovering boundary and resumes any panic, so the caller sees the
+/// panic as if no boundary were there. Lets test harnesses access Salsa the way
+/// production code does without an exemption from [`assert_in_catch_boundary()`].
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn within_boundary<T>(f: impl FnOnce() -> T) -> T {
+    match catch_unwind_payload(Recovery::Always, f) {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and

@@ -9,6 +9,7 @@ use super::LspHarness;
 use crate::lsp::analysis::is_testthat_path;
 use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::diagnostics::generate_diagnostics;
+use crate::panic;
 
 /// Keeps a [`WorldStateSnapshot`] private so snapshot creation remains
 /// separately measurable from diagnostics.
@@ -16,7 +17,7 @@ pub struct HarnessSnapshot(WorldStateSnapshot);
 
 impl LspHarness {
     pub fn snapshot(&self) -> HarnessSnapshot {
-        HarnessSnapshot(self.state.snapshot())
+        HarnessSnapshot(panic::within_boundary(|| self.state.snapshot()))
     }
 
     /// Generate diagnostics synchronously, without the auxiliary channel used
@@ -27,11 +28,13 @@ impl LspHarness {
         snapshot: HarnessSnapshot,
     ) -> anyhow::Result<Vec<Diagnostic>> {
         let open_file = self.state.open_file(path)?;
-        Ok(generate_diagnostics(
-            open_file.file(),
-            snapshot.0,
-            is_testthat_path(path),
-            open_file.wire_uri(),
-        ))
+        Ok(panic::within_boundary(|| {
+            generate_diagnostics(
+                open_file.file(),
+                snapshot.0,
+                is_testthat_path(path),
+                open_file.wire_uri(),
+            )
+        }))
     }
 }

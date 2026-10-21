@@ -53,6 +53,7 @@ use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::traits::url::UrlExt;
+use crate::panic;
 
 impl LspHarness {
     /// Start the main loop against a simulated editor that serves `settings`
@@ -103,14 +104,16 @@ impl LspHarness {
             .map(|folder| folder.to_url().to_uri().unwrap())
             .collect();
 
-        let state = GlobalState::from_parts(
-            client.client(),
-            self.state,
-            LspState::new(
-                tokio::sync::mpsc::unbounded_channel().0,
-                SourceScheduler::new(source_handler),
-            ),
-        );
+        let state = panic::within_boundary(|| {
+            GlobalState::from_parts(
+                client.client(),
+                self.state,
+                LspState::new(
+                    tokio::sync::mpsc::unbounded_channel().0,
+                    SourceScheduler::new(source_handler),
+                ),
+            )
+        });
 
         let mut session = LspSession {
             state,
@@ -230,9 +233,8 @@ impl LspSession {
 
         self.collect_auxiliary();
 
-        self.peak_outstanding_holds = self
-            .peak_outstanding_holds
-            .max(self.state.world().db().outstanding_holds());
+        let holds = panic::within_boundary(|| self.state.world().db().outstanding_holds());
+        self.peak_outstanding_holds = self.peak_outstanding_holds.max(holds);
     }
 
     /// Queue `didOpen` for the main loop to pick up, the way an editor does.
@@ -425,15 +427,17 @@ impl LspSession {
     /// database has no such package. Empty until the package's sources have
     /// been fetched and ingested.
     pub fn package_sources(&self, name: &str) -> Option<Vec<&str>> {
-        let db = self.state.world().db();
-        let package = db.package_by_name(name)?;
-        Some(
-            package
-                .files(db)
-                .iter()
-                .map(|file| file.source_text(db).as_str())
-                .collect(),
-        )
+        panic::within_boundary(|| {
+            let db = self.state.world().db();
+            let package = db.package_by_name(name)?;
+            Some(
+                package
+                    .files(db)
+                    .iter()
+                    .map(|file| file.source_text(db).as_str())
+                    .collect(),
+            )
+        })
     }
 
     pub fn diagnostics_metrics(&self) -> DiagnosticsMetrics {
