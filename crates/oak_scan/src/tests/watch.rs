@@ -137,6 +137,33 @@ fn test_add_watched_file_routes_package_subdir_to_pkg_scripts() {
 }
 
 #[test]
+fn test_add_watched_file_skips_installed_copy_of_workspace_package() {
+    // Installing the package under development into a project-local library
+    // writes shipped scripts under a directory the bulk scan prunes. They
+    // don't belong to the source package of the same name.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let installed = tmp.path().join("lib/pkg");
+    write_package(&installed, "pkg", &[]);
+    fs::create_dir_all(installed.join("Meta")).unwrap();
+    fs::write(installed.join("Meta/package.rds"), "").unwrap();
+    fs::create_dir_all(installed.join("doc")).unwrap();
+    let mut db = OakDatabase::new();
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let path = installed.join("doc/intro.R");
+    fs::write(&path, "shipped <- 1\n").unwrap();
+    let path = FilePath::from_path_buf(path).unwrap();
+    add_watched_file(&mut db, path.clone());
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let pkg = root.packages(&db)[0];
+    assert!(pkg.scripts(&db).is_empty());
+    assert!(root.scripts(&db).is_empty());
+    assert!(db.file_by_path(&path).is_none());
+}
+
+#[test]
 fn test_add_watched_file_skips_nested_r_subdir() {
     // `<pkg>/R/` is flat in standard R packages. The bulk scanner ignores
     // anything deeper than `<pkg>/R/*.R`, so the watcher does too instead

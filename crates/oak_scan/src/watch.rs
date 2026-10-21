@@ -26,7 +26,6 @@ use crate::inputs::with_cow_push;
 use crate::inputs::FileEntry;
 use crate::packages::file_revision;
 use crate::packages::is_r_file;
-use crate::packages::read_description_name;
 
 /// Sync a watched R file that exists on disk. Idempotent: if a `File`
 /// already exists at this URL, its contents are updated and its placement is
@@ -159,11 +158,15 @@ fn classify<DB: Db + DbInputs>(db: &DB, path: &Utf8Path) -> Option<Placement> {
         return Some(Placement::Script(root));
     };
 
-    let pkg_name = read_description_name(pkg_dir.as_std_path())?;
+    // Match on the `DESCRIPTION` path, the `Package` identity. A name match
+    // would hand files of a directory the bulk scan left out (an installed
+    // copy, a same-name duplicate) to the package it kept.
+    let description_path =
+        FilePath::from_path_buf(pkg_dir.join("DESCRIPTION").into_std_path_buf())?;
     let pkg = root
         .packages(db)
         .iter()
-        .find(|pkg| pkg.name(db) == &pkg_name)
+        .find(|pkg| pkg.description_path(db) == &description_path)
         .copied()?;
 
     match classify_in_package(pkg_dir.as_std_path(), path.as_std_path()) {
