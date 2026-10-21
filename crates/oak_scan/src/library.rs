@@ -5,9 +5,10 @@
 //! Removed roots are evicted, but [`oak_db::IdentityMap`] retains their
 //! `File` and `Package` identities for reuse if their paths are added again.
 //!
-//! Installed packages don't have a watcher today: the LSP currently
-//! calls this once at init. The diff path is here ahead of need so
-//! libraries and workspaces share the same eviction story.
+//! The LSP watches direct library entries, and [`crate::ScanScheduler`] rescans
+//! the affected library. Changes inside an existing package directory are not
+//! watched. Initial scans and rescans share [`list_library()`] and
+//! [`set_installed_packages()`] to keep listing and reconciliation consistent.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,14 +18,28 @@ use std::path::PathBuf;
 use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
+use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
 use salsa::Setter;
 use walkdir::WalkDir;
 
+use crate::eviction::clear_package_sources;
+use crate::inputs::upsert_package_metadata;
 use crate::inputs::RootExt;
 use crate::packages::file_revision;
+
+/// Metadata from [`list_library()`] that lets [`set_installed_packages()`]
+/// register or refresh a [`Package`] without further filesystem access.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstalledPackageEntry {
+    pub name: String,
+    pub description_path: FilePath,
+    pub description_revision: FileRevision,
+    pub namespace_revision: FileRevision,
+    pub index_revision: FileRevision,
+}
 
 /// Reconcile `LibraryRoots` to exactly `paths`. Called through
 /// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
@@ -67,9 +82,6 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
     }
 }
 
-/// Initial scan of a path that wasn't previously a library root. Walks only the
-/// package directories, not the package directory contents. Calls `set_package()`
-/// per package directory, returns the freshly-built `Root`.
 fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path: FilePath) -> Root {
     let root = Root::new(
         db,
@@ -79,17 +91,35 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
         Vec::new(),
         Vec::new(),
     );
+    set_installed_packages(db, root, list_library(scan_path));
+    root
+}
 
+/// List installed packages without database access so rescans can run off the
+/// main loop. Only direct package directories are visited, not their contents.
+///
+/// R uses the package name as the directory basename, so no file contents need
+/// reading. A directory qualifies when `DESCRIPTION` is a file. The mtimes of
+/// `DESCRIPTION`, `NAMESPACE`, and `INDEX` drive lazy metadata queries, which
+/// parse their contents on demand. Directories without a `DESCRIPTION` file
+/// (including install locks) or with non-UTF8 names are skipped.
+///
+/// Stable directory-name order lets [`set_installed_packages()`] skip the
+/// `root.packages` write on unchanged rescans. Filesystem iteration order alone
+/// is unspecified.
+pub(crate) fn list_library(path: &Path) -> Vec<InstalledPackageEntry> {
     // renv libraries link each package directory into renv's global cache
     // (symlinks on Unix, junctions on Windows). Without `follow_links()`,
     // `file_type()` reports the link rather than a directory and the package is
     // skipped. `entry.path()` stays the link path inside the library, matching
     // what R reports for the installed package.
-    let mut packages: Vec<Package> = Vec::new();
-    let walker = WalkDir::new(scan_path)
+    let walker = WalkDir::new(path)
         .max_depth(1)
         .min_depth(1)
-        .follow_links(true);
+        .follow_links(true)
+        .sort_by_file_name();
+
+    let mut packages = Vec::new();
     for entry in walker {
         let Ok(entry) = entry else {
             continue;
@@ -97,30 +127,15 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
         if !entry.file_type().is_dir() {
             continue;
         }
-        let Some(pkg) = register_installed_package(db, root, entry.path()) else {
+        let Some(package) = read_installed_package(entry.path()) else {
             continue;
         };
-        packages.push(pkg);
+        packages.push(package);
     }
-
-    root.set_packages(db).to(packages);
-    root
+    packages
 }
 
-/// Register one installed package under `root` without reading any of its
-/// files.
-///
-/// R installs packages at `<libpath>/<PkgName>/`, so the directory basename is the
-/// package name. That lets us skip reading `DESCRIPTION` here: we only confirm it exists
-/// (that's what marks the directory as a package) and stat `DESCRIPTION` / `NAMESPACE` /
-/// `INDEX` for the revisions that drive the lazy metadata queries. Version, collation,
-/// and namespace are parsed on demand, only if the package is ever imported. Returns
-/// `None` for a directory with no `DESCRIPTION` or a non-UTF8 name.
-fn register_installed_package<DB: Db + DbInputs>(
-    db: &mut DB,
-    root: Root,
-    package_dir: &Path,
-) -> Option<Package> {
+fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
     let description_file = package_dir.join("DESCRIPTION");
     if !description_file.is_file() {
         return None;
@@ -129,17 +144,68 @@ fn register_installed_package<DB: Db + DbInputs>(
     let name = package_dir.file_name()?.to_str()?.to_string();
     let description_revision = file_revision(&description_file);
     let namespace_revision = file_revision(&package_dir.join("NAMESPACE"));
-    let index_revision = Some(file_revision(&package_dir.join("INDEX")));
+    let index_revision = file_revision(&package_dir.join("INDEX"));
     let description_path = FilePath::from_path_buf(description_file)?;
 
-    Some(root.set_package(
-        db,
-        description_path,
+    Some(InstalledPackageEntry {
         name,
+        description_path,
         description_revision,
         namespace_revision,
         index_revision,
-        Vec::new(),
-        Vec::new(),
-    ))
+    })
+}
+
+/// Reconcile `root.packages` with [`list_library()`]'s entries, reusing
+/// [`Package`] entities by `DESCRIPTION` path through [`oak_db::IdentityMap`]
+/// and writing only changed inputs.
+///
+/// Preserve fetched sources in `files` and `scripts`, which the listing cannot
+/// reconstruct. [`upsert_package()`](crate::inputs::upsert_package) would replace
+/// them with empty lists.
+/// This also preserves old sources when an upgrade reuses the same entity.
+///
+/// Removed packages leave `root.packages`. Their sources are cleared with
+/// [`clear_package_sources()`] unless another live root still holds the
+/// package. The cleared files become invisible to analysis, and the caller
+/// keeps open buffers visible with
+/// [`crate::inputs::keep_open_files_visible()`].
+pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
+    db: &mut DB,
+    root: Root,
+    entries: Vec<InstalledPackageEntry>,
+) {
+    let packages: Vec<Package> = entries
+        .into_iter()
+        .map(|entry| {
+            upsert_package_metadata(
+                db,
+                entry.description_path,
+                entry.name,
+                entry.description_revision,
+                entry.namespace_revision,
+                Some(entry.index_revision),
+            )
+        })
+        .collect();
+
+    if root.packages(db) == &packages {
+        return;
+    }
+
+    let removed: Vec<Package> = root
+        .packages(db)
+        .iter()
+        .filter(|package| !packages.contains(package))
+        .copied()
+        .collect();
+    root.set_packages(db).to(packages);
+
+    // A library inside a workspace can share a `Package` with that workspace's
+    // scan. Clear only the sources of packages no live root holds anymore.
+    let dropped: Vec<Package> = removed
+        .into_iter()
+        .filter(|package| db.root_by_package(*package).is_none())
+        .collect();
+    clear_package_sources(db, &dropped);
 }

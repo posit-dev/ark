@@ -31,24 +31,49 @@ use salsa::Setter;
 /// Exposed through [`crate::inputs::RootExt::evict()`].
 pub(crate) fn evict_root<DB: Db + DbInputs>(db: &mut DB, root: Root) {
     let packages: Vec<Package> = root.packages(db).clone();
-    let all_files = root_files(db, root);
+    let scripts: Vec<File> = root.scripts(db).clone();
 
-    // The evicted packages are emptied below, so a backpointer to one would
-    // lie about containment.
-    for &file in &all_files {
+    // A root script can point to a package of another root (see
+    // `upsert_workspace_scripts()`). That root is rescanned if it survives, so
+    // the backpointer is cleared like the others.
+    for &file in &scripts {
         file.set_package(db).to(None);
     }
-
-    // Empty package containers, including generated files, to match the
-    // cleared file backpointers. A package must not list a file whose package
-    // association is `None`.
     root.set_scripts(db).to(Vec::new());
-    for &pkg in &packages {
-        pkg.clear_files(db);
-        pkg.set_scripts(db).to(Vec::new());
-    }
+
+    clear_package_sources(db, &packages);
     root.set_packages(db).to(Vec::new());
     root.set_environment_dirs(db).to(Vec::new());
+}
+
+/// Empty the `files` (source and generated) and `scripts` of `packages` and
+/// clear the backpointers of the files they listed. A package must not list a file whose package
+/// association is `None`, and a file must not point to a package that no
+/// longer lists it.
+///
+/// Used when packages leave their root: eviction, or a library rescan that no
+/// longer lists them. The files become invisible to analysis unless
+/// another live container lists them. Public entry points keep open buffers
+/// visible with [`crate::inputs::keep_open_files_visible()`].
+pub(crate) fn clear_package_sources<DB: Db + DbInputs>(db: &mut DB, packages: &[Package]) {
+    for &pkg in packages {
+        let files: Vec<File> = pkg
+            .files(db)
+            .iter()
+            .chain(pkg.scripts(db))
+            .copied()
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        for file in files {
+            file.set_package(db).to(None);
+        }
+        pkg.clear_files(db);
+        if !pkg.scripts(db).is_empty() {
+            pkg.set_scripts(db).to(Vec::new());
+        }
+    }
 }
 
 /// Every `File` that `root` lists: its scripts and its packages' files and

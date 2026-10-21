@@ -21,9 +21,13 @@ use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::FileChangeType;
 use tower_lsp_server::ls_types::FileEvent;
+use tower_lsp_server::ls_types::FileSystemWatcher;
+use tower_lsp_server::ls_types::GlobPattern;
 use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::OneOf;
 use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::Range;
+use tower_lsp_server::ls_types::RelativePattern;
 use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentItem;
@@ -45,6 +49,7 @@ use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::did_open;
 use crate::lsp::state_handlers::effective_workspace_paths;
+use crate::lsp::state_handlers::library_watchers;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::traits::url::UrlExt;
@@ -760,6 +765,48 @@ fn test_rescan_keeps_open_package_file_missing_on_disk() {
     assert!(!pkg.files(state.db()).contains(&file));
     assert_eq!(file.package(state.db()), None);
     assert_incremental_edits_apply(&mut state, &uri);
+}
+
+#[test]
+fn test_library_watchers_watch_direct_entries_of_each_library_root() {
+    let lib1 = tempfile::tempdir().unwrap();
+    let lib2 = tempfile::tempdir().unwrap();
+    let mut state = WorldState::default();
+    state
+        .db_mut()
+        .set_library_paths(&[lib1.path().to_path_buf(), lib2.path().to_path_buf()]);
+
+    let watcher = |lib: &Path| FileSystemWatcher {
+        glob_pattern: GlobPattern::Relative(RelativePattern {
+            base_uri: OneOf::Right(Uri::from_file_path(lib).unwrap()),
+            pattern: String::from("*"),
+        }),
+        kind: None,
+    };
+    assert_eq!(library_watchers(state.db()), vec![
+        watcher(lib1.path()),
+        watcher(lib2.path()),
+    ]);
+}
+
+#[test]
+fn test_library_entry_event_makes_installed_package_resolvable() {
+    let lib = tempfile::tempdir().unwrap();
+    let mut state = WorldState::default();
+    state
+        .db_mut()
+        .set_library_paths(&[lib.path().to_path_buf()]);
+    assert!(state.db().package_by_name("pkg").is_none());
+
+    write_package(&lib.path().join("pkg"), "pkg", &[]);
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![event(&lib.path().join("pkg"), FileChangeType::CREATED)],
+    };
+    did_change_watched_files(params, &mut state).unwrap();
+
+    let pkg = state.db().package_by_name("pkg").unwrap();
+    let root = state.db().library_roots().roots(state.db())[0];
+    assert_eq!(root.packages(state.db()), &vec![pkg]);
 }
 
 /// A console-inputs push carries no oak write, but diagnostics read the console

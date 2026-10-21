@@ -59,9 +59,10 @@ pub trait DbScan: Db + DbInputs {
     /// Reconcile `LibraryRoots` to exactly `paths`.
     ///
     /// - Paths already present as a `Root`: untouched. No fs walk, no
-    ///   salsa churn.
+    ///   salsa churn. Watcher-driven rescans are handled separately by
+    ///   [`crate::ScanScheduler::apply_watcher_events()`].
     ///
-    /// - New paths: scanned and added.
+    /// - New paths are scanned synchronously and added.
     ///
     /// - Removed paths have their roots evicted.
     ///   Open buffers no longer listed by a live root stay visible through
@@ -72,16 +73,10 @@ pub trait DbScan: Db + DbInputs {
     /// Order in `LibraryRoots.roots` follows `paths`, matching R's
     /// `.libPaths()` precedence.
     ///
-    /// **Why this is sync while workspaces go through
-    /// [`crate::ScanScheduler`].** Libraries are scanned exactly
-    /// once at LSP init today. Workspaces churn (folders open and
-    /// close at any time) and have a file watcher pushing events
-    /// mid-scan, so the workspace path needs the buffering /
-    /// stale-result machinery the scheduler exists for. Libraries
-    /// have neither, so the extra plumbing buys nothing. If
-    /// `.libPaths()` ever becomes mutable mid-session (e.g. user
-    /// runs `.libPaths(...)` in the console), this should join
-    /// the scheduler.
+    /// Synchronous scans make installed packages available to the first LSP
+    /// diagnostics at startup. If this call removes a root with a rescan in
+    /// flight, [`crate::ScanScheduler::apply_scan_completed()`] drops its result
+    /// because the root is no longer in `library_roots`.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
 
     /// Upsert the editor's view of a file. Used by the LSP layer to apply
@@ -326,6 +321,11 @@ pub(crate) trait RootExt {
     ///
     /// Invariant: The caller must wire the returned `Package` into
     /// `self.packages` via `Root::set_packages()`.
+    ///
+    /// Scanners batch their file upserts through [`upsert_package()`] or keep
+    /// fetched sources through [`upsert_package_metadata()`]. Tests use this
+    /// to build packages under hand-made roots.
+    #[cfg(test)]
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
@@ -352,6 +352,7 @@ pub(crate) trait RootExt {
 }
 
 impl RootExt for Root {
+    #[cfg(test)]
     fn set_package<DB: Db + DbInputs>(
         self,
         db: &mut DB,
@@ -384,8 +385,9 @@ impl RootExt for Root {
     }
 }
 
-/// [`RootExt::set_package()`] with files resolved through `upserts`, which the
-/// caller finishes once every container is written.
+/// Create or update a package and replace its file set, with files resolved
+/// through `upserts`, which the caller finishes once every container is
+/// written. Metadata is refreshed as in [`upsert_package_metadata()`].
 pub(crate) fn upsert_package<DB: Db + DbInputs>(
     db: &mut DB,
     upserts: &mut FileUpserts,
@@ -396,6 +398,34 @@ pub(crate) fn upsert_package<DB: Db + DbInputs>(
     index_revision: Option<FileRevision>,
     files: Vec<FileEntry>,
     scripts: Vec<FileEntry>,
+) -> Package {
+    let pkg = upsert_package_metadata(
+        db,
+        description_path,
+        name,
+        description_revision,
+        namespace_revision,
+        index_revision,
+    );
+
+    set_package_source_entries(db, upserts, pkg, files, scripts);
+    pkg
+}
+
+/// Intern the [`Package`] at `description_path` and refresh its metadata,
+/// leaving its `files` and `scripts` untouched so library rescans keep fetched
+/// sources. Writes only changed fields to avoid bumping the Salsa revision on
+/// unchanged rescans.
+///
+/// The caller must place the result in a root's `packages` via
+/// [`Root::set_packages()`] for analysis to see it.
+pub(crate) fn upsert_package_metadata<DB: Db + DbInputs>(
+    db: &mut DB,
+    description_path: FilePath,
+    name: String,
+    description_revision: FileRevision,
+    namespace_revision: FileRevision,
+    index_revision: Option<FileRevision>,
 ) -> Package {
     let pkg = db.intern_package(
         description_path,
@@ -416,8 +446,6 @@ pub(crate) fn upsert_package<DB: Db + DbInputs>(
     if pkg.index_revision(db) != index_revision {
         pkg.set_index_revision(db).to(index_revision);
     }
-
-    set_package_source_entries(db, upserts, pkg, files, scripts);
     pkg
 }
 

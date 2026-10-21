@@ -18,6 +18,7 @@ pub(crate) struct Capabilities {
     dynamic_registration_for_did_change_configuration: bool,
     code_action_literal_support: bool,
     workspace_edit_document_changes: bool,
+    relative_pattern_support: bool,
 }
 
 impl Capabilities {
@@ -53,11 +54,19 @@ impl Capabilities {
             .and_then(|workspace_edit| workspace_edit.document_changes)
             .is_some_and(|document_changes| document_changes);
 
+        let relative_pattern_support = client_capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.did_change_watched_files.as_ref())
+            .and_then(|did_change_watched_files| did_change_watched_files.relative_pattern_support)
+            .unwrap_or(false);
+
         Self {
             workspace_configuration,
             dynamic_registration_for_did_change_configuration,
             code_action_literal_support,
             workspace_edit_document_changes,
+            relative_pattern_support,
         }
     }
 
@@ -96,6 +105,12 @@ impl Capabilities {
     ) -> Self {
         self.workspace_edit_document_changes = workspace_edit_document_changes;
         self
+    }
+
+    /// Whether the client accepts `RelativePattern` watcher registrations.
+    /// VS Code and Positron require these to watch libraries outside the workspace.
+    pub(crate) fn relative_pattern_support(&self) -> bool {
+        self.relative_pattern_support
     }
 
     pub(crate) fn code_action_provider_capability(&self) -> Option<CodeActionProviderCapability> {

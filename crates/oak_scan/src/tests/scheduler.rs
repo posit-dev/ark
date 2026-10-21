@@ -12,6 +12,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::slice;
 
 use aether_path::FilePath;
 use oak_db::DbInputs;
@@ -19,6 +20,7 @@ use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
 
+use crate::library::set_installed_packages;
 use crate::scheduler::drain_scheduler;
 use crate::tests::is_case_insensitive;
 use crate::tests::is_normalization_insensitive;
@@ -1495,4 +1497,193 @@ fn test_set_workspace_paths_inserts_empty_root_immediately() {
         roots[0].path(&db).as_path().unwrap().as_std_path(),
         tmp.path()
     );
+}
+
+// --- Library rescans ---
+
+fn write_installed_package(lib: &Path, name: &str) {
+    fs::create_dir_all(lib.join(name)).unwrap();
+    fs::write(
+        lib.join(name).join("DESCRIPTION"),
+        format!("Package: {name}\nVersion: 1.0.0\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_library_entry_events_in_one_batch_request_one_rescan() {
+    // Source installs report both lock and package entries. One batch must
+    // request only one listing of the library.
+    let lib = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+
+    write_installed_package(lib.path(), "pkg");
+    let requests = scheduler.apply_watcher_events(&mut db, vec![
+        watched_path(&lib.path().join("00LOCK-pkg")),
+        watched_path(&lib.path().join("pkg")),
+    ]);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].root, root);
+
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    assert!(!scheduler.has_pending_scans());
+    assert_eq!(root.packages(&db).len(), 1);
+    assert_eq!(root.packages(&db)[0].name(&db), "pkg");
+}
+
+#[test]
+fn test_library_entry_event_mid_rescan_queues_rescan() {
+    let lib = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+
+    write_installed_package(lib.path(), "a");
+    let mut requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("a"))]);
+    assert_eq!(requests.len(), 1);
+    let first = requests.pop().unwrap();
+
+    // Hold the completion to simulate an in-flight scan that has already listed
+    // the library but has not applied its result.
+    let first_result = first.run();
+
+    // Installing `b` after that listing must queue another scan, not start one
+    // concurrently with the unapplied first scan.
+    write_installed_package(lib.path(), "b");
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("b"))]);
+    assert!(requests.is_empty());
+
+    let mut followups = scheduler.apply_scan_completed(&mut db, first_result);
+    assert_eq!(followups.len(), 1);
+    assert_eq!(followups[0].root, root);
+    assert_eq!(root.packages(&db).len(), 1);
+
+    let second = followups.pop().unwrap();
+    let followups = scheduler.apply_scan_completed(&mut db, second.run());
+    assert!(followups.is_empty());
+    assert!(!scheduler.has_pending_scans());
+    assert_eq!(root.packages(&db).len(), 2);
+}
+
+#[test]
+fn test_library_entry_events_inside_workspace_also_update_workspace() {
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+    let requests = scheduler.set_workspace_paths(&mut db, &[workspace_dir.path().to_path_buf()]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    let workspace = db.workspace_roots().roots(&db)[0];
+
+    write_installed_package(&lib, "pkg");
+    let helper = lib.join("helper.R");
+    fs::write(&helper, "helper <- function() 1\n").unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![
+        watched_path(&lib.join("pkg")),
+        watched_path(&helper),
+    ]);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].root, library);
+
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    assert!(!scheduler.has_pending_scans());
+    assert_eq!(library.packages(&db).len(), 1);
+    assert_eq!(library.packages(&db)[0].name(&db), "pkg");
+    let helper_file = db.file_by_path(&watched_path(&helper)).unwrap();
+    assert_eq!(workspace.scripts(&db), &vec![helper_file]);
+}
+
+#[test]
+fn test_library_drop_keeps_files_of_package_shared_with_workspace() {
+    // The workspace scan reuses the library's `Package` because both scans
+    // find the same `DESCRIPTION` path.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    write_package(&lib.join("pkg"), "pkg", &[("a.R", "a <- 1\n")]);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+    let requests = scheduler.set_workspace_paths(&mut db, &[workspace_dir.path().to_path_buf()]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    let workspace = db.workspace_roots().roots(&db)[0];
+    let pkg = library.packages(&db)[0];
+    assert_eq!(workspace.packages(&db), &vec![pkg]);
+    let file = db
+        .file_by_path(&watched_path(&lib.join("pkg").join("R").join("a.R")))
+        .unwrap();
+
+    set_installed_packages(&mut db, library, Vec::new());
+
+    assert!(library.packages(&db).is_empty());
+    assert_eq!(pkg.files(&db), &vec![file]);
+    assert_eq!(file.package(&db), Some(pkg));
+}
+
+#[test]
+fn test_library_rescan_result_dropped_when_library_removed_mid_rescan() {
+    let lib = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+
+    write_installed_package(lib.path(), "pkg");
+    let mut requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("pkg"))]);
+    assert_eq!(requests.len(), 1);
+    let request = requests.pop().unwrap();
+
+    db.set_library_paths(&[]);
+    let followups = scheduler.apply_scan_completed(&mut db, request.run());
+
+    assert!(followups.is_empty());
+    assert!(!scheduler.has_pending_scans());
+    assert!(root.packages(&db).is_empty());
+    let description = watched_path(&lib.path().join("pkg").join("DESCRIPTION"));
+    assert!(db.interned_package(&description).is_none());
+}
+
+#[test]
+fn test_library_rescan_failure_releases_root_and_runs_queued_rescan() {
+    let lib = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+
+    write_installed_package(lib.path(), "a");
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("a"))]);
+    assert_eq!(requests.len(), 1);
+
+    // An event during the failing rescan queues a follow-up, which still runs.
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("a"))]);
+    assert!(requests.is_empty());
+
+    let mut followups = scheduler.apply_scan_failed(&mut db, root);
+    assert_eq!(followups.len(), 1);
+    assert_eq!(followups[0].root, root);
+    assert!(root.packages(&db).is_empty());
+
+    // Failure of the follow-up releases the root without a retry.
+    let request = followups.pop().unwrap();
+    let followups = scheduler.apply_scan_failed(&mut db, request.root);
+    assert!(followups.is_empty());
+    assert!(!scheduler.has_pending_scans());
+
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&lib.path().join("a"))]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    assert_eq!(root.packages(&db).len(), 1);
 }
