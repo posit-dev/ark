@@ -44,14 +44,13 @@ pub(crate) struct DiagnosticsState {
 }
 
 impl DiagnosticsState {
-    /// Queue a diagnostics pass for every open file we diagnose, all tagged
-    /// with a new generation.
+    /// Queues diagnostics for every open file and tags them with a new generation.
     pub(crate) fn refresh_all(
         &mut self,
         state: &WorldState,
         pool: &AnalysisPool,
         events_tx: &TokioUnboundedSender<Event>,
-    ) {
+    ) -> u64 {
         self.generation += 1;
         let generation = self.generation;
 
@@ -63,6 +62,8 @@ impl DiagnosticsState {
 
         tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());
         lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
+
+        let tasks = files.len() as u64;
 
         for (path, open_file) in files {
             let path = path.clone();
@@ -78,6 +79,8 @@ impl DiagnosticsState {
                 events_tx.send(Event::DiagnosticsReady(ready)).log_err();
             });
         }
+
+        tasks
     }
 
     /// Whether a diagnostics result for `path` computed at `generation`
@@ -152,14 +155,6 @@ mod tests {
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
-    /// `accept` is the staleness gate a refresh batch relies on: a result only
-    /// publishes if no newer generation for that file already went out. Pins
-    /// the three cases that can arrive at the main loop: a file seen for the
-    /// first time, a fresh batch superseding the last one, and a straggler
-    /// from an old batch arriving after a newer one already landed. Also pins
-    /// the deliberate choice to accept a repeat of the last generation (see
-    /// `accept`'s doc comment for why that can't happen in practice but is
-    /// still safe).
     #[test]
     fn test_accept_tracks_staleness_per_file() {
         let mut diagnostics = DiagnosticsState::default();
@@ -171,14 +166,6 @@ mod tests {
         assert!(diagnostics.accept(&path, 2));
     }
 
-    /// A salsa cancellation during the pass is swallowed into `None` by
-    /// `catch_cancellation`, the wrapper the pool applies to every task, rather
-    /// than unwinding and killing the worker thread.
-    ///
-    /// `cancellation_token().cancel()` arms local cancellation on the snapshot's
-    /// oak, so the first salsa query in `generate_diagnostics` (the `tree_sitter`
-    /// fetch) unwinds with `salsa::Cancelled`, the same payload a concurrent
-    /// `set_*` produces. The unwind fires before any R, so no `r_task` here.
     #[test]
     fn test_cancelled_diagnostics_pass_is_caught() {
         let mut state = WorldState::default();
