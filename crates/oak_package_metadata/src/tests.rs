@@ -1,8 +1,16 @@
 //! Test-only fixtures shared across crates through the `testing` feature.
 
 use std::fs;
+use std::path::Path;
 
 use tempfile::TempDir;
+
+/// Mark `package_dir` as an installed package. Oak's library listing, like
+/// R's `library()`, accepts only directories with `Meta/package.rds`.
+pub fn mark_installed(package_dir: &Path) {
+    fs::create_dir_all(package_dir.join("Meta")).unwrap();
+    fs::write(package_dir.join("Meta").join("package.rds"), "").unwrap();
+}
 
 /// Build a temporary library directory containing an installed `penguins`
 /// package, with its `DESCRIPTION`, `NAMESPACE`, and `INDEX`. The package
@@ -35,6 +43,7 @@ penguins_raw            Penguin size, clutch, and blood isotope data
                     Antarctica
 ";
     fs::write(package.join("INDEX"), index).unwrap();
+    mark_installed(&package);
 
     library
 }

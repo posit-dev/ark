@@ -16,7 +16,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
-use oak_db::is_workspace_package;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::FileRevision;
@@ -31,6 +30,7 @@ use crate::inputs::replace_package_membership;
 use crate::inputs::upsert_package_metadata;
 use crate::inputs::RootExt;
 use crate::packages::file_revision;
+use crate::packages::is_installed_package;
 
 /// Metadata from [`list_library()`] that lets [`set_installed_packages()`]
 /// register or refresh a [`Package`] without further filesystem access.
@@ -101,10 +101,15 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
 /// main loop. Only direct package directories are visited, not their contents.
 ///
 /// R uses the package name as the directory basename, so no file contents need
-/// reading. A directory qualifies when `DESCRIPTION` is a file. The mtimes of
+/// reading. A directory qualifies when it is an installed package
+/// ([`is_installed_package()`]) with a `DESCRIPTION` file. The mtimes of
 /// `DESCRIPTION`, `NAMESPACE`, and `INDEX` drive lazy metadata queries, which
-/// parse their contents on demand. Directories without a `DESCRIPTION` file
-/// (including install locks) or with non-UTF8 names are skipped.
+/// parse their contents on demand. Install locks, source directories, and
+/// directories with non-UTF8 names are skipped.
+///
+/// The workspace walk prunes every directory [`is_installed_package()`]
+/// accepts, a superset of what this listing returns, so a library nested in a
+/// workspace never shares a [`Package`] with it.
 ///
 /// Stable directory-name order lets [`set_installed_packages()`] skip the
 /// `root.packages` write on unchanged rescans. Filesystem iteration order alone
@@ -139,7 +144,7 @@ pub(crate) fn list_library(path: &Path) -> Vec<InstalledPackageEntry> {
 
 fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
     let description_file = package_dir.join("DESCRIPTION");
-    if !description_file.is_file() {
+    if !is_installed_package(package_dir) || !description_file.is_file() {
         return None;
     }
 
@@ -170,15 +175,13 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// When [`Package::sources_revision()`] is `None` or differs from the
 /// current `DESCRIPTION` revision, [`clear_outdated_sources()`] clears source
 /// files and scripts but preserves generated files. This discards sources
-/// from an older installation after an in-place upgrade. The LSP source
-/// scheduler requests sources for the current revision. Packages held by a
-/// workspace root keep their files because the workspace scan owns those
-/// source lists (see [`is_workspace_package()`]).
+/// from an older installation or workspace files from a [`Package`] that
+/// became installed. The LSP source scheduler requests sources for the
+/// current revision.
 ///
-/// Removed packages leave `root.packages`. Their sources are cleared with
-/// [`clear_package_sources()`] unless another live root still holds the
-/// package. The cleared files become invisible to analysis, and the caller
-/// keeps open buffers visible with
+/// Removed packages leave `root.packages` and their sources are cleared with
+/// [`clear_package_sources()`]. The cleared files become invisible to
+/// analysis, and the caller keeps open buffers visible with
 /// [`crate::inputs::keep_open_files_visible()`].
 pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
     db: &mut DB,
@@ -198,9 +201,7 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
             Some(entry.index_revision),
         );
 
-        if package.sources_revision(db) != Some(entry.description_revision) &&
-            !is_workspace_package(db, package)
-        {
+        if package.sources_revision(db) != Some(entry.description_revision) {
             outdated.push(package);
         }
         packages.push(package);
@@ -220,13 +221,7 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .collect();
     root.set_packages(db).to(packages);
 
-    // A library inside a workspace can share a `Package` with that workspace's
-    // scan. Clear only the sources of packages no live root holds anymore.
-    let dropped: Vec<Package> = removed
-        .into_iter()
-        .filter(|package| db.root_by_package(*package).is_none())
-        .collect();
-    clear_package_sources(db, &dropped);
+    clear_package_sources(db, &removed);
 }
 
 /// Clear source files and scripts and reset [`Package::sources_revision()`],

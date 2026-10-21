@@ -5,6 +5,7 @@ use crate::load_context::load_context;
 use crate::workspace_files;
 use crate::Db;
 use crate::Package;
+use crate::RootKind;
 
 /// Packages that any workspace root depends on
 ///
@@ -124,7 +125,8 @@ pub(crate) fn default_search_path_packages(db: &dyn Db) -> Vec<Package> {
 
 /// Converts an iterable of `names` into their corresponding `Package`s, throwing out:
 /// - Non-installed packages (untracked by the db)
-/// - Workspace packages (see [`is_workspace_package()`])
+/// - Workspace packages (actively being worked on by the user, so `R/` is present
+///   already)
 fn as_packages<'a>(names: impl IntoIterator<Item = &'a str>, db: &dyn Db) -> Vec<Package> {
     let mut packages = Vec::new();
 
@@ -132,28 +134,14 @@ fn as_packages<'a>(names: impl IntoIterator<Item = &'a str>, db: &dyn Db) -> Vec
         let Some(package) = db.package_by_name(name) else {
             continue;
         };
-        if is_workspace_package(db, package) {
+        let Some(root) = db.root_by_package(package) else {
+            continue;
+        };
+        if root.kind(db) != RootKind::Library {
             continue;
         }
         packages.push(package);
     }
 
     packages
-}
-
-/// Whether a workspace root holds `package`. The workspace scan then supplies
-/// its `files` and `scripts`, so they are neither fetched nor cleared by a
-/// library rescan. Only packages held solely by library roots get fetched
-/// sources.
-///
-/// This differs from [`SourceDb::root_by_package()`](crate::SourceDb::root_by_package),
-/// which prefers the deepest root. A package held by both a workspace and a
-/// library nested inside it is a source directory: the workspace walk prunes
-/// installed packages (those with `Meta/package.rds`), so the shared package
-/// has real `.R` files on disk for the workspace scan to list.
-pub fn is_workspace_package(db: &dyn Db, package: Package) -> bool {
-    db.workspace_roots()
-        .roots(db)
-        .iter()
-        .any(|root| root.packages(db).contains(&package))
 }

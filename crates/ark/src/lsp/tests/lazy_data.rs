@@ -85,18 +85,18 @@ async fn test_packages_without_rdata_are_not_passed() {
         .version("4.5.2")
         .built("dummy")
         .field("Priority", "base")
-        .write(&lib.path().join("base"));
+        .write_installed(&lib.path().join("base"));
     DescriptionWriter::new()
         .package("nodata")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("nodata"));
+        .write_installed(&lib.path().join("nodata"));
     let withdata = lib.path().join("withdata");
     DescriptionWriter::new()
         .package("withdata")
         .version("0.0.0")
         .built("dummy")
-        .write(&withdata);
+        .write_installed(&withdata);
     std::fs::create_dir_all(withdata.join("data")).unwrap();
     std::fs::write(withdata.join("data").join("Rdata.rds"), "").unwrap();
 

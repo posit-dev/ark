@@ -18,6 +18,7 @@ use crate::inputs::FileEntry;
 use crate::inputs::FileUpserts;
 use crate::packages::file_revision;
 use crate::scheduler::drain_scheduler;
+use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 
@@ -299,6 +300,7 @@ fn test_library_root_readd_refreshes_index_revision() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = tmp.path().join("lib");
     write_package(&lib.join("pkg"), "pkg", &[]);
+    mark_installed(&lib.join("pkg"));
     let mut db = OakDatabase::new();
 
     db.set_library_paths(slice::from_ref(&lib));
@@ -326,6 +328,7 @@ fn test_library_root_readd_reuses_packages_and_files() {
         "Package: pkg\nVersion: 1.0.0\n",
     )
     .unwrap();
+    mark_installed(&lib.join("pkg"));
     let sources = tmp.path().join("sources");
     fs::create_dir_all(&sources).unwrap();
     fs::write(sources.join("a.R"), "x <- 1\n").unwrap();
@@ -379,6 +382,9 @@ fn test_workspace_root_readd_reuses_entities_and_refreshes_metadata() {
 
 // Documents current behavior: a workspace package and a library package at the
 // same `DESCRIPTION` share one `Package`. Whether they should stays undecided.
+// Libraries list only installed packages and the workspace walk prunes them, so
+// both roots hold the package only while a directory changes between source
+// and installed and one of them hasn't rescanned yet.
 #[test]
 fn test_library_registration_shares_workspace_package() {
     let tmp = tempfile::tempdir().unwrap();
@@ -390,6 +396,7 @@ fn test_library_registration_shares_workspace_package() {
     set_workspace_paths(&mut db, &mut scheduler, slice::from_ref(&lib));
     let workspace_pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
 
+    mark_installed(&lib.join("pkg"));
     db.set_library_paths(&[lib]);
 
     assert_eq!(

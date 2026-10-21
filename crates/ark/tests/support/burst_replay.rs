@@ -27,6 +27,7 @@ use ark::lsp::harness::LspHarness;
 use ark::lsp::harness::LspSession;
 use ark::lsp::harness::Publication;
 use oak_db::OakDatabase;
+use oak_package_metadata::tests::mark_installed;
 use oak_scan::DbScan;
 use tempfile::TempDir;
 use tower_lsp_server::ls_types::Diagnostic;
@@ -152,6 +153,7 @@ impl Fixture {
                 ("Version", "0.0.0"),
                 ("Built", "dummy"),
             ]);
+            mark_installed(&library.path().join(donor));
         }
 
         // References through `::` make the workspace scan request donor sources.

@@ -106,6 +106,7 @@ pub(crate) fn write_library_package(
 ) -> WorldState {
     let package_dir = library.join(name);
     write_package(&package_dir, name, namespace);
+    oak_package_metadata::tests::mark_installed(&package_dir);
 
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.to_path_buf()]);

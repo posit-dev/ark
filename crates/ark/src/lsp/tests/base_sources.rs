@@ -116,7 +116,7 @@ fn library_with_base() -> (tempfile::TempDir, OakDatabase) {
         .version("4.5.2")
         .built("dummy")
         .field("Priority", "base")
-        .write(&lib.path().join("base"));
+        .write_installed(&lib.path().join("base"));
 
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);

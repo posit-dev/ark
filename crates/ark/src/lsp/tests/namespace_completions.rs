@@ -49,7 +49,7 @@ fn library_with_donor(namespace: &str) -> (tempfile::TempDir, OakDatabase) {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&donor);
+        .write_installed(&donor);
     std::fs::write(donor.join("NAMESPACE"), namespace).unwrap();
 
     let mut db = OakDatabase::new();
@@ -66,14 +66,14 @@ fn library_with_base_and_donor() -> (tempfile::TempDir, OakDatabase) {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&donor);
+        .write_installed(&donor);
     std::fs::write(donor.join("NAMESPACE"), "export(foo)\n").unwrap();
     DescriptionWriter::new()
         .package("base")
         .version("4.5.2")
         .built("dummy")
         .field("Priority", "base")
-        .write(&lib.path().join("base"));
+        .write_installed(&lib.path().join("base"));
 
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
@@ -423,7 +423,7 @@ fn library_with_base_donor_and_datasets() -> (tempfile::TempDir, OakDatabase) {
         .package("datasets")
         .version("4.5.2")
         .built("dummy")
-        .write(&datasets);
+        .write_installed(&datasets);
     std::fs::create_dir_all(datasets.join("data")).unwrap();
     std::fs::write(datasets.join("data").join("Rdata.rds"), "").unwrap();
 

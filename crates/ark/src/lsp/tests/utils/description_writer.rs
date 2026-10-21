@@ -32,6 +32,13 @@ impl DescriptionWriter {
         self
     }
 
+    /// Write the assembled `DESCRIPTION` into `dir` and mark `dir` as an
+    /// installed package, for fixtures under a library path.
+    pub(crate) fn write_installed(self, dir: &Path) {
+        self.write(dir);
+        oak_package_metadata::tests::mark_installed(dir);
+    }
+
     /// Write the assembled `DESCRIPTION` into `dir`.
     pub(crate) fn write(self, dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
