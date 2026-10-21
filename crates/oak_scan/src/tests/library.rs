@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::slice;
 
 use aether_path::FilePath;
 use filetime::set_file_mtime;
@@ -17,7 +18,9 @@ use oak_db::SourceDb;
 use crate::library::list_library;
 use crate::library::set_installed_packages;
 use crate::library::InstalledPackageEntry;
+use crate::scheduler::drain_scheduler;
 use crate::DbScan;
+use crate::ScanScheduler;
 
 fn write_installed_package(lib: &Path, name: &str, version: &str) {
     let dir = lib.join(name);
@@ -274,6 +277,148 @@ fn test_rescan_moves_removed_package_editor_owned_sources_to_orphan() {
     assert!(db.orphan_root().files(&db).contains(&file));
     assert!(!db.stale_root().files(&db).contains(&file));
     assert_eq!(db.file_by_path(&path), Some(file));
+}
+
+#[test]
+fn test_rescan_upgrade_moves_sources_to_stale() {
+    let lib = tempfile::tempdir().unwrap();
+    let description = lib.path().join("pkg").join("DESCRIPTION");
+    // `Collate` excludes `script.R`, putting it in `scripts` so the test covers
+    // rehoming both package source lists.
+    let write_description = |version: &str| {
+        fs::create_dir_all(lib.path().join("pkg")).unwrap();
+        fs::write(
+            &description,
+            format!("Package: pkg\nVersion: {version}\nCollate: 'f.R'\n"),
+        )
+        .unwrap();
+    };
+    write_description("1.0.0");
+    set_mtime(&description, 1_000);
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("f.R"), "f <- function() 1\n").unwrap();
+    fs::write(sources.path().join("script.R"), "1 + 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = library_root(&db, lib.path());
+    let pkg = db.package_by_name("pkg").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    let file = pkg.files(&db)[0];
+    let script = pkg.scripts(&db)[0];
+
+    write_description("2.0.0");
+    set_mtime(&description, 2_000);
+    rescan(&mut db, root);
+
+    assert_eq!(db.package_by_name("pkg"), Some(pkg));
+    assert_eq!(root.packages(&db), &vec![pkg]);
+    assert!(pkg.files(&db).is_empty());
+    assert!(pkg.scripts(&db).is_empty());
+    assert_eq!(file.package(&db), None);
+    assert_eq!(script.package(&db), None);
+    assert_eq!(db.stale_root().files(&db), &HashSet::from([file, script]));
+    assert!(db.stale_root().packages(&db).is_empty());
+
+    // Refetched sources at the same paths must reuse the stale `File` entities.
+    db.set_package_sources(pkg, sources.path());
+    assert_eq!(pkg.files(&db), &vec![file]);
+    assert_eq!(pkg.scripts(&db), &vec![script]);
+    assert_eq!(file.package(&db), Some(pkg));
+    assert!(db.stale_root().files(&db).is_empty());
+}
+
+#[test]
+fn test_rescan_upgrade_moves_editor_owned_sources_to_orphan() {
+    let lib = tempfile::tempdir().unwrap();
+    let description = lib.path().join("pkg").join("DESCRIPTION");
+    write_installed_package(lib.path(), "pkg", "1.0.0");
+    set_mtime(&description, 1_000);
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("f.R"), "f <- function() 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = library_root(&db, lib.path());
+    let pkg = db.package_by_name("pkg").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    let file = pkg.files(&db)[0];
+    let path = file.path(&db).clone();
+    db.upsert_editor(path.clone(), String::from("f <- function() 2\n"));
+
+    write_installed_package(lib.path(), "pkg", "2.0.0");
+    set_mtime(&description, 2_000);
+    rescan_with_editor_owned(&mut db, root, &HashSet::from([path.clone()]));
+
+    assert_eq!(db.package_by_name("pkg"), Some(pkg));
+    assert!(pkg.files(&db).is_empty());
+    assert_eq!(file.package(&db), None);
+    assert_eq!(db.orphan_root().files(&db), &HashSet::from([file]));
+    assert!(db.stale_root().files(&db).is_empty());
+    assert_eq!(db.file_by_path(&path), Some(file));
+}
+
+#[test]
+fn test_rescan_unchanged_description_revision_keeps_sources() {
+    let lib = tempfile::tempdir().unwrap();
+    let pkg_dir = lib.path().join("pkg");
+    write_installed_package(lib.path(), "pkg", "1.0.0");
+    fs::write(pkg_dir.join("NAMESPACE"), "export(f)\n").unwrap();
+    set_mtime(&pkg_dir.join("DESCRIPTION"), 1_000);
+    set_mtime(&pkg_dir.join("NAMESPACE"), 1_000);
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("f.R"), "f <- function() 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let root = library_root(&db, lib.path());
+    let pkg = db.package_by_name("pkg").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    let files = pkg.files(&db).clone();
+
+    // A `NAMESPACE` revision change must not discard sources when the
+    // `DESCRIPTION` revision is unchanged.
+    set_mtime(&pkg_dir.join("NAMESPACE"), 2_000);
+    rescan(&mut db, root);
+
+    assert_eq!(pkg.namespace_revision(&db), revision(2_000));
+    assert_eq!(pkg.files(&db), &files);
+    assert_eq!(files[0].package(&db), Some(pkg));
+    assert!(db.stale_root().files(&db).is_empty());
+}
+
+#[test]
+fn test_rescan_upgrade_keeps_files_of_package_shared_with_workspace() {
+    // The workspace scan reuses the library's `Package` because both scans
+    // find the same `DESCRIPTION` path.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    let pkg_dir = lib.join("pkg");
+    write_installed_package(&lib, "pkg", "1.0.0");
+    fs::create_dir_all(pkg_dir.join("R")).unwrap();
+    fs::write(pkg_dir.join("R").join("a.R"), "a <- 1\n").unwrap();
+    set_mtime(&pkg_dir.join("DESCRIPTION"), 1_000);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = library_root(&db, &lib);
+    let mut scheduler = ScanScheduler::new();
+    let requests = scheduler.set_workspace_paths(
+        &mut db,
+        &[workspace_dir.path().to_path_buf()],
+        &HashSet::new(),
+    );
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+    let workspace = db.workspace_roots().roots(&db)[0];
+    let pkg = library.packages(&db)[0];
+    assert_eq!(workspace.packages(&db), &vec![pkg]);
+    let files = pkg.files(&db).clone();
+    assert_eq!(files.len(), 1);
+
+    write_installed_package(&lib, "pkg", "2.0.0");
+    set_mtime(&pkg_dir.join("DESCRIPTION"), 2_000);
+    rescan(&mut db, library);
+
+    assert_eq!(pkg.description_revision(&db), revision(2_000));
+    assert_eq!(pkg.files(&db), &files);
+    assert_eq!(files[0].package(&db), Some(pkg));
+    assert!(db.stale_root().files(&db).is_empty());
 }
 
 #[test]

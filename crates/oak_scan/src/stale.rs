@@ -27,8 +27,9 @@
 //! A library rescan rehomes a removed package's files through [`rehome_files()`]
 //! only when no live root still holds the package. The `Package` itself is not
 //! moved to stale. Once no live root holds it, a later reinstall creates a new
-//! entity. See
-//! [`crate::library::set_installed_packages()`].
+//! entity. An in-place upgrade that changes the `DESCRIPTION` revision keeps
+//! the `Package` in the library root but rehomes its files unless a workspace
+//! root also holds it. See [`crate::library::set_installed_packages()`].
 
 use std::collections::HashSet;
 
@@ -85,9 +86,11 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
 /// go to `OrphanRoot`, and all others go to `StaleRoot`, with no package
 /// association. This includes `scripts` and each package's `files` and `scripts`.
 ///
-/// Package source lists are cleared, but root lists are untouched. Callers must
-/// remove `packages` and `scripts` from their root and decide whether to retain
-/// the `Package` entities in stale or leave them uncontained.
+/// Package source lists are cleared, but root lists are untouched. Callers that
+/// evict must remove `packages` and `scripts` from their root and decide whether
+/// to retain the `Package` entities in stale or leave them uncontained. A caller
+/// that only replaces a live package's sources, such as an in-place upgrade in
+/// [`crate::library::set_installed_packages()`], keeps the package in its root.
 pub(crate) fn rehome_files<DB: Db + DbInputs>(
     db: &mut DB,
     packages: &[Package],
@@ -131,8 +134,12 @@ pub(crate) fn rehome_files<DB: Db + DbInputs>(
     // Clear both lists so a package reused through `package_by_path()` cannot
     // retain references to files that now have no package association.
     for &pkg in packages {
-        pkg.set_files(db).to(Vec::new());
-        pkg.set_scripts(db).to(Vec::new());
+        if !pkg.files(db).is_empty() {
+            pkg.set_files(db).to(Vec::new());
+        }
+        if !pkg.scripts(db).is_empty() {
+            pkg.set_scripts(db).to(Vec::new());
+        }
     }
 }
 

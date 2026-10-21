@@ -829,12 +829,21 @@ impl GlobalState {
                 }
             },
 
-            Event::SourceCompleted(SourceCompleted { package, response }) => {
+            Event::SourceCompleted(SourceCompleted {
+                package,
+                description_revision,
+                response,
+            }) => {
                 self.log_source_completed(package, &response);
 
                 let skipped = matches!(response, SourceResponse::Skipped);
 
-                if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
+                if let Some(directory) = self.lsp_state.source_scheduler.finish(
+                    self.world.db(),
+                    package,
+                    description_revision,
+                    response,
+                ) {
                     // Ignore sources for a `package` no live root holds. A library
                     // rescan may have dropped it during the fetch, and ingesting
                     // a late result could take `File`s from a reinstalled package
@@ -845,7 +854,7 @@ impl GlobalState {
                 }
 
                 // Schedule a skipped package immediately. `finish()` removes it
-                // without advancing the revision, so tick-end scheduling cannot
+                // without advancing the Salsa revision, so tick-end scheduling cannot
                 // retry it after fetching is re-enabled.
                 if skipped {
                     self.schedule_sources();

@@ -28,6 +28,7 @@ use walkdir::WalkDir;
 
 use crate::inputs::upsert_package;
 use crate::inputs::RootExt;
+use crate::lookup::package_by_path;
 use crate::packages::file_revision;
 use crate::stale::rehome_files;
 
@@ -94,7 +95,6 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
         Vec::new(),
         Vec::new(),
     );
-    // A fresh root has no packages to drop, so no file needs rehoming.
     let editor_owned = None;
     set_installed_packages(db, root, list_library(scan_path), editor_owned);
     root
@@ -164,9 +164,15 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// Reconcile `root.packages` with [`list_library()`]'s entries, reusing live or
 /// stale [`Package`] entities by `DESCRIPTION` path and writing only changed inputs.
 ///
-/// Preserve fetched sources in `files` and `scripts`, which the listing cannot
-/// reconstruct. [`RootExt::set_package()`] would replace them with empty lists.
-/// This also preserves old sources when an upgrade reuses the same entity.
+/// Preserve fetched `files` and `scripts` when the `DESCRIPTION` revision is
+/// unchanged. The listing cannot reconstruct them, and [`RootExt::set_package()`]
+/// would replace them with empty lists.
+///
+/// A changed `DESCRIPTION` revision rehomes the old sources through
+/// [`rehome_files()`], so they no longer belong to the upgraded installation.
+/// The revision change also lets the LSP source scheduler request sources again.
+/// Packages held by a workspace root keep their files because the workspace
+/// scan owns those source lists.
 ///
 /// Removed packages are not moved to [`oak_db::StaleRoot`]. Once no live or
 /// stale root contains the old entity, a later reinstall creates a new one,
@@ -185,19 +191,31 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
     entries: Vec<InstalledPackageEntry>,
     editor_owned: Option<&HashSet<FilePath>>,
 ) {
-    let packages: Vec<Package> = entries
-        .into_iter()
-        .map(|entry| {
-            upsert_package(
-                db,
-                entry.description_path,
-                entry.name,
-                entry.description_revision,
-                entry.namespace_revision,
-                Some(entry.index_revision),
-            )
-        })
-        .collect();
+    let mut upgraded: Vec<Package> = Vec::new();
+    let mut packages: Vec<Package> = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let previous_revision = package_by_path(db, &entry.description_path)
+            .map(|package| package.description_revision(db));
+
+        let package = upsert_package(
+            db,
+            entry.description_path,
+            entry.name,
+            entry.description_revision,
+            entry.namespace_revision,
+            Some(entry.index_revision),
+        );
+
+        let revision_changed =
+            previous_revision.is_some_and(|revision| revision != entry.description_revision);
+        if revision_changed && !is_workspace_package(db, package) {
+            upgraded.push(package);
+        }
+        packages.push(package);
+    }
+
+    rehome_files(db, &upgraded, Vec::new(), editor_owned);
 
     if root.packages(db) == &packages {
         return;
@@ -218,4 +236,11 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .filter(|package| db.root_by_package(*package).is_none())
         .collect();
     rehome_files(db, &orphaned, Vec::new(), editor_owned);
+}
+
+fn is_workspace_package(db: &dyn Db, package: Package) -> bool {
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .any(|root| root.packages(db).contains(&package))
 }

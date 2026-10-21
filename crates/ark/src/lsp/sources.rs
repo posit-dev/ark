@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use aether_path::FilePath;
 use oak_db::Db;
+use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Priority;
 use oak_source::SourceCache;
@@ -167,26 +168,34 @@ impl SourceResponse {
 #[derive(Debug)]
 pub(crate) struct SourceCompleted {
     pub(crate) package: Package,
+
+    /// The request's `DESCRIPTION` revision lets [`SourceScheduler::finish()`]
+    /// reject a completion after a request for a newer revision is recorded.
+    pub(crate) description_revision: FileRevision,
+
     pub(crate) response: SourceResponse,
 }
 
 /// State of a particular [Package]'s [SourceRequest]
 ///
-/// There is also a 3rd implied state of "we've never seen this package before" if it
-/// isn't in the `state` hash map.
+/// A package is treated as unseen when it has no entry in `state` or the
+/// entry's `DESCRIPTION` revision differs from its current revision.
 enum SourceState {
     /// The [SourceRequest] is in flight
     Pending,
 
-    /// We have received a [SourceResponse]. Regardless of [SourceResponse::Success] or
-    /// [SourceResponse::Failure], we mark the package as `Finished` so we never request
-    /// it again.
+    /// Success, failure, or an invalid request prevents retries for the same
+    /// `DESCRIPTION` revision.
     Finished,
 }
 
 pub(crate) struct SourceScheduler {
     handler: Option<Arc<dyn SourceHandler>>,
-    state: HashMap<Package, SourceState>,
+
+    /// One entry per [`Package`], tagged with the `DESCRIPTION` revision it was
+    /// recorded for. Replacing the entry on a new revision avoids accumulating
+    /// state for older revisions.
+    state: HashMap<Package, (FileRevision, SourceState)>,
 
     /// Blocks initial fetches until client configuration is resolved.
     awaiting_config: bool,
@@ -251,20 +260,24 @@ impl SourceScheduler {
             return;
         };
 
-        // For each package used across all of the workspace roots, request its sources if
-        // we have never seen it before
         for package in oak_db::all_package_dependencies(db) {
-            if self.state.contains_key(package) {
-                // If we've seen this package before, don't request sources again!
+            let package = *package;
+            let description_revision = package.description_revision(db);
+
+            if self
+                .state
+                .get(&package)
+                .is_some_and(|(revision, _)| *revision == description_revision)
+            {
+                // Already requested or finished at this `DESCRIPTION` revision
                 continue;
             }
-
-            let package = *package;
 
             let Some(request) = SourceRequest::from_package(db, &package).log_err() else {
                 // Go straight to `Finished` if we can't generate the source request,
                 // something is structurally wrong
-                self.state.insert(package, SourceState::Finished);
+                self.state
+                    .insert(package, (description_revision, SourceState::Finished));
                 continue;
             };
 
@@ -272,8 +285,10 @@ impl SourceScheduler {
             let enabled_rx = self.enabled_tx.subscribe();
             let tx = events_tx.clone();
 
-            // Mark as `Pending` just before launching the job
-            self.state.insert(package, SourceState::Pending);
+            // An older fetch may still be in flight. Replacing its recorded
+            // revision makes `finish()` discard its completion without cancelling it.
+            self.state
+                .insert(package, (description_revision, SourceState::Pending));
 
             pool.submit(move || {
                 // Copy the value before fetching so the `borrow()` guard does
@@ -288,6 +303,7 @@ impl SourceScheduler {
 
                 tx.send(Event::SourceCompleted(SourceCompleted {
                     package,
+                    description_revision,
                     response,
                 }))
                 .log_err();
@@ -295,15 +311,46 @@ impl SourceScheduler {
         }
     }
 
+    /// Apply a completion only if its `description_revision` matches both the
+    /// package's recorded revision and its current revision in `db`, returning
+    /// successful sources for ingestion.
+    ///
+    /// A missing entry or a mismatch with the recorded revision returns `None`
+    /// without changing state, so an older completion cannot finish or remove a
+    /// newer request.
+    ///
+    /// The recorded revision alone is not enough: a library rescan can apply an
+    /// upgrade before `schedule()` records the new revision, because
+    /// `refresh_if_due()` defers scheduling while events are queued, and
+    /// `schedule()` records nothing while fetching is disabled. Such a
+    /// completion is dropped and its entry removed, so the next `schedule()`
+    /// requests the current revision.
     #[must_use]
-    pub(crate) fn finish(&mut self, package: Package, response: SourceResponse) -> Option<PathBuf> {
+    pub(crate) fn finish(
+        &mut self,
+        db: &dyn Db,
+        package: Package,
+        description_revision: FileRevision,
+        response: SourceResponse,
+    ) -> Option<PathBuf> {
+        let (recorded, _) = self.state.get(&package)?;
+        if *recorded != description_revision {
+            return None;
+        }
+        if package.description_revision(db) != description_revision {
+            self.state.remove(&package);
+            return None;
+        }
+
         match response {
             SourceResponse::Success { directory, .. } => {
-                self.state.insert(package, SourceState::Finished);
+                self.state
+                    .insert(package, (description_revision, SourceState::Finished));
                 Some(directory)
             },
             SourceResponse::Failure => {
-                self.state.insert(package, SourceState::Finished);
+                self.state
+                    .insert(package, (description_revision, SourceState::Finished));
                 None
             },
             SourceResponse::Skipped => {
@@ -320,7 +367,7 @@ impl SourceScheduler {
     pub(crate) fn has_pending(&self) -> bool {
         self.state
             .values()
-            .any(|state| matches!(state, SourceState::Pending))
+            .any(|(_, state)| matches!(state, SourceState::Pending))
     }
 }
 

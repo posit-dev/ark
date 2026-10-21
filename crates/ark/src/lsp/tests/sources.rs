@@ -9,6 +9,8 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
@@ -1026,6 +1028,225 @@ async fn test_late_sources_for_removed_package_are_not_ingested() {
     assert_eq!(files[0].package(db), Some(reinstalled));
     assert!(removed.files(db).is_empty());
     assert_eq!(dispatched_names(handler.calls()), vec!["donor", "donor"]);
+}
+
+/// An in-place upgrade refetches sources without replacing the `Package`
+/// or the `File` entities at the same source paths.
+#[tokio::test]
+async fn test_in_place_upgrade_refetches_sources() {
+    let _aux = init_aux_for_test();
+    let mut session = upgrade_session();
+
+    session
+        .state
+        .handle_event_to_quiescence(did_change_workspace_folders(session.workspace.path()))
+        .await;
+    let donor = session.state.world().db().package_by_name("donor").unwrap();
+    let files = donor.files(session.state.world().db()).clone();
+    assert_eq!(files.len(), 1);
+
+    session.upgrade_donor();
+    session
+        .state
+        .handle_event_once(did_change_watched_file(
+            &session.donor_dir(),
+            FileChangeType::CREATED,
+        ))
+        .await;
+    let new_completion = session
+        .state
+        .take_event(|event| matches!(event, Event::SourceCompleted(_)))
+        .await;
+
+    let db = session.state.world().db();
+    assert!(donor.files(db).is_empty());
+    assert_eq!(files[0].package(db), None);
+
+    session.state.handle_event_once(new_completion).await;
+
+    let versions: Vec<String> = session
+        .handler
+        .calls()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request.version().to_string())
+        .collect();
+    assert_eq!(versions, vec!["0.0.0", "1.0.0"]);
+
+    let db = session.state.world().db();
+    assert_eq!(db.package_by_name("donor"), Some(donor));
+    assert_eq!(donor.version(db), &Some(String::from("1.0.0")));
+    assert_eq!(donor.files(db), &files);
+    assert_eq!(files[0].package(db), Some(donor));
+    assert!(!session.state.lsp_state().source_scheduler.has_pending());
+}
+
+/// An older completion must neither ingest sources nor finish the pending
+/// request for the upgraded package's `DESCRIPTION` revision.
+#[tokio::test]
+async fn test_completion_for_replaced_version_is_ignored() {
+    let _aux = init_aux_for_test();
+    let mut session = upgrade_session();
+
+    let is_source_completed = |event: &Event| matches!(event, Event::SourceCompleted(_));
+
+    session
+        .state
+        .handle_event_once(did_change_workspace_folders(session.workspace.path()))
+        .await;
+    let old_completion = session.state.take_event(is_source_completed).await;
+    let donor = session.state.world().db().package_by_name("donor").unwrap();
+
+    session.upgrade_donor();
+    session
+        .state
+        .handle_event_once(did_change_watched_file(
+            &session.donor_dir(),
+            FileChangeType::CREATED,
+        ))
+        .await;
+    session.state.pump_scans_to_quiescence().await;
+
+    session.state.handle_event_once(old_completion).await;
+
+    let db = session.state.world().db();
+    assert!(donor.files(db).is_empty());
+    assert!(session.state.lsp_state().source_scheduler.has_pending());
+
+    session.state.pump_sources_to_quiescence().await;
+
+    let db = session.state.world().db();
+    assert_eq!(db.package_by_name("donor"), Some(donor));
+    assert_eq!(donor.files(db).len(), 1);
+    assert!(!session.state.lsp_state().source_scheduler.has_pending());
+    assert_eq!(dispatched_names(session.handler.calls()), vec![
+        "donor", "donor"
+    ]);
+}
+
+/// An older completion can be queued behind the scan that applies the upgrade.
+/// `refresh_if_due()` then defers scheduling, so the completion arrives while
+/// the scheduler still records the old revision. It must still be dropped.
+#[tokio::test]
+async fn test_completion_queued_behind_upgrade_is_ignored() {
+    let _aux = init_aux_for_test();
+    let mut session = upgrade_session();
+
+    session
+        .state
+        .handle_event_once(did_change_workspace_folders(session.workspace.path()))
+        .await;
+    let old_completion = session
+        .state
+        .take_event(|event| matches!(event, Event::SourceCompleted(_)))
+        .await;
+    let donor = session.state.world().db().package_by_name("donor").unwrap();
+
+    session.upgrade_donor();
+    session
+        .state
+        .handle_event_once(did_change_watched_file(
+            &session.donor_dir(),
+            FileChangeType::CREATED,
+        ))
+        .await;
+    let scan_completed = session
+        .state
+        .take_event(|event| matches!(event, Event::OakScanCompleted(_)))
+        .await;
+
+    session.state.events_tx().send(old_completion).unwrap();
+    session.state.handle_event_once(scan_completed).await;
+    let old_completion = session
+        .state
+        .take_event(|event| matches!(event, Event::SourceCompleted(_)))
+        .await;
+    session.state.handle_event_once(old_completion).await;
+
+    assert!(donor.files(session.state.world().db()).is_empty());
+
+    session.state.pump_sources_to_quiescence().await;
+
+    let db = session.state.world().db();
+    assert_eq!(donor.version(db), &Some(String::from("1.0.0")));
+    assert_eq!(donor.files(db).len(), 1);
+    assert!(!session.state.lsp_state().source_scheduler.has_pending());
+    assert_eq!(dispatched_names(session.handler.calls()), vec![
+        "donor", "donor"
+    ]);
+}
+
+/// The workspace uses `donor` via `::` but is not registered until the test
+/// adds it, allowing the test to control when the first fetch starts.
+struct UpgradeSession {
+    state: GlobalState,
+    handler: Arc<TestSourceHandler>,
+    lib: tempfile::TempDir,
+    workspace: tempfile::TempDir,
+}
+
+fn upgrade_session() -> UpgradeSession {
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    write_donor(&lib.path().join("donor"), "0.0.0", 1_000);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler.clone()),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    UpgradeSession {
+        state,
+        handler,
+        lib,
+        workspace,
+    }
+}
+
+impl UpgradeSession {
+    fn donor_dir(&self) -> PathBuf {
+        self.lib.path().join("donor")
+    }
+
+    /// No rescan observes `donor`'s absence, so the upgrade reuses its entity.
+    fn upgrade_donor(&self) {
+        write_donor(&self.donor_dir(), "1.0.0", 2_000);
+    }
+}
+
+/// Explicit mtimes ensure distinct `DESCRIPTION` revisions even when writes
+/// occur within the filesystem's timestamp resolution.
+fn write_donor(dir: &Path, version: &str, mtime_seconds: u64) {
+    DescriptionWriter::new()
+        .package("donor")
+        .version(version)
+        .built("dummy")
+        .write(dir);
+    fs::File::options()
+        .write(true)
+        .open(dir.join("DESCRIPTION"))
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(mtime_seconds))
+        .unwrap();
 }
 
 fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event {
