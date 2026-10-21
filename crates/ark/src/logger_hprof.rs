@@ -292,7 +292,9 @@ struct ms(Duration);
 
 impl std::fmt::Display for ms {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let n = self.0.as_millis();
-        write!(f, "{n:5}ms")
+        // Three decimals so sub-millisecond spans such as LSP request
+        // handlers don't all print as `0ms`.
+        let n = self.0.as_secs_f64() * 1000.0;
+        write!(f, "{n:9.3}ms")
     }
 }
