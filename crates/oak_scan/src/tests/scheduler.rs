@@ -905,6 +905,33 @@ fn test_workspace_rescan_keeps_fetched_sources_of_nested_installed_package() {
 }
 
 #[test]
+fn test_installed_package_opened_as_workspace_keeps_fetched_sources() {
+    // The workspace walk never filters its own root, so the installed package
+    // directory itself as a workspace folder needs its own check.
+    let lib = tempfile::tempdir().unwrap();
+    let pkg_dir = lib.path().join("pkg");
+    write_package(&pkg_dir, "pkg", &[]);
+    fs::create_dir_all(pkg_dir.join("Meta")).unwrap();
+    fs::write(pkg_dir.join("Meta").join("package.rds"), "").unwrap();
+    fs::create_dir_all(pkg_dir.join("doc")).unwrap();
+    fs::write(pkg_dir.join("doc").join("intro.R"), "shipped <- 1\n").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let pkg = db.package_by_name("pkg").unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("a.R"), "a <- 1\n").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    let files = pkg.files(&db).clone();
+
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, slice::from_ref(&pkg_dir));
+
+    assert!(roots[0].packages(&db).is_empty());
+    assert!(roots[0].scripts(&db).is_empty());
+    assert_eq!(pkg.files(&db), &files);
+}
+
+#[test]
 fn test_library_rescan_result_dropped_when_library_removed_mid_rescan() {
     let lib = tempfile::tempdir().unwrap();
     let mut db = OakDatabase::new();

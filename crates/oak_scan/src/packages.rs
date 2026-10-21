@@ -435,12 +435,15 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 /// / `.ignore` and skips hidden directories. Matches the ty / Astral / ruff
 /// convention.
 ///
-/// The walker also prunes installed packages ([`is_installed_package()`]), so a
-/// library inside the workspace contributes no workspace packages or scripts
-/// even when nothing ignores it: `renv/library/` in a project without git, or a
-/// project-local `lib/`. Such packages then belong to library roots only, which
-/// is what they need: an installed `R/` holds a lazy-load database rather than
-/// `.R` files, so their sources come from the LSP source fetcher.
+/// The walker also prunes installed packages ([`is_installed_package()`]),
+/// including a root that is one, so a library inside the workspace contributes
+/// no workspace packages or scripts even when nothing ignores it: a
+/// project-local `lib/`, or a copied `renv/library/` in a project without git.
+/// Symlinked package entries, as renv creates by default, are never walked
+/// because the walker doesn't follow links. Installed packages are held by the
+/// library roots on the library paths, if any, and their sources come from the
+/// LSP source fetcher, because an installed `R/` holds a lazy-load database
+/// rather than `.R` files.
 ///
 /// rust-analyzer takes the opposite approach: walk everything, hardcoded
 /// exclusions for `.git` and `target`. We may want to revisit if the implicit
@@ -448,14 +451,22 @@ pub(crate) fn file_revision(path: &Path) -> FileRevision {
 /// is an opt-out config (similar to ty's `respect-ignore-files`) and / or a
 /// hardcoded exclusion list.
 fn workspace_walker(root: &Path) -> ignore::Walk {
-    WalkBuilder::new(root)
-        .filter_entry(|entry| {
-            let is_dir = entry
-                .file_type()
-                .is_some_and(|file_type| file_type.is_dir());
-            !(is_dir && is_installed_package(entry.path()))
-        })
-        .build()
+    let mut builder = WalkBuilder::new(root);
+    builder.filter_entry(|entry| {
+        let is_dir = entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_dir());
+        !(is_dir && is_installed_package(entry.path()))
+    });
+
+    // `filter_entry()` never sees the walk's root (depth 0). The root entry
+    // alone carries no `DESCRIPTION` or R file, so capping the depth yields
+    // nothing for an installed package opened as a workspace folder.
+    if is_installed_package(root) {
+        builder.max_depth(Some(0));
+    }
+
+    builder.build()
 }
 
 /// Whether `dir` is an installed package rather than package sources.
