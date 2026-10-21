@@ -227,19 +227,22 @@ fn test_object_explorer_view_call_is_unbound() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Atomic vectors are neither tables nor explorable, so `View()` still errors.
+/// Atomic vectors open in the explorer with accessors on the viewed variable.
 #[test]
-fn test_object_explorer_view_atomic_vector_errors() {
+fn test_object_explorer_view_atomic_vector() {
     let frontend = DummyArkFrontend::lock();
+    execute(&frontend, "oe_v <- c(a = 'x', b = 'y')");
 
-    frontend.send_execute_request("View(1:3)", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't `View()`"));
-    frontend.recv_iopub_idle();
-    frontend.recv_shell_execute_reply_exception();
+    let comm_id = view(&frontend, "View(oe_v)");
+    let accessors: Vec<Option<String>> = get_children(&frontend, &comm_id)
+        .children
+        .into_iter()
+        .map(|node| node.accessor)
+        .collect();
+    assert_eq!(accessors, vec![
+        Some(String::from(r#"oe_v["a"]"#)),
+        Some(String::from(r#"oe_v["b"]"#)),
+    ]);
 }
 
 fn execute(frontend: &DummyArkFrontend, code: &str) {

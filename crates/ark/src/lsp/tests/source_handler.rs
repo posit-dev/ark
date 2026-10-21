@@ -27,6 +27,7 @@ pub(super) enum TestBehavior {
     /// and return `Success(dir)`.
     Success(Vec<(&'static str, &'static str)>),
     Failure,
+    Panic,
     /// Park on a [`Gate`] until the test releases it, then fail. Lets a test hold a
     /// source worker for as long as it wants.
     Gated(Gate),
@@ -93,6 +94,7 @@ impl SourceHandler for TestSourceHandler {
                 SourceResponse::fetched(dir)
             },
             Some(TestBehavior::Failure) => SourceResponse::Failure,
+            Some(TestBehavior::Panic) => panic!("Test panic in a source worker"),
             Some(TestBehavior::Gated(gate)) => {
                 gate.wait();
                 SourceResponse::Failure

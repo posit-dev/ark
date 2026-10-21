@@ -21,7 +21,10 @@ use harp::environment::EnvironmentFilter;
 use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::r_chr_get;
+use harp::object::r_dim;
 use harp::object::r_length;
+use harp::object::r_str_na;
 use harp::object::RObject;
 use harp::r_null;
 use harp::r_symbol;
@@ -37,6 +40,7 @@ use harp::utils::r_is_data_frame;
 use harp::utils::r_is_function;
 use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
+use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_is_s7;
 use harp::utils::r_is_simple_vector;
@@ -637,14 +641,19 @@ fn has_viewer(value: SEXP, has_children: bool) -> bool {
         // No method found: data frames and matrices open in the Data Explorer,
         // and other containers with children open in the Object Explorer.
         Ok(None) => {
-            r_is_data_frame(value) || r_is_matrix(value) || (is_explorable(value) && has_children)
+            r_is_data_frame(value) ||
+                r_is_matrix(value) ||
+                (is_explorable(value) &&
+                    (is_s7_value(value) || !r_is_atomic(value)) &&
+                    has_children) ||
+                is_viewable_character(value)
         },
     }
 }
 
-/// Whether the Object Explorer can show an object: a list (but not a data
-/// frame or matrix), an environment, an S4 object, an S7 object (but not one
-/// that extends a function), a pairlist, or an expression vector.
+/// Whether the Object Explorer can show an object: a list or atomic vector (but
+/// not a data frame or matrix), an environment, an S4 object, an S7 object (but
+/// not one that extends a function), a pairlist, or an expression vector.
 pub(crate) fn is_explorable(value: SEXP) -> bool {
     if r_is_null(value) || r_is_data_frame(value) || r_is_matrix(value) {
         return false;
@@ -652,7 +661,35 @@ pub(crate) fn is_explorable(value: SEXP) -> bool {
     if is_s7_value(value) {
         return r_typeof(value) != CLOSXP;
     }
-    r_is_s4(value) || matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
+    r_is_s4(value) ||
+        r_is_atomic(value) ||
+        matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
+}
+
+fn r_is_atomic(value: SEXP) -> bool {
+    matches!(
+        r_typeof(value),
+        LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP
+    )
+}
+
+/// Whether a non-empty character vector gets a viewer button in the Variables
+/// pane. Full text search makes the Object Explorer most useful for these,
+/// unlike other atomic vectors. Classed vectors qualify only if they inherit
+/// from `character` (e.g. `glue`, `fs_path`). A single string is viewable only
+/// if it's too long to show in full as a display value.
+pub(crate) fn is_viewable_character(value: SEXP) -> bool {
+    r_typeof(value) == STRSXP &&
+        (!r_is_object(value) || r_inherits(value, "character")) &&
+        r_dim(value) == r_null() &&
+        match r_length(value) {
+            0 => false,
+            1 => {
+                let elt = r_chr_get(value, 0);
+                elt != r_str_na() && r_length(elt) as usize > MAX_DISPLAY_VALUE_LENGTH
+            },
+            _ => true,
+        }
 }
 
 /// Try to view an object using a custom view method.
@@ -2284,6 +2321,26 @@ mod tests {
                 "#,
             )
             .unwrap();
+        })
+    }
+
+    #[test]
+    fn test_has_viewer_character() {
+        r_task(|| {
+            let viewable =
+                |code: &str| is_viewable_character(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(!viewable("'walnuts'"));
+            assert!(viewable("strrep('a', 101)"));
+            assert!(!viewable("NA_character_"));
+            assert!(viewable("c(a = 'a', b = 'b')"));
+            assert!(viewable(
+                "structure(c('a', 'b'), class = c('glue', 'character'))"
+            ));
+            assert!(!viewable("structure(c('a', 'b'), class = 'foo')"));
+            assert!(!viewable("character()"));
+            assert!(!viewable("matrix(letters[1:4], 2)"));
+            assert!(!viewable("factor('a')"));
+            assert!(!viewable("1:3"));
         })
     }
 

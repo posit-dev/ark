@@ -56,7 +56,6 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp_server::ls_types::WorkspaceServerCapabilities;
-use tracing::Instrument;
 
 use crate::console::ConsoleNotification;
 use crate::lsp;
@@ -226,14 +225,13 @@ pub(super) fn effective_workspace_paths(params: &InitializeParams) -> Vec<AbsPat
         .collect()
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) async fn handle_initialized(
     client: &tower_lsp_server::Client,
     lsp_state: &mut LspState,
     state: &mut WorldState,
     events_tx: &TokioUnboundedSender<Event>,
 ) {
-    let span = tracing::info_span!("handle_initialized").entered();
-
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
@@ -296,11 +294,7 @@ pub(crate) async fn handle_initialized(
         }
     }
 
-    client
-        .register_capability(regs)
-        .instrument(span.exit())
-        .await
-        .log_err();
+    client.register_capability(regs).await.log_err();
 
     update_config(
         open_file_wire_uris(state),
@@ -667,6 +661,7 @@ fn to_std_paths(paths: &[AbsPathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) async fn did_change_configuration(
     _params: DidChangeConfigurationParams,
     client: &tower_lsp_server::Client,
@@ -682,9 +677,7 @@ pub(crate) async fn did_change_configuration(
 
     let was_enabled = state.config.oak.source_fetching_enabled;
 
-    let result = update_config(open_file_wire_uris(state), client, capabilities, state)
-        .instrument(tracing::info_span!("did_change_configuration"))
-        .await;
+    let result = update_config(open_file_wire_uris(state), client, capabilities, state).await;
 
     // Report only changes after startup. `handle_initialized()` reports the initial state.
     if state.config.oak.source_fetching_enabled != was_enabled {

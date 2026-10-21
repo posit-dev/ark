@@ -54,6 +54,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
     line: SEXP,
     column: SEXP,
     uri: SEXP,
+    pinned: SEXP,
 ) -> anyhow::Result<SEXP> {
     let kind: String = RObject::view(uri).try_into()?;
     let kind = OpenEditorKind::from_str(&kind)?;
@@ -63,7 +64,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
         line: RObject::view(line).try_into()?,
         column: RObject::view(column).try_into()?,
         kind,
-        pinned: None,
+        pinned: Some(RObject::view(pinned).try_into()?),
     };
 
     let event = UiFrontendEvent::OpenEditor(params);

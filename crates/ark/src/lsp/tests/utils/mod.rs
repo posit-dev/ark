@@ -1,30 +1,28 @@
-pub(crate) mod client;
 mod description_writer;
-mod events;
+pub(crate) mod events;
 mod namespace_writer;
 
 use std::path::Path;
 use std::sync::Arc;
 
 use aether_path::FilePath;
-pub(super) use client::test_client;
-pub(super) use client::TestClient;
 pub(super) use description_writer::DescriptionWriter;
-pub(super) use events::did_change;
 pub(super) use events::did_change_configuration;
-pub(super) use events::did_change_workspace_folders;
-pub(super) use events::did_open;
 pub(super) use events::initialize;
 pub(super) use events::initialize_with_options;
 pub(super) use events::initialize_without_configuration;
-pub(super) use events::initialized;
 pub(super) use namespace_writer::NamespaceWriter;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
 
-use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+pub(super) use crate::lsp::harness::editor::client::test_client;
+pub(super) use crate::lsp::harness::editor::client::TestClient;
+pub(super) use crate::lsp::harness::editor::notifications::did_change;
+pub(super) use crate::lsp::harness::editor::notifications::did_change_workspace_folders;
+pub(super) use crate::lsp::harness::editor::notifications::did_open;
+pub(super) use crate::lsp::harness::editor::notifications::initialized;
 use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
@@ -44,11 +42,11 @@ pub(super) fn source_scheduler_for_test(handler: Arc<dyn SourceHandler>) -> Sour
     scheduler
 }
 
-/// Creates a [`WorldState`] with default source fetching by removing the ambient
-/// `OAK_SOURCE_FETCHING_ENABLED`. Tests disable it through [`TestClient`].
+/// Keep source fetching enabled by default regardless of
+/// `OAK_SOURCE_FETCHING_ENABLED`, without changing the process environment.
+/// Tests can disable fetching through [`TestClient`], including on later pulls.
 pub(super) fn world_with_source_fetching(db: OakDatabase) -> WorldState {
-    unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-    WorldState::new(db)
+    WorldState::with_default_source_fetching(db)
 }
 
 pub(super) fn make_state(wire: &str, contents: &str) -> (WorldState, Uri) {

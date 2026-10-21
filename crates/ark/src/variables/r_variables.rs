@@ -27,6 +27,7 @@ use harp::environment::EnvironmentFilter;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::get_option;
+use harp::object::r_length;
 use harp::object::RObject;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_function;
@@ -55,6 +56,7 @@ use crate::r_task;
 use crate::r_task::RTask;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::is_explorable;
+use crate::variables::variable::is_viewable_character;
 use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
@@ -350,7 +352,10 @@ impl RVariables {
                 return Ok(None);
             }
 
-            if r_is_function(obj.sexp) {
+            // Functions and single strings open in an editor
+            if r_is_function(obj.sexp) ||
+                (is_viewable_character(obj.sexp) && r_length(obj.sexp) == 1)
+            {
                 harp::as_result(view(&obj, path, &env))?;
                 return Ok(None);
             }

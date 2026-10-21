@@ -33,6 +33,7 @@ use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::TestClient;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::config::env_settings;
 use crate::lsp::config::initialization_options;
 use crate::lsp::config::LspSettings;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
@@ -190,8 +191,8 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     state.handle_event_to_quiescence(initialized()).await;
 
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
     assert!(handler.calls().lock().unwrap().is_empty());
 
@@ -245,9 +246,9 @@ async fn test_configuration_not_pulled_without_capability() {
     state.handle_event_to_quiescence(event).await;
     state.handle_event_to_quiescence(initialized()).await;
 
-    assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability"
-    ]);
+    assert_eq!(client.answered_requests(), vec![Ok::<_, String>(
+        String::from("client/registerCapability")
+    )]);
     assert!(state.world().config.oak.source_fetching_enabled);
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
 }
@@ -355,36 +356,38 @@ async fn test_initialization_options_survive_a_silent_pull() {
     state.handle_event_to_quiescence(initialized()).await;
 
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
     assert!(!state.world().config.oak.source_fetching_enabled);
     assert!(handler.calls().lock().unwrap().is_empty());
 }
 
-/// The environment setting overrides `initializationOptions`.
+/// The environment layer overrides `initializationOptions`.
 #[test]
 fn test_env_var_beats_initialization_options() {
-    let name = OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
-    let options = json!({ "oak": { "sourceFetching": { "enabled": false } } });
+    let options =
+        initialization_options(&json!({ "oak": { "sourceFetching": { "enabled": false } } }));
+    let env = LspSettings {
+        source_fetching_enabled: Some(true),
+        ..Default::default()
+    };
 
-    let resolve =
-        || resolved_source_fetching(initialization_options(&options), LspSettings::default());
-
-    unsafe { std::env::remove_var(name) };
-    assert!(!resolve());
-
-    unsafe { std::env::set_var(name, "1") };
-    assert!(resolve());
-
-    unsafe { std::env::remove_var(name) };
+    assert!(!resolved_source_fetching(
+        LspSettings::default(),
+        options.clone(),
+        LspSettings::default()
+    ));
+    assert!(resolved_source_fetching(
+        env,
+        options,
+        LspSettings::default()
+    ));
 }
 
 /// A pulled value overrides `initializationOptions` for the same setting.
 #[test]
 fn test_pulled_setting_beats_initialization_options() {
-    unsafe { std::env::remove_var(OAK_SOURCE_FETCHING_ENABLED_ENV_VAR) };
-
     let options = initialization_options(&json!({
         "oak": { "sourceFetching": { "enabled": false } }
     }));
@@ -393,14 +396,27 @@ fn test_pulled_setting_beats_initialization_options() {
         source_fetching_enabled: Some(true),
         ..Default::default()
     };
-    assert!(resolved_source_fetching(options.clone(), pulled));
+    assert!(resolved_source_fetching(
+        LspSettings::default(),
+        options.clone(),
+        pulled
+    ));
 
     // An absent pulled value preserves the initialization option.
-    assert!(!resolved_source_fetching(options, LspSettings::default()));
+    assert!(!resolved_source_fetching(
+        LspSettings::default(),
+        options,
+        LspSettings::default()
+    ));
 }
 
-fn resolved_source_fetching(options: LspSettings, client_settings: LspSettings) -> bool {
+fn resolved_source_fetching(
+    env: LspSettings,
+    options: LspSettings,
+    client_settings: LspSettings,
+) -> bool {
     let mut state = WorldState::default();
+    state.env_settings = env;
     state.initialization_options = options;
     state.resolve_config(client_settings);
     state.config.oak.source_fetching_enabled
@@ -492,9 +508,9 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
 
     // Each configuration pull consumes one client response.
     assert_eq!(client.answered_requests(), vec![
-        "client/registerCapability",
-        "workspace/configuration",
-        "workspace/configuration"
+        Ok::<_, String>(String::from("client/registerCapability")),
+        Ok::<_, String>(String::from("workspace/configuration")),
+        Ok::<_, String>(String::from("workspace/configuration"))
     ]);
 }
 
@@ -848,7 +864,7 @@ fn test_env_var_overrides_the_setting() {
             source_fetching_enabled: Some(client_says),
             ..Default::default()
         };
-        resolved_source_fetching(LspSettings::default(), client_settings)
+        resolved_source_fetching(env_settings(), LspSettings::default(), client_settings)
     };
 
     unsafe { std::env::remove_var(name) };

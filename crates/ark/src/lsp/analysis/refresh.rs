@@ -44,14 +44,13 @@ pub(crate) struct DiagnosticsState {
 }
 
 impl DiagnosticsState {
-    /// Queue a diagnostics pass for every open file we diagnose, all tagged
-    /// with a new generation.
+    /// Queues diagnostics for every open file and tags them with a new generation.
     pub(crate) fn refresh_all(
         &mut self,
         state: &WorldState,
         pool: &AnalysisPool,
         events_tx: &TokioUnboundedSender<Event>,
-    ) {
+    ) -> u64 {
         self.generation += 1;
         let generation = self.generation;
 
@@ -63,6 +62,8 @@ impl DiagnosticsState {
 
         tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());
         lsp::log_info!("Queueing {n} diagnostic tasks", n = files.len());
+
+        let tasks = files.len() as u64;
 
         for (path, open_file) in files {
             let path = path.clone();
@@ -78,6 +79,8 @@ impl DiagnosticsState {
                 events_tx.send(Event::DiagnosticsReady(ready)).log_err();
             });
         }
+
+        tasks
     }
 
     /// Whether a diagnostics result for `path` computed at `generation`
@@ -104,6 +107,13 @@ impl DiagnosticsState {
     }
 }
 
+/// Enable testthat-specific diagnostics when any path component is `testthat`.
+/// This path heuristic also classifies files in the testthat repository itself.
+pub(crate) fn is_testthat_path(path: &FilePath) -> bool {
+    path.as_path()
+        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"))
+}
+
 fn refresh_diagnostics(
     path: FilePath,
     file: OpenFile,
@@ -113,13 +123,7 @@ fn refresh_diagnostics(
     let version = file.version();
     let _span = tracing::info_span!("diagnostics_refresh", uri = %uri.as_str()).entered();
 
-    // Special case testthat-specific behaviour. This is a simple stopgap
-    // approach that has some false positives (e.g. when we work on testthat
-    // itself the flag will always be true), but that shouldn't have much
-    // practical impact.
-    let testthat = path
-        .as_path()
-        .is_some_and(|path| path.components().any(|c| c.as_str() == "testthat"));
+    let testthat = is_testthat_path(&path);
 
     let now = std::time::Instant::now();
     lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());
@@ -152,14 +156,6 @@ mod tests {
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
-    /// `accept` is the staleness gate a refresh batch relies on: a result only
-    /// publishes if no newer generation for that file already went out. Pins
-    /// the three cases that can arrive at the main loop: a file seen for the
-    /// first time, a fresh batch superseding the last one, and a straggler
-    /// from an old batch arriving after a newer one already landed. Also pins
-    /// the deliberate choice to accept a repeat of the last generation (see
-    /// `accept`'s doc comment for why that can't happen in practice but is
-    /// still safe).
     #[test]
     fn test_accept_tracks_staleness_per_file() {
         let mut diagnostics = DiagnosticsState::default();
@@ -171,14 +167,6 @@ mod tests {
         assert!(diagnostics.accept(&path, 2));
     }
 
-    /// A salsa cancellation during the pass is swallowed into `None` by
-    /// `catch_cancellation`, the wrapper the pool applies to every task, rather
-    /// than unwinding and killing the worker thread.
-    ///
-    /// `cancellation_token().cancel()` arms local cancellation on the snapshot's
-    /// oak, so the first salsa query in `generate_diagnostics` (the `tree_sitter`
-    /// fetch) unwinds with `salsa::Cancelled`, the same payload a concurrent
-    /// `set_*` produces. The unwind fires before any R, so no `r_task` here.
     #[test]
     fn test_cancelled_diagnostics_pass_is_caught() {
         let mut state = WorldState::default();

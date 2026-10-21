@@ -45,3 +45,37 @@ fn test_view_namespace_function_generates_vdoc() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
+
+/// `View()` on a single string opens it in a read-only virtual document.
+#[test]
+fn test_view_string_generates_vdoc() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    frontend.send_execute_request(
+        "view_string_test <- 'hello'; View(view_string_test)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open_editor = frontend.recv_iopub_comm_msg();
+    assert_eq!(open_editor.comm_id, comm_id);
+    assert_eq!(
+        open_editor.data.get("method").and_then(|v| v.as_str()),
+        Some("open_editor")
+    );
+
+    let pid = std::process::id();
+    let params = &open_editor.data["params"];
+    assert_eq!(
+        params["file"],
+        format!("ark:ark-{pid}/global/view_string_test.txt")
+    );
+    assert_eq!(params["kind"], "uri");
+    assert_eq!(params["pinned"], false);
+
+    frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
