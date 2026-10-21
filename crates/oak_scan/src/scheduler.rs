@@ -1,4 +1,4 @@
-//! Async-friendly coordinator for workspace scanning.
+//! Async-friendly coordinator for workspace scanning and library rescans.
 //!
 //! Architecture: serial main loop, off-loop async scanners. Scheduler
 //! state and salsa inputs are mutated only on the main loop, one event
@@ -15,6 +15,14 @@
 //! on whatever task pool they like, and hand the [`ScanCompleted`] to
 //! [`ScanScheduler::apply_scan_completed`]. Tests do the same on the
 //! current thread via `drain_scheduler`.
+//!
+//! [`crate::DbScan::set_library_paths()`] scans new library roots synchronously.
+//! Later, events for direct library entries request rescans through the same
+//! request/completion cycle and coalescing state as workspace scans. An event
+//! during a rescan queues a follow-up listing to pick up changes missed by the
+//! first. Library entry paths also go through workspace handling when they lie
+//! inside a workspace root. Buffered paths wait only on workspace scans, not
+//! library rescans.
 //!
 //! # Race surface
 //!
@@ -38,11 +46,10 @@
 //!   follow-up scans via [`ScanState::ScanningWithRescanQueued`], keeping
 //!   affected paths buffered until those scans finish.
 //!
-//! - **Stale results.** If the workspace folder is removed while its
-//!   scan is in flight, the result arrives carrying a `Root` that's no
-//!   longer in `workspace_roots`. [`ScanScheduler::apply_scan_completed`]
-//!   silently drops it. The `Root` salsa entity stays as a leak (no
-//!   GC), but nothing references it.
+//! - **Stale results.** Removing a workspace or library root while its scan
+//!   is in flight makes the result stale. [`ScanScheduler::apply_scan_completed()`]
+//!   drops it if its `Root` is no longer in the corresponding live roots list.
+//!   Salsa retains the unreferenced `Root` input because inputs are not garbage collected.
 //!
 //! - **Folder added back during in-flight scan.** Each add mints a
 //!   fresh `Root`, not a revival of the staled one. That way the
@@ -68,6 +75,9 @@ use salsa::Setter;
 
 use crate::inputs::FileEntry;
 use crate::inputs::RootExt;
+use crate::library::list_library;
+use crate::library::set_installed_packages;
+use crate::library::InstalledPackageEntry;
 use crate::packages::is_environment_sentinel;
 use crate::packages::scan_workspace_environment_dirs;
 use crate::packages::scan_workspace_packages;
@@ -86,21 +96,39 @@ use crate::watch::remove_watched_file;
 pub struct ScanRequest {
     pub root: Root,
     pub path: Utf8PathBuf,
+    /// Captured on the main loop because [`Self::run()`] has no database access.
+    pub(crate) kind: RootKind,
 }
 
 impl ScanRequest {
+    /// Return `None` if `root`'s stored URL has no filesystem path to scan.
+    fn for_root<DB: Db + DbInputs>(db: &DB, root: Root) -> Option<Self> {
+        let path = root.path(db).as_path()?.to_path_buf();
+        Some(Self {
+            root,
+            path,
+            kind: root.kind(db),
+        })
+    }
+
     /// Run the scan synchronously. No db access, safe to call from any
     /// thread. Production drivers run this on a task pool; tests call
     /// it directly.
     pub fn run(self) -> ScanCompleted {
-        let packages = scan_workspace_packages(self.path.as_std_path());
-        let scripts = scan_workspace_scripts(self.path.as_std_path());
-        let environment_dirs = scan_workspace_environment_dirs(self.path.as_std_path());
+        let path = self.path.as_std_path();
+        let output = match self.kind {
+            RootKind::Workspace => ScanOutput::Workspace {
+                packages: scan_workspace_packages(path),
+                scripts: scan_workspace_scripts(path),
+                environment_dirs: scan_workspace_environment_dirs(path),
+            },
+            RootKind::Library => ScanOutput::Library {
+                packages: list_library(path),
+            },
+        };
         ScanCompleted {
             root: self.root,
-            packages,
-            scripts,
-            environment_dirs,
+            output,
         }
     }
 }
@@ -110,51 +138,81 @@ impl ScanRequest {
 #[derive(Debug)]
 pub struct ScanCompleted {
     root: Root,
-    packages: Vec<PackageEntry>,
-    scripts: Vec<FileEntry>,
-    environment_dirs: Vec<FilePath>,
+    output: ScanOutput,
+}
+
+#[derive(Debug)]
+enum ScanOutput {
+    Workspace {
+        packages: Vec<PackageEntry>,
+        scripts: Vec<FileEntry>,
+        environment_dirs: Vec<FilePath>,
+    },
+    Library {
+        packages: Vec<InstalledPackageEntry>,
+    },
 }
 
 impl ScanCompleted {
+    fn is_live<DB: Db + DbInputs>(&self, db: &DB) -> bool {
+        match self.output {
+            ScanOutput::Workspace { .. } => db.workspace_roots().roots(db).contains(&self.root),
+            ScanOutput::Library { .. } => db.library_roots().roots(db).contains(&self.root),
+        }
+    }
+
     /// Push the scan's output into salsa inputs for `self.root`.
     ///
     /// Unchanged rescans preserve downstream Salsa caches by reusing `File`
     /// and `Package` entities and writing inputs only when they differ. See
-    /// [`RootExt::set_package()`] and [`RootExt::set_workspace_scripts()`].
-    fn apply<DB: Db + DbInputs>(self, db: &mut DB) {
-        let ScanCompleted {
-            root,
-            packages,
-            scripts,
-            environment_dirs,
-        } = self;
-
-        let package_entities: Vec<Package> = packages
-            .into_iter()
-            .map(|pkg| {
-                // Workspace packages never have an `INDEX`
-                let index_revision = None;
-
-                root.set_package(
-                    db,
-                    pkg.description_path,
-                    pkg.name,
-                    pkg.description_revision,
-                    pkg.namespace_revision,
-                    index_revision,
-                    pkg.files,
-                    pkg.scripts,
-                )
-            })
-            .collect();
-
-        if root.packages(db) != &package_entities {
-            root.set_packages(db).to(package_entities);
+    /// [`RootExt::set_package()`], [`RootExt::set_workspace_scripts()`], and
+    /// [`set_installed_packages()`].
+    fn apply<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
+        match self.output {
+            ScanOutput::Workspace {
+                packages,
+                scripts,
+                environment_dirs,
+            } => apply_workspace_scan(db, self.root, packages, scripts, environment_dirs),
+            ScanOutput::Library { packages } => {
+                set_installed_packages(db, self.root, packages, Some(editor_owned))
+            },
         }
-        root.set_workspace_scripts(db, scripts);
-        if root.environment_dirs(db) != &environment_dirs {
-            root.set_environment_dirs(db).to(environment_dirs);
-        }
+    }
+}
+
+fn apply_workspace_scan<DB: Db + DbInputs>(
+    db: &mut DB,
+    root: Root,
+    packages: Vec<PackageEntry>,
+    scripts: Vec<FileEntry>,
+    environment_dirs: Vec<FilePath>,
+) {
+    let package_entities: Vec<Package> = packages
+        .into_iter()
+        .map(|pkg| {
+            // Only installed packages use `INDEX` metadata.
+            let index_revision = None;
+
+            root.set_package(
+                db,
+                pkg.description_path,
+                pkg.name,
+                pkg.description_revision,
+                pkg.namespace_revision,
+                index_revision,
+                pkg.files,
+                pkg.scripts,
+            )
+        })
+        .collect();
+
+    if root.packages(db) != &package_entities {
+        root.set_packages(db).to(package_entities);
+    }
+    root.set_workspace_scripts(db, scripts);
+    if root.environment_dirs(db) != &environment_dirs {
+        root.set_environment_dirs(db).to(environment_dirs);
     }
 }
 
@@ -164,10 +222,10 @@ enum ScanState {
     ScanningWithRescanQueued,
 }
 
-/// Coordinator for asynchronous workspace scanning.
+/// Coordinator for asynchronous workspace scanning and library rescans.
 ///
 /// Tracks which roots have a scan in flight, buffers the paths of R-file
-/// watcher events for those roots, and coalesces follow-up scan requests.
+/// watcher events for workspace roots, and coalesces follow-up scan requests.
 /// See the module docs for the race-handling design.
 #[derive(Debug, Default)]
 pub struct ScanScheduler {
@@ -244,6 +302,7 @@ impl ScanScheduler {
                     requests.push(ScanRequest {
                         root,
                         path: scan_path,
+                        kind: RootKind::Workspace,
                     });
                     root
                 },
@@ -273,14 +332,32 @@ impl ScanScheduler {
     /// scan. Otherwise they are buffered until all containing roots finish
     /// scanning, so older scan results cannot overwrite their effects. Paths
     /// in `skip` at that point defer to editor buffers and are dropped.
+    ///
+    /// Direct entries of live library roots also request library rescans, once
+    /// per library per batch, regardless of `skip`. These paths still go through
+    /// workspace handling because a workspace may track R files or environment
+    /// sentinels inside a library. Buffered paths outside all workspace roots
+    /// are discarded. Package directory paths match no `File`, so single-file
+    /// reconciliation does not remove their contents.
     pub fn apply_watcher_events<DB: Db + DbInputs>(
         &mut self,
         db: &mut DB,
         paths: Vec<FilePath>,
         skip: &HashSet<FilePath>,
     ) -> Vec<ScanRequest> {
-        let roots = workspace_root_paths(db);
+        let libraries = root_paths(db, db.library_roots().roots(db));
+        let roots = root_paths(db, db.workspace_roots().roots(db));
         let mut requests = Vec::new();
+
+        let mut rescan_roots: Vec<Root> = Vec::new();
+        for path in &paths {
+            let Some(library) = library_of_entry(&libraries, path) else {
+                continue;
+            };
+            if !rescan_roots.contains(&library) {
+                rescan_roots.push(library);
+            }
+        }
 
         // Request rescans before handling R-file events in the same batch,
         // so those events buffer instead of being overwritten by scan results.
@@ -289,7 +366,6 @@ impl ScanScheduler {
         // `packages` and `environment_dirs` lists for overlapping paths.
         // Ignore `skip` here because discovery depends on disk state even
         // when the editor owns a file's contents.
-        let mut rescan_roots: Vec<Root> = Vec::new();
         for path in &paths {
             let Some(fs_path) = path.as_path() else {
                 continue;
@@ -325,10 +401,9 @@ impl ScanScheduler {
 
     /// Apply a [`ScanCompleted`] produced by [`ScanRequest::run`].
     ///
-    /// Drops the result silently if `result.root` is no longer in
-    /// `workspace_roots` (the user removed the folder while its scan was in
-    /// flight). Otherwise updates the root's packages and scripts, then handles
-    /// the post-apply state:
+    /// Drops results for roots removed from `workspace_roots` or `library_roots`
+    /// while scanning. Otherwise applies the workspace contents or installed-package
+    /// listing, then handles the post-apply state.
     ///
     /// - `Scanning`: state cleared, buffered events applied if no other
     ///   containing root has a pending scan.
@@ -344,15 +419,17 @@ impl ScanScheduler {
     ) -> Vec<ScanRequest> {
         let root = result.root;
 
-        let live = db.workspace_roots().roots(db).contains(&root);
-        if !live {
-            // Workspace reconciliation already re-evaluated buffered events
-            // against the surviving roots; this result must not touch them.
+        if !result.is_live(db) {
+            // Applying a removed root's result would move entities from
+            // `StaleRoot` or `OrphanRoot` into a root invisible to analysis.
+            // Buffered paths do not need this completion. `set_workspace_paths()`
+            // already drained them against surviving workspace roots, and
+            // library scans never block them.
             self.state.remove(&root);
             return Vec::new();
         }
 
-        result.apply(db);
+        result.apply(db, editor_owned);
 
         let prior = self.state.remove(&root);
         let requests = match prior {
@@ -363,11 +440,10 @@ impl ScanScheduler {
                 // would stay pending forever. On success the buffer rides along
                 // and replays when the requeued scan finishes. On failure we
                 // fall back to the idle drain.
-                let scan_path = root.path(db).as_path().map(Utf8Path::to_path_buf);
-                match scan_path {
-                    Some(path) => {
+                match ScanRequest::for_root(db, root) {
+                    Some(request) => {
                         self.state.insert(root, ScanState::Scanning);
-                        vec![ScanRequest { root, path }]
+                        vec![request]
                     },
                     None => Vec::new(),
                 }
@@ -399,7 +475,7 @@ impl ScanScheduler {
     /// path must survive a buffer that opens and closes before its scan
     /// completes, otherwise the scan's older listing would win.
     fn drain_buffered<DB: Db + DbInputs>(&mut self, db: &mut DB, editor_owned: &HashSet<FilePath>) {
-        let roots = workspace_root_paths(db);
+        let roots = root_paths(db, db.workspace_roots().roots(db));
         self.buffered.retain(|path| {
             let Some(fs_path) = path.as_path() else {
                 return false;
@@ -456,13 +532,12 @@ impl ScanScheduler {
             },
             Some(ScanState::ScanningWithRescanQueued) => None,
             None => {
-                let Some(path) = root.path(db).as_path() else {
+                let Some(request) = ScanRequest::for_root(db, root) else {
                     log::warn!("Skipping rescan: root path is not a filesystem path");
                     return None;
                 };
-                let path = path.to_path_buf();
                 self.state.insert(root, ScanState::Scanning);
-                Some(ScanRequest { root, path })
+                Some(request)
             },
         }
     }
@@ -487,6 +562,14 @@ pub(crate) fn drain_scheduler<DB: Db + DbInputs>(
         let result = req.run();
         requests.extend(scheduler.apply_scan_completed(db, result, editor_owned));
     }
+}
+
+fn library_of_entry(libraries: &[(Utf8PathBuf, Root)], path: &FilePath) -> Option<Root> {
+    let parent = path.as_path()?.parent()?;
+    libraries
+        .iter()
+        .find(|(library_path, _)| library_path.as_path() == parent)
+        .map(|(_, library)| *library)
 }
 
 /// These files affect package or environment discovery, which the single-file
@@ -541,13 +624,12 @@ fn is_file_on_disk(root_path: &Utf8Path, fs_path: &Utf8Path) -> io::Result<bool>
     Ok(true)
 }
 
-fn workspace_root_paths<DB: Db + DbInputs>(db: &DB) -> Vec<(Utf8PathBuf, Root)> {
-    db.workspace_roots()
-        .roots(db)
+fn root_paths<DB: Db + DbInputs>(db: &DB, roots: &[Root]) -> Vec<(Utf8PathBuf, Root)> {
+    roots
         .iter()
         .filter_map(|root| {
             let Some(path) = root.path(db).as_path() else {
-                log::warn!("Skipping workspace root: path is not a filesystem path");
+                log::warn!("Skipping root: path is not a filesystem path");
                 return None;
             };
             Some((path.to_path_buf(), *root))
@@ -588,9 +670,11 @@ mod tests {
 
         let result = ScanCompleted {
             root,
-            packages: Vec::new(),
-            scripts: Vec::new(),
-            environment_dirs: Vec::new(),
+            output: ScanOutput::Workspace {
+                packages: Vec::new(),
+                scripts: Vec::new(),
+                environment_dirs: Vec::new(),
+            },
         };
         let requests = scheduler.apply_scan_completed(&mut db, result, &HashSet::new());
 

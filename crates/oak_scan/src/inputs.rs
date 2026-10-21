@@ -2,7 +2,7 @@
 //! that a single salsa setter can't safely express on its own.
 //!
 //! The helpers preserve entity identity across rescans: a `File` is
-//! keyed by URL, a `Package` by its `DESCRIPTION` name within its root,
+//! keyed by URL, a `Package` by its `DESCRIPTION` path,
 //! and a `Root` by its path. Repeat scans reuse the existing entities
 //! and update their fields in place rather than minting new ones. This
 //! keeps downstream salsa caches (parse, semantic_index, `Definition`
@@ -63,9 +63,10 @@ pub trait DbScan: Db + DbInputs {
     /// Reconcile `LibraryRoots` to exactly `paths`.
     ///
     /// - Paths already present as a `Root`: untouched. No fs walk, no
-    ///   salsa churn.
+    ///   salsa churn. Watcher-driven rescans are handled separately by
+    ///   [`crate::ScanScheduler::apply_watcher_events()`].
     ///
-    /// - New paths: scanned and added.
+    /// - New paths are scanned synchronously and added.
     ///
     /// - Removed paths: their `Root` is dropped and the contained `File`
     ///   and `Package` entities move to [`oak_db::StaleRoot`] so that
@@ -75,16 +76,10 @@ pub trait DbScan: Db + DbInputs {
     /// Order in `LibraryRoots.roots` follows `paths`, matching R's
     /// `.libPaths()` precedence.
     ///
-    /// **Why this is sync while workspaces go through
-    /// [`crate::ScanScheduler`].** Libraries are scanned exactly
-    /// once at LSP init today. Workspaces churn (folders open and
-    /// close at any time) and have a file watcher pushing events
-    /// mid-scan, so the workspace path needs the buffering /
-    /// stale-result machinery the scheduler exists for. Libraries
-    /// have neither, so the extra plumbing buys nothing. If
-    /// `.libPaths()` ever becomes mutable mid-session (e.g. user
-    /// runs `.libPaths(...)` in the console), this should join
-    /// the scheduler.
+    /// Synchronous scans make installed packages available to the first LSP
+    /// diagnostics at startup. If this call removes a root with a rescan in
+    /// flight, [`crate::ScanScheduler::apply_scan_completed()`] drops its result
+    /// because the root is no longer in `library_roots`.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
 
     /// Upsert the editor's view of a file. Used by the LSP layer to apply
@@ -257,11 +252,8 @@ pub trait RootExt {
     /// Create or update a package under this root. Atomic full-replacement of
     /// the package's file set.
     ///
-    /// The package identity is keyed on `description_path`: if `self.packages`
-    /// already contains a `Package` with this URL, that entity is reused and
-    /// its `name` / `description_revision` / `namespace_revision` fields are
-    /// refreshed (only where they actually changed to avoid an unnecessary
-    /// revision bump).
+    /// Identity is keyed on `description_path`. [`upsert_package()`] reuses a
+    /// live or stale `Package` at that path and refreshes its metadata.
     ///
     /// Invariant: The caller must wire the returned `Package` into
     /// `self.packages` via `Root::set_packages()`.
@@ -309,36 +301,14 @@ impl RootExt for Root {
         files: Vec<FileEntry>,
         scripts: Vec<FileEntry>,
     ) -> Package {
-        // `package_by_path()` finds the existing entity whether it's already
-        // in `self.packages` (rescan, common path) or in
-        // `stale_root.packages` (resurrection after a previous eviction).
-        // Either way we reuse the entity and refresh its metadata fields.
-        let pkg = match package_by_path(db, &description_path) {
-            Some(p) => {
-                if p.name(db) != &name {
-                    p.set_name(db).to(name);
-                }
-                if p.description_revision(db) != description_revision {
-                    p.set_description_revision(db).to(description_revision);
-                }
-                if p.namespace_revision(db) != namespace_revision {
-                    p.set_namespace_revision(db).to(namespace_revision);
-                }
-                remove_from_stale_packages(db, p);
-                p
-            },
-            None => Package::new(
-                db,
-                description_path,
-                name,
-                description_revision,
-                namespace_revision,
-                index_revision,
-                None,
-                Vec::new(),
-                Vec::new(),
-            ),
-        };
+        let pkg = upsert_package(
+            db,
+            description_path,
+            name,
+            description_revision,
+            namespace_revision,
+            index_revision,
+        );
 
         let file_entities: Vec<File> = files
             .into_iter()
@@ -373,6 +343,53 @@ impl RootExt for Root {
     }
 }
 
+/// Reuse a live or stale [`Package`] at `description_path`, or create one if
+/// neither exists. Preserve its source lists so library rescans do not discard
+/// fetched sources. Write metadata only when it changes to avoid bumping the
+/// Salsa revision on unchanged rescans.
+///
+/// The caller must place the result in a root's `packages` via
+/// [`Root::set_packages()`]. A reused entity is removed from stale, and
+/// [`package_by_path()`] only searches live and stale containers. Leaving the
+/// result uncontained would let the next upsert create a duplicate at that path.
+pub(crate) fn upsert_package<DB: Db + DbInputs>(
+    db: &mut DB,
+    description_path: FilePath,
+    name: String,
+    description_revision: FileRevision,
+    namespace_revision: FileRevision,
+    index_revision: Option<FileRevision>,
+) -> Package {
+    let Some(pkg) = package_by_path(db, &description_path) else {
+        return Package::new(
+            db,
+            description_path,
+            name,
+            description_revision,
+            namespace_revision,
+            index_revision,
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
+    };
+
+    if pkg.name(db) != &name {
+        pkg.set_name(db).to(name);
+    }
+    if pkg.description_revision(db) != description_revision {
+        pkg.set_description_revision(db).to(description_revision);
+    }
+    if pkg.namespace_revision(db) != namespace_revision {
+        pkg.set_namespace_revision(db).to(namespace_revision);
+    }
+    if pkg.index_revision(db) != index_revision {
+        pkg.set_index_revision(db).to(index_revision);
+    }
+    remove_from_stale_packages(db, pkg);
+    pkg
+}
+
 /// Upsert a `File` for `entry`, set its `package` backpointer, and clean up
 /// stale references in old containers.
 ///
@@ -380,7 +397,7 @@ impl RootExt for Root {
 /// in some `Root` container (`pkg.files` or `root.scripts`) before returning.
 /// Three callers:
 ///
-/// - [`RootExt::set_package`] (both library and workspace scanners)
+/// - [`RootExt::set_package()`] (workspace scanner)
 /// - [`RootExt::set_workspace_scripts`] (workspace scanner)
 /// - [`watch::add_watched_file`] (watcher dispatch)
 ///

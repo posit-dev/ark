@@ -67,7 +67,8 @@ fn salsa_revision(db: &OakDatabase) -> salsa::Revision {
 /// production trigger of a DESCRIPTION watcher event hitting the root.
 fn rescan_workspace_root(db: &mut OakDatabase, root: Root) {
     let path = root.path(db).as_path().unwrap().to_path_buf();
-    let result = ScanRequest { root, path }.run();
+    let kind = root.kind(db);
+    let result = ScanRequest { root, path, kind }.run();
     let mut scheduler = ScanScheduler::new();
     let reqs = scheduler.apply_scan_completed(db, result, &HashSet::new());
     drain_scheduler(db, &mut scheduler, reqs, &HashSet::new());

@@ -22,6 +22,7 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::OakDatabase;
 use oak_db::Package;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use oak_scan::ScanCompleted;
 use oak_scan::ScanRequest;
@@ -834,7 +835,13 @@ impl GlobalState {
                 let skipped = matches!(response, SourceResponse::Skipped);
 
                 if let Some(directory) = self.lsp_state.source_scheduler.finish(package, response) {
-                    self.world.db_mut().set_package_sources(package, &directory);
+                    // Ignore sources for a `package` no live root holds. A library
+                    // rescan may have dropped it during the fetch, and ingesting
+                    // a late result could take `File`s from a reinstalled package
+                    // that uses the same cached source paths.
+                    if self.world.db().root_by_package(package).is_some() {
+                        self.world.db_mut().set_package_sources(package, &directory);
+                    }
                 }
 
                 // Schedule a skipped package immediately. `finish()` removes it

@@ -21,8 +21,14 @@
 //!   back (can happen e.g. in multi-repo workflows where a workspace path is
 //!   added and removed).
 //!
-//! `Package` entities always go to stale: there's no editor-owned analogue for
-//! packages.
+//! `Package` entities of a dropped `Root` always go to `StaleRoot`. Packages
+//! have no editor-owned container.
+//!
+//! A library rescan rehomes a removed package's files through [`rehome_files()`]
+//! only when no live root still holds the package. The `Package` itself is not
+//! moved to stale. Once no live root holds it, a later reinstall creates a new
+//! entity. See
+//! [`crate::library::set_installed_packages()`].
 
 use std::collections::HashSet;
 
@@ -55,17 +61,48 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     editor_owned: Option<&HashSet<FilePath>>,
 ) {
     let packages: Vec<Package> = root.packages(db).clone();
+    let scripts: Vec<File> = root.scripts(db).to_vec();
 
-    let mut all_files: Vec<File> = root.scripts(db).to_vec();
-    for &pkg in &packages {
+    rehome_files(db, &packages, scripts, editor_owned);
+
+    if !packages.is_empty() {
+        let stale = db.stale_root();
+        let mut stale_packages = stale.packages(db).clone();
+        for pkg in &packages {
+            if !stale_packages.contains(pkg) {
+                stale_packages.push(*pkg);
+            }
+        }
+        stale.set_packages(db).to(stale_packages);
+    }
+
+    root.set_scripts(db).to(Vec::new());
+    root.set_packages(db).to(Vec::new());
+    root.set_environment_dirs(db).to(Vec::new());
+}
+
+/// Keep evicted files available for analysis or reuse. Paths in `editor_owned`
+/// go to `OrphanRoot`, and all others go to `StaleRoot`, with no package
+/// association. This includes `scripts` and each package's `files` and `scripts`.
+///
+/// Package source lists are cleared, but root lists are untouched. Callers must
+/// remove `packages` and `scripts` from their root and decide whether to retain
+/// the `Package` entities in stale or leave them uncontained.
+pub(crate) fn rehome_files<DB: Db + DbInputs>(
+    db: &mut DB,
+    packages: &[Package],
+    scripts: Vec<File>,
+    editor_owned: Option<&HashSet<FilePath>>,
+) {
+    let mut all_files = scripts;
+    for &pkg in packages {
         all_files.extend(pkg.files(db).iter().copied());
         all_files.extend(pkg.scripts(db).iter().copied());
     }
 
     // Clear `file.package` first: by the time these files land in their new
-    // home, their old `Package` entity is itself in stale and the backpointer
-    // would lie about live containment. Setting to `None` here keeps the
-    // placement invariant honest.
+    // home in `OrphanRoot` or `StaleRoot`, they must have no package
+    // association. Analysis treats orphan files as standalone scripts.
     for &file in &all_files {
         file.set_package(db).to(None);
     }
@@ -84,34 +121,19 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
         orphan.set_files(db).to(files);
     }
 
-    let stale = db.stale_root();
     if !to_stale.is_empty() {
+        let stale = db.stale_root();
         let mut files = stale.files(db).clone();
         files.extend(to_stale);
         stale.set_files(db).to(files);
     }
 
-    if !packages.is_empty() {
-        let mut stale_packages = stale.packages(db).clone();
-        for pkg in &packages {
-            if !stale_packages.contains(pkg) {
-                stale_packages.push(*pkg);
-            }
-        }
-        stale.set_packages(db).to(stale_packages);
-    }
-
-    // Clear the dropped root's containers and each package's files / scripts
-    // vec. The packages themselves now live in `stale_root.packages`. Keeping
-    // their `files` populated would leave stale references that
-    // `package_by_path` can resurrect with inconsistent contents.
-    root.set_scripts(db).to(Vec::new());
-    for &pkg in &packages {
+    // Clear both lists so a package reused through `package_by_path()` cannot
+    // retain references to files that now have no package association.
+    for &pkg in packages {
         pkg.set_files(db).to(Vec::new());
         pkg.set_scripts(db).to(Vec::new());
     }
-    root.set_packages(db).to(Vec::new());
-    root.set_environment_dirs(db).to(Vec::new());
 }
 
 pub(crate) fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {

@@ -2,6 +2,7 @@
 //! event loop.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -15,6 +16,10 @@ use oak_scan::DbScan;
 use serde_json::json;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FileEvent;
+use tower_lsp_server::ls_types::Uri;
 
 use super::source_handler::gate;
 use super::source_handler::TestBehavior;
@@ -32,6 +37,8 @@ use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::TestClient;
+use crate::lsp::backend::LspMessage;
+use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::config::env_settings;
 use crate::lsp::config::initialization_options;
@@ -941,6 +948,95 @@ async fn test_failed_source_is_not_retried() {
     assert_eq!(dispatched_names(handler.calls()), vec![String::from(
         "donor"
     )]);
+}
+
+/// A late source result for a removed package must not take `File`s from a
+/// reinstalled package that has already ingested sources at the same paths.
+#[tokio::test]
+async fn test_late_sources_for_removed_package_are_not_ingested() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Success(vec![("foo.R", "foo <- function() 1\n")]),
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    let donor_dir = lib.path().join("donor");
+    let write_donor = || {
+        DescriptionWriter::new()
+            .package("donor")
+            .version("0.0.0")
+            .built("dummy")
+            .write(&donor_dir)
+    };
+    write_donor();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(
+            tokio::sync::mpsc::unbounded_channel().0,
+            source_scheduler_for_test(handler.clone()),
+        ),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    let is_source_completed = |event: &Event| matches!(event, Event::SourceCompleted(_));
+
+    state
+        .handle_event_once(did_change_workspace_folders(workspace.path()))
+        .await;
+    let late_completion = state.take_event(is_source_completed).await;
+    let removed = state.world().db().package_by_name("donor").unwrap();
+
+    fs::remove_dir_all(&donor_dir).unwrap();
+    state
+        .handle_event_once(did_change_watched_file(&donor_dir, FileChangeType::DELETED))
+        .await;
+    state.pump_scans_to_quiescence().await;
+    assert!(state.world().db().package_by_name("donor").is_none());
+
+    write_donor();
+    state
+        .handle_event_once(did_change_watched_file(&donor_dir, FileChangeType::CREATED))
+        .await;
+    let completion = state.take_event(is_source_completed).await;
+    state.handle_event_once(completion).await;
+
+    let db = state.world().db();
+    let reinstalled = db.package_by_name("donor").unwrap();
+    assert_ne!(reinstalled, removed);
+    let files = reinstalled.files(db).clone();
+    assert_eq!(files.len(), 1);
+
+    state.handle_event_to_quiescence(late_completion).await;
+
+    let db = state.world().db();
+    assert_eq!(reinstalled.files(db), &files);
+    assert_eq!(files[0].package(db), Some(reinstalled));
+    assert!(removed.files(db).is_empty());
+    assert_eq!(dispatched_names(handler.calls()), vec!["donor", "donor"]);
+}
+
+fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidChangeWatchedFiles(DidChangeWatchedFilesParams {
+            changes: vec![FileEvent {
+                uri: Uri::from_file_path(path).unwrap(),
+                typ,
+            }],
+        }),
+    ))
 }
 
 /// End to end against real `srcref` recovery: install {generics} from source into a

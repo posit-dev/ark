@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::Db;
 use oak_db::File;
 use oak_scan::DbScan;
 use stdext::result::ResultExt;
@@ -44,6 +45,7 @@ use tower_lsp_server::ls_types::NotebookDocumentSyncOptions;
 use tower_lsp_server::ls_types::NotebookSelector;
 use tower_lsp_server::ls_types::OneOf;
 use tower_lsp_server::ls_types::Registration;
+use tower_lsp_server::ls_types::RelativePattern;
 use tower_lsp_server::ls_types::RenameOptions;
 use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
 use tower_lsp_server::ls_types::ServerCapabilities;
@@ -81,6 +83,7 @@ use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::state::open_file_wire_uris;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
+use crate::lsp::traits::url::UrlExt;
 
 // Handlers that mutate the world state
 
@@ -256,6 +259,22 @@ pub(crate) async fn handle_initialized(
         ),
     });
 
+    if lsp_state.capabilities.relative_pattern_support() {
+        let watchers = library_watchers(state.db());
+        let options = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers });
+        if let Some(options) = options.log_err() {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeWatchedFiles"),
+                register_options: Some(options),
+            });
+        }
+    } else {
+        lsp::log_info!(
+            "Installed packages are not watched: the client doesn't support relative watcher patterns"
+        );
+    }
+
     if lsp_state
         .capabilities
         .dynamic_registration_for_did_change_configuration()
@@ -324,6 +343,31 @@ pub(crate) async fn handle_initialized(
         &lsp_state.source_pool,
         events_tx,
     );
+}
+
+/// Watch direct library entries, which installs and removals replace, create,
+/// or delete, including renv's package links.
+///
+/// `*` keeps watching flat in VS Code and Positron. A pattern containing `/` or
+/// `**`, such as `*/DESCRIPTION`, would require recursive watching of package
+/// contents. This deliberately misses changes inside an existing package directory.
+///
+/// Keep the stored root path rather than resolving symlinks. These clients report
+/// events under the requested base, and
+/// [`oak_scan::ScanScheduler::apply_watcher_events()`] matches that stored path.
+pub(super) fn library_watchers(db: &dyn Db) -> Vec<FileSystemWatcher> {
+    db.library_roots()
+        .roots(db)
+        .iter()
+        .filter_map(|root| root.path(db).to_url().to_uri().log_err())
+        .map(|base_uri| FileSystemWatcher {
+            glob_pattern: GlobPattern::Relative(RelativePattern {
+                base_uri: OneOf::Right(base_uri),
+                pattern: String::from("*"),
+            }),
+            kind: None,
+        })
+        .collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]
