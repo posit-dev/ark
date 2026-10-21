@@ -63,6 +63,8 @@ fn install_default_search_path(db: &mut OakDatabase, r_root: &Path) {
             format!("Package: {name}\nVersion: {R_VERSION}\n"),
         )
         .unwrap();
+        fs::create_dir_all(lib.path().join(name).join("Meta")).unwrap();
+        fs::write(lib.path().join(name).join("Meta").join("package.rds"), "").unwrap();
     }
     // `set_library_paths` only reads `lib` once, up front, to discover
     // package directories, so it's fine to drop the `TempDir` handle (and

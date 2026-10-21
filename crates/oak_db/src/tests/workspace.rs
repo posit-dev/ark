@@ -168,33 +168,6 @@ fn test_workspace_package_self_reference_is_dropped() {
 }
 
 #[test]
-fn test_package_shared_with_nested_library_is_dropped() {
-    // The library at `proj/libs` is deeper than the workspace, so
-    // `root_by_package()` names the library. The workspace still holds the
-    // package and lists its sources, so it isn't fetched.
-    let mut db = TestDb::new();
-    let pkg = Package::new(
-        &db,
-        file_path("proj/libs/foo/DESCRIPTION"),
-        "foo".to_string(),
-        FileRevision::zero(),
-        FileRevision::zero(),
-        None,
-        None,
-        vec![],
-        Vec::new(),
-    );
-    let lib = library_root(&db, "proj/libs");
-    lib.set_packages(&mut db).to(vec![pkg]);
-    db.library_roots().set_roots(&mut db).to(vec![lib]);
-    workspace_with_script(&mut db, "library(foo)\n");
-    let root = db.workspace_roots().roots(&db)[0];
-    root.set_packages(&mut db).to(vec![pkg]);
-
-    assert!(all_package_dependencies_names(&db).is_empty());
-}
-
-#[test]
 fn test_empty_workspace_uses_nothing() {
     let db = TestDb::new();
     assert!(all_package_dependencies_names(&db).is_empty());

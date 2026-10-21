@@ -73,4 +73,3 @@ pub use package_layout::classify_in_package;
 pub use package_layout::PackagePlacement;
 pub use storage::OakDatabase;
 pub use workspace::all_package_dependencies;
-pub use workspace::is_workspace_package;

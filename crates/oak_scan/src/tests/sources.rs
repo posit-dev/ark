@@ -5,6 +5,7 @@ use oak_db::File;
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
 
+use crate::tests::mark_installed;
 use crate::DbScan;
 
 /// Write an installed package's `DESCRIPTION` under `lib`
@@ -23,6 +24,7 @@ fn write_description(lib: &Path, name: &str, collate: Option<&[&str]>) {
     }
 
     fs::write(directory.join("DESCRIPTION"), description).unwrap();
+    mark_installed(&directory);
 }
 
 /// Write `*.R` files directly under `directory`, the layout a source provider hands to

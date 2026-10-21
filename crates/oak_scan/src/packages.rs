@@ -472,6 +472,10 @@ fn workspace_walker(root: &Path) -> ignore::Walk {
 /// Whether `dir` is an installed package rather than package sources.
 /// `library()` rejects a directory without `Meta/package.rds` as "not a valid
 /// installed package", so this is R's own criterion.
-fn is_installed_package(dir: &Path) -> bool {
+///
+/// Library listing ([`crate::library::list_library()`]) accepts and the
+/// workspace walk prunes on this one predicate, so each `DESCRIPTION` belongs
+/// to either a library root or a workspace root, never both.
+pub(crate) fn is_installed_package(dir: &Path) -> bool {
     dir.join("Meta").join("package.rds").is_file()
 }

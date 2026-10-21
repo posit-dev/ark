@@ -176,6 +176,7 @@ fn write_package(library: &tempfile::TempDir, name: &str, description: &str, nam
     fs::create_dir(&package).unwrap();
     fs::write(package.join("DESCRIPTION"), description).unwrap();
     fs::write(package.join("NAMESPACE"), namespace).unwrap();
+    oak_package_metadata::tests::mark_installed(&package);
 }
 
 #[test]

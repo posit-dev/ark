@@ -12,6 +12,7 @@ use oak_db::RootKind;
 use oak_db::SourceDb;
 
 use crate::scheduler::drain_scheduler;
+use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 
@@ -476,8 +477,7 @@ fn test_scan_workspace_skips_installed_packages() {
     write_package(&tmp.path().join("mypkg"), "mypkg", &[("a.R", "x <- 1\n")]);
     let installed = tmp.path().join("lib/dplyr");
     write_package(&installed, "dplyr", &[("dplyr.R", "vendored <- 1\n")]);
-    fs::create_dir_all(installed.join("Meta")).unwrap();
-    fs::write(installed.join("Meta/package.rds"), "").unwrap();
+    mark_installed(&installed);
     let shipped = ["R/dplyr.R", "doc/intro.R", "demo/demo.R"];
     for path in &shipped[1..] {
         let path = installed.join(path);

@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use std::slice;
 
 use aether_path::FilePath;
 use filetime::set_file_mtime;
@@ -18,9 +17,8 @@ use oak_db::SourceDb;
 use crate::library::list_library;
 use crate::library::set_installed_packages;
 use crate::library::InstalledPackageEntry;
-use crate::scheduler::drain_scheduler;
+use crate::tests::mark_installed;
 use crate::DbScan;
-use crate::ScanScheduler;
 
 fn write_installed_package(lib: &Path, name: &str, version: &str) {
     let dir = lib.join(name);
@@ -30,6 +28,7 @@ fn write_installed_package(lib: &Path, name: &str, version: &str) {
         format!("Package: {name}\nVersion: {version}\n"),
     )
     .unwrap();
+    mark_installed(&dir);
 }
 
 fn set_mtime(path: &Path, seconds: i64) {
@@ -74,10 +73,16 @@ fn test_list_library_lists_only_package_directories() {
     set_mtime(&pkg_dir.join("NAMESPACE"), 2_000);
     set_mtime(&pkg_dir.join("INDEX"), 3_000);
 
-    // Install locks without `DESCRIPTION` and temporary files must not count
-    // as installed packages.
+    // Install locks, temporary files, and source directories (a `DESCRIPTION`
+    // but no `Meta/package.rds`) must not count as installed packages.
     fs::create_dir_all(lib.path().join("00LOCK-pkg").join("00new")).unwrap();
     fs::write(lib.path().join("file1a2b3c"), "").unwrap();
+    fs::create_dir_all(lib.path().join("src")).unwrap();
+    fs::write(
+        lib.path().join("src").join("DESCRIPTION"),
+        "Package: src\nVersion: 1.0.0\n",
+    )
+    .unwrap();
 
     let entries = list_library(lib.path());
 
@@ -292,6 +297,7 @@ fn test_rescan_upgrade_moves_sources_to_stale() {
             format!("Package: pkg\nVersion: {version}\nCollate: 'f.R'\n"),
         )
         .unwrap();
+        mark_installed(&lib.path().join("pkg"));
     };
     write_description("1.0.0");
     set_mtime(&description, 1_000);
@@ -379,44 +385,6 @@ fn test_rescan_unchanged_description_revision_keeps_sources() {
     rescan(&mut db, root);
 
     assert_eq!(pkg.namespace_revision(&db), revision(2_000));
-    assert_eq!(pkg.files(&db), &files);
-    assert_eq!(files[0].package(&db), Some(pkg));
-    assert!(db.stale_root().files(&db).is_empty());
-}
-
-#[test]
-fn test_rescan_upgrade_keeps_files_of_package_shared_with_workspace() {
-    // The workspace scan reuses the library's `Package` because both scans
-    // find the same `DESCRIPTION` path. The directory has no
-    // `Meta/package.rds`, so the workspace walk doesn't prune it.
-    let workspace_dir = tempfile::tempdir().unwrap();
-    let lib = workspace_dir.path().join("lib");
-    let pkg_dir = lib.join("pkg");
-    write_installed_package(&lib, "pkg", "1.0.0");
-    fs::create_dir_all(pkg_dir.join("R")).unwrap();
-    fs::write(pkg_dir.join("R").join("a.R"), "a <- 1\n").unwrap();
-    set_mtime(&pkg_dir.join("DESCRIPTION"), 1_000);
-    let mut db = OakDatabase::new();
-    db.set_library_paths(slice::from_ref(&lib));
-    let library = library_root(&db, &lib);
-    let mut scheduler = ScanScheduler::new();
-    let requests = scheduler.set_workspace_paths(
-        &mut db,
-        &[workspace_dir.path().to_path_buf()],
-        &HashSet::new(),
-    );
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
-    let workspace = db.workspace_roots().roots(&db)[0];
-    let pkg = library.packages(&db)[0];
-    assert_eq!(workspace.packages(&db), &vec![pkg]);
-    let files = pkg.files(&db).clone();
-    assert_eq!(files.len(), 1);
-
-    write_installed_package(&lib, "pkg", "2.0.0");
-    set_mtime(&pkg_dir.join("DESCRIPTION"), 2_000);
-    rescan(&mut db, library);
-
-    assert_eq!(pkg.description_revision(&db), revision(2_000));
     assert_eq!(pkg.files(&db), &files);
     assert_eq!(files[0].package(&db), Some(pkg));
     assert!(db.stale_root().files(&db).is_empty());

@@ -792,8 +792,8 @@ impl Fixtures {
         self.root.join("dplyr")
     }
 
-    /// Provides `DESCRIPTION` and `NAMESPACE` stubs so package discovery treats
-    /// cached imports as installed.
+    /// Provides `DESCRIPTION`, `NAMESPACE` and `Meta/package.rds` stubs so
+    /// package discovery treats cached imports as installed.
     fn library(&self) -> PathBuf {
         self.root.join("library")
     }
@@ -884,6 +884,8 @@ impl Fixtures {
             for metadata in ["DESCRIPTION", "NAMESPACE"] {
                 std::fs::write(package.join(metadata), std::fs::read(root.join(metadata))?)?;
             }
+            std::fs::create_dir_all(package.join("Meta"))?;
+            std::fs::write(package.join("Meta").join("package.rds"), "")?;
         }
 
         Ok(())

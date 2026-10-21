@@ -17,7 +17,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
-use oak_db::is_workspace_package;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::FileRevision;
@@ -31,6 +30,7 @@ use crate::inputs::upsert_package;
 use crate::inputs::RootExt;
 use crate::lookup::package_by_path;
 use crate::packages::file_revision;
+use crate::packages::is_installed_package;
 use crate::stale::rehome_files;
 
 /// Metadata from [`list_library()`] that lets [`set_installed_packages()`]
@@ -105,10 +105,15 @@ fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path:
 /// main loop. Only direct package directories are visited, not their contents.
 ///
 /// R uses the package name as the directory basename, so no file contents need
-/// reading. A directory qualifies when `DESCRIPTION` is a file. The mtimes of
+/// reading. A directory qualifies when it is an installed package
+/// ([`is_installed_package()`]) with a `DESCRIPTION` file. The mtimes of
 /// `DESCRIPTION`, `NAMESPACE`, and `INDEX` drive lazy metadata queries, which
-/// parse their contents on demand. Directories without a `DESCRIPTION` file
-/// (including install locks) or with non-UTF8 names are skipped.
+/// parse their contents on demand. Install locks, source directories, and
+/// directories with non-UTF8 names are skipped.
+///
+/// The workspace walk prunes every directory [`is_installed_package()`]
+/// accepts, a superset of what this listing returns, so a library nested in a
+/// workspace never shares a [`Package`] with it.
 ///
 /// Stable directory-name order lets [`set_installed_packages()`] skip the
 /// `root.packages` write on unchanged rescans. Filesystem iteration order alone
@@ -143,7 +148,7 @@ pub(crate) fn list_library(path: &Path) -> Vec<InstalledPackageEntry> {
 
 fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
     let description_file = package_dir.join("DESCRIPTION");
-    if !description_file.is_file() {
+    if !is_installed_package(package_dir) || !description_file.is_file() {
         return None;
     }
 
@@ -172,16 +177,15 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// A changed `DESCRIPTION` revision rehomes the old sources through
 /// [`rehome_files()`], so they no longer belong to the upgraded installation.
 /// The revision change also lets the LSP source scheduler request sources again.
-/// Packages held by a workspace root keep their files because the workspace
-/// scan owns those source lists (see [`is_workspace_package()`]).
+/// Every file of a library package is a fetched source, because no workspace
+/// root holds installed packages (see [`list_library()`]).
 ///
 /// Removed packages are not moved to [`oak_db::StaleRoot`]. Once no live or
 /// stale root contains the old entity, a later reinstall creates a new one,
 /// allowing the LSP source scheduler to fetch sources for the new installation.
 ///
-/// Files of removed packages stay in place if another live root holds the
-/// package. Otherwise [`rehome_files()`] moves them to `OrphanRoot` when their
-/// paths are in `editor_owned`, or to `StaleRoot`. This preserves open buffers
+/// [`rehome_files()`] moves the files of removed packages to `OrphanRoot` when
+/// their paths are in `editor_owned`, or to `StaleRoot`. This preserves open buffers
 /// for analysis and keeps closed files available to the upsert helpers' stale
 /// lookup. Files left in neither container would be duplicated on a later
 /// [`crate::DbScan::upsert_editor()`] or [`crate::DbScan::set_package_sources()`]
@@ -210,7 +214,7 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
 
         let revision_changed =
             previous_revision.is_some_and(|revision| revision != entry.description_revision);
-        if revision_changed && !is_workspace_package(db, package) {
+        if revision_changed {
             upgraded.push(package);
         }
         packages.push(package);
@@ -230,11 +234,5 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .collect();
     root.set_packages(db).to(packages);
 
-    // A library inside a workspace can share a `Package` with that workspace's
-    // scan. Rehome only the files of packages no live root holds anymore.
-    let orphaned: Vec<Package> = removed
-        .into_iter()
-        .filter(|package| db.root_by_package(*package).is_none())
-        .collect();
-    rehome_files(db, &orphaned, Vec::new(), editor_owned);
+    rehome_files(db, &removed, Vec::new(), editor_owned);
 }

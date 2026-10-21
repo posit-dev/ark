@@ -20,9 +20,9 @@ use oak_db::OakDatabase;
 use oak_db::Root;
 use oak_db::SourceDb;
 
-use crate::library::set_installed_packages;
 use crate::lookup::package_by_path;
 use crate::scheduler::drain_scheduler;
+use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 
@@ -727,6 +727,7 @@ fn write_installed_package(lib: &Path, name: &str) {
         format!("Package: {name}\nVersion: 1.0.0\n"),
     )
     .unwrap();
+    mark_installed(&lib.join(name));
 }
 
 #[test]
@@ -837,35 +838,28 @@ fn test_library_entry_events_inside_workspace_also_update_workspace() {
 }
 
 #[test]
-fn test_library_drop_keeps_files_of_package_shared_with_workspace() {
-    // The workspace scan reuses the library's `Package` because both scans
-    // find the same `DESCRIPTION` path. The directory has no
-    // `Meta/package.rds`, so the workspace walk doesn't prune it.
+fn test_nested_library_and_workspace_partition_packages() {
+    // A library inside a workspace holding an installed package and a source
+    // directory. Each `DESCRIPTION` belongs to exactly one root.
     let workspace_dir = tempfile::tempdir().unwrap();
     let lib = workspace_dir.path().join("lib");
-    write_package(&lib.join("pkg"), "pkg", &[("a.R", "a <- 1\n")]);
+    write_installed_package(&lib, "installed");
+    write_package(&lib.join("source"), "source", &[("a.R", "a <- 1\n")]);
     let mut db = OakDatabase::new();
     db.set_library_paths(slice::from_ref(&lib));
-    let library = db.library_roots().roots(&db)[0];
     let mut scheduler = ScanScheduler::new();
-    let requests = scheduler.set_workspace_paths(
-        &mut db,
-        &[workspace_dir.path().to_path_buf()],
-        &HashSet::new(),
-    );
-    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
-    let workspace = db.workspace_roots().roots(&db)[0];
-    let pkg = library.packages(&db)[0];
-    assert_eq!(workspace.packages(&db), &vec![pkg]);
-    let file = db
-        .file_by_path(&watched_path(&lib.join("pkg").join("R").join("a.R")))
-        .unwrap();
+    scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
 
-    set_installed_packages(&mut db, library, Vec::new(), None);
-
-    assert!(library.packages(&db).is_empty());
-    assert_eq!(pkg.files(&db), &vec![file]);
-    assert_eq!(file.package(&db), Some(pkg));
+    let names = |root: Root| -> Vec<String> {
+        root.packages(&db)
+            .iter()
+            .map(|package| package.name(&db).clone())
+            .collect()
+    };
+    assert_eq!(names(db.library_roots().roots(&db)[0]), vec!["installed"]);
+    assert_eq!(names(db.workspace_roots().roots(&db)[0]), vec!["source"]);
 }
 
 #[test]
@@ -876,8 +870,7 @@ fn test_workspace_rescan_keeps_fetched_sources_of_nested_installed_package() {
     let workspace_dir = tempfile::tempdir().unwrap();
     let pkg_dir = workspace_dir.path().join("lib").join("pkg");
     write_package(&pkg_dir, "pkg", &[]);
-    fs::create_dir_all(pkg_dir.join("Meta")).unwrap();
-    fs::write(pkg_dir.join("Meta").join("package.rds"), "").unwrap();
+    mark_installed(&pkg_dir);
     let mut db = OakDatabase::new();
     db.set_library_paths(&[workspace_dir.path().join("lib")]);
     let pkg = db.package_by_name("pkg").unwrap();
@@ -911,8 +904,7 @@ fn test_installed_package_opened_as_workspace_keeps_fetched_sources() {
     let lib = tempfile::tempdir().unwrap();
     let pkg_dir = lib.path().join("pkg");
     write_package(&pkg_dir, "pkg", &[]);
-    fs::create_dir_all(pkg_dir.join("Meta")).unwrap();
-    fs::write(pkg_dir.join("Meta").join("package.rds"), "").unwrap();
+    mark_installed(&pkg_dir);
     fs::create_dir_all(pkg_dir.join("doc")).unwrap();
     fs::write(pkg_dir.join("doc").join("intro.R"), "shipped <- 1\n").unwrap();
     let mut db = OakDatabase::new();

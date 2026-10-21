@@ -1328,6 +1328,7 @@ mod tests {
             .map(|export| format!("export({export})\n"))
             .collect();
         std::fs::write(package.join("NAMESPACE"), namespace).unwrap();
+        oak_package_metadata::tests::mark_installed(&package);
     }
 
     #[test]
@@ -1946,6 +1947,7 @@ foo
         )
         .unwrap();
         std::fs::write(pkg_dir.join("R").join("a.R"), "undefined_symbol\n").unwrap();
+        oak_package_metadata::tests::mark_installed(&pkg_dir);
 
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);

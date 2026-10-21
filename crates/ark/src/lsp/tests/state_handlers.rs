@@ -714,6 +714,7 @@ fn test_library_entry_event_makes_installed_package_resolvable() {
     assert!(state.db().package_by_name("pkg").is_none());
 
     write_package(&lib.path().join("pkg"), "pkg", &[]);
+    oak_package_metadata::tests::mark_installed(&lib.path().join("pkg"));
     let params = DidChangeWatchedFilesParams {
         changes: vec![event(&lib.path().join("pkg"), FileChangeType::CREATED)],
     };

@@ -211,6 +211,7 @@ fn test_roxygen_comment() {
     std::fs::create_dir(&package_dir).unwrap();
     std::fs::write(package_dir.join("DESCRIPTION"), "Package: roxygen2\n").unwrap();
     std::fs::write(package_dir.join("roxygen2-tags.yml"), content).unwrap();
+    oak_package_metadata::tests::mark_installed(&package_dir);
 
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.path().to_path_buf()]);

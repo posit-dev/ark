@@ -147,7 +147,7 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
             .package(name)
             .version("0.0.0")
             .built("dummy")
-            .write(&lib.path().join(name));
+            .write_installed(&lib.path().join(name));
     }
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
@@ -210,7 +210,7 @@ async fn test_settle_reports_a_panicking_source_worker() {
         .package("donor1")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor1"));
+        .write_installed(&lib.path().join("donor1"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 

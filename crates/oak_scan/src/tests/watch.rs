@@ -12,6 +12,7 @@ use oak_db::Root;
 use oak_db::SourceDb;
 
 use crate::scheduler::drain_scheduler;
+use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanRequest;
 use crate::ScanScheduler;
@@ -145,8 +146,7 @@ fn test_add_watched_file_skips_installed_copy_of_workspace_package() {
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
     let installed = tmp.path().join("lib/pkg");
     write_package(&installed, "pkg", &[]);
-    fs::create_dir_all(installed.join("Meta")).unwrap();
-    fs::write(installed.join("Meta/package.rds"), "").unwrap();
+    mark_installed(&installed);
     fs::create_dir_all(installed.join("doc")).unwrap();
     let mut db = OakDatabase::new();
     set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());

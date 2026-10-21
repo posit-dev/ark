@@ -276,7 +276,7 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         .package("foopkg")
         .version("0.0.0")
         .built("dummy")
-        .write(&library.path().join("foopkg"));
+        .write_installed(&library.path().join("foopkg"));
     NamespaceWriter::new()
         .export("foo")
         .write(&library.path().join("foopkg"));
@@ -346,7 +346,7 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         .package("barpkg")
         .version("0.0.0")
         .built("dummy")
-        .write(&library.path().join("barpkg"));
+        .write_installed(&library.path().join("barpkg"));
     NamespaceWriter::new()
         .export("bar")
         .write(&library.path().join("barpkg"));
@@ -420,7 +420,7 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         .package("pkg")
         .version("0.0.0")
         .built("dummy")
-        .write(&library.path().join("pkg"));
+        .write_installed(&library.path().join("pkg"));
     NamespaceWriter::new()
         .export("foo")
         .write(&library.path().join("pkg"));
@@ -581,7 +581,7 @@ fn write_dummy_targets(library: &Path) {
         .package("targets")
         .version("0.0.0")
         .built("dummy")
-        .write(&package);
+        .write_installed(&package);
     NamespaceWriter::new().export("tar_source").write(&package);
 }
 

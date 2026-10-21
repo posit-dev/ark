@@ -16,9 +16,10 @@ use oak_scan::RootExt;
 use salsa::Setter;
 use url::Url;
 
-/// Write a minimal R package layout under `dir`: a `DESCRIPTION` file
-/// with `Package: {name}, Version: 1.0.0`, plus the `R/` files in
-/// `r_files` (basename -> contents).
+/// Write a minimal installed package under `dir`: a `DESCRIPTION` file
+/// with `Package: {name}, Version: 1.0.0`, the `Meta/package.rds` marker
+/// the library listing requires, plus the `R/` files in `r_files`
+/// (basename -> contents).
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     fs::create_dir_all(dir.join("R")).unwrap();
     fs::write(
@@ -26,9 +27,15 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
         format!("Package: {name}\nVersion: 1.0.0\n"),
     )
     .unwrap();
+    mark_installed(dir);
     for (basename, contents) in r_files {
         fs::write(dir.join("R").join(basename), contents).unwrap();
     }
+}
+
+fn mark_installed(dir: &Path) {
+    fs::create_dir_all(dir.join("Meta")).unwrap();
+    fs::write(dir.join("Meta").join("package.rds"), "").unwrap();
 }
 
 #[test]
@@ -323,6 +330,7 @@ fn test_scan_picks_up_collation_field() {
         "Package: pkg\nVersion: 1.0.0\nCollate: b.R a.R\n",
     )
     .unwrap();
+    mark_installed(&pkg_dir);
     fs::write(pkg_dir.join("R").join("a.R"), "x <- 1\n").unwrap();
     fs::write(pkg_dir.join("R").join("b.R"), "y <- 2\n").unwrap();
     let mut db = OakDatabase::new();

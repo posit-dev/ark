@@ -111,7 +111,7 @@ async fn test_source_pipeline_ingests_package_sources() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -172,7 +172,7 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -227,7 +227,7 @@ async fn test_configuration_not_pulled_without_capability() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -293,7 +293,7 @@ async fn check_initialization_options(options: Option<Value>) -> Arc<TestSourceH
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -336,7 +336,7 @@ async fn test_initialization_options_survive_a_silent_pull() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -470,7 +470,7 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -546,7 +546,7 @@ async fn test_disabling_stops_fetching_new_packages() {
             .package(name)
             .version("0.0.0")
             .built("dummy")
-            .write(&lib.path().join(name));
+            .write_installed(&lib.path().join(name));
     }
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
@@ -716,7 +716,7 @@ async fn queued_fetch_session() -> QueuedFetchSession {
             .package(name)
             .version("0.0.0")
             .built("dummy")
-            .write(&lib.path().join(name));
+            .write_installed(&lib.path().join(name));
     }
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
@@ -801,7 +801,7 @@ async fn check_fetching_waits_for_initialized(
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -911,7 +911,7 @@ async fn test_failed_source_is_not_retried() {
         .package("donor")
         .version("0.0.0")
         .built("dummy")
-        .write(&lib.path().join("donor"));
+        .write_installed(&lib.path().join("donor"));
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
@@ -970,7 +970,7 @@ async fn test_late_sources_for_removed_package_are_not_ingested() {
             .package("donor")
             .version("0.0.0")
             .built("dummy")
-            .write(&donor_dir)
+            .write_installed(&donor_dir)
     };
     write_donor();
     let mut db = OakDatabase::new();
@@ -1240,7 +1240,7 @@ fn write_donor(dir: &Path, version: &str, mtime_seconds: u64) {
         .package("donor")
         .version(version)
         .built("dummy")
-        .write(dir);
+        .write_installed(dir);
     fs::File::options()
         .write(true)
         .open(dir.join("DESCRIPTION"))
