@@ -125,13 +125,13 @@ type DiagnosticCountByPath<'a> = (&'a str, Option<DiagnosticSeverity>, usize);
 
 /// Expected diagnostics for the pinned corpus, grouped by path and severity.
 /// They are known resolution gaps: `vec_order_radix` is not exported by vctrs
-/// 0.6.5, and the other missing names belong to `base`, `utils`, dplyr,
-/// or packages listed only in dplyr's `Suggests`.
+/// 0.6.5, and the other missing names belong to `base`, `utils`, or packages
+/// listed only in dplyr's `Suggests`.
 const EXPECTED_ALL_DIAGNOSTIC_COUNTS: &[DiagnosticCountByPath<'static>] = &[
     ("arrange.R", None, 2),
     ("arrange.R", WARN, 1),
     ("colwise.R", None, 2),
-    ("compat-dbplyr.R", None, 5),
+    ("compat-dbplyr.R", None, 4),
     ("conditions.R", None, 1),
     ("deprec-dbi.R", None, 10),
     ("deprec-src-local.R", None, 1),
@@ -139,7 +139,6 @@ const EXPECTED_ALL_DIAGNOSTIC_COUNTS: &[DiagnosticCountByPath<'static>] = &[
     ("nth-value.R", WARN, 1),
     ("order-by.R", WARN, 2),
     ("progress.R", None, 1),
-    ("slice.R", None, 5),
     ("src-dbi.R", None, 2),
 ];
 
@@ -661,7 +660,6 @@ fn build_world_base(fixtures: &Fixtures, cache: &SourceCache) -> anyhow::Result<
 
     let mut world = LspHarness::new(db);
     world.set_workspace_folders(vec![fixtures.workspace_folder()]);
-    world.set_installed_packages(PACKAGES.iter().map(|(name, _)| name.to_string()).collect());
     world.set_console_scopes(session_scopes().clone());
 
     Ok(world)

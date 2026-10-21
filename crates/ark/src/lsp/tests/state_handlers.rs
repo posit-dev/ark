@@ -49,7 +49,7 @@ use crate::lsp::traits::url::UrlExt;
 /// because tests assert post-quiescent state; carrying scheduler
 /// state across calls only matters for mid-flight timing assertions,
 /// which live in `oak_scan`'s scheduler tests.
-fn set_workspace_paths(
+pub(crate) fn set_workspace_paths(
     state: &mut WorldState,
     paths: &[PathBuf],
     editor_owned: &HashSet<FilePath>,
@@ -690,7 +690,6 @@ fn test_console_inputs_advance_revision() {
     did_change_console_inputs(
         ConsoleInputs {
             console_scopes: vec![vec!["foo".to_string()]],
-            installed_packages: vec![],
         },
         &mut state,
     )

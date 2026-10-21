@@ -70,9 +70,6 @@ pub struct DiagnosticContext<'a> {
     /// The symbols defined in the workspace.
     pub workspace_symbols: HashSet<String>,
 
-    // The set of packages that are currently installed.
-    pub installed_packages: HashSet<String>,
-
     /// The symbols exported by packages loaded via `library()` calls in this
     /// document. Currently global.
     pub library_symbols: BTreeMap<Point, HashSet<String>>,
@@ -112,7 +109,6 @@ impl<'a> DiagnosticContext<'a> {
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
-            installed_packages: HashSet::new(),
             library_symbols: BTreeMap::new(),
             in_formula: false,
             in_call_like_arguments: false,
@@ -245,10 +241,6 @@ pub(crate) fn generate_diagnostics(
     // Add `_` pipe placeholder as a "known" session symbol so we never flag it with
     // "symbol not found" when it shows up as an `identifier` node
     context.session_symbols.insert(String::from("_"));
-
-    for pkg in state.installed_packages.iter() {
-        context.installed_packages.insert(pkg.clone());
-    }
 
     // In a notebook cell, packages that earlier cells attach are available
     // from the start of this cell. Later cells don't count.
@@ -801,9 +793,10 @@ fn recurse_namespace(
         return ().ok();
     });
 
-    // Check for a valid package name.
+    // Treat workspace packages as available even when they aren't installed.
+    // This applies to `pkg::` references anywhere, not just inside the package.
     let package = lhs.node_as_str(context.contents())?;
-    if !context.installed_packages.contains(package) {
+    if context.db.package_by_name(package).is_none() {
         let range = lhs.range();
         let range = lsp_range_from_tree_sitter_range(
             range,
@@ -1272,10 +1265,13 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::path::Path;
+    use std::path::PathBuf;
 
     use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
+    use harp::RFunction;
     use oak_db::OakDatabase;
     use oak_db::SourceDb;
     use oak_scan::DbScan;
@@ -1283,8 +1279,9 @@ mod tests {
     use tower_lsp_server::ls_types as lsp_types;
     use tower_lsp_server::ls_types::Position;
 
-    use crate::console::console_inputs;
+    use crate::console::console_scopes;
     use crate::lsp::state::WorldState;
+    use crate::lsp::tests::state_handlers::set_workspace_paths;
     use crate::lsp::traits::url::UrlExt;
     use crate::r_task;
 
@@ -1301,12 +1298,21 @@ mod tests {
         super::generate_diagnostics(file, state.snapshot(), false, &uri)
     }
 
+    /// Use the test R session's library paths and console scopes so diagnostics
+    /// recognize its installed packages and global and search-path symbols.
     fn current_state() -> WorldState {
-        let inputs = console_inputs().unwrap();
+        let library_paths: Vec<String> = RFunction::new("base", ".libPaths")
+            .call()
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
-        let mut state = WorldState::default();
-        state.console_scopes = inputs.console_scopes;
-        state.installed_packages = inputs.installed_packages;
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&library_paths);
+
+        let mut state = WorldState::with_db(db);
+        state.console_scopes = console_scopes();
         state
     }
 
@@ -1847,6 +1853,53 @@ foo
             .iter()
             .any(|d| d.message.contains("No symbol named 'foo'")));
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_namespace_library_package_not_flagged() {
+        let library = TempDir::new().unwrap();
+        install_package(library.path(), "mockpkg", &["foo"]);
+
+        let mut db = OakDatabase::new();
+        db.set_library_paths(&[library.path().to_path_buf()]);
+        let state = WorldState::with_db(db);
+
+        let diagnostics = generate_diagnostics("mockpkg::foo", &state);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_namespace_unknown_package_flagged() {
+        let state = WorldState::with_db(OakDatabase::new());
+
+        for code in ["mockpkg::foo", "mockpkg:::foo"] {
+            let diagnostics = generate_diagnostics(code, &state);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(
+                diagnostics[0].message,
+                "Package 'mockpkg' is not installed."
+            );
+        }
+    }
+
+    #[test]
+    fn test_namespace_workspace_package_not_flagged() {
+        let workspace = TempDir::new().unwrap();
+        std::fs::write(
+            workspace.path().join("DESCRIPTION"),
+            "Package: devpkg\nVersion: 1.0.0\n",
+        )
+        .unwrap();
+
+        let mut state = WorldState::with_db(OakDatabase::new());
+        set_workspace_paths(
+            &mut state,
+            &[workspace.path().to_path_buf()],
+            &HashSet::new(),
+        );
+
+        let diagnostics = generate_diagnostics("devpkg::foo", &state);
+        assert!(diagnostics.is_empty());
     }
 
     #[test]

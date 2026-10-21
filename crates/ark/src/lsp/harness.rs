@@ -94,10 +94,6 @@ impl LspHarness {
         self.state.workspace = Workspace { folders };
     }
 
-    pub fn set_installed_packages(&mut self, packages: Vec<String>) {
-        self.state.installed_packages = packages;
-    }
-
     /// Accept explicit console scopes for resolving base symbols because
     /// obtaining real scopes requires an R session.
     pub fn set_console_scopes(&mut self, scopes: Vec<Vec<String>>) {

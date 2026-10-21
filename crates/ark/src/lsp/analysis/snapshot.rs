@@ -23,7 +23,6 @@ pub(crate) struct WorldStateSnapshot {
     db: OakDatabase,
     pub(crate) workspace: Workspace,
     pub(crate) console_scopes: Vec<Vec<String>>,
-    pub(crate) installed_packages: Vec<String>,
     pub(crate) config: LspConfig,
 }
 
@@ -41,7 +40,6 @@ impl WorldState {
         WorldStateSnapshot {
             db: self.db().snapshot(),
             console_scopes: self.console_scopes.clone(),
-            installed_packages: self.installed_packages.clone(),
             config: self.config.clone(),
             workspace: self.workspace.clone(),
         }

@@ -93,10 +93,6 @@ pub struct ConsoleInputs {
     /// the LSP query us for the contents so that the LSP can cache the
     /// information.
     pub console_scopes: Vec<Vec<String>>,
-
-    /// Packages currently installed in the library path. TODO: Should send
-    /// library paths instead and inspect and cache package information in the LSP.
-    pub installed_packages: Vec<String>,
 }
 
 // Handlers taking exclusive references to global state
@@ -858,7 +854,6 @@ pub(crate) fn did_change_console_inputs(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     state.console_scopes = inputs.console_scopes;
-    state.installed_packages = inputs.installed_packages;
 
     // We currently rely on global console scopes for diagnostics, in particular
     // during package development in conjunction with `devtools::load_all()`.
