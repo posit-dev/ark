@@ -24,6 +24,7 @@ use tower_lsp_server::ls_types::FileEvent;
 use tower_lsp_server::ls_types::Uri;
 
 use super::source_handler::gate;
+use super::source_handler::wait_for_entries;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_configuration;
@@ -751,9 +752,7 @@ async fn queued_fetch_session() -> QueuedFetchSession {
     state.handle_event_once(initialized()).await;
 
     // Every worker is blocked in `handle()`, leaving the final fetch queued until `releases` drops.
-    for _ in 0..SOURCE_POOL_THREADS {
-        entered_rx.recv().unwrap();
-    }
+    wait_for_entries(&entered_rx, SOURCE_POOL_THREADS);
 
     // The configuration pull publishes `false` before the queued job starts.
     client.set_setting(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false));

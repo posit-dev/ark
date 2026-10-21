@@ -1122,7 +1122,7 @@ impl GlobalState {
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending()
         {
-            let event = self.next_event().await;
+            let event = self.next_event_or_panic("quiescence").await;
             self.handle_event_once(event).await;
         }
     }
@@ -1131,7 +1131,7 @@ impl GlobalState {
     /// requests.
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() {
-            let event = self.next_event().await;
+            let event = self.next_event_or_panic("pending scans").await;
             self.handle_event_once(event).await;
         }
     }
@@ -1139,7 +1139,7 @@ impl GlobalState {
     /// Pump events until no source request is pending, ignoring pending scans.
     pub(crate) async fn pump_sources_to_quiescence(&mut self) {
         while self.lsp_state.source_scheduler.has_pending() {
-            let event = self.next_event().await;
+            let event = self.next_event_or_panic("pending source requests").await;
             self.handle_event_once(event).await;
         }
     }
@@ -1149,11 +1149,24 @@ impl GlobalState {
     /// response that is already in flight.
     pub(crate) async fn take_event(&mut self, wanted: impl Fn(&Event) -> bool) -> Event {
         loop {
-            let event = self.next_event().await;
+            let event = self.next_event_or_panic("a wanted event").await;
             if wanted(&event) {
                 return event;
             }
             self.handle_event_once(event).await;
+        }
+    }
+
+    /// [`Self::next_event()`] with a deadline. The test pumps wait for events
+    /// that work in flight will send, so work that was never dispatched (a
+    /// fixture package the scanner didn't list, a lost wakeup) would otherwise
+    /// block the test forever: the local nextest profile reports slow tests
+    /// but never kills them.
+    async fn next_event_or_panic(&mut self, waiting_for: &str) -> Event {
+        const TIMEOUT: Duration = Duration::from_secs(30);
+        match tokio::time::timeout(TIMEOUT, self.next_event()).await {
+            Ok(event) => event,
+            Err(_) => panic!("No event within {TIMEOUT:?} while waiting for {waiting_for}"),
         }
     }
 }

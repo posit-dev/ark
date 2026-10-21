@@ -21,6 +21,7 @@ use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 
 use super::source_handler::gate;
+use super::source_handler::wait_for_entries;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change;
@@ -178,9 +179,7 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
 
     // The source pool workers are now parked in a fetch that salsa cancellation can't
     // reach. Index warmup went to the analysis pool, so it isn't queued behind them.
-    for _ in 0..2 {
-        entered_rx.recv().unwrap();
-    }
+    wait_for_entries(&entered_rx, 2);
 
     // Goes through, no holds outstanding. Ends the tick by queueing a diagnostics
     // pass, which needs an analysis thread to run on.

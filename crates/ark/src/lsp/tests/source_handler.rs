@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use super::utils::write_sources;
 use crate::lsp::sources::SourceHandler;
@@ -54,6 +55,19 @@ pub(super) fn gate(entered_tx: Sender<()>) -> (Gate, Sender<()>) {
         release_rx: Mutex::new(release_rx),
     };
     (gate, release_tx)
+}
+
+/// Block until `count` gates sharing `entered_rx` have entered `handle()`. The
+/// gates hold clones of the sender, so the channel never disconnects: without
+/// a deadline, a test whose fetches were never dispatched would block forever
+/// instead of failing.
+pub(super) fn wait_for_entries(entered_rx: &Receiver<()>, count: usize) {
+    const TIMEOUT: Duration = Duration::from_secs(30);
+    for entered in 0..count {
+        if entered_rx.recv_timeout(TIMEOUT).is_err() {
+            panic!("Only {entered} of {count} gated fetches started within {TIMEOUT:?}");
+        }
+    }
 }
 
 impl Gate {
