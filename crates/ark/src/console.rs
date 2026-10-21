@@ -74,7 +74,6 @@ use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::with_calling_error_handler;
 use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;

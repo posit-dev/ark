@@ -72,9 +72,6 @@ pub(crate) struct WorldState {
     /// more analysis of symbols in the search path.
     pub(crate) console_scopes: Vec<Vec<String>>,
 
-    /// Currently installed packages
-    pub(crate) installed_packages: Vec<String>,
-
     pub(crate) config: LspConfig,
 
     /// Persist `initializationOptions` so omitted settings in later pulls can

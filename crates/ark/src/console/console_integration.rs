@@ -112,12 +112,7 @@ impl Console {
     }
 
     pub(super) fn refresh_lsp(&mut self) {
-        match console_inputs() {
-            Ok(inputs) => {
-                self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(inputs));
-            },
-            Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
-        }
+        self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(console_inputs()));
     }
 }
 

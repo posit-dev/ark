@@ -13,5 +13,5 @@ mod sidecar_handler;
 mod source_handler;
 mod sources;
 mod state;
-mod state_handlers;
+pub(crate) mod state_handlers;
 pub(crate) mod utils;
