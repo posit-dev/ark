@@ -66,7 +66,7 @@ jobs:
             readr
             rstudioapi
             S7
-            survival
+            any::survival
             tibble
 
       - name: Build
