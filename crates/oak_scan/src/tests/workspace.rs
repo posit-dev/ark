@@ -468,6 +468,38 @@ fn test_scan_workspace_excludes_renv_library() {
 }
 
 #[test]
+fn test_scan_workspace_skips_installed_packages() {
+    // A project-local library that nothing ignores. Its installed packages
+    // belong to library roots, not to the workspace, and the R files they ship
+    // (vignette code, demos) aren't workspace files.
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("mypkg"), "mypkg", &[("a.R", "x <- 1\n")]);
+    let installed = tmp.path().join("lib/dplyr");
+    write_package(&installed, "dplyr", &[("dplyr.R", "vendored <- 1\n")]);
+    fs::create_dir_all(installed.join("Meta")).unwrap();
+    fs::write(installed.join("Meta/package.rds"), "").unwrap();
+    let shipped = ["R/dplyr.R", "doc/intro.R", "demo/demo.R"];
+    for path in &shipped[1..] {
+        let path = installed.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "shipped <- 1\n").unwrap();
+    }
+    let mut db = OakDatabase::new();
+
+    set_workspace_paths(&mut db, &[tmp.path().to_path_buf()], &HashSet::new());
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let packages = root.packages(&db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(&db), "mypkg");
+    assert!(root.scripts(&db).is_empty());
+    for path in shipped {
+        let path = FilePath::from_path_buf(installed.join(path)).unwrap();
+        assert!(db.file_by_path(&path).is_none());
+    }
+}
+
+#[test]
 fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
     // The motivating case for routing editor-owned files to `OrphanRoot`
     // (rather than `StaleRoot`) on eviction: a buffer the user has open

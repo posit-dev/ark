@@ -17,6 +17,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use oak_db::is_workspace_package;
 use oak_db::Db;
 use oak_db::DbInputs;
 use oak_db::FileRevision;
@@ -172,7 +173,7 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// [`rehome_files()`], so they no longer belong to the upgraded installation.
 /// The revision change also lets the LSP source scheduler request sources again.
 /// Packages held by a workspace root keep their files because the workspace
-/// scan owns those source lists.
+/// scan owns those source lists (see [`is_workspace_package()`]).
 ///
 /// Removed packages are not moved to [`oak_db::StaleRoot`]. Once no live or
 /// stale root contains the old entity, a later reinstall creates a new one,
@@ -236,11 +237,4 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .filter(|package| db.root_by_package(*package).is_none())
         .collect();
     rehome_files(db, &orphaned, Vec::new(), editor_owned);
-}
-
-fn is_workspace_package(db: &dyn Db, package: Package) -> bool {
-    db.workspace_roots()
-        .roots(db)
-        .iter()
-        .any(|root| root.packages(db).contains(&package))
 }

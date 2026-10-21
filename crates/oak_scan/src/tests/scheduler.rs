@@ -839,7 +839,8 @@ fn test_library_entry_events_inside_workspace_also_update_workspace() {
 #[test]
 fn test_library_drop_keeps_files_of_package_shared_with_workspace() {
     // The workspace scan reuses the library's `Package` because both scans
-    // find the same `DESCRIPTION` path.
+    // find the same `DESCRIPTION` path. The directory has no
+    // `Meta/package.rds`, so the workspace walk doesn't prune it.
     let workspace_dir = tempfile::tempdir().unwrap();
     let lib = workspace_dir.path().join("lib");
     write_package(&lib.join("pkg"), "pkg", &[("a.R", "a <- 1\n")]);
@@ -865,6 +866,42 @@ fn test_library_drop_keeps_files_of_package_shared_with_workspace() {
     assert!(library.packages(&db).is_empty());
     assert_eq!(pkg.files(&db), &vec![file]);
     assert_eq!(file.package(&db), Some(pkg));
+}
+
+#[test]
+fn test_workspace_rescan_keeps_fetched_sources_of_nested_installed_package() {
+    // If the workspace scan also held the installed package, each rescan would
+    // replace the fetched sources with the installed `R/`, which has no `.R`
+    // files.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let pkg_dir = workspace_dir.path().join("lib").join("pkg");
+    write_package(&pkg_dir, "pkg", &[]);
+    fs::create_dir_all(pkg_dir.join("Meta")).unwrap();
+    fs::write(pkg_dir.join("Meta").join("package.rds"), "").unwrap();
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[workspace_dir.path().join("lib")]);
+    let pkg = db.package_by_name("pkg").unwrap();
+    let mut scheduler = ScanScheduler::new();
+    scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
+
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("a.R"), "a <- 1\n").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    let files = pkg.files(&db).clone();
+    assert_eq!(files.len(), 1);
+
+    // A sentinel event rescans the whole workspace root.
+    let rprofile = workspace_dir.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let requests =
+        scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)], &HashSet::new());
+    assert_eq!(requests.len(), 1);
+    drain_scheduler(&mut db, &mut scheduler, requests, &HashSet::new());
+
+    assert_eq!(pkg.files(&db), &files);
+    assert_eq!(files[0].package(&db), Some(pkg));
 }
 
 #[test]

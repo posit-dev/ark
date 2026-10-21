@@ -387,7 +387,8 @@ fn test_rescan_unchanged_description_revision_keeps_sources() {
 #[test]
 fn test_rescan_upgrade_keeps_files_of_package_shared_with_workspace() {
     // The workspace scan reuses the library's `Package` because both scans
-    // find the same `DESCRIPTION` path.
+    // find the same `DESCRIPTION` path. The directory has no
+    // `Meta/package.rds`, so the workspace walk doesn't prune it.
     let workspace_dir = tempfile::tempdir().unwrap();
     let lib = workspace_dir.path().join("lib");
     let pkg_dir = lib.join("pkg");
