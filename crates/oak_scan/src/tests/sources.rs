@@ -7,8 +7,8 @@ use oak_db::File;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 
-use crate::tests::mark_installed;
 use crate::DbScan;
 
 /// Write an installed package's `DESCRIPTION` under `lib`

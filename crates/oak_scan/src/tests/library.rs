@@ -18,6 +18,7 @@ use oak_db::Package;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 use salsa::Setter;
 use url::Url;
 
@@ -26,7 +27,6 @@ use crate::inputs::RootExt;
 use crate::library::list_library;
 use crate::library::InstalledPackageEntry;
 use crate::scheduler::drain_scheduler;
-use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 

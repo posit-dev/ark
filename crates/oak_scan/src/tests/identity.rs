@@ -12,13 +12,13 @@ use oak_db::DbInputs;
 use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 use salsa::Setter;
 
 use crate::inputs::FileEntry;
 use crate::inputs::FileUpserts;
 use crate::packages::file_revision;
 use crate::scheduler::drain_scheduler;
-use crate::tests::mark_installed;
 use crate::DbScan;
 use crate::ScanScheduler;
 

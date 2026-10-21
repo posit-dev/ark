@@ -30,6 +30,7 @@ use std::path::Path;
 
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
+use oak_package_metadata::tests::mark_installed;
 use oak_scan::DbScan;
 use oak_source::SourceCache;
 
@@ -63,8 +64,7 @@ fn install_default_search_path(db: &mut OakDatabase, r_root: &Path) {
             format!("Package: {name}\nVersion: {R_VERSION}\n"),
         )
         .unwrap();
-        fs::create_dir_all(lib.path().join(name).join("Meta")).unwrap();
-        fs::write(lib.path().join(name).join("Meta").join("package.rds"), "").unwrap();
+        mark_installed(&lib.path().join(name));
     }
     // `set_library_paths` only reads `lib` once, up front, to discover
     // package directories, so it's fine to drop the `TempDir` handle (and

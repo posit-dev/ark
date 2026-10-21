@@ -8,6 +8,7 @@ use oak_db::OakDatabase;
 use oak_db::RootKind;
 use oak_db::SourceDb;
 use oak_package_metadata::namespace::Import;
+use oak_package_metadata::tests::mark_installed;
 use oak_scan::DbScan;
 use salsa::Setter;
 
@@ -26,11 +27,6 @@ fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
     for (basename, contents) in r_files {
         fs::write(dir.join("R").join(basename), contents).unwrap();
     }
-}
-
-fn mark_installed(dir: &Path) {
-    fs::create_dir_all(dir.join("Meta")).unwrap();
-    fs::write(dir.join("Meta").join("package.rds"), "").unwrap();
 }
 
 #[test]
