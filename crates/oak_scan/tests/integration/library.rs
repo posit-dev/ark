@@ -63,6 +63,27 @@ fn test_scan_library_discovers_package() {
     assert_eq!(packages[0].version(&db), &Some("1.0.0".to_string()),);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_scan_library_discovers_symlinked_package() {
+    // renv libraries link each package directory into a global cache
+    let cache = tempfile::tempdir().unwrap();
+    let lib = tempfile::tempdir().unwrap();
+    write_package(&cache.path().join("targets"), "targets", &[]);
+    std::os::unix::fs::symlink(cache.path().join("targets"), lib.path().join("targets")).unwrap();
+    let mut db = OakDatabase::new();
+
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let packages = db.library_roots().roots(&db)[0].packages(&db).clone();
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(&db), "targets");
+    assert_eq!(
+        packages[0].description_path(&db),
+        &FilePath::from_path_buf(lib.path().join("targets").join("DESCRIPTION")).unwrap()
+    );
+}
+
 #[test]
 fn test_package_namespace_reads_from_disk() {
     let tmp = tempfile::tempdir().unwrap();
