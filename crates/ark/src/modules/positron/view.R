@@ -85,6 +85,10 @@ view <- function(
         return(view_function(x, title, var, env, top_level = top_level))
     }
 
+    if (is_string(x)) {
+        return(view_string(x, var, env))
+    }
+
     if (is_explorable_object(x)) {
         return(view_object(x, title, var, env, accessor))
     }
@@ -93,6 +97,20 @@ view <- function(
         "Can't `View()` an object of class `%s`",
         paste(class(x), collapse = "/")
     ))
+}
+
+# A single string opens in a read-only virtual document.
+view_string <- function(x, var = "", env = NULL) {
+    env_name <- .ps.env_name(env) %||% obj_address(env)
+    if (!nzchar(var)) {
+        var <- "unknown"
+    }
+
+    uri <- ark_uri(sprintf("%s/%s.txt", env_name, var))
+    insert_virtual_document(uri, x)
+    .ps.ui.navigateToFile(uri, pinned = FALSE)
+
+    invisible()
 }
 
 view_function <- function(

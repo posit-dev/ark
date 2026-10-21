@@ -36,7 +36,8 @@
 .ps.ui.navigateToFile <- function(
     file = character(0),
     line = 0L,
-    column = 0L
+    column = 0L,
+    pinned = TRUE
 ) {
     # Don't normalize if that's already a URI
     if (is_uri(file)) {
@@ -54,7 +55,7 @@
         column <- 0L
     }
 
-    .ps.Call("ps_ui_navigate_to_file", file, line, column, kind)
+    .ps.Call("ps_ui_navigate_to_file", file, line, column, kind, pinned)
 }
 
 #' @export

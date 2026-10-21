@@ -1143,7 +1143,9 @@ mod tests {
             assert!(explorable("pairlist(a = 1)"));
             assert!(explorable("expression(1 + 1)"));
             assert!(!explorable("mtcars"));
-            assert!(!explorable("1:3"));
+            assert!(explorable("1:3"));
+            assert!(explorable("c(a = 'a', b = 'b')"));
+            assert!(!explorable("matrix(1:4, 2)"));
             assert!(!explorable("NULL"));
             assert!(!explorable("matrix(list(1, 2, 3, 4), 2)"));
         })
