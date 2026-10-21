@@ -502,11 +502,7 @@ impl GlobalState {
                         panic!("Test panic outside the event recovery boundary");
                     }
 
-                    let outcome =
-                        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event))
-                            .await;
-
-                    match outcome {
+                    match self.handle_event_in_boundary(event).await {
                         Ok(Ok(())) => {},
                         Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
@@ -535,6 +531,16 @@ impl GlobalState {
     #[cfg(any(test, feature = "testing"))]
     pub(crate) async fn next_event(&mut self) -> Event {
         self.events_rx.recv().await.unwrap()
+    }
+
+    /// Keep event handling and its deferred refresh inside the same recovery
+    /// boundary in production and the harness. Callers decide whether a panic
+    /// shuts down the LSP or fails a test.
+    async fn handle_event_in_boundary(
+        &mut self,
+        event: Event,
+    ) -> Result<anyhow::Result<()>, panic::PanicPayload> {
+        panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
 
     async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
@@ -1012,9 +1018,7 @@ impl GlobalState {
     /// This allows callers to inspect or gate a subsystem before it settles.
     /// Panics unwind to the test runner rather than shutting down the LSP.
     pub(crate) async fn handle_event_once(&mut self, event: Event) {
-        let outcome =
-            panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await;
-        match outcome {
+        match self.handle_event_in_boundary(event).await {
             Ok(Ok(())) => {},
             Ok(Err(err)) => panic!("Failure while handling event: {err:?}"),
             Err(payload) => match classify_event_unwind(payload) {

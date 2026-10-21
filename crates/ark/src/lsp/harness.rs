@@ -14,6 +14,34 @@
 //! came from scheduling or synchronisation rather than compute.
 //!
 //! `editor` simulates the client on the other end of a session.
+//!
+//! # Panic boundaries
+//!
+//! A panic boundary lets a caller handle failure without killing the R kernel.
+//! Otherwise, Ark's panic hook aborts: a background thread dying could leave the
+//! kernel running with broken channels or partially updated state. A recovering
+//! boundary combines a thread-local marker that permits unwinding with a
+//! `catch_unwind()` that handles the panic. The marker is necessary because the
+//! hook runs before unwinding reaches the catch.
+//!
+//! Salsa queries can panic, for example on a query cycle. In debug integration
+//! tests, database access asserts that a boundary is active, detecting unprotected
+//! access without needing to provoke a panic. The harness has two cases:
+//!
+//! - Event dispatch uses `GlobalState::handle_event_in_boundary()`, shared with
+//!   production, to catch panics from the handler and deferred diagnostics refresh.
+//!   Both callers absorb Salsa cancellation. For other panics, the LSP shuts down
+//!   the session; the harness resumes unwinding to fail the test.
+//! - Setup and inspection, such as `prepare_document()` and `snapshot()`, access
+//!   Salsa outside event dispatch and need a scoped `panic::test_boundary()` guard.
+//!   It permits unwinding to the test or benchmark runner, which reports the
+//!   failure to the user and exits with a nonzero status. The guard does not catch
+//!   the panic; it restores the previous marker when dropped. Its state is
+//!   thread-local, so Clippy rejects holding it across `.await`.
+//!
+//! Never extend a harness guard around event dispatch. The assertion checks for
+//! *any* active boundary, so an enclosing guard would hide missing recovery
+//! boundaries in the event code under test.
 
 mod control;
 pub(crate) mod editor;

@@ -130,7 +130,7 @@ pub(crate) fn assert_in_catch_boundary() {
 /// tasks could inherit it and the guard could be dropped on a different thread.
 #[cfg(any(test, feature = "testing"))]
 #[must_use]
-pub(crate) fn test_boundary() -> impl Drop {
+pub(crate) fn test_boundary() -> CatchBoundary {
     catch_boundary(Recovery::Always)
 }
 
@@ -210,7 +210,7 @@ pub(crate) fn message(payload: &PanicPayload) -> String {
 ///
 /// Restores the preceding flag in `Drop::drop()` so a nested boundary cannot disable an
 /// outer boundary.
-struct CatchBoundary {
+pub(crate) struct CatchBoundary {
     previous: Option<Recovery>,
 }
 

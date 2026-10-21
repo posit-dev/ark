@@ -1,3 +1,7 @@
+await-holding-invalid-types = [
+  { path = "ark::panic::CatchBoundary", reason = "the boundary flag is thread-local; use `crate::panic::catch_unwind_async()` for async code" },
+]
+
 disallowed-methods = [
   { path = "std::panic::catch_unwind", reason = "use `crate::panic::catch_unwind()` and friends, which declare the boundary the panic hook checks before aborting" },
   { path = "tokio::spawn", reason = "use `crate::panic::spawn()` or an explicit per-poll panic boundary. Ark's panic hook aborts on unprotected task panics" },
