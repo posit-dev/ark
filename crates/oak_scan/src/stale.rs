@@ -24,9 +24,9 @@
 //! `Package` entities of a dropped `Root` always go to `StaleRoot`. Packages
 //! have no editor-owned container.
 //!
-//! A library rescan rehomes a removed package's files through [`rehome_files()`].
-//! The `Package` itself is not moved to stale, so a later reinstall creates a
-//! new entity. An in-place upgrade that changes the `DESCRIPTION` revision
+//! A library rescan rehomes a removed package's files through [`rehome_files()`]
+//! only when no live root still holds the package. The `Package` itself is not
+//! moved to stale, so a later reinstall creates a new entity. An in-place upgrade that changes the `DESCRIPTION` revision
 //! keeps the `Package` in the library root but rehomes its files. See
 //! [`crate::library::set_installed_packages()`].
 

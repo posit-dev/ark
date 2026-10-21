@@ -177,15 +177,14 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// A changed `DESCRIPTION` revision rehomes the old sources through
 /// [`rehome_files()`], so they no longer belong to the upgraded installation.
 /// The revision change also lets the LSP source scheduler request sources again.
-/// Every file of a library package is a fetched source, because no workspace
-/// root holds installed packages (see [`list_library()`]).
 ///
 /// Removed packages are not moved to [`oak_db::StaleRoot`]. Once no live or
 /// stale root contains the old entity, a later reinstall creates a new one,
 /// allowing the LSP source scheduler to fetch sources for the new installation.
 ///
-/// [`rehome_files()`] moves the files of removed packages to `OrphanRoot` when
-/// their paths are in `editor_owned`, or to `StaleRoot`. This preserves open buffers
+/// Files of removed packages stay in place if another live root holds the
+/// package. Otherwise [`rehome_files()`] moves them to `OrphanRoot` when their
+/// paths are in `editor_owned`, or to `StaleRoot`. This preserves open buffers
 /// for analysis and keeps closed files available to the upsert helpers' stale
 /// lookup. Files left in neither container would be duplicated on a later
 /// [`crate::DbScan::upsert_editor()`] or [`crate::DbScan::set_package_sources()`]
@@ -234,5 +233,15 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .collect();
     root.set_packages(db).to(packages);
 
-    rehome_files(db, &removed, Vec::new(), editor_owned);
+    // Library and workspace roots list disjoint directories (see
+    // `is_installed_package()`), but a directory that turns from an installed
+    // package into a source checkout is held by both for a while: the
+    // workspace rescan adopts the library's `Package` through
+    // `package_by_path()` and fills its files, and only this rescan drops it
+    // from the library. Those files belong to the workspace scan.
+    let orphaned: Vec<Package> = removed
+        .into_iter()
+        .filter(|package| db.root_by_package(*package).is_none())
+        .collect();
+    rehome_files(db, &orphaned, Vec::new(), editor_owned);
 }
