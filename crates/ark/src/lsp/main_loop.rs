@@ -137,6 +137,23 @@ pub(crate) enum Event {
     TestPanicMainLoop,
 }
 
+impl Event {
+    /// Label for the `handle_event` tracing span. Coarse on purpose: LSP
+    /// handlers are instrumented and name themselves as child spans, and the
+    /// variants' payloads can carry document contents.
+    fn kind(&self) -> &'static str {
+        match self {
+            Event::Lsp(_) => "lsp",
+            Event::Kernel(_) => "kernel",
+            Event::OakScanCompleted(_) => "oak_scan_completed",
+            Event::SourceCompleted(_) => "source_completed",
+            Event::DiagnosticsReady(_) => "diagnostics_ready",
+            #[cfg(feature = "testing")]
+            Event::TestPanicMainLoop => "test_panic_main_loop",
+        }
+    }
+}
+
 #[derive(Debug)]
 #[expect(clippy::enum_variant_names)]
 pub(crate) enum KernelNotification {
@@ -543,12 +560,13 @@ impl GlobalState {
         panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
 
-    /// The `handle_event` span groups one main-loop tick for profiling. Its
-    /// children are the instrumented handler and, when a refresh fires,
-    /// `refresh_if_due`, so dispatch time is the span minus that refresh.
-    /// `DispatchTiming` is measured separately so harness timings don't depend
-    /// on which tracing layers are installed.
-    #[tracing::instrument(level = "info", skip_all)]
+    /// The `handle_event` span groups one main-loop tick for profiling, labelled
+    /// with [`Event::kind()`]. Its children are the instrumented handler and,
+    /// when a refresh fires, `refresh_if_due`. The span minus that refresh is
+    /// the tick time outside the refresh: dispatch plus the watchdog, boundary,
+    /// and refresh-eligibility checks. `DispatchTiming` is measured separately
+    /// so harness timings don't depend on which tracing layers are installed.
+    #[tracing::instrument(level = "info", skip_all, fields(kind = event.kind()))]
     async fn handle_event(&mut self, event: Event) -> (anyhow::Result<()>, DispatchTiming) {
         let _tick = self
             .lsp_state
