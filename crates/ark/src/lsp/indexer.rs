@@ -609,4 +609,38 @@ class <- R6::R6Class(
         db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
         assert!(find(&db, "foo").is_some());
     }
+
+    #[test]
+    fn test_workspace_symbol_names_tracks_edits() {
+        use aether_path::FilePath;
+
+        fn sorted_names(db: &dyn ArkDb) -> Vec<String> {
+            let mut names: Vec<String> = workspace_symbol_names(db).iter().cloned().collect();
+            names.sort();
+            names
+        }
+
+        let mut db = oak_db::OakDatabase::new();
+        let path_a = FilePath::from_url(&Url::parse("file:///a.R").unwrap());
+        let path_b = FilePath::from_url(&Url::parse("file:///b.R").unwrap());
+
+        // Sections and R6 methods are not symbol names
+        db.upsert_editor(
+            path_a.clone(),
+            "# Section ----\nfoo <- 1\ncls <- R6Class(public = list(m = function() 1))".to_string(),
+        );
+        assert_eq!(sorted_names(&db), vec!["cls", "foo"]);
+
+        // Editing a file replaces its names
+        db.upsert_editor(path_a.clone(), "bar <- function() 1".to_string());
+        assert_eq!(sorted_names(&db), vec!["bar"]);
+
+        // Adding a file contributes its names
+        db.upsert_editor(path_b.clone(), "baz <- 2".to_string());
+        assert_eq!(sorted_names(&db), vec!["bar", "baz"]);
+
+        // Closing a file removes its names
+        db.close_editor(&path_b);
+        assert_eq!(sorted_names(&db), vec!["bar"]);
+    }
 }
