@@ -19,7 +19,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
@@ -224,12 +223,10 @@ impl LspSession {
     pub(crate) async fn handle_once(&mut self, event: Event) {
         let definition = response_tx(&event).and_then(|tx| self.definitions.find(tx));
 
-        let started = Instant::now();
-        self.state.handle_event_once(event).await;
-        let handled = started.elapsed();
+        let timing = self.state.handle_event_once(event).await;
 
         if let Some(definition) = definition {
-            self.definitions.collect(definition, handled);
+            self.definitions.collect(definition, timing);
         }
 
         self.collect_auxiliary();

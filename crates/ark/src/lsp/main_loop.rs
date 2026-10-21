@@ -503,8 +503,8 @@ impl GlobalState {
                     }
 
                     match self.handle_event_in_boundary(event).await {
-                        Ok(Ok(())) => {},
-                        Ok(Err(err)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
+                        Ok((Ok(()), _span)) => {},
+                        Ok((Err(err), _span)) => lsp::log_error!("Failure while handling event:\n{err:?}"),
                         Err(payload) => match classify_event_unwind(payload) {
                             // `handle_event()` absorbs cancellation from handlers.
                             EventUnwind::Cancelled => {},
@@ -539,11 +539,11 @@ impl GlobalState {
     async fn handle_event_in_boundary(
         &mut self,
         event: Event,
-    ) -> Result<anyhow::Result<()>, panic::PanicPayload> {
+    ) -> Result<(anyhow::Result<()>, DispatchTiming), panic::PanicPayload> {
         panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
 
-    async fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+    async fn handle_event(&mut self, event: Event) -> (anyhow::Result<()>, DispatchTiming) {
         let _tick = self
             .lsp_state
             .watchdog
@@ -554,6 +554,7 @@ impl GlobalState {
         // in `main_loop()` would put the refresh outside its per-event boundary.
         // Other panics skip the refresh because the handler may have partially
         // written its state.
+        let start = std::time::Instant::now();
         let result =
             match panic::catch_unwind_async_payload(Recovery::Always, self.dispatch_event(event))
                 .await
@@ -564,13 +565,17 @@ impl GlobalState {
                     EventUnwind::Panicked(payload) => std::panic::resume_unwind(payload),
                 },
             };
+        let timing = DispatchTiming {
+            start,
+            end: std::time::Instant::now(),
+        };
 
         // An event that empties the queue must trigger any deferred refresh,
         // even if its handler returns an error or is cancelled. Otherwise,
         // diagnostics could wait indefinitely for another event.
         self.refresh_if_due();
 
-        result
+        (result, timing)
     }
 
     #[rustfmt::skip]
@@ -1017,14 +1022,14 @@ impl GlobalState {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
     /// Panics unwind to the test runner rather than shutting down the LSP.
-    pub(crate) async fn handle_event_once(&mut self, event: Event) {
+    ///
+    /// `handle_event()` absorbs handler cancellation. Any other unwind fails the
+    /// test, including a cancellation that `main_loop()` would ignore.
+    pub(crate) async fn handle_event_once(&mut self, event: Event) -> DispatchTiming {
         match self.handle_event_in_boundary(event).await {
-            Ok(Ok(())) => {},
-            Ok(Err(err)) => panic!("Failure while handling event: {err:?}"),
-            Err(payload) => match classify_event_unwind(payload) {
-                EventUnwind::Cancelled => {},
-                EventUnwind::Panicked(payload) => std::panic::resume_unwind(payload),
-            },
+            Ok((Ok(()), timing)) => timing,
+            Ok((Err(err), _timing)) => panic!("Failure while handling event: {err:?}"),
+            Err(payload) => std::panic::resume_unwind(payload),
         }
     }
 
@@ -1106,6 +1111,19 @@ impl GlobalState {
             self.handle_event_once(event).await;
         }
     }
+}
+
+/// When `dispatch_event()` started and returned for one event. Captured in
+/// `handle_event()` so the `refresh_if_due()` that follows dispatch is
+/// excluded from handler timings.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(
+    not(any(test, feature = "testing")),
+    expect(dead_code, reason = "only the harness reads the timing")
+)]
+pub(crate) struct DispatchTiming {
+    pub(crate) start: std::time::Instant,
+    pub(crate) end: std::time::Instant,
 }
 
 enum EventUnwind {
@@ -1650,11 +1668,12 @@ mod tests {
         state
             .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
             .await
+            .0
             .unwrap();
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
 
         let failing = state.next_event().await;
-        assert!(state.handle_event(failing).await.is_err());
+        assert!(state.handle_event(failing).await.0.is_err());
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
     }
 
@@ -1671,6 +1690,7 @@ mod tests {
         state
             .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
             .await
+            .0
             .unwrap();
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
 
@@ -1701,11 +1721,12 @@ mod tests {
         state
             .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
             .await
+            .0
             .unwrap();
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 0);
 
         let cancelled = state.next_event().await;
-        state.handle_event(cancelled).await.unwrap();
+        state.handle_event(cancelled).await.0.unwrap();
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
     }
 

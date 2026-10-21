@@ -17,6 +17,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::WeakUnboundedSender;
 
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::main_loop::DispatchTiming;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
 use crate::lsp::main_loop::TokioUnboundedSender;
 
@@ -52,15 +53,19 @@ impl<T> Copy for RequestHandle<T> {}
 
 /// An answer as the session observed it, right after the request's handler
 /// returned.
+///
+/// Both timings end when `dispatch_event()` returns, which approximates when
+/// the server queued its reply. They exclude the `refresh_if_due()` that runs
+/// afterwards in the same main-loop tick, and transport to a real client.
 #[derive(Debug)]
 pub struct RequestAnswer<T> {
     pub response: T,
 
-    /// From sending the request until its handler returned, including the time
-    /// the request waited behind earlier events.
+    /// From sending the request until its dispatch completed, including the
+    /// time the request waited behind earlier events.
     pub latency: Duration,
 
-    /// Duration of this request's main-loop handler.
+    /// Duration of this request's `dispatch_event()`.
     pub handled: Duration,
 }
 
@@ -160,8 +165,9 @@ impl<T> Requests<T> {
         self.pending.pop_front().map(Tracked)
     }
 
-    /// Read the answer to `tracked` after its handler ran for `handled`.
-    pub(super) fn collect(&mut self, tracked: Tracked, handled: Duration) {
+    /// Read the answer to `tracked` after its event was dispatched as measured
+    /// by `timing`.
+    pub(super) fn collect(&mut self, tracked: Tracked, timing: DispatchTiming) {
         let Tracked(mut pending) = tracked;
 
         let response = match pending.response_rx.try_recv() {
@@ -174,8 +180,42 @@ impl<T> Requests<T> {
 
         self.answers[pending.index] = Some(RequestAnswer {
             response: (self.decode)(response),
-            latency: pending.sent_at.elapsed(),
-            handled,
+            latency: timing.end.duration_since(pending.sent_at),
+            handled: timing.end.duration_since(timing.start),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Timings derive from the supplied dispatch timing, not from when the
+    /// answer is collected. Dispatch ends in the future, so a timing measured
+    /// at collection would come out shorter than expected.
+    #[test]
+    fn test_collect_measures_timings_from_the_dispatch_timing() {
+        let mut requests = Requests::new(|response| response.is_some());
+        let (response_tx, response_rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = requests.track(&response_tx, response_rx);
+
+        let Some(tracked) = requests.find(&response_tx) else {
+            panic!("Expected the tracked request at the front");
+        };
+        let sent_at = tracked.0.sent_at;
+        let timing = DispatchTiming {
+            start: sent_at + Duration::from_secs(2),
+            end: sent_at + Duration::from_secs(5),
+        };
+
+        response_tx.send(RequestResponse::Disabled).unwrap();
+        requests.collect(tracked, timing);
+
+        let Some(answer) = requests.answer(handle) else {
+            panic!("Expected a collected answer");
+        };
+        assert!(answer.response);
+        assert_eq!(answer.handled, Duration::from_secs(3));
+        assert_eq!(answer.latency, Duration::from_secs(5));
     }
 }

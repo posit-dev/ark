@@ -149,10 +149,10 @@ fn report(replay: &Replay, endpoint: Duration, settled: Duration, cpu: Option<Du
     );
 }
 
-/// Probe latency runs from sending until the probe's handler returns, so it
+/// Probe latency runs from sending until the probe's dispatch completes, so it
 /// includes the remaining burst-enqueue time before the loop starts and
-/// earlier event handling. Handler duration excludes enqueueing and queue
-/// wait.
+/// earlier event handling. Handler duration covers only the probe's dispatch,
+/// excluding enqueueing, queue wait, and the refresh that may follow it.
 fn format_latencies(replay: &Replay) -> String {
     let answers: Vec<_> = replay
         .probes
