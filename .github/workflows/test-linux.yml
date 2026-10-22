@@ -90,6 +90,7 @@ jobs:
             R6
             ragg
             readr
+            renv
             rstudioapi
             S7
             tibble
@@ -110,5 +111,6 @@ jobs:
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
+          R_PROFILE_USER: ${{ github.workspace }}/.github/Rprofile
         run: |
           cargo nextest run ${{ matrix.config.flavor == 'release' && '--release' || '' }}

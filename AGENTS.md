@@ -173,6 +173,7 @@ The following R packages are required for tests:
 - htmltools
 - R6
 - readr
+- renv
 
 ### Installation
 
