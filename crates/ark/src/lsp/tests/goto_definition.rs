@@ -628,12 +628,26 @@ fn assert_targets_project_definitions(world: &WorldState, dir: &Path) {
 /// dependencies) from an renv cache at `cache`. Returns the project library.
 ///
 /// `renv::hydrate()` copies from the libraries of the R that runs it, so this
-/// needs no network but does need `renv` and `targets` installed. The cache is
-/// isolated so the test never writes to the user's renv cache.
+/// needs `renv` and `targets` installed there. If `targets` is missing,
+/// `hydrate()` doesn't fail but installs it and its dependencies from the
+/// repos, producing plain copies instead of links. The script checks for the
+/// packages up front and clears `repos` so a missing prerequisite fails with a
+/// clear message instead. The cache is isolated so the test never writes to the
+/// user's renv cache.
 fn renv_project_with_targets(project: &Path, cache: &Path) -> PathBuf {
     std::fs::create_dir_all(project).unwrap();
 
     let script = r#"
+        for (pkg in c("renv", "targets")) {
+            if (!requireNamespace(pkg, quietly = TRUE)) {
+                stop(sprintf(
+                    "This test requires '%s' in the library of the R running `Rscript`",
+                    pkg
+                ))
+            }
+        }
+        options(repos = character())
+
         project <- commandArgs(trailingOnly = TRUE)[[1]]
         renv::init(project = project, bare = TRUE, load = FALSE, restart = FALSE)
         library <- renv::paths$library(project = project)
