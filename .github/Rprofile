@@ -1,0 +1,18 @@
+# User profile for R processes spawned during CI test runs, set via
+# `R_PROFILE_USER` in the "Run Tests" step.
+#
+# Gives `Rscript` helpers a full backtrace on unexpected errors. Base R only
+# prints a truncated `Calls:` line, which hides the failing call.
+#
+# The `--file=` guard limits this to script runs. The embedded R in unit tests
+# (`harp::r_test_setup()`) also reads this profile, but starts without
+# `--file=`. A global handler there would run before Ark's own global error
+# handlers and could change the error messages that tests assert on.
+# `interactive()` is not a usable guard because that embedded R is
+# non-interactive when stdin is not a tty.
+local({
+    is_script <- any(startsWith(commandArgs(), "--file="))
+    if (is_script && requireNamespace("rlang", quietly = TRUE)) {
+        rlang::global_entrace(class = "error")
+    }
+})
