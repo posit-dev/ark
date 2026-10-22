@@ -8,6 +8,7 @@ use assert_matches::assert_matches;
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
 use oak_scan::DbScan;
+use stdext::is_ci;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
@@ -538,7 +539,12 @@ async fn test_goto_definition_through_tar_source_from_renv_library() {
     // project in Positron
     let scratch = tempfile::tempdir().unwrap();
     let project = scratch.path().join("project");
-    let library = renv_project_with_targets(&project, &scratch.path().join("cache"));
+    let Some(library) = renv_project_with_targets(&project, &scratch.path().join("cache")) else {
+        // Missing prerequisites fail on CI, where they are installed
+        assert!(!is_ci(), "`renv` and `targets` must be installed on CI");
+        eprintln!("Skipping: `renv` and `targets` must be installed");
+        return;
+    };
 
     // Guard against renv silently copying instead of linking, which would turn
     // this into a plain-library test
@@ -624,31 +630,33 @@ fn assert_targets_project_definitions(world: &WorldState, dir: &Path) {
     );
 }
 
+/// Exit status the setup script uses to report a missing prerequisite
+const MISSING_PREREQUISITE_STATUS: i32 = 77;
+
 /// Create an renv project at `project` whose library links `targets` (and its
 /// dependencies) from an renv cache at `cache`. Returns the project library.
 ///
-/// `renv::hydrate()` copies from the libraries of the R that runs it, so this
-/// needs `renv` and `targets` installed there. If `targets` is missing,
-/// `hydrate()` doesn't fail but installs it and its dependencies from the
-/// repos, producing plain copies instead of links. The script checks for the
-/// packages up front and clears `repos` so a missing prerequisite fails with a
-/// clear message instead. The cache is isolated so the test never writes to the
-/// user's renv cache.
-fn renv_project_with_targets(project: &Path, cache: &Path) -> PathBuf {
+/// Returns `None` if `renv` or `targets` isn't installed.
+///
+/// `renv::hydrate()` copies from the libraries of the R that runs it. If
+/// `targets` is missing, `hydrate()` doesn't fail but installs it and its
+/// dependencies from the repos, producing plain copies instead of links. The
+/// script checks for the packages up front and clears `repos` so a missing
+/// prerequisite can never reach `hydrate()`. The cache is isolated so the test
+/// never writes to the user's renv cache.
+fn renv_project_with_targets(project: &Path, cache: &Path) -> Option<PathBuf> {
     std::fs::create_dir_all(project).unwrap();
 
     let script = r#"
+        args <- commandArgs(trailingOnly = TRUE)
         for (pkg in c("renv", "targets")) {
             if (!requireNamespace(pkg, quietly = TRUE)) {
-                stop(sprintf(
-                    "This test requires '%s' in the library of the R running `Rscript`",
-                    pkg
-                ))
+                quit(save = "no", status = as.integer(args[[2]]))
             }
         }
         options(repos = character())
 
-        project <- commandArgs(trailingOnly = TRUE)[[1]]
+        project <- args[[1]]
         renv::init(project = project, bare = TRUE, load = FALSE, restart = FALSE)
         library <- renv::paths$library(project = project)
         dir.create(library, recursive = TRUE, showWarnings = FALSE)
@@ -661,10 +669,14 @@ fn renv_project_with_targets(project: &Path, cache: &Path) -> PathBuf {
     let output = std::process::Command::new("Rscript")
         .arg(&script_path)
         .arg(project)
+        .arg(MISSING_PREREQUISITE_STATUS.to_string())
         .env("RENV_PATHS_CACHE", cache)
         .env("RENV_CONFIG_CACHE_SYMLINKS", "TRUE")
         .output()
         .unwrap();
+    if output.status.code() == Some(MISSING_PREREQUISITE_STATUS) {
+        return None;
+    }
     if !output.status.success() {
         panic!(
             "renv setup failed:\n{}",
@@ -676,7 +688,7 @@ fn renv_project_with_targets(project: &Path, cache: &Path) -> PathBuf {
     std::fs::remove_file(project.join("library-path")).unwrap();
     std::fs::remove_file(&script_path).unwrap();
 
-    PathBuf::from(library.trim())
+    Some(PathBuf::from(library.trim()))
 }
 
 /// `.Rprofile` makes `subproject/` the assumed session directory, so
