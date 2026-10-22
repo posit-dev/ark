@@ -116,9 +116,11 @@ pub trait DbInputs: salsa::Database {
 ///
 /// This is not a Salsa input, so map updates do not invalidate queries. A query
 /// reading it would get an untracked answer that depends on which paths were
-/// ever interned, not on live membership. Queries can't read it: the map's
-/// methods are private to this module, and every [`DbInputs`] method that
-/// reaches them takes `&mut self`, which queries never get. Entries are
+/// ever interned, not on live membership. Queries outside this module can't
+/// read it: the map's methods are private to this module, and every
+/// [`DbInputs`] method that reaches them takes `&mut self`, which queries never
+/// get. Queries defined in this module must not call the private lookups
+/// through [`DbInputs::identity_map()`]. Entries are
 /// retained for the database's lifetime,
 /// matching Salsa's retention of input entities. The map stores paths and
 /// handles to those entities.
