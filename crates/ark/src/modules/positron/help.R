@@ -41,12 +41,13 @@ help <- function(topic, package = NULL) {
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
 #' @export
-.ps.help.showHelpTopic <- function(topic) {
-    info <- split_topic(topic)
-    topic <- info$topic
-    package <- info$package
+.ps.help.showHelpTopic <- function(topic, package = NULL) {
+    if (is.null(package)) {
+        info <- split_topic(topic)
+        topic <- info$topic
+        package <- info$package
+    }
 
-    # Try to find help on the topic.
     results <- help(topic, package)
 
     # If we found results of any kind, show them.
@@ -60,21 +61,166 @@ help <- function(topic, package = NULL) {
     length(results) > 0
 }
 
-# Resolve the package specifier, if there is one
-split_topic <- function(topic) {
-    # Try `:::` first, as `::` will match both
-    components <- strsplit(topic, ":::")[[1L]]
-    if (length(components) > 1L) {
-        package <- components[[1L]]
-        topic <- components[[2L]]
-        return(list(topic = topic, package = package))
+# Search all installed help documentation and show R's native HTML results page.
+#' @export
+.ps.help.searchHelp <- function(query) {
+    query <- trimws(query)
+    if (!nzchar(query)) {
+        return(FALSE)
     }
 
-    components <- strsplit(topic, "::")[[1L]]
-    if (length(components) > 1L) {
-        package <- components[[1L]]
-        topic <- components[[2L]]
-        return(list(topic = topic, package = package))
+    .ps.help.searchIndex(build = FALSE)
+    results <- .ps.help.searchResults(query)
+
+    if (!in_ark_tests()) {
+        old <- options(help_type = "html")
+        on.exit(options(old), add = TRUE)
+        print(results)
+    }
+
+    TRUE
+}
+
+# Keep native regexp and fuzzy matching for valid patterns, but treat incomplete
+# regexps (including R aliases such as `[.data.frame`) as literal text. Validate
+# separately so an unrelated help.search() error is not mistaken for a bad query.
+.ps.help.searchResults <- function(query) {
+    valid <- suppressWarnings(tryCatch(
+        {
+            grepl(query, "", ignore.case = TRUE)
+            TRUE
+        },
+        error = function(err) FALSE
+    ))
+    if (!valid) {
+        query <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", query)
+    }
+    utils::help.search(query, package = NULL)
+}
+
+# Refresh native R's search database when library metadata changes, retaining its
+# matches for a lazily built autocomplete index. Check library directories on each
+# request, but scan package metadata at most once a minute unless the libraries or
+# search settings change. This avoids
+# per-package filesystem calls on every keystroke, especially on network libraries.
+# In-place updates may take a minute to appear, on the next request after expiry.
+# Failed rebuilds use the same cooldown, then retry even if metadata is unchanged.
+.ps.help.searchIndex <- local({
+    signature <- NULL
+    metadata_signature <- NULL
+    last_checked <- -Inf
+    matches <- NULL
+    index <- NULL
+
+    function(build = TRUE) {
+        libraries <- .libPaths()
+        current <- list(
+            libraries = libraries,
+            files = file.info(libraries)[,
+                c("size", "mtime", "ctime"),
+                drop = FALSE
+            ],
+            locale = Sys.getlocale("LC_CTYPE"),
+            collation = Sys.getlocale("LC_COLLATE"),
+            types = getOption("help.search.types")
+        )
+        now <- proc.time()[["elapsed"]]
+        if (!identical(current, signature) || now - last_checked >= 60) {
+            packages <- unlist(
+                lapply(libraries, list.dirs, recursive = FALSE),
+                use.names = FALSE
+            )
+            metadata <- unlist(
+                lapply(
+                    c("package.rds", "hsearch.rds", "vignette.rds", "demo.rds"),
+                    function(name) file.path(packages, "Meta", name)
+                ),
+                use.names = FALSE
+            )
+            current_metadata <- file.info(metadata)[,
+                c("size", "mtime", "ctime"),
+                drop = FALSE
+            ]
+            last_checked <<- now
+            if (
+                !identical(current, signature) ||
+                    !identical(current_metadata, metadata_signature) ||
+                    is.null(matches)
+            ) {
+                # Record the attempt before rebuilding so errors cannot bypass the cooldown.
+                signature <<- current
+                metadata_signature <<- current_metadata
+                index <<- NULL
+                matches <<- tryCatch(
+                    utils::help.search(
+                        ".",
+                        fields = "alias",
+                        package = NULL,
+                        rebuild = TRUE
+                    )$matches,
+                    error = function(err) NULL
+                )
+            }
+        }
+
+        if (!build || is.null(matches)) {
+            return(invisible(NULL))
+        }
+        if (is.null(index)) {
+            help_matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
+            topics <- unique(data.frame(
+                package = help_matches[, "Package"],
+                label = help_matches[, "Entry"]
+            ))
+            labels <- tolower(topics$label)
+            sorted <- order(labels, topics$package)
+            index <<- list(
+                labels = labels[sorted],
+                topics = topics[sorted, , drop = FALSE]
+            )
+        }
+        index
+    }
+})
+
+# Return matching packages and literal aliases, ranked as in the search box:
+# exact label, prefix, then substring; alphabetical within each group.
+#' @export
+.ps.help.getHelpTopics <- function(query, limit) {
+    query <- tolower(trimws(query))
+    if (!nzchar(query)) {
+        return(data.frame(package = character(), label = character()))
+    }
+    index <- .ps.help.searchIndex()
+    if (is.null(index)) {
+        return(data.frame(package = character(), label = character()))
+    }
+    hits <- which(grepl(query, index$labels, fixed = TRUE))
+    labels <- index$labels[hits]
+    rank <- ifelse(
+        labels == query,
+        0L,
+        ifelse(startsWith(labels, query), 1L, 2L)
+    )
+    index$topics[utils::head(hits[order(rank)], limit), , drop = FALSE]
+}
+
+# Resolve the package specifier, if there is one
+split_topic <- function(topic) {
+    separator <- regexpr("::", topic, fixed = TRUE)[[1L]]
+    if (separator > 1L) {
+        package <- substr(topic, 1L, separator - 1L)
+        alias <- substring(topic, separator + 2L)
+        # Preserve internal `pkg:::name` lookups, but keep literal `:` and `::`
+        # aliases intact in `pkg:::` and `pkg::::`.
+        if (
+            nchar(alias) > 1L &&
+                startsWith(alias, ":") &&
+                !startsWith(alias, "::")
+        ) {
+            alias <- substring(alias, 2L)
+        }
+        return(list(topic = alias, package = package))
     }
 
     list(topic = topic, package = NULL)
