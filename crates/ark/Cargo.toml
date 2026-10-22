@@ -55,6 +55,7 @@ oak_core.workspace = true
 oak_db.workspace = true
 oak_ide.workspace = true
 oak_package_metadata.workspace = true
+oak_r_process.workspace = true
 oak_scan.workspace = true
 oak_semantic.workspace = true
 oak_sidecar.workspace = true
@@ -95,7 +96,6 @@ ark_test.workspace = true
 assert_matches.workspace = true
 criterion.workspace = true
 insta.workspace = true
-oak_r_process.workspace = true
 oak_semantic = { workspace = true, features = ["testing"] }
 oak_package_metadata = { workspace = true, features = ["testing"] }
 stdext = { workspace = true, features = ["testing"] }

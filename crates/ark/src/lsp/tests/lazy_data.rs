@@ -37,8 +37,7 @@ path <- system.file("data", "Rdata.rds", package = "datasets", mustWork = TRUE)
 names <- unlist(readRDS(path), use.names = FALSE)
 writeLines(sort(unique(names), method = "radix"))
 "#,
-        &[],
-        &[],
+        &oak_r_process::RunOptions::default(),
     )
     .unwrap();
     assert!(output.status.success());

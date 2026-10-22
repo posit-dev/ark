@@ -35,7 +35,10 @@ pub fn read_object_names(r: &Path, rdata_files: &[PathBuf]) -> anyhow::Result<Ve
 
     let paths = write_paths_file(rdata_files)?;
     let paths_arg = paths.path().to_string_lossy();
-    let output = oak_r_process::run_text(r, SCRIPT, &[paths_arg.as_ref()], &[])?;
+    let output = oak_r_process::run_text(r, SCRIPT, &oak_r_process::RunOptions {
+        args: &[paths_arg.as_ref()],
+        ..Default::default()
+    })?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {

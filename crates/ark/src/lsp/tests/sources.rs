@@ -1291,8 +1291,7 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
         &format!(
             r#"install.packages("generics", lib = "{library_literal}", repos = "https://cran.r-project.org", type = "source", INSTALL_opts = "--with-keep.source")"#,
         ),
-        &[],
-        &[],
+        &oak_r_process::RunOptions::default(),
     )
     .expect("Failed to run install.packages()");
     assert!(output.status.success());

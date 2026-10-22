@@ -1,8 +1,12 @@
 use std::path::Path;
+use std::time::Duration;
 
 use oak_cache::set_readonly;
+use oak_r_process::RunOptions;
 
 const SCRIPT: &str = include_str!("../scripts/srcrefs.R");
+
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Recover an installed package's sources from `srcref` metadata into `dir`
 ///
@@ -26,7 +30,12 @@ pub(crate) fn populate(
     let library_path = library_path.to_string_lossy();
     let env = &[("R_LIBS", library_path.as_ref())];
 
-    let output = oak_r_process::run_text(r, SCRIPT, args, env)?;
+    let output = oak_r_process::run_text(r, SCRIPT, &RunOptions {
+        timeout: Some(TIMEOUT),
+        args,
+        env,
+        ..Default::default()
+    })?;
 
     let code = output.status.code().unwrap_or(1);
 
@@ -226,8 +235,7 @@ fn_a <- function() {
             &format!(
                 r#"install.packages("generics", lib = "{library_for_interpolation}", repos = "https://cran.r-project.org", type = "source", INSTALL_opts = "--with-keep.source")"#,
             ),
-            &[],
-            &[],
+            &RunOptions::default(),
         )
         .expect("Failed to run install.packages()");
         assert!(output.status.success());
@@ -238,8 +246,7 @@ fn_a <- function() {
             &format!(
                 r#"cat(as.character(packageVersion("generics", lib.loc = "{library_for_interpolation}")))"#,
             ),
-            &[],
-            &[],
+            &RunOptions::default(),
         )
         .expect("Failed to get generics version");
         assert!(output.status.success());

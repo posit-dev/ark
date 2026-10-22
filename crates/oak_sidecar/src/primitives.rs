@@ -73,7 +73,10 @@ fn key(version: &str, built: &str) -> String {
 }
 
 fn populate(r: &Path, version: &str, dir: &Path) -> anyhow::Result<bool> {
-    let output = oak_r_process::run_text(r, SCRIPT, &[version], &[])?;
+    let output = oak_r_process::run_text(r, SCRIPT, &oak_r_process::RunOptions {
+        args: &[version],
+        ..Default::default()
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

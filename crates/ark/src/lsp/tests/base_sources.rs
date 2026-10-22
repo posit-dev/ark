@@ -54,8 +54,7 @@ is_primitive <- vapply(
 )
 cat(names[is_primitive], sep = "\n")
 "#,
-        &[],
-        &[],
+        &oak_r_process::RunOptions::default(),
     )
     .unwrap();
     assert!(output.status.success());

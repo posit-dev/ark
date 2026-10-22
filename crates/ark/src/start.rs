@@ -46,6 +46,10 @@ pub fn start_kernel(
         Err(err) => panic!("Can't set up `R_HOME`: {err}"),
     };
 
+    // Include `R_HOME` set by `r_home_setup()`, but exclude environment changes
+    // made by the embedded R session and its startup files.
+    oak_r_process::capture_startup_environment();
+
     let r_version = match crate::version::from_r_home(&r_home) {
         Ok(r_version) => r_version,
         Err(err) => panic!("Can't detect R version: {err:?}"),
