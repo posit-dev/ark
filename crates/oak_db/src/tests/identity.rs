@@ -38,7 +38,7 @@ fn test_intern_returns_existing_entity_unchanged_and_shares_with_snapshots() {
     assert_eq!(pkg.name(&db), "pkg");
     assert_eq!(pkg.index_revision(&db), None);
 
-    let snapshot = db.snapshot();
+    let mut snapshot = db.snapshot();
     assert_eq!(snapshot.interned_file(&path), Some(file));
     assert_eq!(snapshot.interned_package(&description), Some(pkg));
 }

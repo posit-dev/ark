@@ -669,7 +669,7 @@ fn test_did_close_releases_orphan_file() {
 
     assert!(!state.db().orphan_root().files(state.db()).contains(&file));
     assert_eq!(state.db().file_by_path(&file_path), None);
-    assert_eq!(state.db().interned_file(&file_path), Some(file));
+    assert_eq!(state.db_mut().interned_file(&file_path), Some(file));
     assert_eq!(file.source_text_override(state.db()), &None);
 
     // did_close() clears diagnostics for the closed file.

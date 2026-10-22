@@ -51,13 +51,18 @@ pub trait DbInputs: salsa::Database {
 
     /// Look up the [`File`] for `path` without creating it or checking live
     /// membership. Analysis uses [`SourceDb::file_by_path()`] instead.
-    fn interned_file(&self, path: &FilePath) -> Option<File> {
+    ///
+    /// Takes `&mut self` so tracked queries, which only get shared references,
+    /// can't call it. See [`IdentityMap`].
+    fn interned_file(&mut self, path: &FilePath) -> Option<File> {
         self.identity_map().file(path)
     }
 
     /// Look up the [`Package`] for `description_path` without creating it or
     /// checking live membership.
-    fn interned_package(&self, description_path: &FilePath) -> Option<Package> {
+    ///
+    /// Takes `&mut self` for the same reason as [`Self::interned_file()`].
+    fn interned_package(&mut self, description_path: &FilePath) -> Option<Package> {
         self.identity_map().package(description_path)
     }
 
@@ -109,8 +114,12 @@ pub trait DbInputs: salsa::Database {
 /// Analysis visibility depends on live containers, as checked by
 /// [`SourceDb::file_by_path()`].
 ///
-/// This is not a Salsa input and no query reads it, so map updates do not
-/// invalidate queries. Entries are retained for the database's lifetime,
+/// This is not a Salsa input, so map updates do not invalidate queries. A query
+/// reading it would get an untracked answer that depends on which paths were
+/// ever interned, not on live membership. Queries can't read it: the map's
+/// methods are private to this module, and every [`DbInputs`] method that
+/// reaches them takes `&mut self`, which queries never get. Entries are
+/// retained for the database's lifetime,
 /// matching Salsa's retention of input entities. The map stores paths and
 /// handles to those entities.
 ///
