@@ -92,7 +92,6 @@ jobs:
             readr
             rstudioapi
             S7
-            survival
             tibble
 
       - name: Set LD_LIBRARY_PATH
