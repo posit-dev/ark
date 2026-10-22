@@ -93,7 +93,6 @@ jobs:
             renv
             rstudioapi
             S7
-            targets
             tibble
 
       - name: Set LD_LIBRARY_PATH

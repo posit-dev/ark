@@ -174,7 +174,6 @@ The following R packages are required for tests:
 - R6
 - readr
 - renv
-- targets
 
 ### Installation
 

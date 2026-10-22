@@ -60,7 +60,6 @@ jobs:
             renv
             rstudioapi
             S7
-            targets
             tibble
 
       - name: Build

@@ -502,14 +502,7 @@ async fn test_goto_definition_through_tar_source_from_symlinked_library() {
     let _aux = init_aux_for_test();
 
     let cache = tempfile::tempdir().unwrap();
-    DescriptionWriter::new()
-        .package("targets")
-        .version("0.0.0")
-        .built("dummy")
-        .write(&cache.path().join("targets"));
-    NamespaceWriter::new()
-        .export("tar_source")
-        .write(&cache.path().join("targets"));
+    write_dummy_targets(cache.path());
 
     let library = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(cache.path().join("targets"), library.path().join("targets"))
@@ -527,8 +520,8 @@ async fn test_goto_definition_through_tar_source_from_symlinked_library() {
     assert_targets_project_definitions(state.world(), workspace.path());
 }
 
-/// Real renv: `renv::hydrate()` installs `targets` into an isolated renv cache
-/// and links it into the project library (symlinks on Unix, junctions on
+/// Real renv: `renv::hydrate()` copies a dummy `targets` into an isolated renv
+/// cache and links it into the project library (symlinks on Unix, junctions on
 /// Windows). Covers whatever link layout the installed renv produces, which the
 /// hand-built symlink test above can't.
 #[tokio::test]
@@ -540,9 +533,9 @@ async fn test_goto_definition_through_tar_source_from_renv_library() {
     let scratch = tempfile::tempdir().unwrap();
     let project = scratch.path().join("project");
     let Some(library) = renv_project_with_targets(&project, &scratch.path().join("cache")) else {
-        // Missing prerequisites fail on CI, where they are installed
-        assert!(!is_ci(), "`renv` and `targets` must be installed on CI");
-        eprintln!("Skipping: `renv` and `targets` must be installed");
+        // A missing prerequisite fails on CI, where it is installed
+        assert!(!is_ci(), "`renv` must be installed on CI");
+        eprintln!("Skipping: `renv` must be installed");
         return;
     };
 
@@ -563,8 +556,7 @@ async fn test_goto_definition_through_tar_source_from_renv_library() {
 }
 
 /// Resolving `tar_source` needs only the `targets` `NAMESPACE`, not its
-/// sources. Without a source handler, the real `targets` in the renv test
-/// doesn't trigger fetches for its dependencies.
+/// sources, so the tests run without a source handler.
 fn state_without_source_fetching(library: &Path) -> GlobalState {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.to_path_buf()]);
@@ -577,6 +569,20 @@ fn state_without_source_fetching(library: &Path) -> GlobalState {
             SourceScheduler::new(None),
         ),
     )
+}
+
+/// Write an installed `targets` package into `library` with only what the
+/// `tar_source()` effect needs: a `DESCRIPTION` and a `NAMESPACE` exporting
+/// `tar_source`. Having no dependencies also keeps `renv::hydrate()` from
+/// resolving anything beyond this package.
+fn write_dummy_targets(library: &Path) {
+    let package = library.join("targets");
+    DescriptionWriter::new()
+        .package("targets")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&package);
+    NamespaceWriter::new().export("tar_source").write(&package);
 }
 
 /// Write the `_targets.R` layout from posit-dev/positron#16523 into `dir`.
@@ -633,34 +639,38 @@ fn assert_targets_project_definitions(world: &WorldState, dir: &Path) {
 /// Exit status the setup script uses to report a missing prerequisite
 const MISSING_PREREQUISITE_STATUS: i32 = 77;
 
-/// Create an renv project at `project` whose library links `targets` (and its
-/// dependencies) from an renv cache at `cache`. Returns the project library.
+/// Create an renv project at `project` whose library links a dummy `targets`
+/// from an renv cache at `cache`. Returns the project library, or `None` if
+/// `renv` isn't installed.
 ///
-/// Returns `None` if `renv` or `targets` isn't installed.
-///
-/// `renv::hydrate()` copies from the libraries of the R that runs it. If
-/// `targets` is missing, `hydrate()` doesn't fail but installs it and its
-/// dependencies from the repos, producing plain copies instead of links. The
-/// script checks for the packages up front and clears `repos` so a missing
-/// prerequisite can never reach `hydrate()`. The cache is isolated so the test
-/// never writes to the user's renv cache.
+/// `hydrate()` resolves the package and its dependency closure from `sources`
+/// and tries to install anything it can't find there. Hydrating from a scratch
+/// library holding only the dependency-free dummy keeps the setup independent
+/// of the installed packages and of the network. The cache is isolated so the
+/// test never writes to the user's renv cache.
 fn renv_project_with_targets(project: &Path, cache: &Path) -> Option<PathBuf> {
     std::fs::create_dir_all(project).unwrap();
 
+    let sources = tempfile::tempdir().unwrap();
+    write_dummy_targets(sources.path());
+
     let script = r#"
         args <- commandArgs(trailingOnly = TRUE)
-        for (pkg in c("renv", "targets")) {
-            if (!requireNamespace(pkg, quietly = TRUE)) {
-                quit(save = "no", status = as.integer(args[[2]]))
-            }
+        if (!requireNamespace("renv", quietly = TRUE)) {
+            quit(save = "no", status = as.integer(args[[3]]))
         }
-        options(repos = character())
 
         project <- args[[1]]
         renv::init(project = project, bare = TRUE, load = FALSE, restart = FALSE)
         library <- renv::paths$library(project = project)
         dir.create(library, recursive = TRUE, showWarnings = FALSE)
-        renv::hydrate(packages = "targets", library = library, project = project, prompt = FALSE)
+        renv::hydrate(
+            packages = "targets",
+            library = library,
+            sources = args[[2]],
+            project = project,
+            prompt = FALSE
+        )
         writeLines(library, file.path(project, "library-path"))
     "#;
     let script_path = project.join("setup.R");
@@ -669,9 +679,13 @@ fn renv_project_with_targets(project: &Path, cache: &Path) -> Option<PathBuf> {
     let output = std::process::Command::new("Rscript")
         .arg(&script_path)
         .arg(project)
+        .arg(sources.path())
         .arg(MISSING_PREREQUISITE_STATUS.to_string())
         .env("RENV_PATHS_CACHE", cache)
         .env("RENV_CONFIG_CACHE_SYMLINKS", "TRUE")
+        // Set by `r-lib/actions/setup-r`. Nothing should need installing, but
+        // if something does, fail instead of downloading it.
+        .env_remove("RENV_CONFIG_REPOS_OVERRIDE")
         .output()
         .unwrap();
     if output.status.code() == Some(MISSING_PREREQUISITE_STATUS) {
