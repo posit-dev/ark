@@ -1405,8 +1405,10 @@ fn test_notebook_evaluate_erroring_print_does_not_deadlock() {
 }
 
 /// The Watch Pane sends `evaluate` as soon as it gets `stopped`, which the
-/// kernel emits before its event loop is running. The evaluate must wait for
-/// the loop rather than report "R is busy", so a single attempt succeeds.
+/// kernel emits before its event loop is running. A single attempt must
+/// succeed rather than report "R is busy". This guards the behaviour end to
+/// end but doesn't force the request into the gap before the event loop
+/// starts.
 #[test]
 fn test_notebook_evaluate_right_after_stopped() {
     let frontend = DummyArkFrontendNotebook::lock();
@@ -1519,15 +1521,25 @@ fn test_notebook_evaluate_busy_while_running_code() {
     // Wait for R to reach its first prompt
     notebook_evaluate(&frontend, 1, "1");
 
-    frontend.send_execute_request("Sys.sleep(1)", ExecuteRequestOptions::default());
+    // Keep R busy until we create `release`, however slow the runner is
+    let release = std::env::temp_dir().join(format!("ark-evaluate-busy-{}", std::process::id()));
+    let release_r = release.to_string_lossy().replace('\\', "/");
+    frontend.send_execute_request(
+        &format!("while (!file.exists('{release_r}')) Sys.sleep(0.01)"),
+        ExecuteRequestOptions::default(),
+    );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
     let (reply, elapsed) = notebook_evaluate_once(&frontend, 2, "1 + 1");
+    std::fs::write(&release, "").unwrap();
+
     assert_eq!(reply["success"], false);
     assert_eq!(reply["message"], "R is busy");
 
-    // The busy reply doesn't wait out the start timeout of `evaluate`
+    // The busy reply doesn't wait out the start timeout of `evaluate`. This is
+    // what distinguishes immediate rejection from timing out, so the bound
+    // can't be looser than that timeout.
     assert!(elapsed < std::time::Duration::from_millis(200));
 
     frontend.recv_iopub_interleaved(&[
@@ -1535,6 +1547,7 @@ fn test_notebook_evaluate_busy_while_running_code() {
         &[IopubExpectation::IdleShell],
     ]);
     frontend.recv_shell_execute_reply();
+    std::fs::remove_file(&release).unwrap();
 }
 
 /// Watch expressions run non-interactively, so `readline()` returns `""`

@@ -951,7 +951,7 @@ impl Console {
         // that run as `try_r_task()`s, e.g. the Watch Pane's `evaluate`, and
         // those must not be rejected because the event loop hasn't started
         // yet. Dropping the window when we return rejects tasks still queued.
-        let _try_task_window = info.kind.serves_idle_any_tasks().then(TryTaskWindow::open);
+        let try_task_window = info.kind.serves_idle_any_tasks().then(TryTaskWindow::open);
 
         // Continuation prompt for the frontend (i.e. `getOption("continue")`).
         // Passed along with the input prompt to `handle_active_request` and
@@ -1003,7 +1003,7 @@ impl Console {
                 !self.debug_dap.lock().unwrap().is_connected
             {
                 // The frontend sees an input request, so R is busy
-                drop(_try_task_window);
+                drop(try_task_window);
                 self.debug_dap.lock().unwrap().is_debugging_stdin = true;
                 let result = self.handle_input_request(&info, buf, buflen);
                 self.debug_dap.lock().unwrap().is_debugging_stdin = false;
@@ -1164,8 +1164,8 @@ impl Console {
         };
 
         // Try tasks too, except while waiting for an input reply at a browser
-        // prompt routed to stdin. `read_console()` doesn't open a
-        // `TryTaskWindow` in that case, so callers get "busy" right away.
+        // prompt routed to stdin. `read_console()` drops its `TryTaskWindow`
+        // before entering that loop, so callers get "busy" right away.
         let serves_try_tasks = serves_idle_any_tasks && matches!(wait_for, WaitFor::ExecuteRequest);
 
         let try_tasks_wake_index = if serves_try_tasks {

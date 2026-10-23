@@ -262,12 +262,19 @@ where
 ///
 /// The prompt is tracked by a `TryTaskWindow` that `read_console()` opens
 /// before announcing idleness to frontends. A request sent in reaction to
-/// such an announcement, e.g. a DAP `evaluate` sent on `stopped`, always
-/// finds the window open, even if the event loop hasn't started yet.
+/// such an announcement, e.g. a DAP `evaluate` sent on `stopped`, finds the
+/// window open unless R has resumed since. It then runs as soon as the event
+/// loop starts, provided that happens within `start_within`.
 ///
 /// Like `r_task()`, `f` may borrow from the caller's stack, Rust panics in `f`
-/// are re-raised on the caller's thread, and `f` runs with `R_Interactive`
-/// off. An R error escaping `f` panics.
+/// are re-raised on the caller's thread, and an R error escaping `f` panics.
+/// When queued, `f` runs through `handle_task()` with `R_Interactive` off.
+/// When called from the R thread or in unit tests, it runs inline as is.
+///
+/// Values that must be dropped on every path, such as a `WorldStateSnapshot`
+/// that parks salsa writes, should stay on the caller's stack and be
+/// borrowed by `f`. If `f` owned them, an R longjump out of `f` would skip
+/// their destructor.
 pub(crate) fn try_r_task<'env, F, T>(f: F, start_within: Duration) -> Option<T>
 where
     F: FnOnce() -> T,
@@ -452,7 +459,8 @@ struct TryTasks {
     state: Mutex<TryTasksState>,
 
     /// Wakes an event loop parked in `Select` after a push. Capacity 1 so
-    /// pushes coalesce: the event loop drains the whole queue on each turn.
+    /// pushes coalesce: the event loop pops a task at the top of every
+    /// iteration, so one pending wake-up is enough.
     wake_tx: Sender<()>,
     wake_rx: Mutex<Option<Receiver<()>>>,
 }
@@ -552,7 +560,8 @@ impl Drop for TryTaskWindow {
             std::mem::take(&mut state.queue)
         };
 
-        // Outside the lock so callers that just timed out can check the queue
+        // Outside the lock because closure destructors run arbitrary code,
+        // which must not run under this non-reentrant mutex
         for (_, task) in rejected {
             let RTaskSync { fun, status_tx, .. } = task;
 
