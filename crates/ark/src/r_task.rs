@@ -7,10 +7,12 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
@@ -36,8 +38,9 @@ static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 /// not input)
 static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
-/// Queue for `try_r_task()`s, see there.
-static TRY_TASKS: LazyLock<TryTasks> = LazyLock::new(TryTasks::new);
+/// Queue for `try_r_task()`. `Console::read_console()` registers each prompt
+/// here with a `TryTaskFrame`.
+pub(crate) static TRY_TASKS: LazyLock<TryTasks> = LazyLock::new(TryTasks::new);
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
@@ -260,11 +263,11 @@ where
 /// is the usual cause of the last case. Once `f` has started, this blocks
 /// until it finishes, however long that takes.
 ///
-/// The prompt is tracked by a `TryTaskWindow` that `read_console()` opens
-/// before announcing idleness to frontends. A request sent in reaction to
-/// such an announcement, e.g. a DAP `evaluate` sent on `stopped`, finds the
-/// window open unless R has resumed since. It then runs as soon as the event
-/// loop starts, provided that happens within `start_within`.
+/// `Console::read_console()` registers each prompt with a `TryTaskFrame`
+/// before announcing idleness to frontends. Only the innermost frame can
+/// admit `f`. This lets requests triggered by an idle notification, such as
+/// a DAP `evaluate` request after `stopped`, queue before the event loop starts.
+/// See `TryTasks::submit()` for timeout and rejection behavior.
 ///
 /// Like `r_task()`, `f` may borrow from the caller's stack, Rust panics in `f`
 /// are re-raised on the caller's thread, and an R error escaping `f` panics.
@@ -300,63 +303,7 @@ where
         return Some(f());
     }
 
-    // Room for both `Started` and `Finished` so the R thread never blocks on
-    // a send. After a timeout, the caller first tries to reclaim the task
-    // from the queue and only then receives, so a rendezvous channel would
-    // stall the R thread in the meantime.
-    let (status_tx, status_rx) = bounded::<RTaskStatus>(2);
-
-    // SAFETY: Every path below returns only after the task has finished
-    // running or has been dropped. `push()` and `remove()` hand a task that
-    // never started back to us. The R thread drops a rejected task's closure
-    // before sending `Rejected`, and a `Disconnected` status channel means the
-    // whole task was dropped.
-    let (task, result) = unsafe { erase_task(f, status_tx) };
-
-    let id = match TRY_TASKS.push(task) {
-        Ok(id) => id,
-        Err(task) => {
-            drop(task);
-            return None;
-        },
-    };
-
-    let status = match status_rx.recv_timeout(start_within) {
-        Ok(status) => status,
-        Err(RecvTimeoutError::Timeout) => {
-            if let Some(task) = TRY_TASKS.remove(id) {
-                drop(task);
-                return None;
-            }
-
-            // The R thread took the task off the queue, either to run it or
-            // to reject it. Both send a status.
-            match status_rx.recv() {
-                Ok(status) => status,
-                Err(err) => {
-                    log::error!("`try_r_task()`: Task dropped without a status: {err:?}");
-                    return None;
-                },
-            }
-        },
-        Err(RecvTimeoutError::Disconnected) => {
-            log::error!("`try_r_task()`: Task dropped without a status");
-            return None;
-        },
-    };
-
-    match status {
-        RTaskStatus::Started => Some(join_task(&status_rx, &result)),
-        RTaskStatus::Rejected => None,
-        RTaskStatus::Finished(_) => {
-            let trace = std::backtrace::Backtrace::force_capture();
-            panic!(
-                "Task `status` value must be `Started` or `Rejected`: {status:?}\n\
-                 Backtrace of calling thread:\n\n
-                 {trace}"
-            );
-        },
-    }
+    TRY_TASKS.submit(f, start_within)
 }
 
 /// Box `f` as a `RTaskSync` that can be sent to the R thread, with a slot
@@ -453,9 +400,14 @@ fn join_task<T>(
     }
 }
 
-/// Queue of `try_r_task()`s, served by the event loop while at least one
-/// `TryTaskWindow` is open.
-struct TryTasks {
+/// Queue for `try_r_task()`, admitting tasks only while the innermost
+/// prompt is configured to serve them.
+///
+/// `Console::read_console()` registers every prompt, including input
+/// prompts that do not serve tasks. For example, `readline()` called from a
+/// `later` callback makes callers receive `None` immediately, even if the
+/// outer event loop serves tasks.
+pub(crate) struct TryTasks {
     state: Mutex<TryTasksState>,
 
     /// Wakes an event loop parked in `Select` after a push. Capacity 1 so
@@ -466,11 +418,22 @@ struct TryTasks {
 }
 
 struct TryTasksState {
-    /// Number of open `TryTaskWindow`s. More than one when a task run from an
-    /// event loop reaches a nested browser prompt.
-    windows: usize,
+    /// One entry per live `TryTaskFrame`, innermost last. `true` if that
+    /// frame's event loop serves try tasks. `queue` is empty unless the last
+    /// entry is `true`.
+    frames: Vec<bool>,
     next_id: u64,
     queue: VecDeque<(u64, RTaskSync)>,
+}
+
+impl TryTasksState {
+    fn top_serves(&self) -> bool {
+        matches!(self.frames.last(), Some(true))
+    }
+
+    fn is_top(&self, index: usize) -> bool {
+        index + 1 == self.frames.len()
+    }
 }
 
 impl TryTasks {
@@ -478,7 +441,7 @@ impl TryTasks {
         let (wake_tx, wake_rx) = bounded::<()>(1);
         Self {
             state: Mutex::new(TryTasksState {
-                windows: 0,
+                frames: Vec::new(),
                 next_id: 0,
                 queue: VecDeque::new(),
             }),
@@ -492,12 +455,119 @@ impl TryTasks {
         rx.take().expect("`take_wake_rx()` can only be called once")
     }
 
-    /// Queue `task` if a window is open. Otherwise hand it back so the caller
-    /// drops it on its own thread.
+    /// Register the innermost prompt, with `serving` indicating whether its
+    /// event loop serves try tasks. A non-serving frame rejects queued tasks
+    /// because the outer event loop cannot resume until this prompt returns.
+    pub(crate) fn frame(&self, serving: bool) -> TryTaskFrame<'_> {
+        let mut state = self.state.lock().unwrap();
+        state.frames.push(serving);
+        let index = state.frames.len() - 1;
+        Self::reject_unserved(state);
+
+        TryTaskFrame {
+            tasks: self,
+            index,
+            _not_send: PhantomData,
+        }
+    }
+
+    /// Queue `f` for the event loop of the innermost frame and wait for it.
+    /// Returns `None` without waiting if that frame doesn't serve try tasks.
+    ///
+    /// When `start_within` expires, the caller reclaims a still-queued task
+    /// and drops it on its own thread. This releases captured values such as
+    /// `WorldStateSnapshot`, which blocks Salsa writes until dropped. If the
+    /// event loop has already taken the task to run it, the caller waits for
+    /// completion. If the task was taken for rejection, the caller waits for
+    /// its closure to be dropped before receiving `None`. Queued tasks are
+    /// rejected when the innermost frame stops serving them.
+    pub(crate) fn submit<'env, F, T>(&self, f: F, start_within: Duration) -> Option<T>
+    where
+        F: FnOnce() -> T,
+        F: 'env + Send,
+        T: 'env + Send,
+    {
+        self.submit_with(f, |status_rx| status_rx.recv_timeout(start_within))
+    }
+
+    /// `submit()` with the wait for the first status injected, so tests can
+    /// decide when the timeout fires relative to the R thread popping the
+    /// task.
+    fn submit_with<'env, F, T>(
+        &self,
+        f: F,
+        wait_for_start: impl FnOnce(&Receiver<RTaskStatus>) -> Result<RTaskStatus, RecvTimeoutError>,
+    ) -> Option<T>
+    where
+        F: FnOnce() -> T,
+        F: 'env + Send,
+        T: 'env + Send,
+    {
+        // Room for both `Started` and `Finished` so the R thread never blocks on
+        // a send. After a timeout, the caller first tries to reclaim the task
+        // from the queue and only then receives, so a rendezvous channel would
+        // stall the R thread in the meantime.
+        let (status_tx, status_rx) = bounded::<RTaskStatus>(2);
+
+        // SAFETY: Every path below returns only after the task has finished
+        // running or has been dropped. `push()` and `remove()` hand a task that
+        // never started back to us. The R thread drops a rejected task's closure
+        // before sending `Rejected`, and a `Disconnected` status channel means the
+        // whole task was dropped.
+        let (task, result) = unsafe { erase_task(f, status_tx) };
+
+        let id = match self.push(task) {
+            Ok(id) => id,
+            Err(task) => {
+                drop(task);
+                return None;
+            },
+        };
+
+        let status = match wait_for_start(&status_rx) {
+            Ok(status) => status,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(task) = self.remove(id) {
+                    drop(task);
+                    return None;
+                }
+
+                // The R thread took the task off the queue, either to run it or
+                // to reject it. Both send a status.
+                match status_rx.recv() {
+                    Ok(status) => status,
+                    Err(err) => {
+                        log::error!("`try_r_task()`: Task dropped without a status: {err:?}");
+                        return None;
+                    },
+                }
+            },
+            Err(RecvTimeoutError::Disconnected) => {
+                log::error!("`try_r_task()`: Task dropped without a status");
+                return None;
+            },
+        };
+
+        match status {
+            RTaskStatus::Started => Some(join_task(&status_rx, &result)),
+            RTaskStatus::Rejected => None,
+            RTaskStatus::Finished(_) => {
+                let trace = std::backtrace::Backtrace::force_capture();
+                panic!(
+                    "Task `status` value must be `Started` or `Rejected`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+                );
+            },
+        }
+    }
+
+    /// Queue `task` if the innermost frame serves try tasks. Otherwise hand it
+    /// back so the caller drops it on its own thread.
     fn push(&self, task: RTaskSync) -> Result<u64, RTaskSync> {
         let id = {
             let mut state = self.state.lock().unwrap();
-            if state.windows == 0 {
+            if !state.top_serves() {
                 return Err(task);
             }
             let id = state.next_id;
@@ -523,45 +593,21 @@ impl TryTasks {
         let index = state.queue.iter().position(|(task_id, _)| *task_id == id)?;
         state.queue.remove(index).map(|(_, task)| task)
     }
-}
 
-/// Take the next `try_r_task()` off the queue. Must be called from the R
-/// thread's event loop, which then runs it with `handle_task()`. Taking a task
-/// off the queue commits to running it: its caller can no longer reclaim it.
-pub(crate) fn pop_try_task() -> Option<QueuedRTask> {
-    let mut state = TRY_TASKS.state.lock().unwrap();
-    state
-        .queue
-        .pop_front()
-        .map(|(_, task)| QueuedRTask::Sync(task))
-}
+    /// Reject queued tasks when the innermost frame does not serve them or
+    /// no frame remains, without waiting for `start_within` to expire. Called
+    /// after every frame-stack change.
+    ///
+    /// Consumes the guard to release the lock before dropping task closures.
+    /// Their destructors may run arbitrary code and reacquire this
+    /// non-reentrant mutex.
+    fn reject_unserved(mut state: MutexGuard<'_, TryTasksState>) {
+        if state.top_serves() {
+            return;
+        }
+        let rejected = std::mem::take(&mut state.queue);
+        drop(state);
 
-/// Marks the R thread as being at a prompt whose event loop serves
-/// `try_r_task()`s. While a window is open, `try_r_task()` queues instead of
-/// returning `None`. Dropping the last open window rejects tasks still
-/// queued.
-pub(crate) struct TryTaskWindow(());
-
-impl TryTaskWindow {
-    pub(crate) fn open() -> Self {
-        TRY_TASKS.state.lock().unwrap().windows += 1;
-        Self(())
-    }
-}
-
-impl Drop for TryTaskWindow {
-    fn drop(&mut self) {
-        let rejected = {
-            let mut state = TRY_TASKS.state.lock().unwrap();
-            state.windows -= 1;
-            if state.windows > 0 {
-                return;
-            }
-            std::mem::take(&mut state.queue)
-        };
-
-        // Outside the lock because closure destructors run arbitrary code,
-        // which must not run under this non-reentrant mutex
         for (_, task) in rejected {
             let RTaskSync { fun, status_tx, .. } = task;
 
@@ -575,6 +621,66 @@ impl Drop for TryTaskWindow {
                 }
             }
         }
+    }
+}
+
+/// One prompt in the `TryTasks` stack, registered by `TryTasks::frame()`
+/// and removed on drop. Only the innermost frame admits and serves tasks.
+/// Dropping it preserves queued tasks if the outer frame serves them,
+/// otherwise it rejects them.
+///
+/// Frames must be created and dropped in LIFO order on the R thread.
+/// `!Send` prevents moving a frame to another thread.
+pub(crate) struct TryTaskFrame<'a> {
+    tasks: &'a TryTasks,
+    index: usize,
+    _not_send: PhantomData<*const ()>,
+}
+
+impl TryTaskFrame<'_> {
+    /// Stop serving try tasks at this prompt, rejecting those queued. Must be
+    /// called on the innermost frame: rejection only looks at the top.
+    pub(crate) fn suspend(&self) {
+        let mut state = self.tasks.state.lock().unwrap();
+        debug_assert!(state.is_top(self.index));
+        if let Some(serving) = state.frames.get_mut(self.index) {
+            *serving = false;
+        }
+        TryTasks::reject_unserved(state);
+    }
+
+    /// Whether this prompt's event loop serves try tasks.
+    pub(crate) fn serves(&self) -> bool {
+        let state = self.tasks.state.lock().unwrap();
+        matches!(state.frames.get(self.index), Some(true))
+    }
+
+    /// Take the next try task off the queue, to be run with `handle_task()`.
+    /// Returns `None` unless this frame is the innermost one and serves.
+    /// Taking a task off the queue commits to running it. Its caller can no
+    /// longer reclaim it.
+    pub(crate) fn pop(&self) -> Option<QueuedRTask> {
+        let mut state = self.tasks.state.lock().unwrap();
+        if !state.is_top(self.index) || !state.top_serves() {
+            return None;
+        }
+        state
+            .queue
+            .pop_front()
+            .map(|(_, task)| QueuedRTask::Sync(task))
+    }
+}
+
+impl Drop for TryTaskFrame<'_> {
+    fn drop(&mut self) {
+        let mut state = self.tasks.state.lock().unwrap();
+        debug_assert!(state.is_top(self.index));
+
+        // Entries above this one remain only if their frame's destructor was
+        // skipped, e.g. by an R longjump. Debug builds catch that with the
+        // assertion above; in release builds `truncate()` discards them too.
+        state.frames.truncate(self.index);
+        TryTasks::reject_unserved(state);
     }
 }
 
@@ -825,4 +931,299 @@ unsafe extern "C-unwind" fn ps_test_spawn_eval_idle_task(code: SEXP) -> anyhow::
     }));
 
     Ok(libr::R_NilValue)
+}
+
+// Protocol tests for `TryTasks`, without R. A scoped thread stands in for
+// the R thread, registering prompts and running tasks with `run_task()`.
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
+    use std::time::Duration;
+
+    use crossbeam::channel::bounded;
+    use crossbeam::channel::Receiver;
+    use crossbeam::channel::RecvTimeoutError;
+
+    use super::QueuedRTask;
+    use super::RTaskStatus;
+    use super::TryTaskFrame;
+    use super::TryTasks;
+    use crate::panic;
+    use crate::panic::Recovery;
+
+    /// Long enough that the frame stack or the task decides the outcome,
+    /// never `start_within`.
+    const NEVER: Duration = Duration::from_secs(60);
+
+    /// Records which thread drops it, to observe where and when a closure
+    /// capturing it is dropped.
+    struct DropProbe(Arc<Mutex<Option<ThreadId>>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            *self.0.lock().unwrap() = Some(std::thread::current().id());
+        }
+    }
+
+    fn drop_probe() -> (DropProbe, Arc<Mutex<Option<ThreadId>>>) {
+        let dropped_on = Arc::new(Mutex::new(None));
+        (DropProbe(Arc::clone(&dropped_on)), dropped_on)
+    }
+
+    /// Runs a popped task like `Console::handle_task_inner()` does.
+    fn run_task(task: QueuedRTask) {
+        let QueuedRTask::Sync(task) = task else {
+            panic!("Expected a sync task");
+        };
+        let status_tx = task.status_tx.unwrap();
+        status_tx.send(RTaskStatus::Started).unwrap();
+        (task.fun)();
+        status_tx.send(RTaskStatus::Finished(Ok(()))).unwrap();
+    }
+
+    /// Waits for a wake-up and pops from `frame`, like the event loop.
+    fn pop_next(frame: &TryTaskFrame, wake_rx: &Receiver<()>) -> QueuedRTask {
+        loop {
+            wake_rx.recv().unwrap();
+            if let Some(task) = frame.pop() {
+                return task;
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_task_refused_without_frame() {
+        let tasks = TryTasks::new();
+        assert_eq!(tasks.submit(|| 1, NEVER), None);
+    }
+
+    #[test]
+    fn test_try_task_refused_when_top_does_not_serve() {
+        let tasks = TryTasks::new();
+        let _outer = tasks.frame(true);
+        let _inner = tasks.frame(false);
+        assert_eq!(tasks.submit(|| 1, NEVER), None);
+    }
+
+    #[test]
+    fn test_try_task_served_with_borrowed_data() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+        let data = [1, 2, 3];
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                run_task(pop_next(&frame, &wake_rx));
+            });
+
+            ready_rx.recv().unwrap();
+            let sum = tasks.submit(|| data.iter().sum::<i32>(), NEVER);
+            assert_eq!(sum, Some(6));
+        });
+    }
+
+    #[test]
+    fn test_try_task_timeout_while_queued_drops_on_caller() {
+        let tasks = &TryTasks::new();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            let (done_tx, done_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                // Keep the task queued until the caller reclaims it on timeout.
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                done_rx.recv().unwrap();
+                assert!(frame.pop().is_none());
+            });
+
+            ready_rx.recv().unwrap();
+            let (probe, dropped_on) = drop_probe();
+            let out = tasks.submit(
+                move || {
+                    drop(probe);
+                    1
+                },
+                Duration::from_millis(10),
+            );
+            assert_eq!(out, None);
+            assert_eq!(
+                *dropped_on.lock().unwrap(),
+                Some(std::thread::current().id())
+            );
+            done_tx.send(()).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_try_task_timeout_after_pop_still_runs() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            let (popped_tx, popped_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                let task = pop_next(&frame, &wake_rx);
+                popped_tx.send(()).unwrap();
+                run_task(task);
+            });
+
+            ready_rx.recv().unwrap();
+
+            // Time out only once the task has been popped, so the caller's
+            // reclaim fails and it must wait for the task to run
+            let out = tasks.submit_with(
+                || 1,
+                |_| {
+                    popped_rx.recv().unwrap();
+                    Err(RecvTimeoutError::Timeout)
+                },
+            );
+            assert_eq!(out, Some(1));
+        });
+    }
+
+    #[test]
+    fn test_try_task_rejected_when_last_frame_dropped() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            let r_thread = scope.spawn(move || {
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                wake_rx.recv().unwrap();
+                drop(frame);
+            });
+            let r_thread_id = r_thread.thread().id();
+
+            ready_rx.recv().unwrap();
+            let (probe, dropped_on) = drop_probe();
+            let out = tasks.submit(
+                move || {
+                    drop(probe);
+                    1
+                },
+                NEVER,
+            );
+            assert_eq!(out, None);
+            assert_eq!(*dropped_on.lock().unwrap(), Some(r_thread_id));
+        });
+    }
+
+    #[test]
+    fn test_try_task_kept_when_nested_frame_dropped_over_serving_frame() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let outer = tasks.frame(true);
+                let inner = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                wake_rx.recv().unwrap();
+
+                // A serving outer frame cannot take tasks from an inner prompt.
+                assert!(outer.pop().is_none());
+                drop(inner);
+
+                let task = outer.pop().unwrap();
+                run_task(task);
+            });
+
+            ready_rx.recv().unwrap();
+            assert_eq!(tasks.submit(|| 1, NEVER), Some(1));
+        });
+    }
+
+    #[test]
+    fn test_try_task_nested_non_serving_frame_rejects_and_refuses() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (step_tx, step_rx) = bounded::<()>(0);
+            let (resume_tx, resume_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let outer = tasks.frame(true);
+                step_tx.send(()).unwrap();
+
+                wake_rx.recv().unwrap();
+                let inner = tasks.frame(false);
+                step_tx.send(()).unwrap();
+
+                resume_rx.recv().unwrap();
+                drop(inner);
+                step_tx.send(()).unwrap();
+
+                run_task(pop_next(&outer, &wake_rx));
+            });
+
+            // Queued for `outer`, rejected when `inner` is pushed
+            step_rx.recv().unwrap();
+            assert_eq!(tasks.submit(|| 1, NEVER), None);
+
+            // Refused while `inner` is the innermost frame
+            step_rx.recv().unwrap();
+            assert_eq!(tasks.submit(|| 2, NEVER), None);
+            resume_tx.send(()).unwrap();
+
+            // Served by `outer` once `inner` is gone
+            step_rx.recv().unwrap();
+            assert_eq!(tasks.submit(|| 3, NEVER), Some(3));
+        });
+    }
+
+    #[test]
+    fn test_try_task_rejected_on_suspend() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                wake_rx.recv().unwrap();
+
+                frame.suspend();
+                assert!(!frame.serves());
+                assert!(frame.pop().is_none());
+            });
+
+            ready_rx.recv().unwrap();
+            assert_eq!(tasks.submit(|| 1, NEVER), None);
+        });
+    }
+
+    #[test]
+    fn test_try_task_panic_reraised_on_caller() {
+        let tasks = &TryTasks::new();
+        let wake_rx = tasks.take_wake_rx();
+
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = bounded::<()>(0);
+            scope.spawn(move || {
+                let frame = tasks.frame(true);
+                ready_tx.send(()).unwrap();
+                run_task(pop_next(&frame, &wake_rx));
+            });
+
+            ready_rx.recv().unwrap();
+            let result = panic::catch_unwind(Recovery::Always, || {
+                tasks.submit(|| -> i32 { panic!("boom") }, NEVER)
+            });
+            assert_eq!(result, Err(String::from("boom")));
+        });
+    }
 }

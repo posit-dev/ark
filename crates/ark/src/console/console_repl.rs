@@ -24,7 +24,8 @@ use crate::panic;
 use crate::panic::Recovery;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
-use crate::r_task::TryTaskWindow;
+use crate::r_task::TryTaskFrame;
+use crate::r_task::TRY_TASKS;
 use crate::request::DebugRequest;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
@@ -247,9 +248,9 @@ pub(super) enum PromptKind {
 }
 
 impl PromptKind {
-    /// Whether the event loop at this prompt runs "idle any" tasks and
-    /// `try_r_task()`s. Input requests are excluded to reduce the risk of
-    /// reentrancy.
+    /// Whether this prompt permits "idle any" tasks. Input requests are
+    /// excluded to reduce reentrancy. `try_r_task()` uses the same prompt kinds
+    /// but also requires an unsuspended `TryTaskFrame`.
     fn serves_idle_any_tasks(&self) -> bool {
         matches!(self, PromptKind::TopLevel | PromptKind::Browser)
     }
@@ -945,13 +946,13 @@ impl Console {
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
-        // Open before anything below announces idleness: `debug_start()` emits
-        // the DAP `stopped` event and `handle_active_request()` unblocks the
-        // execute reply and Idle status. Frontends react to these with requests
-        // that run as `try_r_task()`s, e.g. the Watch Pane's `evaluate`, and
-        // those must not be rejected because the event loop hasn't started
-        // yet. Dropping the window when we return rejects tasks still queued.
-        let try_task_window = info.kind.serves_idle_any_tasks().then(TryTaskWindow::open);
+        // Register the prompt before `debug_start()` emits DAP `stopped` or
+        // `handle_active_request()` releases the execute reply and Idle status.
+        // Requests triggered by these notifications, such as Watch Pane
+        // `evaluate`, must be able to queue before the event loop starts.
+        // Register input prompts too, so nested `readline()` makes
+        // `try_r_task()` return `None` even if the outer loop serves tasks.
+        let try_task_frame = TRY_TASKS.frame(info.kind.serves_idle_any_tasks());
 
         // Continuation prompt for the frontend (i.e. `getOption("continue")`).
         // Passed along with the input prompt to `handle_active_request` and
@@ -1003,9 +1004,9 @@ impl Console {
                 !self.debug_dap.lock().unwrap().is_connected
             {
                 // The frontend sees an input request, so R is busy
-                drop(try_task_window);
+                try_task_frame.suspend();
                 self.debug_dap.lock().unwrap().is_debugging_stdin = true;
-                let result = self.handle_input_request(&info, buf, buflen);
+                let result = self.handle_input_request(&info, &try_task_frame, buf, buflen);
                 self.debug_dap.lock().unwrap().is_debugging_stdin = false;
                 return result;
             }
@@ -1062,7 +1063,7 @@ impl Console {
             }
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
-            return self.handle_input_request(&info, buf, buflen);
+            return self.handle_input_request(&info, &try_task_frame, buf, buflen);
         } else if let Some(input) = self.pop_pending() {
             // Evaluate pending expression if there is any remaining
             return self.handle_pending_input(input, buf, buflen);
@@ -1090,7 +1091,7 @@ impl Console {
             self.refresh_lsp();
         }
 
-        self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
+        self.run_event_loop(&info, &try_task_frame, buf, buflen, WaitFor::ExecuteRequest)
     }
 
     /// Runs the ReadConsole event loop.
@@ -1098,12 +1099,14 @@ impl Console {
     /// - Reception of either input replies or execute requests (as determined
     ///   by `wait_for`)
     /// - Idle-time tasks
+    /// - `try_r_task()`s, if `frame` serves them
     /// - Requests from the frontend (currently only used for establishing UI comm)
     /// - R's activity handlers
     /// - R's `R_ProcessEvents()`
     fn run_event_loop(
         &mut self,
         info: &PromptInfo,
+        frame: &TryTaskFrame,
         buf: *mut c_uchar,
         buflen: c_int,
         wait_for: WaitFor,
@@ -1155,20 +1158,15 @@ impl Console {
         };
 
         // "Idle any" tasks run at both top-level and browser prompts
-        let serves_idle_any_tasks = info.kind.serves_idle_any_tasks();
-
-        let tasks_idle_any_index = if serves_idle_any_tasks {
+        let tasks_idle_any_index = if info.kind.serves_idle_any_tasks() {
             Some(select.recv(&tasks_idle_any_rx))
         } else {
             None
         };
 
-        // Try tasks too, except while waiting for an input reply at a browser
-        // prompt routed to stdin. `read_console()` drops its `TryTaskWindow`
-        // before entering that loop, so callers get "busy" right away.
-        let serves_try_tasks = serves_idle_any_tasks && matches!(wait_for, WaitFor::ExecuteRequest);
-
-        let try_tasks_wake_index = if serves_try_tasks {
+        // Unlike "idle any" tasks, try tasks must not run at a browser prompt
+        // routed to stdin. `read_console()` suspends that prompt's frame.
+        let try_tasks_wake_index = if frame.serves() {
             Some(select.recv(&try_tasks_wake_rx))
         } else {
             None
@@ -1216,11 +1214,9 @@ impl Console {
             // Try tasks come next, before `select` can pick an idle task.
             // Their callers are blocked waiting, and give up if the task
             // doesn't start soon.
-            if serves_try_tasks {
-                if let Some(task) = r_task::pop_try_task() {
-                    self.handle_task(task);
-                    continue;
-                }
+            if let Some(task) = frame.pop() {
+                self.handle_task(task);
+                continue;
             }
 
             let oper = select.select();
@@ -1669,6 +1665,7 @@ impl Console {
     fn handle_input_request(
         &mut self,
         info: &PromptInfo,
+        frame: &TryTaskFrame,
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> ConsoleResult {
@@ -1696,7 +1693,7 @@ impl Console {
         self.request_input(originator, String::from(&info.input_prompt));
 
         // Run the event loop, waiting for stdin replies but not execute requests
-        self.run_event_loop(info, buf, buflen, WaitFor::InputReply)
+        self.run_event_loop(info, frame, buf, buflen, WaitFor::InputReply)
     }
 
     fn handle_pending_input(
