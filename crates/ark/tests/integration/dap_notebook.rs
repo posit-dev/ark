@@ -1551,10 +1551,11 @@ fn test_notebook_evaluate_readline_is_not_interactive() {
     assert_eq!(reply["body"]["result"], "0L");
 }
 
-/// A `browser()` prompt routed to stdin still serves `evaluate`: the event loop
-/// waiting for the input reply runs at a browser prompt.
+/// A `browser()` prompt routed to stdin is an input request from the
+/// frontend's point of view, so `evaluate` reports "R is busy" right away
+/// rather than running code under the prompt.
 #[test]
-fn test_notebook_evaluate_at_stdin_browser_prompt() {
+fn test_notebook_evaluate_busy_at_stdin_browser_prompt() {
     let frontend = DummyArkFrontendNotebook::lock();
 
     frontend.send_execute_request_with_metadata(
@@ -1571,11 +1572,12 @@ fn test_notebook_evaluate_at_stdin_browser_prompt() {
         "Expected Browse prompt, got: {prompt}"
     );
 
-    let (reply, _) = notebook_evaluate_once(&frontend, 1, "1 + 1");
+    let (reply, elapsed) = notebook_evaluate_once(&frontend, 1, "1 + 1");
     frontend.recv_iopub_busy();
     frontend.recv_iopub_idle();
-    assert_eq!(reply["success"], true);
-    assert_eq!(reply["body"]["result"], "2");
+    assert_eq!(reply["success"], false);
+    assert_eq!(reply["message"], "R is busy");
+    assert!(elapsed < std::time::Duration::from_millis(200));
 
     frontend.send_stdin_input_reply(String::from("Q"));
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");

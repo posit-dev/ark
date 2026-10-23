@@ -1002,6 +1002,8 @@ impl Console {
             if self.session_mode == SessionMode::Notebook &&
                 !self.debug_dap.lock().unwrap().is_connected
             {
+                // The frontend sees an input request, so R is busy
+                drop(_try_task_window);
                 self.debug_dap.lock().unwrap().is_debugging_stdin = true;
                 let result = self.handle_input_request(&info, buf, buflen);
                 self.debug_dap.lock().unwrap().is_debugging_stdin = false;
@@ -1152,7 +1154,7 @@ impl Console {
             None
         };
 
-        // "Idle any" tasks and try tasks run at both top-level and browser prompts
+        // "Idle any" tasks run at both top-level and browser prompts
         let serves_idle_any_tasks = info.kind.serves_idle_any_tasks();
 
         let tasks_idle_any_index = if serves_idle_any_tasks {
@@ -1161,7 +1163,12 @@ impl Console {
             None
         };
 
-        let try_tasks_wake_index = if serves_idle_any_tasks {
+        // Try tasks too, except while waiting for an input reply at a browser
+        // prompt routed to stdin. `read_console()` doesn't open a
+        // `TryTaskWindow` in that case, so callers get "busy" right away.
+        let serves_try_tasks = serves_idle_any_tasks && matches!(wait_for, WaitFor::ExecuteRequest);
+
+        let try_tasks_wake_index = if serves_try_tasks {
             Some(select.recv(&try_tasks_wake_rx))
         } else {
             None
@@ -1209,7 +1216,7 @@ impl Console {
             // Try tasks come next, before `select` can pick an idle task.
             // Their callers are blocked waiting, and give up if the task
             // doesn't start soon.
-            if serves_idle_any_tasks {
+            if serves_try_tasks {
                 if let Some(task) = r_task::pop_try_task() {
                     self.handle_task(task);
                     continue;
