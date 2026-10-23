@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,9 +16,9 @@ use std::time::Duration;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::SendTimeoutError;
+use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
-use harp::exec::r_sandbox;
+use crossbeam::channel::TrySendError;
 #[cfg(debug_assertions)]
 use libr::SEXP;
 use uuid::Uuid;
@@ -35,16 +36,8 @@ static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 /// not input)
 static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
-/// Rendezvous channel for try-idle tasks. `bounded(0)` means `try_send`
-/// succeeds only when the receiver is already parked in `Select`, giving
-/// an atomic check-and-wake with no race window.
-static TRY_IDLE: LazyLock<TryIdleChannels> = LazyLock::new(|| {
-    let (tx, rx) = bounded::<TryIdleTask>(0);
-    TryIdleChannels {
-        tx,
-        rx: Mutex::new(Some(rx)),
-    }
-});
+/// Queue for `try_r_task()`s, see there.
+static TRY_TASKS: LazyLock<TryTasks> = LazyLock::new(TryTasks::new);
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
@@ -56,15 +49,6 @@ type SharedOption<T> = Arc<Mutex<Option<T>>>;
 struct TaskChannels {
     tx: Sender<QueuedRTask>,
     rx: Mutex<Option<Receiver<QueuedRTask>>>,
-}
-
-struct TryIdleChannels {
-    tx: Sender<TryIdleTask>,
-    rx: Mutex<Option<Receiver<TryIdleTask>>>,
-}
-
-pub(crate) struct TryIdleTask {
-    pub(crate) fun: Box<dyn FnOnce(&mut ConsoleOutputCapture) + Send>,
 }
 
 impl TaskChannels {
@@ -86,74 +70,16 @@ impl TaskChannels {
     }
 }
 
-/// Returns receivers for idle, idle-any, and try-idle tasks.
+/// Returns receivers for idle and idle-any tasks, and the wake-up channel for
+/// try tasks.
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `Console` during init).
-pub(crate) fn take_receivers() -> (
-    Receiver<QueuedRTask>,
-    Receiver<QueuedRTask>,
-    Receiver<TryIdleTask>,
-) {
+pub(crate) fn take_receivers() -> (Receiver<QueuedRTask>, Receiver<QueuedRTask>, Receiver<()>) {
     (
         IDLE_TASKS.take_rx(),
         IDLE_ANY_TASKS.take_rx(),
-        TRY_IDLE.rx.lock().unwrap().take().unwrap(),
+        TRY_TASKS.take_wake_rx(),
     )
-}
-
-/// An idle R is not parked in its event loop continuously. It wakes every 50ms
-/// for the polled-events tick (see `console_repl.rs`), runs the events, then
-/// re-enters the `Select`. It also has a short gap right after an execution
-/// while it sends the idle status and rebuilds the `Select`. We wait longer
-/// than one tick to give a chance to ReadConsole to pick up the TryIdle task.
-const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
-
-/// Attempt to run `f` on the R thread if it is currently idle at a prompt.
-///
-/// Returns `None` if R was busy, i.e. the Console event loop did not accept the
-/// task within `TRY_IDLE_TIMEOUT`. Otherwise returns `Some` with the outcome:
-/// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
-pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
-where
-    F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let result: SharedOption<harp::Result<T>> = Arc::new(Mutex::new(None));
-    let (done_tx, done_rx) = bounded::<()>(1);
-
-    let result_clone = Arc::clone(&result);
-    let task = TryIdleTask {
-        fun: Box::new(move |capture| {
-            // Run `f` inside `r_sandbox` so an R error longjumps back to here
-            // rather than unwinding past this frame. The `done` signal must
-            // stay outside the sandbox: a longjump skips everything between
-            // the error and the sandbox `setjmp`, so signalling inside would
-            // strand the caller forever in `recv()`.
-            let res = r_sandbox(|| f(capture));
-            *result_clone.lock().unwrap() = Some(res);
-            let _ = done_tx.send(());
-        }),
-    };
-
-    // Hand the task to the Console idle event loop. This only succeeds if the
-    // event loop parks in its `Select` within the timeout.
-    match TRY_IDLE.tx.send_timeout(task, TRY_IDLE_TIMEOUT) {
-        Ok(()) => {},
-        Err(SendTimeoutError::Timeout(_)) => return None,
-        Err(SendTimeoutError::Disconnected(_)) => {
-            log::error!("`try_idle_task`: `TRY_IDLE` is disconnected");
-            return None;
-        },
-    }
-
-    if done_rx.recv().is_err() {
-        // Likely from a main thread panic, log as best effort
-        log::error!("`try_idle_task`: task disconnected without completing");
-        return None;
-    }
-
-    let out = result.lock().unwrap().take();
-    out
 }
 
 pub enum QueuedRTask {
@@ -185,6 +111,9 @@ pub struct RTaskWaker {
 pub enum RTaskStatus {
     Started,
     Finished(harp::error::Result<()>),
+    /// A try task was dropped without running because R left its prompt
+    /// first. Sent after the closure has been dropped.
+    Rejected,
 }
 
 #[derive(Clone)]
@@ -298,9 +227,152 @@ where
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
 
+    // Channel to communicate status of the task/closure
+    let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
+
+    // SAFETY: We block below until the task has finished running.
+    let (task, result) = unsafe { erase_task(f, status_tx) };
+
+    // Send the task to the R thread
+    IDLE_ANY_TASKS.tx().send(QueuedRTask::Sync(task)).unwrap();
+
+    // Block until we get the signal that the task has started
+    let status = status_rx.recv().unwrap();
+
+    let RTaskStatus::Started = status else {
+        let trace = std::backtrace::Backtrace::force_capture();
+        panic!(
+            "Task `status` value must be `Started`: {status:?}\n\
+             Backtrace of calling thread:\n\n
+             {trace}"
+        );
+    };
+
+    join_task(&status_rx, &result)
+}
+
+/// Run `f` on the R thread if R is at a top-level or browser prompt, without
+/// queueing behind user code.
+///
+/// Returns `None` if R is busy: it is evaluating code or waiting at an input
+/// prompt, it left its prompt before `f` could start, or `f` did not start
+/// within `start_within`. A long-running idle task occupying the event loop
+/// is the usual cause of the last case. Once `f` has started, this blocks
+/// until it finishes, however long that takes.
+///
+/// The prompt is tracked by a `TryTaskWindow` that `read_console()` opens
+/// before announcing idleness to frontends. A request sent in reaction to
+/// such an announcement, e.g. a DAP `evaluate` sent on `stopped`, always
+/// finds the window open, even if the event loop hasn't started yet.
+///
+/// Like `r_task()`, `f` may borrow from the caller's stack, Rust panics in `f`
+/// are re-raised on the caller's thread, and `f` runs with `R_Interactive`
+/// off. An R error escaping `f` panics.
+pub(crate) fn try_r_task<'env, F, T>(f: F, start_within: Duration) -> Option<T>
+where
+    F: FnOnce() -> T,
+    F: 'env + Send,
+    T: 'env + Send,
+{
+    if !Console::is_initialized() {
+        // Escape hatch for unit tests, which run without a Console. Unlike in
+        // `r_task()`, this is gated on `cfg!(test)` rather than `IS_TESTING`:
+        // integration tests do have a Console, and a cold-start request must
+        // not run `f` inline on the caller's thread while R starts up.
+        if cfg!(test) {
+            let _lock = harp::fixtures::R_TEST_LOCK.lock();
+            r_test_init();
+            return Some(f());
+        }
+
+        // R hasn't reached its first prompt yet
+        return None;
+    }
+
+    if Console::on_main_thread() {
+        return Some(f());
+    }
+
+    // Room for both `Started` and `Finished` so the R thread never blocks on
+    // a send. After a timeout, the caller first tries to reclaim the task
+    // from the queue and only then receives, so a rendezvous channel would
+    // stall the R thread in the meantime.
+    let (status_tx, status_rx) = bounded::<RTaskStatus>(2);
+
+    // SAFETY: Every path below returns only after the task has finished
+    // running or has been dropped. `push()` and `remove()` hand a task that
+    // never started back to us. The R thread drops a rejected task's closure
+    // before sending `Rejected`, and a `Disconnected` status channel means the
+    // whole task was dropped.
+    let (task, result) = unsafe { erase_task(f, status_tx) };
+
+    let id = match TRY_TASKS.push(task) {
+        Ok(id) => id,
+        Err(task) => {
+            drop(task);
+            return None;
+        },
+    };
+
+    let status = match status_rx.recv_timeout(start_within) {
+        Ok(status) => status,
+        Err(RecvTimeoutError::Timeout) => {
+            if let Some(task) = TRY_TASKS.remove(id) {
+                drop(task);
+                return None;
+            }
+
+            // The R thread took the task off the queue, either to run it or
+            // to reject it. Both send a status.
+            match status_rx.recv() {
+                Ok(status) => status,
+                Err(err) => {
+                    log::error!("`try_r_task()`: Task dropped without a status: {err:?}");
+                    return None;
+                },
+            }
+        },
+        Err(RecvTimeoutError::Disconnected) => {
+            log::error!("`try_r_task()`: Task dropped without a status");
+            return None;
+        },
+    };
+
+    match status {
+        RTaskStatus::Started => Some(join_task(&status_rx, &result)),
+        RTaskStatus::Rejected => None,
+        RTaskStatus::Finished(_) => {
+            let trace = std::backtrace::Backtrace::force_capture();
+            panic!(
+                "Task `status` value must be `Started` or `Rejected`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
+        },
+    }
+}
+
+/// Box `f` as a `RTaskSync` that can be sent to the R thread, with a slot
+/// for its outcome.
+///
+/// # Safety
+///
+/// The closure's `'env` lifetime is erased so it can cross threads. The
+/// caller must not return before the task has finished running or has been
+/// dropped, so that whatever `f` borrows outlives it.
+unsafe fn erase_task<'env, F, T>(
+    f: F,
+    status_tx: Sender<RTaskStatus>,
+) -> (RTaskSync, SharedOption<std::thread::Result<T>>)
+where
+    F: FnOnce() -> T,
+    F: 'env + Send,
+    T: 'env + Send,
+{
     // Stores the outcome of `f`. If the caller can recover panics, catch any unwind
     // on the R thread instead of letting it escape through `r_sandbox`'s C frames.
-    // The payload is ferried back and re-raised below, on the calling thread.
+    // The payload is ferried back and re-raised by `join_task()`, on the calling
+    // thread.
     //
     // Without a recovering caller, don't install a boundary on the R thread. The
     // production panic hook must abort rather than let the process continue after
@@ -308,70 +380,59 @@ where
     let caller_recovers_panic = panic::recovers_panic();
     let result: SharedOption<std::thread::Result<T>> = SharedOption::default();
 
-    {
+    let closure = {
         let result = Arc::clone(&result);
-        let closure = move || {
+        move || {
             let caught = if caller_recovers_panic {
                 panic::catch_unwind_payload(Recovery::Always, f)
             } else {
                 Ok(f())
             };
             *result.lock().unwrap() = Some(caught);
-        };
-
-        // Move `f` to heap and erase its lifetime so we can send it to
-        // another thread. It is safe to do so because we block in this
-        // scope until the closure has finished running, so the objects
-        // captured by the closure are guaranteed to exist for the duration
-        // of the closure call.
-        let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
-        let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
-
-        // Channel to communicate status of the task/closure
-        let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
-
-        // Send the task to the R thread
-        let task = QueuedRTask::Sync(RTaskSync {
-            fun: closure,
-            status_tx: Some(status_tx),
-            start_info: RTaskStartInfo::new(),
-        });
-        IDLE_ANY_TASKS.tx().send(task).unwrap();
-
-        // Block until we get the signal that the task has started
-        let status = status_rx.recv().unwrap();
-
-        let RTaskStatus::Started = status else {
-            let trace = std::backtrace::Backtrace::force_capture();
-            panic!(
-                "Task `status` value must be `Started`: {status:?}\n\
-                 Backtrace of calling thread:\n\n
-                 {trace}"
-            );
-        };
-
-        // Block until task was completed or timed out
-        let status = status_rx.recv().unwrap();
-
-        let RTaskStatus::Finished(status) = status else {
-            let trace = std::backtrace::Backtrace::force_capture();
-            panic!(
-                "Task `status` value must be `Finished`: {status:?}\n\
-                 Backtrace of calling thread:\n\n
-                 {trace}"
-            );
-        };
-
-        // If the task failed send a backtrace of the current thread to the
-        // main thread
-        if let Err(err) = status {
-            let trace = std::backtrace::Backtrace::force_capture();
-            panic!(
-                "While running task: {err:?}\n\
-                 Backtrace of calling thread:\n\n\
-                 {trace}"
-            );
         }
+    };
+
+    // Move `f` to heap and erase its lifetime so we can send it to another
+    // thread. Sound because of the contract documented above.
+    let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
+    let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
+
+    let task = RTaskSync {
+        fun: closure,
+        status_tx: Some(status_tx),
+        start_info: RTaskStartInfo::new(),
+    };
+
+    (task, result)
+}
+
+/// Block until a started task has finished, then return its value or
+/// re-raise its panic.
+fn join_task<T>(
+    status_rx: &Receiver<RTaskStatus>,
+    result: &SharedOption<std::thread::Result<T>>,
+) -> T {
+    // Block until task was completed or timed out
+    let status = status_rx.recv().unwrap();
+
+    let RTaskStatus::Finished(status) = status else {
+        let trace = std::backtrace::Backtrace::force_capture();
+        panic!(
+            "Task `status` value must be `Finished`: {status:?}\n\
+             Backtrace of calling thread:\n\n
+             {trace}"
+        );
+    };
+
+    // If the task failed send a backtrace of the current thread to the
+    // main thread
+    if let Err(err) = status {
+        let trace = std::backtrace::Backtrace::force_capture();
+        panic!(
+            "While running task: {err:?}\n\
+             Backtrace of calling thread:\n\n\
+             {trace}"
+        );
     }
 
     // The closure ran to completion, and an R-level error would have panicked above.
@@ -382,6 +443,129 @@ where
     match caught {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// Queue of `try_r_task()`s, served by the event loop while at least one
+/// `TryTaskWindow` is open.
+struct TryTasks {
+    state: Mutex<TryTasksState>,
+
+    /// Wakes an event loop parked in `Select` after a push. Capacity 1 so
+    /// pushes coalesce: the event loop drains the whole queue on each turn.
+    wake_tx: Sender<()>,
+    wake_rx: Mutex<Option<Receiver<()>>>,
+}
+
+struct TryTasksState {
+    /// Number of open `TryTaskWindow`s. More than one when a task run from an
+    /// event loop reaches a nested browser prompt.
+    windows: usize,
+    next_id: u64,
+    queue: VecDeque<(u64, RTaskSync)>,
+}
+
+impl TryTasks {
+    fn new() -> Self {
+        let (wake_tx, wake_rx) = bounded::<()>(1);
+        Self {
+            state: Mutex::new(TryTasksState {
+                windows: 0,
+                next_id: 0,
+                queue: VecDeque::new(),
+            }),
+            wake_tx,
+            wake_rx: Mutex::new(Some(wake_rx)),
+        }
+    }
+
+    fn take_wake_rx(&self) -> Receiver<()> {
+        let mut rx = self.wake_rx.lock().unwrap();
+        rx.take().expect("`take_wake_rx()` can only be called once")
+    }
+
+    /// Queue `task` if a window is open. Otherwise hand it back so the caller
+    /// drops it on its own thread.
+    fn push(&self, task: RTaskSync) -> Result<u64, RTaskSync> {
+        let id = {
+            let mut state = self.state.lock().unwrap();
+            if state.windows == 0 {
+                return Err(task);
+            }
+            let id = state.next_id;
+            state.next_id += 1;
+            state.queue.push_back((id, task));
+            id
+        };
+
+        match self.wake_tx.try_send(()) {
+            // `Full` means a wake-up is already pending
+            Ok(()) | Err(TrySendError::Full(())) => {},
+            Err(TrySendError::Disconnected(())) => {
+                log::error!("`try_r_task()`: Wake-up channel is disconnected");
+            },
+        }
+
+        Ok(id)
+    }
+
+    /// Reclaim a task that the R thread hasn't taken off the queue yet.
+    fn remove(&self, id: u64) -> Option<RTaskSync> {
+        let mut state = self.state.lock().unwrap();
+        let index = state.queue.iter().position(|(task_id, _)| *task_id == id)?;
+        state.queue.remove(index).map(|(_, task)| task)
+    }
+}
+
+/// Take the next `try_r_task()` off the queue. Must be called from the R
+/// thread's event loop, which then runs it with `handle_task()`. Taking a task
+/// off the queue commits to running it: its caller can no longer reclaim it.
+pub(crate) fn pop_try_task() -> Option<QueuedRTask> {
+    let mut state = TRY_TASKS.state.lock().unwrap();
+    state
+        .queue
+        .pop_front()
+        .map(|(_, task)| QueuedRTask::Sync(task))
+}
+
+/// Marks the R thread as being at a prompt whose event loop serves
+/// `try_r_task()`s. While a window is open, `try_r_task()` queues instead of
+/// returning `None`. Dropping the last open window rejects tasks still
+/// queued.
+pub(crate) struct TryTaskWindow(());
+
+impl TryTaskWindow {
+    pub(crate) fn open() -> Self {
+        TRY_TASKS.state.lock().unwrap().windows += 1;
+        Self(())
+    }
+}
+
+impl Drop for TryTaskWindow {
+    fn drop(&mut self) {
+        let rejected = {
+            let mut state = TRY_TASKS.state.lock().unwrap();
+            state.windows -= 1;
+            if state.windows > 0 {
+                return;
+            }
+            std::mem::take(&mut state.queue)
+        };
+
+        // Outside the lock so callers that just timed out can check the queue
+        for (_, task) in rejected {
+            let RTaskSync { fun, status_tx, .. } = task;
+
+            // The closure may borrow from the caller's stack. Drop it before
+            // `Rejected` lets the caller return.
+            drop(fun);
+
+            if let Some(status_tx) = status_tx {
+                if let Err(err) = status_tx.send(RTaskStatus::Rejected) {
+                    log::error!("`try_r_task()`: Can't reject task: {err:?}");
+                }
+            }
+        }
     }
 }
 

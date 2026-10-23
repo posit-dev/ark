@@ -23,14 +23,14 @@ fn find_debug_event<'a>(msgs: &'a [Message], event: &str) -> &'a serde_json::Val
 
 /// Send an `evaluate` `debug_request` and return the reply.
 ///
-/// `evaluate` runs through `try_idle_task()`, which waits for the R thread to
-/// park in its read-console `Select`. Once R is at a prompt a single attempt
-/// lands. The only time it reports "R is busy" here is cold start, before R has
-/// reached its first prompt, so we re-send until it's ready. The kernel-side
-/// wait paces each attempt, so no sleep is needed. The control thread brackets
-/// each attempt with busy/idle on IOPub, and the R-thread evaluation emits
-/// nothing there (printed output is captured), so each is the same busy/reply/
-/// idle as any other control-only request.
+/// `evaluate` runs through `try_r_task()`, which runs it if R is at a prompt.
+/// Once R is at a prompt a single attempt lands. The only time it reports "R is
+/// busy" here is cold start, before R has reached its first prompt, so we
+/// re-send until it's ready. Busy replies come back immediately, so we pace the
+/// attempts with a short sleep. The control thread brackets each attempt with
+/// busy/idle on IOPub, and the R-thread evaluation emits nothing there (printed
+/// output is captured), so each is the same busy/reply/idle as any other
+/// control-only request.
 fn notebook_evaluate(
     frontend: &DummyArkFrontendNotebook,
     seq: i64,
@@ -55,7 +55,26 @@ fn notebook_evaluate(
         if std::time::Instant::now() >= deadline {
             panic!("`evaluate` kept returning \"R is busy\"; R never reached a prompt");
         }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+/// Send a single `evaluate` `debug_request` in the global environment and
+/// return the reply, along with how long the reply took to arrive.
+fn notebook_evaluate_once(
+    frontend: &DummyArkFrontendNotebook,
+    seq: i64,
+    expression: &str,
+) -> (serde_json::Value, std::time::Duration) {
+    let start = std::time::Instant::now();
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": seq,
+        "command": "evaluate",
+        "arguments": { "expression": expression }
+    }));
+    let reply = frontend.recv_debug_reply();
+    (reply, start.elapsed())
 }
 
 #[test]
@@ -1383,4 +1402,183 @@ fn test_notebook_evaluate_erroring_print_does_not_deadlock() {
     let reply = notebook_evaluate(&frontend, 2, "40 + 2");
     assert_eq!(reply["success"], true);
     assert_eq!(reply["body"]["result"], "42");
+}
+
+/// The Watch Pane sends `evaluate` as soon as it gets `stopped`, which the
+/// kernel emits before its event loop is running. The evaluate must wait for
+/// the loop rather than report "R is busy", so a single attempt succeeds.
+#[test]
+fn test_notebook_evaluate_right_after_stopped() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let fn_code = "fn_stopped <- function() {\n  x <- 1\n  x\n}";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": fn_code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 3 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_debug_event(); // thread started
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_execute_request_with_metadata(
+        fn_code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "stopped-def" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.send_execute_request_with_metadata(
+        "fn_stopped()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "stopped-call" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // No retry: the first attempt must land
+    let (reply, _) = notebook_evaluate_once(&frontend, 4, "1 + 1");
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_shell_execute_reply();
+    let msgs = frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[
+            IopubExpectation::DebugEvent,
+            IopubExpectation::ExecuteResult,
+            IopubExpectation::IdleShell,
+        ],
+    ]);
+    find_debug_event(&msgs, "continued");
+
+    // Disconnect to reset is_connected for other tests.
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 6,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+}
+
+/// While R evaluates user code, `evaluate` reports "R is busy" right away
+/// instead of waiting for R to reach a prompt.
+#[test]
+fn test_notebook_evaluate_busy_while_running_code() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Wait for R to reach its first prompt
+    notebook_evaluate(&frontend, 1, "1");
+
+    frontend.send_execute_request("Sys.sleep(1)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let (reply, elapsed) = notebook_evaluate_once(&frontend, 2, "1 + 1");
+    assert_eq!(reply["success"], false);
+    assert_eq!(reply["message"], "R is busy");
+
+    // The busy reply doesn't wait out the start timeout of `evaluate`
+    assert!(elapsed < std::time::Duration::from_millis(200));
+
+    frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[IopubExpectation::IdleShell],
+    ]);
+    frontend.recv_shell_execute_reply();
+}
+
+/// Watch expressions run non-interactively, so `readline()` returns `""`
+/// instead of requesting input from the frontend.
+#[test]
+fn test_notebook_evaluate_readline_is_not_interactive() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // `notebook_evaluate()` asserts on the busy/idle window, and `readline()`
+    // echoes its prompt, so this also checks the echo is captured rather than
+    // streamed
+    let reply = notebook_evaluate(&frontend, 1, "nchar(readline('prompt> '))");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "0L");
+}
+
+/// A `browser()` prompt routed to stdin still serves `evaluate`: the event loop
+/// waiting for the input reply runs at a browser prompt.
+#[test]
+fn test_notebook_evaluate_at_stdin_browser_prompt() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_execute_request_with_metadata(
+        "browser(); 42",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-stdin-evaluate" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert!(
+        prompt.contains("Browse"),
+        "Expected Browse prompt, got: {prompt}"
+    );
+
+    let (reply, _) = notebook_evaluate_once(&frontend, 1, "1 + 1");
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    frontend.send_stdin_input_reply(String::from("Q"));
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 }

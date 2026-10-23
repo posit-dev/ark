@@ -24,7 +24,7 @@ use crate::panic;
 use crate::panic::Recovery;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
-use crate::r_task::TryIdleTask;
+use crate::r_task::TryTaskWindow;
 use crate::request::DebugRequest;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
@@ -246,6 +246,15 @@ pub(super) enum PromptKind {
     InputRequest,
 }
 
+impl PromptKind {
+    /// Whether the event loop at this prompt runs "idle any" tasks and
+    /// `try_r_task()`s. Input requests are excluded to reduce the risk of
+    /// reentrancy.
+    fn serves_idle_any_tasks(&self) -> bool {
+        matches!(self, PromptKind::TopLevel | PromptKind::Browser)
+    }
+}
+
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
@@ -396,13 +405,13 @@ impl Console {
             };
         }
 
-        let (tasks_idle_rx, tasks_idle_any_rx, try_idle_rx) = r_task::take_receivers();
+        let (tasks_idle_rx, tasks_idle_any_rx, try_tasks_wake_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             r_home,
             tasks_idle_rx,
             tasks_idle_any_rx,
-            try_idle_rx,
+            try_tasks_wake_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -643,7 +652,7 @@ impl Console {
         r_home: PathBuf,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
-        try_idle_rx: Receiver<TryIdleTask>,
+        try_tasks_wake_rx: Receiver<()>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -678,7 +687,7 @@ impl Console {
             debug_stopped_reason: None,
             tasks_idle_rx,
             tasks_idle_any_rx,
-            try_idle_rx,
+            try_tasks_wake_rx,
             pending_futures: HashMap::new(),
             session_mode,
             is_positron: std::env::var("POSITRON").as_deref() == Ok("1"),
@@ -769,7 +778,7 @@ impl Console {
 
             let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
-            let (_, try_idle_rx) = crossbeam::channel::unbounded();
+            let (_, try_tasks_wake_rx) = crossbeam::channel::unbounded();
             let (comm_event_tx, _) = crossbeam::channel::unbounded();
             let (r_request_tx, r_request_rx) = crossbeam::channel::unbounded();
             let (stdin_request_tx, _) = crossbeam::channel::unbounded();
@@ -782,7 +791,7 @@ impl Console {
                 PathBuf::new(),
                 tasks_idle_rx,
                 tasks_idle_any_rx,
-                try_idle_rx,
+                try_tasks_wake_rx,
                 comm_event_tx,
                 r_request_rx,
                 stdin_request_tx,
@@ -935,6 +944,14 @@ impl Console {
     ) -> ConsoleResult {
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
+
+        // Open before anything below announces idleness: `debug_start()` emits
+        // the DAP `stopped` event and `handle_active_request()` unblocks the
+        // execute reply and Idle status. Frontends react to these with requests
+        // that run as `try_r_task()`s, e.g. the Watch Pane's `evaluate`, and
+        // those must not be rejected because the event loop hasn't started
+        // yet. Dropping the window when we return rejects tasks still queued.
+        let _try_task_window = info.kind.serves_idle_any_tasks().then(TryTaskWindow::open);
 
         // Continuation prompt for the frontend (i.e. `getOption("continue")`).
         // Passed along with the input prompt to `handle_active_request` and
@@ -1097,7 +1114,7 @@ impl Console {
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
         let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
-        let try_idle_rx = self.try_idle_rx.clone();
+        let try_tasks_wake_rx = self.try_tasks_wake_rx.clone();
 
         // Run activity handlers regularly while waiting for console input.
         // We used to poll every 200ms but that slowed down callbacks from the later
@@ -1135,16 +1152,17 @@ impl Console {
             None
         };
 
-        // "Idle any" tasks run at both top-level and browser prompts
-        let tasks_idle_any_index =
-            if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
-                Some(select.recv(&tasks_idle_any_rx))
-            } else {
-                None
-            };
+        // "Idle any" tasks and try tasks run at both top-level and browser prompts
+        let serves_idle_any_tasks = info.kind.serves_idle_any_tasks();
 
-        let try_idle_index = if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
-            Some(select.recv(&try_idle_rx))
+        let tasks_idle_any_index = if serves_idle_any_tasks {
+            Some(select.recv(&tasks_idle_any_rx))
+        } else {
+            None
+        };
+
+        let try_tasks_wake_index = if serves_idle_any_tasks {
+            Some(select.recv(&try_tasks_wake_rx))
         } else {
             None
         };
@@ -1184,6 +1202,16 @@ impl Console {
                 }
                 if let Ok(req) = kernel_request_rx.try_recv() {
                     self.handle_kernel_request(req);
+                    continue;
+                }
+            }
+
+            // Try tasks come next, before `select` can pick an idle task.
+            // Their callers are blocked waiting, and give up if the task
+            // doesn't start soon.
+            if serves_idle_any_tasks {
+                if let Some(task) = r_task::pop_try_task() {
+                    self.handle_task(task);
                     continue;
                 }
             }
@@ -1241,11 +1269,12 @@ impl Console {
                     self.handle_task(task);
                 },
 
-                // A try-idle task woke us up
-                i if Some(i) == try_idle_index => {
-                    let task = oper.recv(&try_idle_rx).unwrap();
-                    let mut capture = self.start_capture();
-                    (task.fun)(&mut capture);
+                // A try task was queued. It's taken off the queue at the
+                // top of the loop.
+                i if Some(i) == try_tasks_wake_index => {
+                    if let Err(err) = oper.recv(&try_tasks_wake_rx) {
+                        log::error!("Try tasks wake-up channel disconnected: {err:?}");
+                    }
                 },
 
                 // It's time to run activity handlers

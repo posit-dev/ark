@@ -18,6 +18,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_event::DebugEvent;
@@ -29,6 +30,7 @@ use dap::requests::Request;
 use dap::responses::ResponseBody;
 use stdext::result::ResultExt;
 
+use crate::console::Console;
 use crate::dap::dap_notebook;
 use crate::dap::dap_server::DapConsoleEvent;
 use crate::dap::dap_server::DapHandler;
@@ -39,6 +41,12 @@ use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
 use crate::r_task;
 use crate::request::RRequest;
+
+/// How long `evaluate` waits for R to start the evaluation when R is at a
+/// prompt but its event loop is occupied, e.g. by an idle task. Requests are
+/// handled serially on the Control socket, so this also delays interrupts and
+/// shutdowns queued behind the `evaluate`.
+const EVALUATE_START_WITHIN: Duration = Duration::from_millis(200);
 
 pub struct DapJupyterHandler {
     handler: DapHandler,
@@ -83,7 +91,7 @@ impl DapJupyterHandler {
 
         // Handle Jupyter Debug Protocol extensions and commands not in the
         // `dap` crate's `Command` enum, plus `evaluate` which requires
-        // running R code via `try_idle_task`.
+        // running R code via `try_r_task()`.
         let result = match command {
             "dumpCell" => Some(self.handle_dump_cell(seq, request)),
             "debugInfo" => Some(self.handle_debug_info(seq)),
@@ -135,32 +143,27 @@ impl DapJupyterHandler {
         let args: EvaluateArguments =
             serde_json::from_value(request.get("arguments").cloned().unwrap_or_default())?;
 
-        let state = self.handler.state.clone();
-        let expression = args.expression;
+        let state = &self.handler.state;
+        let expression = args.expression.as_str();
         let frame_id = args.frame_id;
 
         // This runs only if R is idle. Even though we stopped at some point,
         // causing the Evaluate request, R could be busy evaluating the next
-        // expression already, in which case `try_idle_task()` returns `None`.
+        // expression already, in which case `try_r_task()` returns `None`.
         // `DapHandler::evaluate()` runs the eval under a timeout so a runaway
-        // expression is interrupted and doesn't freeze the kernel.
-        let outcome = r_task::try_idle_task(move |capture| {
-            DapHandler::evaluate(&state, &expression, frame_id, capture)
-        });
+        // expression is interrupted and doesn't freeze the kernel. R errors
+        // can't escape it: `with_timeout()` converts them into
+        // `EvaluateOutcome::Error`.
+        let outcome = r_task::try_r_task(
+            || {
+                let mut capture = Console::get_mut().start_capture();
+                DapHandler::evaluate(state, expression, frame_id, &mut capture)
+            },
+            EVALUATE_START_WITHIN,
+        );
 
         let Some(outcome) = outcome else {
             return Ok(self.error_response(seq, "evaluate", "R is busy"));
-        };
-
-        let outcome = match outcome {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                // `DapHandler::evaluate()` doesn't touch R outside of `with_timeout()`,
-                // which already converts any escaping error into `EvaluateOutcome::Error`
-                // (see `DapHandler::evaluate()`). So this shouldn't be reachable.
-                log::error!("Jupyter DAP: Unexpected error from `try_idle_task`: {err:?}");
-                return Ok(self.error_response(seq, "evaluate", &err.to_string()));
-            },
         };
 
         match outcome {
