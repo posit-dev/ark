@@ -196,21 +196,10 @@ fn test_help_search_padded_query() {
         harp::parse_eval0(
             r#"
 local({
-    # Capture native results while exercising normalization at the search entry point.
-    search <- .ps.help.searchHelp
-    environment(search) <- new.env(parent = environment(search))
-    results <- NULL
-    environment(search)$.ps.help.searchResults <- function(query) {
-        results <<- .ps.help.searchResults(query)
-        results
-    }
-
-    stopifnot(search("lm"))
-    expected <- results
-    stopifnot(nrow(expected$matches) > 0L)
+    expected <- .ps.help.searchUrl("lm")
+    stopifnot(is.character(expected))
     for (query in c(" lm ", "\tlm\n")) {
-        stopifnot(search(query))
-        stopifnot(identical(results, expected))
+        stopifnot(identical(.ps.help.searchUrl(query), expected))
     }
     TRUE
 })
@@ -244,41 +233,39 @@ fn test_help_search_query_edge_cases() {
         harp::parse_eval0(
             r#"
 local({
-    # Invalid regexps fall back to literal matching, with no warning escaping.
     old <- options(warn = 2)
     on.exit(options(old))
-    for (query in c("[.data.frame", "c(", "\\", "[.^$|?*+(){}\\")) {
-        results <- .ps.help.searchResults(query)
-        stopifnot(inherits(results, "hsearch"))
-        stopifnot(grepl(results$pattern, query))
-        stopifnot(identical(results$type, "regexp"))
-    }
-    results <- .ps.help.searchResults("[.data.frame")
-    stopifnot(any(results$matches[, "Entry"] == "[.data.frame"))
-    stopifnot(identical(
-        results,
-        utils::help.search("\\[\\.data\\.frame", package = NULL)
-    ))
-    stopifnot(identical(
-        .ps.help.searchResults("c("),
-        utils::help.search("c\\(", package = NULL)
-    ))
 
-    # Valid regexps, native fuzzy matching, and no-match results are unchanged.
-    for (query in c("^lm$", "regresion", "zzzz_ark_no_help_match")) {
-        stopifnot(identical(
-            .ps.help.searchResults(query),
-            utils::help.search(query, package = NULL)
-        ))
+    # Invalid regexps and operator queries are searched as literal text.
+    for (query in c("[.data.frame", "c(", "\\", "[.^$|?*+(){}\\", "$", "?", "+", "*", "|", ".", "[[")) {
+        pattern <- .ps.help.searchPattern(query)
+        stopifnot(!identical(pattern, query))
+        stopifnot(grepl(pattern, query))
+        stopifnot(inherits(utils::help.search(pattern, package = NULL), "hsearch"))
     }
-    stopifnot(identical(.ps.help.searchResults("regresion")$type, "fuzzy"))
-    stopifnot(nrow(.ps.help.searchResults("^lm$")$matches) > 0L)
-    stopifnot(nrow(.ps.help.searchResults("zzzz_ark_no_help_match")$matches) == 0L)
+    stopifnot(identical(.ps.help.searchPattern("[.data.frame"), "\\[\\.data\\.frame"))
+    stopifnot(identical(.ps.help.searchPattern("$"), "\\$"))
+    results <- utils::help.search(.ps.help.searchPattern("$"), package = NULL)
+    stopifnot(any(results$matches[, "Entry"] == "$"))
+    stopifnot(nrow(results$matches) < nrow(utils::help.search("$", package = NULL)$matches))
 
-    # Unrelated native search errors must still reach the caller.
-    old_types <- options(help.search.types = "invalid-type")
-    on.exit(options(old_types), add = TRUE)
-    stopifnot(inherits(try(.ps.help.searchResults("[.data.frame"), silent = TRUE), "try-error"))
+    # Valid regexps keep native regexp and fuzzy matching.
+    for (query in c("^lm$", "regresion", "linear model", "data.frame", "zzzz_ark_no_help_match")) {
+        stopifnot(identical(.ps.help.searchPattern(query), query))
+    }
+
+    # Each query has its own URL, which the help server answers with that query's results.
+    page <- function(query) {
+        url <- .ps.help.searchUrl(query)
+        stopifnot(startsWith(url, "http://127.0.0.1:"))
+        pattern <- utils::URLdecode(sub(".*[?]pattern=", "", url))
+        stopifnot(identical(pattern, .ps.help.searchPattern(query)))
+        tools:::httpd("/doc/html/Search", c(pattern = pattern))$payload
+    }
+    stopifnot(!identical(.ps.help.searchUrl("glm"), .ps.help.searchUrl("^lm$")))
+    stopifnot(grepl("library/stats/help/glm\"", page("glm"), fixed = TRUE))
+    stopifnot(!grepl("library/stats/help/glm\"", page("^lm$"), fixed = TRUE))
+    stopifnot(grepl(">base::[.data.frame</a>", page("[.data.frame"), fixed = TRUE))
     TRUE
 })
 "#,
@@ -531,6 +518,8 @@ fn test_help_search_navigation_correlation() {
         assert_eq!(comms[0].comm_id, comm_id);
         assert_eq!(comms[0].data["method"], "show_help");
         assert_eq!(comms[0].data["params"]["search_id"], "ui-search");
+        let url = comms[0].data["params"]["content"].as_str().unwrap();
+        assert!(url.contains("/doc/html/Search?pattern=%5C%5B%5C.data%5C.frame"));
         assert_eq!(comms[1].comm_id, comm_id);
         assert_eq!(comms[1].data["result"], true);
         frontend.execute_request_invisibly(&format!(
@@ -548,6 +537,7 @@ fn test_help_search_navigation_correlation() {
     assert!(event.data["params"]["search_id"].is_null());
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("options(ark.testing = TRUE)");
 }
 
 #[test]
@@ -676,7 +666,7 @@ local({
     stopifnot(cache$last_checked == now)
     now <- 159
     stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
-    stopifnot(is.null(.ps.help.searchIndex(build = FALSE)))
+    stopifnot(isFALSE(.ps.help.searchIndex(build = FALSE)), is.null(.ps.help.searchUrl("lm")))
     stopifnot(rebuilds == 1L)
 
     # Unchanged metadata must still permit a retry when the cooldown expires.
@@ -834,6 +824,7 @@ fn test_help_punctuation_suggestions_open_exact_target() {
     frontend.execute_request_invisibly(
         ".libPaths(old_alias_paths); unlink(alias_library, recursive = TRUE)",
     );
+    frontend.execute_request_invisibly("options(ark.testing = TRUE)");
 }
 
 fn assert_help_topic_target(
@@ -888,6 +879,26 @@ local({
         list(topic = "tf$abs", package = "tensorflow")))
     stopifnot(identical(split_topic("obj$hello"),
         list(topic = "obj$hello", package = NULL)))
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
+    }));
+}
+
+#[test]
+fn test_help_topic_missing_package() {
+    // A suggested package can be removed before the suggestion is opened.
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    stopifnot(isFALSE(.ps.help.showHelpTopic("abs", package = "zzzzarkmissingpackage")))
+    stopifnot(isFALSE(.ps.help.showHelpTopic("zzzzarkmissingpackage::abs")))
     TRUE
 })
 "#,

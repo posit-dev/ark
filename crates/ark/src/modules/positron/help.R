@@ -48,7 +48,8 @@ help <- function(topic, package = NULL) {
         package <- info$package
     }
 
-    results <- help(topic, package)
+    # A package can be removed between offering a suggestion and opening it.
+    results <- tryCatch(help(topic, package), error = function(err) character())
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -62,29 +63,55 @@ help <- function(topic, package = NULL) {
 }
 
 # Search all installed help documentation and show R's native HTML results page.
+# Returns whether the results page was requested.
 #' @export
 .ps.help.searchHelp <- function(query) {
-    query <- trimws(query)
-    if (!nzchar(query)) {
+    url <- .ps.help.searchUrl(query)
+    if (is.null(url)) {
         return(FALSE)
     }
 
-    .ps.help.searchIndex(build = FALSE)
-    results <- .ps.help.searchResults(query)
-
+    # Tests have no `Console` to receive the navigation.
     if (!in_ark_tests()) {
-        old <- options(help_type = "html")
-        on.exit(options(old), add = TRUE)
-        print(results)
+        utils::browseURL(url)
     }
 
     TRUE
 }
 
+# Build the help server URL that runs `help.search()` for `query`. Each query has
+# its own URL, so a new search is never mistaken for the page already shown, and
+# Back and reload show the right results. (`print()` of an `hsearch` object always
+# browses the same `Search?objects=1` URL, which serves only the latest search.)
+# Returns `NULL` when there is nothing to search or nowhere to show the results.
+.ps.help.searchUrl <- function(query) {
+    query <- trimws(query)
+    if (!nzchar(query)) {
+        return(NULL)
+    }
+
+    # Refresh R's search database; without one, `help.search()` finds nothing.
+    if (!.ps.help.searchIndex(build = FALSE)) {
+        return(NULL)
+    }
+
+    port <- .ps.help.startOrReconnectToHelpServer()
+    if (port <= 0L) {
+        return(NULL)
+    }
+
+    sprintf(
+        "http://127.0.0.1:%d/doc/html/Search?pattern=%s",
+        port,
+        utils::URLencode(.ps.help.searchPattern(query), reserved = TRUE)
+    )
+}
+
 # Keep native regexp and fuzzy matching for valid patterns, but treat incomplete
-# regexps (including R aliases such as `[.data.frame`) as literal text. Validate
-# separately so an unrelated help.search() error is not mistaken for a bad query.
-.ps.help.searchResults <- function(query) {
+# regexps (including R aliases such as `[.data.frame`) and operator queries such
+# as `$` or `?` as literal text. An operator is a valid regexp, but it matches
+# every help page, and a user who searches for one means the operator.
+.ps.help.searchPattern <- function(query) {
     valid <- suppressWarnings(tryCatch(
         {
             grepl(query, "", ignore.case = TRUE)
@@ -92,10 +119,10 @@ help <- function(topic, package = NULL) {
         },
         error = function(err) FALSE
     ))
-    if (!valid) {
+    if (!valid || !grepl("[[:alnum:]]", query)) {
         query <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", query)
     }
-    utils::help.search(query, package = NULL)
+    query
 }
 
 # Refresh native R's search database when library metadata changes, retaining its
@@ -105,6 +132,8 @@ help <- function(topic, package = NULL) {
 # per-package filesystem calls on every keystroke, especially on network libraries.
 # In-place updates may take a minute to appear, on the next request after expiry.
 # Failed rebuilds use the same cooldown, then retry even if metadata is unchanged.
+# With `build = FALSE`, returns whether R's search database is usable; otherwise
+# returns the autocomplete index, or `NULL` if there is none.
 .ps.help.searchIndex <- local({
     signature <- NULL
     metadata_signature <- NULL
@@ -163,8 +192,11 @@ help <- function(topic, package = NULL) {
             }
         }
 
-        if (!build || is.null(matches)) {
-            return(invisible(NULL))
+        if (!build) {
+            return(invisible(!is.null(matches)))
+        }
+        if (is.null(matches)) {
+            return(NULL)
         }
         if (is.null(index)) {
             help_matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
