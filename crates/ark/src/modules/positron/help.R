@@ -129,7 +129,12 @@ help <- function(topic, package = NULL) {
     # (a `<` after an odd number of backslashes) becomes the word boundary `\b`. Any
     # other `<` before a tag character becomes `\x3C`, which matches the same text.
     # A `<` before anything else (`<-`, `<=`, `%<>%`) is plain text and stays as is.
-    query <- gsub("(?<!\\\\)((?:\\\\\\\\)*)\\\\<", "\\1\\\\b", query, perl = TRUE)
+    query <- gsub(
+        "(?<!\\\\)((?:\\\\\\\\)*)\\\\<",
+        "\\1\\\\b",
+        query,
+        perl = TRUE
+    )
     gsub("<(?=[[:alpha:]/!?])", "\\\\x3C", query, perl = TRUE)
 }
 
