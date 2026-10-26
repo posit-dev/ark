@@ -122,7 +122,10 @@ help <- function(topic, package = NULL) {
     if (!valid || !grepl("[[:alnum:]]", query)) {
         query <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", query)
     }
-    query
+    # The results page shows the pattern without HTML escaping, so a `<` that would
+    # open a tag (as in `<script>`) is written as the equivalent regexp escape `\x3C`.
+    # A `<` before anything else (`<-`, `<=`, `%<>%`) is plain text and stays as is.
+    gsub("<(?=[[:alpha:]/!?])", "\\\\x3C", query, perl = TRUE)
 }
 
 # Refresh native R's search database when library metadata changes, retaining its

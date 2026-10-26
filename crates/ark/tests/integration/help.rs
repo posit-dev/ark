@@ -266,6 +266,18 @@ local({
     stopifnot(grepl("library/stats/help/glm\"", page("glm"), fixed = TRUE))
     stopifnot(!grepl("library/stats/help/glm\"", page("^lm$"), fixed = TRUE))
     stopifnot(grepl(">base::[.data.frame</a>", page("[.data.frame"), fixed = TRUE))
+
+    # The results page shows the pattern unescaped, so it must not contain markup.
+    for (query in c("<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "<!--", "<?x")) {
+        shown <- sub('(?s).*The search string was <b>"(.*?)"</b>.*', "\\1", page(query), perl = TRUE)
+        stopifnot(!grepl("<[[:alpha:]/!?]", shown))
+    }
+    # The escape keeps the regexp meaning.
+    stopifnot(identical(.ps.help.searchPattern("<script>"), "\\x3Cscript>"))
+    stopifnot(grepl(.ps.help.searchPattern("<script>"), "<script>"))
+    for (query in c("<-", "<<-", "<=", "%<>%")) {
+        stopifnot(identical(.ps.help.searchPattern(query), query))
+    }
     TRUE
 })
 "#,
