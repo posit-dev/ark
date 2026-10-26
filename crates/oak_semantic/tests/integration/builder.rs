@@ -4,11 +4,13 @@ use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::NamespaceAccessKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
 
 use crate::common::index;
+use crate::common::index_with_base_exporting_local;
 
 /// Project each access into a comparable tuple via the public accessors.
 fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
@@ -771,6 +773,123 @@ fn test_super_assignment_nested_skips_super_bound_scope() {
     // Inner function: `x` has IS_SUPER_BOUND
     let x_inner = index.symbols(inner).get("x").unwrap();
     assert_eq!(x_inner.flags(), SymbolFlags::IS_SUPER_BOUND);
+}
+
+#[test]
+fn test_super_assignment_to_locked_package_name_records_no_target() {
+    // Retain the assignment site without a target definition. With `local`
+    // bound only in base, calling `f()` raises "cannot change value of locked
+    // binding" rather than creating a global binding.
+    let index = index_with_base_exporting_local("f <- function() local <<- identity\n");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    assert!(index.symbols(file).get("local").is_none());
+
+    let local_fun = index.symbols(fun).get("local").unwrap();
+    assert_eq!(local_fun.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(index.definitions(fun).len(), 1);
+    assert!(matches!(
+        index.definitions(fun)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "local" && package == "base"
+    ));
+}
+
+#[test]
+fn test_super_assignment_without_export_data_keeps_file_fallback() {
+    // Without a resolver that knows base's exports, `local` is not known to
+    // be locked, so the file scope stands in for the global target.
+    let index = index("f <- function() local <<- identity\n");
+    let file = ScopeId::from(0);
+
+    let local = index.symbols(file).get("local").unwrap();
+    assert_eq!(local.flags(), SymbolFlags::IS_BOUND);
+    assert!(index.diagnostics().is_empty());
+}
+
+#[test]
+fn test_super_assignment_to_name_bound_nowhere_keeps_file_fallback() {
+    let index = index("f <- function() mycache <<- list()\n");
+    let file = ScopeId::from(0);
+
+    let mycache = index.symbols(file).get("mycache").unwrap();
+    assert_eq!(mycache.flags(), SymbolFlags::IS_BOUND);
+    assert!(index
+        .definitions(file)
+        .iter()
+        .any(|(_, def)| matches!(def.kind(), DefinitionKind::SuperAssignment(_))));
+}
+
+#[test]
+fn test_super_assignment_targets_later_enclosing_binding() {
+    // Select `g()`'s later binding, but report timing dependence because the
+    // index does not prove that `h()` runs after `local <- 1`, even though
+    // the call in this example does.
+    let source = "g <- function() { h <- function() local <<- identity; local <- 1; h() }\n";
+    let index = index(source);
+    let file = ScopeId::from(0);
+    let g = ScopeId::from(1);
+    let h = ScopeId::from(2);
+
+    assert!(index.symbols(file).get("local").is_none());
+
+    let local_g_defs: Vec<_> = index
+        .definitions(g)
+        .iter()
+        .filter(|(_, d)| index.symbols(g).symbol(d.symbol()).name() == "local")
+        .collect();
+    assert_eq!(local_g_defs.len(), 2);
+    assert!(matches!(
+        local_g_defs[0].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+    assert!(matches!(
+        local_g_defs[1].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+
+    let local_h = index.symbols(h).get("local").unwrap();
+    assert_eq!(local_h.flags(), SymbolFlags::IS_SUPER_BOUND);
+
+    let diagnostics = index.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    match &diagnostics[0] {
+        SemanticDiagnostic::AmbiguousSuperAssignment {
+            name,
+            binding_range,
+            ..
+        } => {
+            assert_eq!(name, "local");
+            let start = u32::from(binding_range.start()) as usize;
+            assert_eq!(start, source.find("local <- 1").unwrap());
+        },
+        other => panic!("unexpected diagnostic: {other:?}"),
+    }
+}
+
+#[test]
+fn test_super_assignment_to_locked_package_name_at_file_scope_records_marker_only() {
+    // Top-level `<<-` searches outside the global environment. With `local`
+    // bound only in base, the locked binding prevents a global assignment.
+    let index = index_with_base_exporting_local("local <<- identity\n");
+    let file = ScopeId::from(0);
+
+    let local = index.symbols(file).get("local").unwrap();
+    assert_eq!(local.flags(), SymbolFlags::IS_SUPER_BOUND);
+
+    assert_eq!(index.diagnostics().len(), 1);
+    assert!(matches!(
+        &index.diagnostics()[0],
+        SemanticDiagnostic::LockedSuperAssignment { name, package, .. }
+            if name == "local" && package == "base"
+    ));
 }
 
 #[test]

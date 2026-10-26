@@ -4,7 +4,7 @@ use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::file_imports::CollationView;
-use crate::tests::test_db::file_path;
+use crate::test_path::file_path;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::make_package;
 use crate::tests::test_db::workspace_root;
@@ -1112,6 +1112,25 @@ fn test_shiny_autoload_survives_an_explicit_source() {
     ]);
 }
 
+/// A cross-file query can name a file without analyzing its body. This is why
+/// the fuzz history heuristic cannot treat every file-keyed query as an observer.
+#[test]
+fn test_cross_file_layers_does_not_demand_a_single_file_packages_index() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["base"]);
+    let (pkg, files) = make_package(&mut db, "mypkg", Namespace::default(), &[(
+        "ws/mypkg/R/a.R",
+        "library(base)\nsource(\"other.R\")\nval <- 1\n",
+    )]);
+    let root = workspace_root(&db, "ws/mypkg");
+    root.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let _ = files[0].cross_file_layers(&db, CollationView::Eager);
+
+    assert_eq!(db.executions_for("File::semantic_index", files[0]), 0);
+}
+
 #[test]
 fn test_cold_entry_to_cross_file_layers_recovers() {
     // A cold `cross_file_layers(b.R, Eager)` entry re-enters through `a.R`'s
@@ -1710,4 +1729,38 @@ fn test_tar_source_recurses_into_subdirectories() {
     let mut names: Vec<&str> = pipeline.exports(&db).iter().map(|(name, _)| name).collect();
     names.sort();
     assert_eq!(names, vec!["a_val", "fit_val"]);
+}
+
+#[test]
+fn test_tar_source_c_of_script_and_directory() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["targets"]);
+    let root = workspace_root(&db, "ws");
+    let pipeline = File::new(
+        &db,
+        file_path("ws/_targets.R"),
+        FileRevision::zero(),
+        Some("library(targets)\ntar_source(c(\"packages.R\", \"R\"))\n".to_string()),
+        None,
+    );
+    let packages = File::new(
+        &db,
+        file_path("ws/packages.R"),
+        FileRevision::zero(),
+        Some("packages_val <- 1\n".to_string()),
+        None,
+    );
+    let a = File::new(
+        &db,
+        file_path("ws/R/a.R"),
+        FileRevision::zero(),
+        Some("a_val <- 1\n".to_string()),
+        None,
+    );
+    root.set_scripts(&mut db).to(vec![pipeline, packages, a]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let mut names: Vec<&str> = pipeline.exports(&db).iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, vec!["a_val", "packages_val"]);
 }

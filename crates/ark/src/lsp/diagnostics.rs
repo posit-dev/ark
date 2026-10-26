@@ -191,16 +191,9 @@ pub(crate) fn generate_diagnostics(
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
 
-    // Add the current workspace symbols.
-    indexer::map(db, |_file, _symbol, entry| match &entry.data {
-        indexer::IndexEntryData::Function { name, arguments: _ } => {
-            context.workspace_symbols.insert(name.to_string());
-        },
-        indexer::IndexEntryData::Variable { name } => {
-            context.workspace_symbols.insert(name.to_string());
-        },
-        _ => {},
-    });
+    context
+        .workspace_symbols
+        .extend(indexer::workspace_symbol_names(db).iter().cloned());
 
     // If this is a package, add imported symbols to workspace
     if let Some(package) = file.package(db) {
@@ -255,6 +248,14 @@ pub(crate) fn generate_diagnostics(
 
     for pkg in state.installed_packages.iter() {
         context.installed_packages.insert(pkg.clone());
+    }
+
+    // In a notebook cell, packages that earlier cells attach are available
+    // from the start of this cell. Later cells don't count.
+    for cell in file.earlier_notebook_cells(db) {
+        for package in cell.attached_packages(db) {
+            attach_package(package.text(db).as_str(), Point::new(0, 0), &mut context);
+        }
     }
 
     // Start iterating through the nodes.
@@ -993,8 +994,14 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     }
 
     let package_name = package_node.get_identifier_or_string_text(context.contents())?;
-    let attach_pos = node.end_position();
+    attach_package(package_name, node.end_position(), context);
 
+    Ok(())
+}
+
+/// Record the exports that `library(package_name)` makes available from
+/// `attach_pos` onwards, including packages it attaches in turn.
+fn attach_package(package_name: &str, attach_pos: Point, context: &mut DiagnosticContext) {
     insert_package_exports(package_name, attach_pos, context);
 
     // Also attach packages from `Depends` field, if any
@@ -1052,8 +1059,6 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     for package_name in attach_field {
         insert_package_exports(package_name, attach_pos, context);
     }
-
-    Ok(())
 }
 
 fn insert_package_exports(package_name: &str, attach_pos: Point, context: &mut DiagnosticContext) {
@@ -1907,7 +1912,7 @@ foo
     }
 
     #[test]
-    fn test_oak_diagnostics_ambiguous_effect_experimental() {
+    fn test_oak_diagnostics_ambiguous_callee_resolution_experimental() {
         r_task(|| {
             // `local`'s NSE reading could be shadowed by the later
             // `local <- identity` at file scope, with undetermined timing
@@ -1926,7 +1931,7 @@ foo
             assert_eq!(
                 diagnostic.code,
                 Some(lsp_types::NumberOrString::String(
-                    "ambiguous-effect".to_string()
+                    "ambiguous-callee-resolution".to_string()
                 ))
             );
             assert_eq!(diagnostic.range.start, Position::new(0, 16));
@@ -1946,7 +1951,7 @@ foo
     }
 
     #[test]
-    fn test_oak_diagnostics_ambiguous_effect_disabled_by_default() {
+    fn test_oak_diagnostics_ambiguous_callee_resolution_disabled_by_default() {
         r_task(|| {
             let text = "f <- function() local({ x <- 1 })\nlocal <- identity\n";
 

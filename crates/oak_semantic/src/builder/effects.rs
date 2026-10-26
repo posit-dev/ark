@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
+use aether_syntax::RNamespaceExpression;
 use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
@@ -14,35 +15,47 @@ use super::SemanticIndexBuilder;
 use crate::effects;
 use crate::effects::AssignBinding;
 use crate::effects::CallContext;
+use crate::effects::CalleeImport;
+use crate::effects::CalleeOrigin;
+use crate::effects::CalleeResolution;
+use crate::effects::CalleeUncertainty;
+use crate::effects::DroppedAttach;
 use crate::effects::EffectSite;
 use crate::effects::Effects;
-use crate::effects::EffectsHandlers;
+use crate::effects::FunctionHandlers;
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::AmbiguityReason;
+use crate::semantic_index::CalleeDependency;
+use crate::semantic_index::CalleeUsage;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticDiagnostic;
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     pub(super) fn resolve_effects(&mut self, call: &RCall) -> Option<Effects> {
-        let handlers = self.resolve_effects_handlers(call)?;
+        let resolution = self.resolve_callee(call);
+        if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_effects) {
+            self.record_call_ambiguity(call, reason);
+        }
+        let handlers = resolution.handlers?.effects;
 
-        // `resolve_effects_handlers()` returns owned handlers, so its `&mut
-        // self` borrow is finished. Reborrow immutably.
-        let bindings = ScanBindings { builder: &*self };
-        let ctx = CallContext::with_bindings(&bindings);
+        let mut bindings = ScanBindings { builder: self };
+        let mut ctx = CallContext::new(&mut bindings);
 
         let arguments = handlers
             .arguments
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let attach = handlers
             .attach
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let source = handlers
             .source
-            .and_then(|handler| handler.resolve(call, &ctx));
+            .and_then(|handler| handler.resolve(call, &mut ctx));
         let assign = handlers
             .assign
-            .and_then(|handler| handler.resolve(EffectSite::Call(call), &ctx));
+            .and_then(|handler| handler.resolve(EffectSite::Call(call), &mut ctx));
+
+        let callee_imports = ctx.into_callee_imports();
+        self.record_callee_imports(callee_imports);
 
         Some(Effects {
             arguments,
@@ -52,69 +65,70 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         })
     }
 
-    /// Resolve a call's callee to its [`EffectsHandlers`] (NSE, attach, ...).
+    /// Resolve during the scan, not the walk, because bare names depend on
+    /// flow-precise bindings and attachments at the call site. Qualified names
+    /// bypass those bindings, and the `sourceDir()` idiom overrides the handlers
+    /// that name lookup finds.
     ///
-    /// The shared core for both NSE recognition ([`scan_call`] reads `.arguments`) and
-    /// attach recognition ([`scan_call`] reads `.attach`). Two cases resolve:
-    /// - A bare identifier. If bound locally it goes through the local
-    ///   [`resolve_local_effects`](Self::resolve_local_effects). Otherwise the
-    ///   cross-file `ImportsResolver::resolve_effects()` resolves it across the
-    ///   search path, against the attach set in `attached_so_far`.
-    /// - A `pkg::fn` namespace expression, resolved through
-    ///   `ImportsResolver::resolve_qualified_effects()`. `::` names the package,
-    ///   so there's no search-path disambiguation; the resolver answers from
-    ///   per-package knowledge (the static registry, plus cross-file knowledge
-    ///   like the re-export chase once that lands).
-    ///
-    /// The bound check reads the scan pass's flow-precise binding state
-    /// for the current scope, so this must run during the scan, not the walk.
-    ///
-    /// [`EffectsHandlers`]: crate::effects::EffectsHandlers
-    /// [`scan_call`]: Self::scan_call
-    fn resolve_effects_handlers(&mut self, call: &RCall) -> Option<EffectsHandlers> {
-        let func = call.function().ok()?;
+    /// Lookup returns uncertainty without emitting diagnostics. Effect handling
+    /// and static evaluation each use [`CalleeResolution::ambiguity()`] to
+    /// report only uncertainty relevant to the handlers they need.
+    pub(super) fn resolve_callee(&mut self, call: &RCall) -> CalleeResolution {
+        let Ok(func) = call.function() else {
+            return CalleeResolution::settled(CalleeOrigin::Dynamic, None);
+        };
 
         match &func {
             AnyRExpression::RIdentifier(ident) => {
                 let name = ident.name_text();
-                if let Some(effects) = effects::source_dir_idiom(&name) {
-                    return Some(*effects);
+                let resolution = self.resolve_symbol(&name);
+
+                // Local bindings must not disable the `sourceDir()` idiom,
+                // which is usually defined in the file itself. Keep the lookup
+                // origin, but discard its uncertainty because the idiom's
+                // handlers apply regardless of which binding the name resolves to.
+                match effects::source_dir_idiom(&name) {
+                    Some(handlers) => CalleeResolution::settled(resolution.origin, Some(*handlers)),
+                    None => resolution,
                 }
-                self.resolve_symbol_effects(&name, call.syntax().text_trimmed_range())
             },
 
-            AnyRExpression::RNamespaceExpression(ns_expr) => {
-                let left = ns_expr.left().ok()?;
-                let right = ns_expr.right().ok()?;
-                let pkg = left.identifier_text()?;
-                let func_name = right.identifier_text()?;
+            AnyRExpression::RNamespaceExpression(ns_expr) => CalleeResolution::settled(
+                CalleeOrigin::Qualified,
+                self.resolve_qualified_effects(ns_expr),
+            ),
 
-                if !effects::annotates(&func_name) {
-                    return None;
-                }
-
-                self.resolver.resolve_qualified_effects(&pkg, &func_name)
-            },
-
-            _ => None,
+            _ => CalleeResolution::settled(CalleeOrigin::Dynamic, None),
         }
     }
 
-    /// Resolve a callee `sym` to its [`EffectsHandlers`].
-    ///
-    /// `range` is the invocation's range, used to anchor a lazy-shadow
-    /// diagnostic.
-    fn resolve_symbol_effects(&mut self, sym: &str, range: TextRange) -> Option<EffectsHandlers> {
+    fn resolve_qualified_effects(
+        &mut self,
+        ns_expr: &RNamespaceExpression,
+    ) -> Option<FunctionHandlers> {
+        let pkg = ns_expr.left().ok()?.identifier_text()?;
+        let func_name = ns_expr.right().ok()?.identifier_text()?;
+
+        if !effects::annotates(&func_name) {
+            return None;
+        }
+
+        self.resolver.resolve_qualified_effects(&pkg, &func_name)
+    }
+
+    /// Local bindings take precedence over both dropped attaches and lazy
+    /// ancestor bindings. Calls and binding operators share this lookup.
+    fn resolve_symbol(&mut self, sym: &str) -> CalleeResolution {
         // First check for a local definition (which in the future may
         // carry declared effects that we resolve here).
         if self.scan.bound_so_far.is_bound(sym) {
-            return self.resolve_local_effects(sym);
+            return CalleeResolution::settled(CalleeOrigin::Local, self.resolve_local_effects(sym));
         }
 
         // Bail early if it is known that no package annotates this name
         // with effects. This speeds up the common case of no known annotations.
         if !effects::annotates(sym) {
-            return None;
+            return CalleeResolution::settled(CalleeOrigin::Import, None);
         }
 
         // Now check imports since the symbol is locally unbound
@@ -122,24 +136,58 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             &self.scan.attached_inherited,
             self.scan.attached_so_far.packages(),
         );
-        let effects = self.resolver.resolve_effects(sym, &attached);
+        let handlers = self.resolver.resolve_effects(sym, &attached);
 
-        let Some(effects) = effects else {
-            // The search path didn't resolve. Probe whether it would have if a
-            // dropped attach had survived the join, so we can flag it.
-            self.record_conditional_attach_ambiguity(sym, range);
-            return None;
+        let uncertainty = match handlers {
+            Some(_) => self
+                .is_lazily_shadowed(sym)
+                .map(|overwrite_range| CalleeUncertainty::LazyShadow { overwrite_range }),
+            None => self.conditional_attach_uncertainty(sym),
         };
 
-        // The callee is unbound by any eager binding, so its effect
-        // holds. If a lazy-crossed ancestor binds it whole-scope, that
-        // binding's timing relative to this deferred body is
-        // undetermined, so the decision is a guess. Flag it.
-        if let Some(overwrite_range) = self.is_lazily_shadowed(sym) {
-            self.record_lazy_shadow_ambiguity(sym.to_string(), range, overwrite_range);
-        }
+        CalleeResolution::new(CalleeOrigin::Import, handlers, uncertainty)
+    }
 
-        Some(effects)
+    fn record_call_ambiguity(&mut self, call: &RCall, reason: AmbiguityReason) {
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+        self.record_ambiguity(
+            &ident.name_text(),
+            call.syntax().text_trimmed_range(),
+            reason,
+        );
+    }
+
+    /// Report the immediate ambiguity of the callees a handler's static
+    /// evaluation consulted, and record them as `Value` dependencies for the
+    /// post-index inherited-shadow check.
+    ///
+    /// A record is complete once collected, so it goes straight into the
+    /// index rather than through `CallResolution` to the walk. That keeps
+    /// records whose call the walk never visits after the scan, and records
+    /// of effects that produced nothing: `source(c(path))` consults `c()`
+    /// despite its unknown path.
+    fn record_callee_imports(&mut self, callee_imports: Vec<CalleeImport>) {
+        for import in callee_imports {
+            if let Some(reason) = import.ambiguity {
+                self.record_ambiguity(&import.name, import.call_range, reason);
+            }
+            self.callee_dependencies.push(CalleeDependency {
+                name: import.name,
+                range: import.call_range,
+                usage: CalleeUsage::Value,
+            });
+        }
+    }
+
+    fn record_ambiguity(&mut self, name: &str, call_range: TextRange, reason: AmbiguityReason) {
+        self.diagnostics
+            .push(SemanticDiagnostic::AmbiguousCalleeResolution {
+                name: name.to_string(),
+                call_range,
+                reason,
+            });
     }
 
     /// Local resolver for declared effects, mirroring the imports resolver's
@@ -150,7 +198,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     /// TODO(nse, inference): Infer effects from local function bodies. Calling
     /// `g()` should apply the attach in `g <- function() library(shiny)`. Mutual
     /// recursion needs a fixed point.
-    fn resolve_local_effects(&self, _name: &str) -> Option<EffectsHandlers> {
+    fn resolve_local_effects(&self, _name: &str) -> Option<FunctionHandlers> {
         None
     }
 
@@ -175,11 +223,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             return None;
         }
 
-        let handlers = self.resolve_symbol_effects(op_text, bin.syntax().text_trimmed_range())?;
+        let resolution = self.resolve_symbol(op_text);
+        if let Some(reason) = resolution.ambiguity(FunctionHandlers::has_effects) {
+            self.record_ambiguity(op_text, bin.syntax().text_trimmed_range(), reason);
+        }
+        let handlers = resolution.handlers?.effects;
 
-        let bindings = ScanBindings { builder: &*self };
-        let ctx = CallContext::with_bindings(&bindings);
-        handlers.assign?.resolve(EffectSite::Operator(bin), &ctx)
+        let assign = handlers.assign?;
+
+        let mut bindings = ScanBindings { builder: self };
+        let mut ctx = CallContext::new(&mut bindings);
+        let assigned = assign.resolve(EffectSite::Operator(bin), &mut ctx);
+
+        let callee_imports = ctx.into_callee_imports();
+        self.record_callee_imports(callee_imports);
+
+        assigned
     }
 
     /// Detect ambiguities caused by laziness.
@@ -256,29 +315,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         None
     }
 
-    fn record_lazy_shadow_ambiguity(
-        &mut self,
-        name: String,
-        call_range: TextRange,
-        overwrite_range: TextRange,
-    ) {
-        self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-            name,
-            call_range,
-            reason: AmbiguityReason::LazyShadow { overwrite_range },
-        });
-    }
-
-    /// Probe whether `sym`'s effect still resolves after a conditional
-    /// attach. If the case, we record the ambiguity for diagnostics.
+    /// Probe dropped attaches independently, in reverse attach order, so each
+    /// consumer can report the most recent candidate with the handler it needs.
+    /// This does not reconstruct the runtime search path.
     ///
-    /// This handles the eager case, where the dropped attach and the callee are
-    /// both reachable from the same scan. What's still open is the lazy-sibling
-    /// case (`g <- function() library(shiny); f <- function() reactive({...})`),
-    /// which needs the complete set of lazy-context attaches from a post-pass,
-    /// not this call-site probe. That belongs in the future salsa diagnostics
-    /// query where this lint family should move too.
-    fn record_conditional_attach_ambiguity(&mut self, sym: &str, call_range: TextRange) {
+    /// The probe sees only attaches reachable from the callee's scan. Attaches
+    /// in sibling lazy bodies are not in that set, even if those bodies could
+    /// run before the callee.
+    fn conditional_attach_uncertainty(&mut self, sym: &str) -> Option<CalleeUncertainty> {
         // A package in `attached_anywhere` but off the search path means it was
         // dropped at a branch or loop join
         let search_path = attach_search_path(
@@ -293,27 +337,22 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .cloned()
             .collect();
 
-        // Probe one package at a time, most recent first, so the diagnostic
-        // mentions the attach that would actually have carried the effect.
-        for (package, attach_range) in dropped.into_iter().rev() {
-            if self
-                .resolver
-                .resolve_effects(sym, std::slice::from_ref(&package))
-                .is_none()
-            {
-                continue;
-            }
-
-            self.diagnostics.push(SemanticDiagnostic::AmbiguousEffect {
-                name: sym.to_string(),
-                call_range,
-                reason: AmbiguityReason::ConditionalAttach {
+        let candidates: Vec<DroppedAttach> = dropped
+            .into_iter()
+            .rev()
+            .filter_map(|(package, attach_range)| {
+                let handlers = self
+                    .resolver
+                    .resolve_effects(sym, std::slice::from_ref(&package))?;
+                Some(DroppedAttach {
                     package,
                     attach_range,
-                },
-            });
-            return;
-        }
+                    handlers,
+                })
+            })
+            .collect();
+
+        (!candidates.is_empty()).then_some(CalleeUncertainty::ConditionalAttach(candidates))
     }
 }
 

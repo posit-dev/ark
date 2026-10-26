@@ -60,8 +60,10 @@ pub struct Annotation {
 /// experimental status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
-    AmbiguousEffect,
+    AmbiguousCalleeResolution,
     AmbiguousAttachOrder,
+    AmbiguousSuperAssignment,
+    LockedSuperAssignment,
     UninstalledPackage,
     SourceCycle,
     InheritedShadow,
@@ -71,8 +73,10 @@ impl DiagnosticKind {
     /// The stable string an LSP consumer reports as the diagnostic `code`.
     pub fn as_str(&self) -> &'static str {
         match self {
-            DiagnosticKind::AmbiguousEffect => "ambiguous-effect",
+            DiagnosticKind::AmbiguousCalleeResolution => "ambiguous-callee-resolution",
             DiagnosticKind::AmbiguousAttachOrder => "ambiguous-attach-order",
+            DiagnosticKind::AmbiguousSuperAssignment => "ambiguous-super-assignment",
+            DiagnosticKind::LockedSuperAssignment => "locked-super-assignment",
             DiagnosticKind::UninstalledPackage => "uninstalled-package",
             DiagnosticKind::SourceCycle => "source-cycle",
             DiagnosticKind::InheritedShadow => "inherited-shadow",
@@ -81,8 +85,10 @@ impl DiagnosticKind {
 
     pub fn severity(&self) -> Severity {
         match self {
-            DiagnosticKind::AmbiguousEffect => Severity::Info,
+            DiagnosticKind::AmbiguousCalleeResolution => Severity::Info,
             DiagnosticKind::AmbiguousAttachOrder => Severity::Info,
+            DiagnosticKind::AmbiguousSuperAssignment => Severity::Info,
+            DiagnosticKind::LockedSuperAssignment => Severity::Warning,
             DiagnosticKind::UninstalledPackage => Severity::Warning,
             DiagnosticKind::SourceCycle => Severity::Warning,
             DiagnosticKind::InheritedShadow => Severity::Info,
@@ -91,8 +97,10 @@ impl DiagnosticKind {
 
     pub fn is_experimental(&self) -> bool {
         match self {
-            DiagnosticKind::AmbiguousEffect => true,
+            DiagnosticKind::AmbiguousCalleeResolution => true,
             DiagnosticKind::AmbiguousAttachOrder => true,
+            DiagnosticKind::AmbiguousSuperAssignment => true,
+            DiagnosticKind::LockedSuperAssignment => true,
             DiagnosticKind::UninstalledPackage => true,
             DiagnosticKind::SourceCycle => true,
             DiagnosticKind::InheritedShadow => true,
@@ -115,14 +123,24 @@ pub(crate) fn lower_semantic_diagnostic(
     diagnostic: &SemanticDiagnostic,
 ) -> Diagnostic {
     match diagnostic {
-        SemanticDiagnostic::AmbiguousEffect {
+        SemanticDiagnostic::AmbiguousCalleeResolution {
             name,
             call_range,
             reason,
-        } => lower_ambiguous_effect(name, *call_range, reason),
+        } => lower_ambiguous_callee_resolution(name, *call_range, reason),
         SemanticDiagnostic::AmbiguousAttachOrder { packages, range } => {
             lower_ambiguous_attach_order(packages, *range)
         },
+        SemanticDiagnostic::AmbiguousSuperAssignment {
+            name,
+            range,
+            binding_range,
+        } => lower_ambiguous_super_assignment(name, *range, *binding_range),
+        SemanticDiagnostic::LockedSuperAssignment {
+            name,
+            package,
+            range,
+        } => lower_locked_super_assignment(name, package, *range),
         SemanticDiagnostic::UninstalledPackage { package, range } => {
             lower_uninstalled_package(package, *range)
         },
@@ -132,7 +150,7 @@ pub(crate) fn lower_semantic_diagnostic(
 
 /// The primary range is always the call site. The reason's competing site
 /// becomes a single annotation.
-fn lower_ambiguous_effect(
+fn lower_ambiguous_callee_resolution(
     name: &str,
     call_range: TextRange,
     reason: &AmbiguityReason,
@@ -140,8 +158,8 @@ fn lower_ambiguous_effect(
     let (message, annotation) = match reason {
         AmbiguityReason::LazyShadow { overwrite_range } => (
             format!(
-                "Ambiguous reading of effectful `{name}()`.\nAn assignment to `{name}` in an enclosing \
-                 scope could run before this call and change its effect."
+                "Ambiguous reading of `{name}()`.\nAn assignment to `{name}` in an enclosing \
+                 scope could run before this call and change what it does."
             ),
             Annotation {
                 range: *overwrite_range,
@@ -173,9 +191,42 @@ fn lower_ambiguous_effect(
         ),
     };
 
-    Diagnostic::new(DiagnosticKind::AmbiguousEffect, message, call_range, vec![
-        annotation,
-    ])
+    Diagnostic::new(
+        DiagnosticKind::AmbiguousCalleeResolution,
+        message,
+        call_range,
+        vec![annotation],
+    )
+}
+
+/// Annotate the selected target binding because it may not exist when the
+/// assignment runs. The primary range points at the assigned name.
+fn lower_ambiguous_super_assignment(
+    name: &str,
+    range: TextRange,
+    binding_range: TextRange,
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::AmbiguousSuperAssignment,
+        format!(
+            "Ambiguous target of `{name} <<-`.\nAn assignment to `{name}` in an enclosing scope \
+             could be absent when this closure runs, changing what `{name} <<-` updates."
+        ),
+        range,
+        vec![Annotation {
+            range: binding_range,
+            message: format!("This binding may not exist when `{name} <<-` runs"),
+        }],
+    )
+}
+
+fn lower_locked_super_assignment(name: &str, package: &str, range: TextRange) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::LockedSuperAssignment,
+        format!("Cannot change value of locked binding for `{name}` in package `{package}`."),
+        range,
+        Vec::new(),
+    )
 }
 
 /// The primary range covers the `if`. Both arms are inside it, so there is no

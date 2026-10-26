@@ -74,10 +74,26 @@ pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf
 /// package directories, not the package directory contents. Calls `set_package()`
 /// per package directory, returns the freshly-built `Root`.
 fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path: FilePath) -> Root {
-    let root = Root::new(db, path, RootKind::Library, Vec::new(), Vec::new());
+    let root = Root::new(
+        db,
+        path,
+        RootKind::Library,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
 
+    // renv libraries link each package directory into renv's global cache
+    // (symlinks on Unix, junctions on Windows). Without `follow_links()`,
+    // `file_type()` reports the link rather than a directory and the package is
+    // skipped. `entry.path()` stays the link path inside the library, matching
+    // what R reports for the installed package.
     let mut packages: Vec<Package> = Vec::new();
-    for entry in WalkDir::new(scan_path).max_depth(1).min_depth(1) {
+    let walker = WalkDir::new(scan_path)
+        .max_depth(1)
+        .min_depth(1)
+        .follow_links(true);
+    for entry in walker {
         let Ok(entry) = entry else {
             continue;
         };

@@ -49,6 +49,7 @@ cc = "1.2.61"
 cfg-if = "1.0.4"
 chrono = "0.4.44"
 compact_str = "0.10"
+criterion = { version = "0.8.0", default-features = false, features = ["cargo_bench_support"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 ctor = "1.0.0"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }
@@ -68,6 +69,7 @@ hex = "0.4.3"
 hmac = "0.13.0"
 home = "0.5.12"
 ignore = "0.4.23"
+indexmap = "2.14.0"
 insta = "1.47.2"
 itertools = "0.15.0"
 libc = "0.2.186"
@@ -76,6 +78,7 @@ libr = { path = "crates/libr" }
 log = "0.4.29"
 memchr = "2.7.4"
 mime_guess = "2.0.5"
+mutatis = { version = "0.5.3", features = ["check"] }
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal"] }
 notify = "8.2.0"
 oak_cache = { path = "crates/oak_cache" }

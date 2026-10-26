@@ -5,6 +5,7 @@
 //
 //
 
+use std::ops::Range;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -20,7 +21,10 @@ use harp::environment::EnvironmentFilter;
 use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::r_chr_get;
+use harp::object::r_dim;
 use harp::object::r_length;
+use harp::object::r_str_na;
 use harp::object::RObject;
 use harp::r_null;
 use harp::r_symbol;
@@ -36,7 +40,9 @@ use harp::utils::r_is_data_frame;
 use harp::utils::r_is_function;
 use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
+use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
+use harp::utils::r_is_s7;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_is_unbound;
 use harp::utils::r_promise_force_with_rollback;
@@ -55,6 +61,7 @@ use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
 use stdext::local;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 
 use crate::methods::ArkGenerics;
@@ -101,6 +108,7 @@ impl WorkspaceVariableDisplayValue {
             LANGSXP => Self::from_language(value),
             CHARSXP => Self::from_charsxp(value),
             _ if r_is_matrix(value) => Self::from_matrix(value)?,
+            _ if is_s7_value(value) => Self::from_s7(value)?,
             RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value)?,
             _ if r_is_s4(value) => Self::from_s4(value)?,
             _ => Self::from_error(Error::Anyhow(anyhow!(
@@ -183,19 +191,24 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_list(value: SEXP) -> Self {
-        let n = r_length(value);
+        let names = Names::new(value, |_i| String::from(""));
+        let entries =
+            (0..r_length(value)).map(|i| (names.get_unchecked(i), harp::list_get(value, i)));
+        Self::from_entries(entries)
+    }
+
+    fn from_entries<N: AsRef<str>>(entries: impl Iterator<Item = (N, SEXP)>) -> Self {
         let mut display_value = String::from("[");
         let mut is_truncated = false;
-        let names = Names::new(value, |_i| String::from(""));
 
-        for i in 0..n {
+        for (i, (name, value)) in entries.enumerate() {
             if i > 0 {
                 display_value.push_str(", ");
             }
-            let display_i = Self::from(harp::list_get(value, i));
-            let name = names.get_unchecked(i);
+            let display_i = Self::from(value);
+            let name = name.as_ref();
             if !name.is_empty() {
-                display_value.push_str(&name);
+                display_value.push_str(name);
                 display_value.push_str(" = ");
             }
             display_value.push_str(&display_i.display_value);
@@ -335,6 +348,26 @@ impl WorkspaceVariableDisplayValue {
             }
         }
         Ok(Self::new(display_value, false))
+    }
+
+    fn from_s7(value: SEXP) -> anyhow::Result<Self> {
+        if matches!(
+            r_typeof(value),
+            RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP
+        ) {
+            // `s7_data()` returns `None` for empty vectors
+            let Some(data) = s7_data(value) else {
+                return Ok(Self::empty());
+            };
+            return Self::from_default(data.sexp);
+        }
+
+        let properties = s7_properties(value);
+        Ok(Self::from_entries(
+            properties
+                .iter()
+                .map(|(name, property)| (name, property.sexp)),
+        ))
     }
 
     fn from_charsxp(_: SEXP) -> Self {
@@ -570,6 +603,8 @@ fn has_children(value: SEXP) -> bool {
             let names = CharacterVector::new_unchecked(names);
             names.len() > 0
         }
+    } else if is_s7_value(value) {
+        s7_has_properties(value) || s7_data_has_children(value)
     } else {
         match r_typeof(value) {
             VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
@@ -586,7 +621,7 @@ fn has_children(value: SEXP) -> bool {
     }
 }
 
-fn has_viewer(value: SEXP) -> bool {
+fn has_viewer(value: SEXP, has_children: bool) -> bool {
     if r_is_function(value) {
         return true;
     }
@@ -603,9 +638,58 @@ fn has_viewer(value: SEXP) -> bool {
         },
         // The viewer method was found, use its result
         Ok(Some(val)) => val,
-        // No method found, fall back to default logic for data frames/matrices
-        Ok(None) => r_is_data_frame(value) || r_is_matrix(value),
+        // No method found: data frames and matrices open in the Data Explorer,
+        // and other containers with children open in the Object Explorer.
+        Ok(None) => {
+            r_is_data_frame(value) ||
+                r_is_matrix(value) ||
+                (is_explorable(value) &&
+                    (is_s7_value(value) || !r_is_atomic(value)) &&
+                    has_children) ||
+                is_viewable_character(value)
+        },
     }
+}
+
+/// Whether the Object Explorer can show an object: a list or atomic vector (but
+/// not a data frame or matrix), an environment, an S4 object, an S7 object (but
+/// not one that extends a function), a pairlist, or an expression vector.
+pub(crate) fn is_explorable(value: SEXP) -> bool {
+    if r_is_null(value) || r_is_data_frame(value) || r_is_matrix(value) {
+        return false;
+    }
+    if is_s7_value(value) {
+        return r_typeof(value) != CLOSXP;
+    }
+    r_is_s4(value) ||
+        r_is_atomic(value) ||
+        matches!(r_typeof(value), VECSXP | EXPRSXP | ENVSXP | LISTSXP)
+}
+
+fn r_is_atomic(value: SEXP) -> bool {
+    matches!(
+        r_typeof(value),
+        LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP
+    )
+}
+
+/// Whether a non-empty character vector gets a viewer button in the Variables
+/// pane. Full text search makes the Object Explorer most useful for these,
+/// unlike other atomic vectors. Classed vectors qualify only if they inherit
+/// from `character` (e.g. `glue`, `fs_path`). A single string is viewable only
+/// if it's too long to show in full as a display value.
+pub(crate) fn is_viewable_character(value: SEXP) -> bool {
+    r_typeof(value) == STRSXP &&
+        (!r_is_object(value) || r_inherits(value, "character")) &&
+        r_dim(value) == r_null() &&
+        match r_length(value) {
+            0 => false,
+            1 => {
+                let elt = r_chr_get(value, 0);
+                elt != r_str_na() && r_length(elt) as usize > MAX_DISPLAY_VALUE_LENGTH
+            },
+            _ => true,
+        }
 }
 
 /// Try to view an object using a custom view method.
@@ -624,11 +708,29 @@ pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
     }
 }
 
-enum EnvironmentVariableNode {
-    Concrete { object: RObject },
-    R6Node { object: RObject, name: String },
-    Matrixcolumn { object: RObject, index: isize },
-    AtomicVectorElement { object: RObject, index: isize },
+#[derive(Clone)]
+pub(crate) enum EnvironmentVariableNode {
+    Concrete {
+        object: RObject,
+    },
+    R6Node {
+        object: RObject,
+        name: String,
+    },
+    S7EnvironmentData {
+        object: RObject,
+    },
+    /// A dynamic S7 property. Its value is computed by a getter, which we
+    /// don't run, so it has no value and no children.
+    S7DynamicProperty,
+    Matrixcolumn {
+        object: RObject,
+        index: isize,
+    },
+    AtomicVectorElement {
+        object: RObject,
+        index: isize,
+    },
 }
 
 pub struct PositronVariable {
@@ -676,6 +778,7 @@ impl PositronVariable {
         } = WorkspaceVariableDisplayType::from(x, true);
 
         let kind = Self::variable_kind(x);
+        let has_children = has_children(x);
 
         Self {
             var: Variable {
@@ -687,9 +790,9 @@ impl PositronVariable {
                 kind,
                 length: Self::variable_length(x) as i64,
                 size: 0, // It's up to the caller to set the size.
-                has_children: has_children(x),
+                has_children,
                 is_truncated,
-                has_viewer: has_viewer(x),
+                has_viewer: has_viewer(x, has_children),
                 updated_time: Self::update_timestamp(),
             },
         }
@@ -746,13 +849,23 @@ impl PositronVariable {
     }
 
     fn from_active_binding(display_name: String) -> Self {
+        Self::from_unevaluated(display_name.clone(), display_name, "active binding")
+    }
+
+    fn from_dynamic_property(access_key: String, display_name: String) -> Self {
+        Self::from_unevaluated(access_key, display_name, "dynamic property")
+    }
+
+    /// A placeholder for a value that is computed by user code on access. We
+    /// don't run that code, so the value is left empty.
+    fn from_unevaluated(access_key: String, display_name: String, display_type: &str) -> Self {
         Self {
             var: Variable {
-                access_key: display_name.clone(),
+                access_key,
                 display_name,
                 display_value: String::from(""),
-                display_type: String::from("active binding"),
-                type_info: String::from("active binding"),
+                display_type: String::from(display_type),
+                type_info: String::from(display_type),
                 kind: VariableKind::Other,
                 length: 0,
                 size: 0,
@@ -823,12 +936,19 @@ impl PositronVariable {
             return VariableKind::Map;
         }
 
-        if r_inherits(x, "factor") {
-            return VariableKind::Other;
-        }
-
         if r_is_data_frame(x) {
             return VariableKind::Table;
+        }
+
+        // Function-based S7 objects are still functions. This check comes
+        // before the factor check so S7 objects that extend `class_factor`
+        // are explorable like other S7 objects.
+        if is_s7_value(x) && r_typeof(x) != CLOSXP {
+            return VariableKind::Map;
+        }
+
+        if r_inherits(x, "factor") {
+            return VariableKind::Other;
         }
 
         // TODO: generic S3 object, not sure what it should be
@@ -931,8 +1051,18 @@ impl PositronVariable {
         }
     }
 
-    pub fn inspect(env: RObject, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
-        let node = Self::resolve_object_from_path(env, path)?;
+    pub fn inspect(env: RObject, path: &[String]) -> anyhow::Result<Vec<Variable>> {
+        Ok(Self::inspect_children(env, path, 0..MAX_DISPLAY_VALUE_ENTRIES)?.0)
+    }
+
+    /// Inspects the children of the object at `path` below `object`, returning
+    /// those in `range` along with the total number of children.
+    pub(crate) fn inspect_children(
+        object: RObject,
+        path: &[String],
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<Variable>, usize)> {
+        let node = Self::resolve_object_from_path(object, path)?;
 
         match node {
             EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
@@ -941,18 +1071,24 @@ impl PositronVariable {
                     let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
                     let private = RObject::new(enclos.find("private")?);
 
-                    Ok(Self::inspect_environment(private)?)
+                    Ok(Self::inspect_environment(private, range)?)
                 },
 
-                "<methods>" => Ok(Self::inspect_r6_methods(object)?),
+                "<methods>" => Ok(Self::inspect_r6_methods(object, range)?),
 
                 _ => Err(anyhow!("Unexpected path {:?}", path)),
             },
 
+            EnvironmentVariableNode::S7EnvironmentData { object } => {
+                Ok(Self::inspect_environment(object, range)?)
+            },
+
+            EnvironmentVariableNode::S7DynamicProperty => Ok((vec![], 0)),
+
             EnvironmentVariableNode::Concrete { object } => {
                 // First try to dispatch GetChildren method and construct
                 // variables from it.
-                match Self::try_inspect_custom_method(object.sexp) {
+                match Self::try_inspect_custom_method(object.sexp, range.clone()) {
                     Err(err) => log::error!(
                         "Failed to inspect with {}: {err}",
                         ArkGenerics::VariableGetChildren
@@ -962,34 +1098,36 @@ impl PositronVariable {
                 }
 
                 if object.is_s4() {
-                    Ok(Self::inspect_s4(object.sexp)?)
+                    Ok(Self::inspect_s4(object.sexp, range)?)
+                } else if is_s7_value(object.sexp) {
+                    Ok(take_range(Self::inspect_s7(object.sexp), range))
                 } else {
                     match r_typeof(object.sexp) {
-                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp)?),
-                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp)?),
+                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp, range)?),
+                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp, range)?),
                         ENVSXP => {
                             if r_inherits(object.sexp, "R6") {
-                                Ok(Self::inspect_r6(object)?)
+                                Ok(Self::inspect_r6(object, range)?)
                             } else {
-                                Ok(Self::inspect_environment(object)?)
+                                Ok(Self::inspect_environment(object, range)?)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
                             if r_is_matrix(object.sexp) {
-                                Self::inspect_matrix(object.sexp)
+                                Self::inspect_matrix(object.sexp, range)
                             } else {
-                                Ok(Self::inspect_vector(object.sexp)?)
+                                Self::inspect_vector(object.sexp, range)
                             }
                         },
-                        _ => Ok(vec![]),
+                        _ => Ok((vec![], 0)),
                     }
                 }
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Ok(Self::inspect_matrix_column(object.sexp, index)?)
+                Self::inspect_matrix_column(object.sexp, index, range)
             },
-            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
+            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok((vec![], 0)),
         }
     }
 
@@ -1020,6 +1158,8 @@ impl PositronVariable {
                 }
             },
             EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::S7EnvironmentData { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::S7DynamicProperty => Ok(String::from("")),
             EnvironmentVariableNode::AtomicVectorElement { object, index } => {
                 let formatted = FormattedVector::new(object)?;
                 Ok(formatted.format_elt(index)?)
@@ -1071,7 +1211,7 @@ impl PositronVariable {
         }
 
         Ok(EnvironmentVariableNode::Concrete {
-            object: RObject::view(x),
+            object: RObject::new(x),
         })
     }
 
@@ -1129,6 +1269,28 @@ impl PositronVariable {
             return Ok(EnvironmentVariableNode::Concrete { object: child });
         }
 
+        // For S7 objects, child nodes are the underlying data or a property.
+        if is_s7_value(object.sexp) {
+            let child = if access_key == S7_DATA_ACCESS_KEY {
+                if r_typeof(object.sexp) == ENVSXP {
+                    return Ok(EnvironmentVariableNode::S7EnvironmentData { object });
+                }
+                s7_data(object.sexp)
+            } else {
+                let name = access_key.strip_prefix(S7_PROPERTY_ACCESS_KEY_PREFIX);
+                if name.is_some_and(|name| s7_property_is_dynamic_by_name(object.sexp, name)) {
+                    return Ok(EnvironmentVariableNode::S7DynamicProperty);
+                }
+                name.and_then(|name| s7_property(object.sexp, name))
+            };
+            let Some(child) = child else {
+                return Err(harp::Error::Anyhow(anyhow!(
+                    "Unexpected S7 child at {access_key}"
+                )));
+            };
+            return Ok(EnvironmentVariableNode::Concrete { object: child });
+        }
+
         // R6 objects may be accessed with special elements called <methods> and <private>.
         // For them, we'll have to build the next node artifically.
         if r_inherits(object.sexp, "R6") && access_key.starts_with("<") {
@@ -1143,7 +1305,7 @@ impl PositronVariable {
             VECSXP | EXPRSXP => {
                 let index = parse_index(access_key)?;
                 Ok(EnvironmentVariableNode::Concrete {
-                    object: RObject::view(harp::list_get(object.sexp, index)),
+                    object: RObject::new(harp::list_get(object.sexp, index)),
                 })
             },
             LISTSXP => {
@@ -1153,7 +1315,7 @@ impl PositronVariable {
                     pairlist = unsafe { CDR(pairlist) };
                 }
                 Ok(EnvironmentVariableNode::Concrete {
-                    object: RObject::view(unsafe { CAR(pairlist) }),
+                    object: RObject::new(unsafe { CAR(pairlist) }),
                 })
             },
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
@@ -1175,7 +1337,7 @@ impl PositronVariable {
         }
     }
 
-    fn get_child_node_at(
+    pub(crate) fn get_child_node_at(
         node: EnvironmentVariableNode,
         path_elt: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
@@ -1188,13 +1350,13 @@ impl PositronVariable {
                 match name.as_str() {
                     "<private>" => {
                         let env = Environment::new(object);
-                        let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
-                        let private = Environment::new(RObject::view(enclos.find("private")?));
+                        let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
+                        let private = Environment::new(RObject::new(enclos.find("private")?));
 
                         // TODO: it seems unlikely that private would host active bindings
                         //       so find() is fine, we can assume this is concrete
                         Ok(EnvironmentVariableNode::Concrete {
-                            object: RObject::view(private.find(path_elt)?),
+                            object: RObject::new(private.find(path_elt)?),
                         })
                     },
 
@@ -1207,6 +1369,14 @@ impl PositronVariable {
                     },
                 }
             },
+
+            EnvironmentVariableNode::S7EnvironmentData { object } => {
+                Self::get_envsxp_child_node_at(object, path_elt)
+            },
+
+            EnvironmentVariableNode::S7DynamicProperty => Err(harp::Error::Anyhow(anyhow!(
+                "Can't get children of a dynamic property, got {path_elt}"
+            ))),
 
             EnvironmentVariableNode::AtomicVectorElement { .. } => Err(harp::Error::Anyhow(
                 anyhow!("Can't subset an atomic vector even further, got {path_elt}"),
@@ -1225,7 +1395,7 @@ impl PositronVariable {
         }
     }
 
-    fn resolve_object_from_path(
+    pub(crate) fn resolve_object_from_path(
         object: RObject,
         path: &[String],
     ) -> harp::Result<EnvironmentVariableNode> {
@@ -1238,25 +1408,27 @@ impl PositronVariable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
-        let list = List::new(value)?;
+    /// Inspects a list or an expression vector.
+    fn inspect_list(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
+        let total = r_length(value) as usize;
 
-        let variables: Vec<Variable> = list
-            .iter()
-            .enumerate()
-            .take(MAX_DISPLAY_VALUE_ENTRIES)
-            .map(|(i, value)| {
+        let variables: Vec<Variable> = (range.start..range.end.min(total))
+            .map(|i| i as isize)
+            .map(|i| {
                 let (_, display_name) =
-                    truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
-                Self::from(i.to_string(), display_name, value).var()
+                    truncate_chars(names.get_unchecked(i), MAX_DISPLAY_VALUE_LENGTH);
+                Self::from(i.to_string(), display_name, harp::list_get(value, i)).var()
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, total))
     }
 
-    fn inspect_matrix(matrix: SEXP) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_matrix(matrix: SEXP, range: Range<usize>) -> anyhow::Result<(Vec<Variable>, usize)> {
         let matrix = RObject::new(matrix);
         let (_n_row, n_col) = harp::Matrix::dim(matrix.sexp)?;
 
@@ -1276,9 +1448,10 @@ impl PositronVariable {
         };
 
         let formatted = FormattedVector::new(matrix)?;
-        let mut variables = Vec::with_capacity(n_col as usize);
+        let n_col = n_col as usize;
+        let mut variables = Vec::with_capacity(range.len().min(n_col));
 
-        for col in (0..n_col).take(MAX_DISPLAY_VALUE_ENTRIES) {
+        for col in range.start..range.end.min(n_col) {
             // The display value of columns concatenates the column vector values into a
             // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.
             let mut is_truncated = false;
@@ -1314,25 +1487,31 @@ impl PositronVariable {
             ));
         }
 
-        Ok(variables)
+        Ok((variables, n_col))
     }
 
-    fn inspect_matrix_column(matrix: SEXP, index: isize) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_matrix_column(
+        matrix: SEXP,
+        index: isize,
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<Variable>, usize)> {
         let column = harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix)?;
+        let start = range.start;
+        let (variables, total) = Self::inspect_vector(column.sexp, range)?;
 
-        let variables: Vec<Variable> = Self::inspect_vector(column.sexp)?
+        let variables: Vec<Variable> = variables
             .into_iter()
             .enumerate()
             .map(|(row, mut var)| {
-                var.display_name = format!("[{}, {}]", row + 1, index + 1);
+                var.display_name = format!("[{}, {}]", start + row + 1, index + 1);
                 var
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, total))
     }
 
-    fn inspect_vector(vector: SEXP) -> anyhow::Result<Vec<Variable>> {
+    fn inspect_vector(vector: SEXP, range: Range<usize>) -> anyhow::Result<(Vec<Variable>, usize)> {
         let vector = RObject::new(vector);
 
         let r_type = r_typeof(vector.sexp);
@@ -1367,9 +1546,9 @@ impl PositronVariable {
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
         let variables: Vec<Variable> = formatted
-            .iter_take(MAX_DISPLAY_VALUE_ENTRIES)?
-            .enumerate()
-            .map(|(i, value)| {
+            .iter_range(range.clone())?
+            .zip(range)
+            .map(|(value, i)| {
                 let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
                 // Names are arbitrarily set by users, so we add a safeguard to truncate them
                 // to avoid massive names that could break communications with the frontend.
@@ -1386,7 +1565,7 @@ impl PositronVariable {
             })
             .collect();
 
-        Ok(variables)
+        Ok((variables, r_length(vector.sexp) as usize))
     }
 
     /// Creates an update timestamp for a variable
@@ -1397,7 +1576,10 @@ impl PositronVariable {
             .as_millis() as i64
     }
 
-    fn inspect_pairlist(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_pairlist(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
 
         let mut pairlist = value;
@@ -1406,24 +1588,29 @@ impl PositronVariable {
             while pairlist != R_NilValue {
                 r_assert_type(pairlist, &[LISTSXP])?;
 
-                let tag = TAG(pairlist);
-                let display_name = if r_is_null(tag) {
-                    format!("[[{}]]", i + 1)
-                } else {
-                    String::from(RSymbol::new_unchecked(tag))
-                };
+                if range.contains(&i) {
+                    let tag = TAG(pairlist);
+                    let display_name = if r_is_null(tag) {
+                        format!("[[{}]]", i + 1)
+                    } else {
+                        String::from(RSymbol::new_unchecked(tag))
+                    };
 
-                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
+                    out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
+                }
 
                 pairlist = CDR(pairlist);
                 i += 1;
             }
-        }
 
-        Ok(out)
+            Ok((out, i))
+        }
     }
 
-    fn inspect_r6(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_r6(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
@@ -1496,44 +1683,107 @@ impl PositronVariable {
             });
         }
 
-        Ok(childs)
+        Ok(take_range(childs, range))
     }
 
-    fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> =
+    fn inspect_environment(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
+        let mut bindings: Vec<Binding> =
             Environment::new_filtered(value, EnvironmentFilter::ExcludeHidden)
                 .iter()
                 .filter_map(|b| b.ok())
-                .map(|b| Self::new(&b).var())
                 .collect();
 
-        out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-        Ok(out
-            .get(0..std::cmp::min(out.len(), MAX_DISPLAY_VALUE_ENTRIES))
-            .ok_or(Error::Anyhow(anyhow!("Unexpected environment size?")))?
-            .to_vec())
+        bindings.sort_by_cached_key(|b| b.name.to_string());
+        let (bindings, total) = take_range(bindings, range);
+        Ok((bindings.iter().map(|b| Self::new(b).var()).collect(), total))
     }
 
-    fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_s4(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
 
         unsafe {
             let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
 
             let slot_names = CharacterVector::new_unchecked(slot_names.sexp);
-            let mut iter = slot_names.iter();
-            while let Some(Some(display_name)) = iter.next() {
+            let total = slot_names.len();
+            for display_name in slot_names
+                .iter()
+                .skip(range.start)
+                .take(range.len())
+                .flatten()
+            {
                 let slot_symbol = r_symbol!(display_name);
                 let slot: RObject = harp::try_catch(|| R_do_slot(value, slot_symbol).into())?;
                 let access_key = display_name.clone();
                 out.push(PositronVariable::from(access_key, display_name, slot.sexp).var());
             }
-        }
 
-        Ok(out)
+            Ok((out, total))
+        }
     }
 
-    fn inspect_r6_methods(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect_s7(value: SEXP) -> Vec<Variable> {
+        let mut out: Vec<Variable> = vec![];
+
+        if r_typeof(value) == ENVSXP {
+            out.push(Self::s7_environment_data_var(value));
+        } else if let Some(data) = s7_data(value) {
+            let access_key = String::from(S7_DATA_ACCESS_KEY);
+            let display_name = String::from(".data");
+            out.push(PositronVariable::from(access_key, display_name, data.sexp).var());
+        }
+
+        for (name, property) in s7_property_entries(value) {
+            let access_key = format!("{S7_PROPERTY_ACCESS_KEY_PREFIX}{name}");
+            let variable = match property {
+                Some(property) => PositronVariable::from(access_key, name, property.sexp),
+                None => PositronVariable::from_dynamic_property(access_key, name),
+            };
+            out.push(variable.var());
+        }
+
+        out
+    }
+
+    /// The `.data` child of an S7 object that extends an environment. We can't
+    /// remove the class and properties from a copy of an environment as we do
+    /// for vectors, so we build the variable here and treat the object as a
+    /// plain environment when inspecting it.
+    fn s7_environment_data_var(value: SEXP) -> Variable {
+        let WorkspaceVariableDisplayValue {
+            display_value,
+            is_truncated,
+        } = WorkspaceVariableDisplayValue::from_env(value);
+        let has_children =
+            !Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden)
+                .is_empty();
+
+        Variable {
+            access_key: String::from(S7_DATA_ACCESS_KEY),
+            display_name: String::from(".data"),
+            display_value,
+            display_type: String::from("environment"),
+            type_info: String::from("environment"),
+            kind: VariableKind::Map,
+            length: 0,
+            size: 0,
+            has_children,
+            is_truncated,
+            has_viewer: false,
+            updated_time: Self::update_timestamp(),
+        }
+    }
+
+    fn inspect_r6_methods(
+        value: RObject,
+        range: Range<usize>,
+    ) -> Result<(Vec<Variable>, usize), harp::error::Error> {
         let mut out: Vec<Variable> = Environment::new(value)
             .iter()
             .filter_map(|b| b.ok())
@@ -1547,10 +1797,13 @@ impl PositronVariable {
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
-        Ok(out)
+        Ok(take_range(out, range))
     }
 
-    fn try_inspect_custom_method(value: SEXP) -> anyhow::Result<Option<Vec<Variable>>> {
+    fn try_inspect_custom_method(
+        value: SEXP,
+        range: Range<usize>,
+    ) -> anyhow::Result<Option<(Vec<Variable>, usize)>> {
         let result: Option<RObject> = ArkGenerics::VariableGetChildren
             .try_dispatch(value, vec![])
             .map_err(harp::Error::Anyhow)?;
@@ -1582,6 +1835,8 @@ impl PositronVariable {
                     .iter()
                     .zip(names.iter())
                     .enumerate()
+                    .skip(range.start)
+                    .take(range.len())
                     .map(|(i, (x, name))| {
                         // The acess key is formatted as `custom-{index}-{length(name)}-{name}`
                         // where:
@@ -1605,13 +1860,13 @@ impl PositronVariable {
                     })
                     .collect();
 
-                Ok(Some(variables))
+                Ok(Some((variables, n)))
             },
         }
     }
 }
 
-fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
+pub(crate) fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
     let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
 
     if parsed_access_key.len() != 4 {
@@ -1672,7 +1927,208 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
     }
 }
 
-fn parse_index(x: &str) -> harp::Result<isize> {
+/// Access key of the `.data` child of S7 objects that extend a base type.
+pub(crate) const S7_DATA_ACCESS_KEY: &str = "<data>";
+
+/// Prefix of the access keys of S7 properties. Property names can be any
+/// string, so the prefix keeps them from clashing with `S7_DATA_ACCESS_KEY`
+/// and other special keys such as `.Last.value`.
+pub(crate) const S7_PROPERTY_ACCESS_KEY_PREFIX: &str = "@";
+
+/// S7 classes, generics, and methods are themselves S7 objects. They are
+/// shown as plain functions, so they don't get the S7 treatment.
+pub(crate) fn is_s7_value(x: SEXP) -> bool {
+    r_is_s7(x) && !is_s7_metaobject(x)
+}
+
+fn is_s7_metaobject(x: SEXP) -> bool {
+    ["S7_class", "S7_generic", "S7_method"]
+        .iter()
+        .any(|class| r_inherits(x, class))
+}
+
+/// Returns the static properties of an S7 object, in declaration order.
+fn s7_properties(x: SEXP) -> Vec<(String, RObject)> {
+    s7_property_entries(x)
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect()
+}
+
+/// Returns all properties of an S7 object, in declaration order.
+///
+/// Property values are stored as attributes, so they are read directly. A
+/// property set to `NULL` has no attribute and is returned as `NULL`. Dynamic
+/// properties (those with a getter) have no value, because computing it would
+/// run user code.
+fn s7_property_entries(x: SEXP) -> Vec<(String, Option<RObject>)> {
+    let Some(specs) = s7_property_specs(x) else {
+        return vec![];
+    };
+    let Some(names) = specs.names() else {
+        return vec![];
+    };
+
+    names
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, name)| {
+            let name = name?;
+            let spec = RObject::view(harp::list_get(specs.sexp, i as isize));
+            if s7_property_is_dynamic(&spec) {
+                return Some((name, None));
+            }
+            let value = s7_property_value(x, &name);
+            Some((name, Some(value)))
+        })
+        .collect()
+}
+
+/// Returns the value of a static property. Returns `None` for dynamic or
+/// unknown properties.
+fn s7_property(x: SEXP, name: &str) -> Option<RObject> {
+    let spec = s7_property_spec(x, name)?;
+    if s7_property_is_dynamic(&spec) {
+        return None;
+    }
+    Some(s7_property_value(x, name))
+}
+
+/// Whether `name` is a dynamic property of `x`. False for unknown properties.
+fn s7_property_is_dynamic_by_name(x: SEXP, name: &str) -> bool {
+    s7_property_spec(x, name).is_some_and(|spec| s7_property_is_dynamic(&spec))
+}
+
+fn s7_property_spec(x: SEXP, name: &str) -> Option<RObject> {
+    let specs = s7_property_specs(x)?;
+    list_get_by_name(&specs, name)
+}
+
+fn s7_has_properties(x: SEXP) -> bool {
+    s7_property_specs(x).is_some_and(|specs| r_length(specs.sexp) > 0)
+}
+
+fn s7_property_names(x: SEXP) -> Vec<String> {
+    let Some(names) = s7_property_specs(x).and_then(|specs| specs.names()) else {
+        return vec![];
+    };
+    names.into_iter().flatten().collect()
+}
+
+/// The property specifications are a named list stored in the `properties`
+/// attribute of the class object, which is itself stored in the `S7_class`
+/// attribute of the instance.
+fn s7_property_specs(x: SEXP) -> Option<RObject> {
+    let class = RObject::view(x).get_attribute("S7_class")?;
+    let specs = class.get_attribute("properties")?;
+    (r_typeof(specs.sexp) == VECSXP).then_some(specs)
+}
+
+fn s7_property_is_dynamic(spec: &RObject) -> bool {
+    list_get_by_name(spec, "getter").is_some_and(|getter| !r_is_null(getter.sexp))
+}
+
+fn s7_property_value(x: SEXP, name: &str) -> RObject {
+    RObject::view(x)
+        .get_attribute(name)
+        .unwrap_or_else(|| RObject::from(r_null()))
+}
+
+fn list_get_by_name(list: &RObject, name: &str) -> Option<RObject> {
+    if r_typeof(list.sexp) != VECSXP {
+        return None;
+    }
+    let index = list
+        .names()?
+        .iter()
+        .position(|elt_name| elt_name.as_deref() == Some(name))?;
+    Some(RObject::view(harp::list_get(list.sexp, index as isize)))
+}
+
+/// Whether the data of an S7 object has children of its own, by the same
+/// rules as a plain vector, list, or environment. Without properties, a
+/// `.data` child that can't be expanded would only repeat the summary row.
+fn s7_data_has_children(x: SEXP) -> bool {
+    match r_typeof(x) {
+        VECSXP | EXPRSXP => r_length(x) > 0,
+        LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => r_length(x) > 1,
+        ENVSXP => !Environment::new_filtered(RObject::view(x), EnvironmentFilter::ExcludeHidden)
+            .is_empty(),
+        _ => false,
+    }
+}
+
+/// For an environment, removing attributes would modify the original object,
+/// so only vector and list data can be extracted with `s7_data()`.
+fn s7_has_vector_data(x: SEXP) -> bool {
+    let is_vector = matches!(
+        r_typeof(x),
+        LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP | VECSXP | EXPRSXP
+    );
+    is_vector && r_length(x) > 0
+}
+
+/// Returns the data of an S7 object without its properties and S7 classes.
+/// Other attributes, such as `names` and `dim`, are kept.
+///
+/// Unlike `S7::S7_data()`, the class of an S3 parent such as `class_factor`
+/// or `class_Date` is kept, so the data is formatted as a factor or a date
+/// instead of as raw codes or numbers.
+///
+/// `unclass()` returns a new object, so we can remove attributes from it
+/// without affecting `x`. For large vectors that new object is an ALTREP
+/// wrapper that shares the data of `x`, so we don't copy the data or
+/// materialize ALTREP vectors.
+fn s7_data(x: SEXP) -> Option<RObject> {
+    if !s7_has_vector_data(x) {
+        return None;
+    }
+
+    let data = RFunction::new("base", "unclass").add(x).call().log_err()?;
+    for name in s7_property_names(x) {
+        data.set_attribute(&name, r_null());
+    }
+    data.set_attribute("S7_class", r_null());
+
+    if let Some(class) = s7_s3_parent_class(x) {
+        data.set_attribute("class", class.sexp);
+    }
+
+    Some(data)
+}
+
+/// Returns the S3 class vector of the S3 class that an S7 object extends,
+/// such as `"factor"` or `c("POSIXct", "POSIXt")`. Returns `None` if the
+/// object extends a base type or no parent at all.
+///
+/// The parent chain starts at the `S7_class` attribute of the object and
+/// follows the `parent` attribute of each S7 class. An S3 parent is an
+/// `S7_S3_class`, a list with the class vector in its `class` element.
+fn s7_s3_parent_class(x: SEXP) -> Option<RObject> {
+    let mut class = RObject::view(x).get_attribute("S7_class")?;
+    while r_inherits(class.sexp, "S7_class") {
+        class = class.get_attribute("parent")?;
+    }
+
+    if !r_inherits(class.sexp, "S7_S3_class") {
+        return None;
+    }
+    list_get_by_name(&class, "class")
+}
+
+/// Takes the elements of `items` in `range`, returning them with the total
+/// number of items.
+fn take_range<T>(items: Vec<T>, range: Range<usize>) -> (Vec<T>, usize) {
+    let total = items.len();
+    let items = items
+        .into_iter()
+        .skip(range.start)
+        .take(range.len())
+        .collect();
+    (items, total)
+}
+
+pub(crate) fn parse_index(x: &str) -> harp::Result<isize> {
     x.parse::<isize>().map_err(|err| {
         harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
     })
@@ -1869,6 +2325,26 @@ mod tests {
     }
 
     #[test]
+    fn test_has_viewer_character() {
+        r_task(|| {
+            let viewable =
+                |code: &str| is_viewable_character(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(!viewable("'walnuts'"));
+            assert!(viewable("strrep('a', 101)"));
+            assert!(!viewable("NA_character_"));
+            assert!(viewable("c(a = 'a', b = 'b')"));
+            assert!(viewable(
+                "structure(c('a', 'b'), class = c('glue', 'character'))"
+            ));
+            assert!(!viewable("structure(c('a', 'b'), class = 'foo')"));
+            assert!(!viewable("character()"));
+            assert!(!viewable("matrix(letters[1:4], 2)"));
+            assert!(!viewable("factor('a')"));
+            assert!(!viewable("1:3"));
+        })
+    }
+
+    #[test]
     fn test_inspect_r6() {
         r_task(|| {
             // Skip test if R6 is not installed
@@ -2044,6 +2520,632 @@ mod tests {
                 let index = index + 1; // R indexes start from 1
                 assert_eq!(value.display_name, format!("[[{index}]]"));
             });
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Dog <- S7::new_class("Dog", properties = list(
+                    name = S7::class_character,
+                    age = S7::class_numeric,
+                    toys = S7::class_list,
+                    owner = S7::class_any,
+                    age_months = S7::new_property(getter = function(self) {
+                        stop("Variables pane should not evaluate dynamic properties.")
+                    })
+                ))
+                x <- Dog(name = "Lola", age = 11, toys = list("ball", "rope"))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+
+            assert_eq!(
+                x.display_value,
+                r#"[name = "Lola", age = 11, toys = ["ball", "rope"], owner = NULL]"#
+            );
+            assert_eq!(x.display_type, "Dog");
+            assert_eq!(x.type_info, "Dog/S7_object");
+            assert_eq!(x.kind, VariableKind::Map);
+            assert!(x.has_children);
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec!["name", "age", "toys", "owner", "age_months"]);
+
+            // Dynamic properties are listed but not evaluated
+            assert_eq!(fields[4].display_value, "");
+            assert_eq!(fields[4].display_type, "dynamic property");
+            assert!(!fields[4].has_children);
+
+            let path = vec![String::from("x"), fields[2].access_key.clone()];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[1].display_value, r#""rope""#);
+        })
+    }
+
+    #[test]
+    fn test_s7_dynamic_property_is_not_evaluated() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Dog <- S7::new_class("Dog", properties = list(
+                    name = S7::class_character,
+                    age_months = S7::new_property(getter = function(self) {
+                        stop("Variables pane should not evaluate dynamic properties.")
+                    })
+                ))
+                x <- Dog(name = "Lola")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[1].display_name, "age_months");
+
+            let path = vec![String::from("x"), fields[1].access_key.clone()];
+            let clipped =
+                PositronVariable::clip(env.clone(), &path, &ClipboardFormatFormat::TextPlain)
+                    .unwrap();
+            assert_eq!(clipped, "");
+            let (children, total) =
+                PositronVariable::inspect_children(env.clone(), &path, 0..10).unwrap();
+            assert!(children.is_empty());
+            assert_eq!(total, 0);
+
+            // A property that doesn't exist is still an error
+            let path = vec![
+                String::from("x"),
+                format!("{S7_PROPERTY_ACCESS_KEY_PREFIX}unknown"),
+            ];
+            assert!(PositronVariable::resolve_object_from_path(env.clone(), &path).is_err());
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_with_base_type() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Tagged <- S7::new_class("Tagged", parent = S7::class_list, properties = list(
+                    tag = S7::class_character
+                ))
+                x <- Tagged(list(a = 1, b = 2, c = 3), tag = "abc")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec![".data", "tag"]);
+            assert_eq!(fields[0].display_type, "list [3]");
+            assert_eq!(fields[0].display_value, "[a = 1, b = 2, c = 3]");
+
+            let path = vec![String::from("x"), fields[0].access_key.clone()];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec!["a", "b", "c"]);
+
+            // The original object keeps its attributes
+            let class: Vec<String> = harp::parse_eval0("class(x)", env.clone())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(class, vec!["Tagged", "list", "S7_object"]);
+        })
+    }
+
+    #[test]
+    fn test_s7_class_and_generic_are_functions() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Dog <- S7::new_class("Dog", properties = list(name = S7::class_character))
+                speak <- S7::new_generic("speak", "x")
+                S7::method(speak, Dog) <- function(x) "woof"
+                speak_dog <- S7::method(speak, Dog)
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            let names: Vec<&str> = vars.iter().map(|var| var.display_name.as_str()).collect();
+            assert_eq!(names, vec!["Dog", "speak", "speak_dog"]);
+            for var in vars {
+                assert_eq!(var.kind, VariableKind::Function);
+                assert!(!var.has_children);
+            }
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_with_function_base_type() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Labelled <- S7::new_class("Labelled", parent = S7::class_function, properties = list(
+                    label = S7::class_character
+                ))
+                x <- Labelled(function(y) y + 1, label = "inc")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+            assert_eq!(x.kind, VariableKind::Function);
+            assert_eq!(x.display_value, "function (y) ");
+            assert!(x.has_children);
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec!["label"]);
+            assert_eq!(fields[0].display_value, r#""inc""#);
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_with_expression_base_type() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Exprs <- S7::new_class("Exprs", parent = S7::class_expression, properties = list(
+                    note = S7::class_character
+                ))
+                x <- Exprs(expression(a + b, c), note = "n")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec![".data", "note"]);
+            assert_eq!(fields[0].display_type, "expression [2]");
+
+            let path = vec![String::from("x"), fields[0].access_key.clone()];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 2);
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_property_names_do_not_collide() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            // Property names that match the `.Last.value` and `.data` access keys
+            harp::parse_eval0(
+                r#"
+                Odd <- S7::new_class(
+                    "Odd",
+                    parent = S7::class_character,
+                    properties = list(`.Last.value` = S7::class_list, `<data>` = S7::class_list)
+                )
+                x <- Odd(c("a", "b", "c", "d"), `.Last.value` = list(1, 2), `<data>` = list(1, 2, 3))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec![".data", ".Last.value", "<data>"]);
+
+            let n_children: Vec<usize> = fields
+                .iter()
+                .map(|field| {
+                    let path = vec![String::from("x"), field.access_key.clone()];
+                    PositronVariable::inspect(env.clone(), &path).unwrap().len()
+                })
+                .collect();
+            assert_eq!(n_children, vec![4, 2, 3]);
+        })
+    }
+
+    #[test]
+    fn test_s7_empty_vector_has_no_children() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Empty <- S7::new_class("Empty", parent = S7::class_character)
+                x <- Empty()
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+            assert_eq!(x.display_value, "");
+            assert!(!x.has_children);
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert!(fields.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_s7_has_children_only_if_data_or_properties_do() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Num <- S7::new_class("Num", parent = S7::class_double)
+                Labeled <- S7::new_class("Labeled", parent = S7::class_double, properties = list(
+                    label = S7::class_character
+                ))
+                Env <- S7::new_S3_class("Env", constructor = function(.data = new.env()) {
+                    structure(.data, class = "Env")
+                })
+                Store <- S7::new_class("Store", parent = Env)
+                scalar <- Num(1)
+                pair <- Num(c(1, 2))
+                labeled <- Labeled(1, label = "a")
+                store <- Store()
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let has_children = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.has_children
+            };
+            assert!(!has_children("scalar"));
+            assert!(has_children("pair"));
+            assert!(has_children("labeled"));
+            assert!(!has_children("store"));
+        })
+    }
+
+    #[test]
+    fn test_s7_data_frame_is_table() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Annotated <- S7::new_class("Annotated", parent = S7::class_data.frame, properties = list(
+                    note = S7::class_character
+                ))
+                x <- Annotated(data.frame(a = 1:2, b = 3:4), note = "hi")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+
+            assert_eq!(x.kind, VariableKind::Table);
+            assert_eq!(x.display_value, "[2 rows x 2 columns] <Annotated>");
+            assert!(x.has_viewer);
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_with_environment_base_type() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            // S7 doesn't allow `class_environment` as a parent, but an S3 class
+            // whose instances are environments is allowed
+            harp::parse_eval0(
+                r#"
+                Env <- S7::new_S3_class("Env", constructor = function(.data = new.env()) {
+                    structure(.data, class = "Env")
+                })
+                Store <- S7::new_class("Store", parent = Env, properties = list(
+                    tag = S7::class_character
+                ))
+                x <- Store(tag = "abc")
+                x$count <- 1
+                x$items <- list("a", "b")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec![".data", "tag"]);
+            assert_eq!(fields[0].display_type, "environment");
+            assert_eq!(fields[0].display_value, "{count, items}");
+            assert_eq!(fields[0].kind, VariableKind::Map);
+            assert!(fields[0].has_children);
+
+            let path = vec![String::from("x"), fields[0].access_key.clone()];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let names: Vec<&str> = fields
+                .iter()
+                .map(|field| field.display_name.as_str())
+                .collect();
+            assert_eq!(names, vec!["count", "items"]);
+
+            let path = vec![
+                String::from("x"),
+                String::from(S7_DATA_ACCESS_KEY),
+                String::from("items"),
+            ];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[1].display_value, r#""b""#);
+
+            // The original object keeps its attributes
+            let class: Vec<String> = harp::parse_eval0("class(x)", env.clone())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(class, vec!["Store", "Env", "S7_object"]);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_atomic_base_type_shows_data() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Measure <- S7::new_class("Measure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                x <- Measure(c(1.5, 2.5), units = "cm")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let x = vars.iter().find(|var| var.display_name == "x").unwrap();
+            assert_eq!(x.display_value, "1.5 2.5");
+            assert!(!x.is_truncated);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_s3_parent_keeps_s3_class() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Lvl <- S7::new_class("Lvl", parent = S7::class_factor)
+                SubLvl <- S7::new_class("SubLvl", parent = Lvl, properties = list(
+                    note = S7::class_character
+                ))
+                Day <- S7::new_class("Day", parent = S7::class_Date)
+                lvl <- Lvl(factor(c("lo", "hi", "lo")))
+                sub <- SubLvl(factor(c("a", "b")), note = "x")
+                day <- Day(as.Date("2026-10-20"))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let display_value = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.display_value.clone()
+            };
+            assert_eq!(display_value("lvl"), r#""lo" "hi" "lo""#);
+            assert_eq!(display_value("sub"), r#""a" "b""#);
+            assert_eq!(display_value("day"), r#""2026-10-20""#);
+
+            // The `.data` child keeps the S3 class too
+            let path = vec![String::from("sub")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].display_value, r#""a" "b""#);
+
+            let path = vec![String::from("day")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].display_value, r#""2026-10-20""#);
+        })
+    }
+
+    #[test]
+    fn test_s7_with_factor_parent_is_map() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Lvl <- S7::new_class("Lvl", parent = S7::class_factor)
+                lvl <- Lvl(factor(c("lo", "hi", "lo")))
+                f <- factor(c("lo", "hi", "lo"))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let kind = |name: &str| {
+                let var = vars.iter().find(|var| var.display_name == name).unwrap();
+                var.kind.clone()
+            };
+            assert_eq!(kind("lvl"), VariableKind::Map);
+            assert_eq!(kind("f"), VariableKind::Other);
+
+            // The `.data` child is a plain factor
+            let path = vec![String::from("lvl")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].kind, VariableKind::Other);
+        })
+    }
+
+    #[test]
+    fn test_inspect_s7_data_is_not_copied() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                Measure <- S7::new_class("Measure", parent = S7::class_double, properties = list(
+                    unit = S7::class_character
+                ))
+                x <- Measure(as.double(1:1e6), unit = "m")
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // The data is an ALTREP wrapper around the original vector, not a copy
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields[0].display_name, ".data");
+            assert_eq!(fields[0].display_type, "dbl [1000000]");
+            assert_eq!(fields[0].type_info, "dbl [1000000]base::wrap_real");
+
+            let path = vec![String::from("x"), fields[0].access_key.clone()];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(fields[0].display_value, "1");
+
+            // The original object keeps its attributes
+            let unit: String = harp::parse_eval0("attr(x, 'unit')", env.clone())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(unit, "m");
+        })
+    }
+
+    #[test]
+    fn test_inspect_expression() {
+        r_task(|| {
+            let vars = inspect_from_expr("expression(a + b, c)");
+            assert_eq!(vars.len(), 2);
+            assert_eq!(vars[0].display_name, "[[1]]");
         })
     }
 

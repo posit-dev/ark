@@ -90,8 +90,9 @@ jobs:
             R6
             ragg
             readr
+            renv
             rstudioapi
-            survival
+            S7
             tibble
 
       - name: Set LD_LIBRARY_PATH
@@ -110,5 +111,6 @@ jobs:
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
+          R_PROFILE_USER: ${{ github.workspace }}/.github/Rprofile
         run: |
           cargo nextest run ${{ matrix.config.flavor == 'release' && '--release' || '' }}

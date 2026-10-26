@@ -126,7 +126,10 @@ pub(crate) use console_debug::FrameSource;
 use console_error::stack_overflow_occurred;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
+pub(crate) use console_integration::FrontendCallOutcome;
 pub(crate) use console_repl::console_inputs;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use console_repl::console_scopes;
 pub(crate) use console_repl::r_busy;
 pub(crate) use console_repl::r_interrupt_events;
 pub(crate) use console_repl::r_read_console;
@@ -199,6 +202,9 @@ pub struct Console {
 
     /// Whether we are running in Console, Notebook, or Background mode.
     session_mode: SessionMode,
+
+    /// Whether the frontend is Positron (`POSITRON=1`).
+    is_positron: bool,
 
     /// Channel used to send along messages relayed on the open comms.
     comm_event_tx: Sender<CommEvent>,

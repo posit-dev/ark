@@ -38,6 +38,9 @@ use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(args: &Vec<String>) {
     unsafe {
+        // Must be set before R is touched, as R 4.2.0 hits it in `cmdlineoptions()`
+        _set_invalid_parameter_handler(Some(r_invalid_parameter_handler));
+
         libr::set(R_SignalHandlers, 0);
 
         // - We have to collect these before `cmdlineoptions()` is called, because
@@ -225,6 +228,45 @@ extern "C-unwind" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     let question = unsafe { CStr::from_ptr(question).to_str().unwrap() };
     log::warn!("Ignoring `YesNoCancel` question: '{question}'. Returning `NO`.");
     return -1;
+}
+
+type InvalidParameterHandler = unsafe extern "C" fn(
+    expression: *const u16,
+    function: *const u16,
+    file: *const u16,
+    line: u32,
+    reserved: usize,
+);
+
+extern "C" {
+    fn _set_invalid_parameter_handler(
+        handler: Option<InvalidParameterHandler>,
+    ) -> Option<InvalidParameterHandler>;
+}
+
+/// Match other R frontends by returning from C runtime invalid-parameter checks.
+///
+/// UCRT's default handler terminates the process with `0xc0000409`. Rterm and
+/// Rgui use MinGW's non-terminating handler, and RStudio installs its own.
+/// Returning here lets CRT functions that support recovery report an error
+/// to the caller instead.
+///
+/// R 4.2.0 needs this during startup because it calls
+/// `setlocale(LC_MESSAGES, "")`, but UCRT does not support `LC_MESSAGES`.
+///
+/// https://github.com/posit-dev/positron/issues/8488
+/// https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/src/cpp/session/SessionMain.cpp#L2446-L2452
+///
+/// Release UCRT builds omit the expression, function name, and source
+/// location, so the warning cannot identify the failing call.
+extern "C" fn r_invalid_parameter_handler(
+    _expression: *const u16,
+    _function: *const u16,
+    _file: *const u16,
+    _line: u32,
+    _reserved: usize,
+) {
+    log::warn!("Ignoring invalid parameter passed to a C runtime function.");
 }
 
 // - (?-u) to disable unicode so it matches the bytes exactly

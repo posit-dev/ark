@@ -53,6 +53,7 @@ use smallvec::SmallVec;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::BindingTimelineBuilder;
+use crate::semantic_index::CalleeDependency;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
@@ -106,6 +107,10 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     // Diagnostics collected during the build and logged on `finish()`. A minimal
     // channel for now, no user-facing surface.
     diagnostics: Vec<SemanticDiagnostic>,
+    // Both passes contribute: the scan records the callees static evaluation
+    // consulted as soon as their handlers finish, and the walk records the
+    // callees of the attach and source calls it emits. Sorted on `finish()`.
+    callee_dependencies: Vec<CalleeDependency>,
     scan: ScanState,
     walk: WalkState,
 }
@@ -161,11 +166,17 @@ struct ScanState {
     // call's range, in attach order. Unlike `attached_so_far`, this is never
     // dropped or truncated at a branch or loop join. Used to probe whether an
     // effect decision based on the linear view is ambiguous across paths
-    // (`record_conditional_attach_ambiguity()`).
+    // (`conditional_attach_uncertainty()`).
     attached_anywhere: Vec<(String, TextRange)>,
     // Per-call facts resolved by the scanner in flow order, keyed by the call's
     // range. See `CallResolution`.
     call_resolutions: FxHashMap<TextRange, CallResolution>,
+    // The package supplying the first search-path binding of each `<<-`
+    // target, keyed by the assigned name's range. Recorded by the scan because
+    // only the scan sees the attaches made before the site. By the time the
+    // walk reaches the site, `attached_so_far` also holds later attaches in the
+    // unit. Sites whose name no package binds have no entry.
+    super_binding_packages: FxHashMap<TextRange, String>,
     // `Current + Lazy` bodies (e.g. `rlang::on_load()`) queued at their call
     // sites, scanned when their enclosing scan unit finishes.
     deferred_bodies: Vec<DeferredBody>,
@@ -222,10 +233,12 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             scopes,
             current_scope: file_scope,
             diagnostics: Vec::new(),
+            callee_dependencies: Vec::new(),
             resolver,
             scan: ScanState {
                 bound_anywhere,
                 call_resolutions: FxHashMap::default(),
+                super_binding_packages: FxHashMap::default(),
                 bound_so_far: FlowState::default(),
                 body_scans: FxHashMap::default(),
                 attached_so_far: FlowAttaches::default(),
@@ -312,18 +325,17 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     }
 
     /// Whether `scope` binds `name` anywhere, regardless of flow position.
-    /// `bound_anywhere` records syntactic bindings before the walk reaches
-    /// them. `walked_binding()` adds parameters and `<<-` targets after their
-    /// binding scope has been resolved.
+    /// `bound_anywhere` records syntactic bindings, including parameters,
+    /// before the walk reaches them. `walked_binding()` adds `<<-` targets
+    /// after their binding scope has been resolved.
     fn scope_binds_anywhere(&self, scope: ScopeId, name: &str) -> bool {
         self.walked_binding(scope, name).is_some() || self.scan.bound_anywhere[scope].binds(name)
     }
 
-    /// The binding site for every name counted by
-    /// [`scope_binds_anywhere`](Self::scope_binds_anywhere). Prefers the
-    /// scan-collected site in `bound_anywhere`, then falls back to an
-    /// already-walked parameter or `<<-` target. Points the lazy-shadow
-    /// diagnostic at the overwrite.
+    /// Locate the overwrite for a lazy-shadow diagnostic. For names counted
+    /// by [`scope_binds_anywhere()`](Self::scope_binds_anywhere), prefer the
+    /// scan-collected site in `bound_anywhere`, falling back to a `<<-` target
+    /// whose scope the walk has resolved.
     fn scope_binding_range(&self, scope: ScopeId, name: &str) -> Option<TextRange> {
         if let Some(range) = self.scan.bound_anywhere[scope].binding_range(name) {
             return Some(range);
@@ -374,6 +386,13 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             .map(|b| Arc::new(b.finish()))
             .collect();
 
+        // Value entries arrive in scan order and effect entries in walk order.
+        // Sort into source order so the output doesn't depend on which pass
+        // produced an entry. `sort_by_key()` is stable, so entries sharing a
+        // range keep their recording order.
+        self.callee_dependencies
+            .sort_by_key(|dependency| (dependency.range.start(), dependency.range.end()));
+
         SemanticIndex::new(
             self.scopes,
             symbol_tables,
@@ -382,6 +401,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             use_def_maps,
             self.walk.enclosing_snapshots,
             self.walk.semantic_calls,
+            self.callee_dependencies,
             self.walk.namespace_accesses,
             self.diagnostics,
             file_final_bindings,

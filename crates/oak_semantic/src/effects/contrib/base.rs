@@ -1,8 +1,10 @@
 mod bquote;
+mod c;
 mod library;
 mod substitute;
 
 use bquote::BquoteHandler;
+use c::CHandler;
 use library::LibraryHandler;
 use substitute::SubstituteHandler;
 
@@ -12,6 +14,7 @@ use crate::effects::contrib::quoted;
 use crate::effects::contrib::source;
 use crate::effects::contrib::Entry;
 use crate::effects::EffectsHandlers;
+use crate::effects::FunctionHandlers;
 use crate::semantic_index::EvalEnv::Current;
 use crate::semantic_index::EvalEnv::Nested;
 use crate::semantic_index::EvalTiming::Eager;
@@ -38,24 +41,20 @@ pub(crate) static ENTRIES: &[Entry] = &[
     // it needs a handler rather than a static per-argument effect.
     Entry {
         function: "bquote",
-        effects: EffectsHandlers {
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             arguments: Some(&BquoteHandler),
-            attach: None,
-            source: None,
-            assign: None,
-        },
+            ..EffectsHandlers::EMPTY
+        }),
     },
     // `substitute` quotes `expr` too, but replaces the symbols its environment
     // binds, so it needs a handler that queries the scope rather than a static
     // per-argument effect.
     Entry {
         function: "substitute",
-        effects: EffectsHandlers {
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             arguments: Some(&SubstituteHandler),
-            attach: None,
-            source: None,
-            assign: None,
-        },
+            ..EffectsHandlers::EMPTY
+        }),
     },
     // base attach. `library`/`require` share `LibraryHandler` (below).
     attach_entry("library"),
@@ -77,17 +76,19 @@ pub(crate) static ENTRIES: &[Entry] = &[
         "value",
         ["assign.env"]
     ),
+    Entry {
+        function: "c",
+        handlers: FunctionHandlers::with_value(&CHandler),
+    },
 ];
 
 /// Build the attach [`Entry`] for a base function served by [`LibraryHandler`].
 const fn attach_entry(function: &'static str) -> Entry {
     Entry {
         function,
-        effects: EffectsHandlers {
-            arguments: None,
+        handlers: FunctionHandlers::with_effects(EffectsHandlers {
             attach: Some(&LibraryHandler),
-            source: None,
-            assign: None,
-        },
+            ..EffectsHandlers::EMPTY
+        }),
     }
 }

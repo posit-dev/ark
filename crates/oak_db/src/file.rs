@@ -2,6 +2,7 @@ use aether_path::FilePath;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 
+use crate::db::notebook_by_cell;
 use crate::db::root_by_file;
 use crate::diagnostic::lower_semantic_diagnostic;
 use crate::diagnostic::Diagnostic;
@@ -326,6 +327,21 @@ impl File {
             return db.root_by_package(pkg);
         }
         root_by_file(db, self).or_else(|| root_by_path(db, self.path(db)))
+    }
+
+    /// The cells before this one in its open notebook, in document order.
+    /// Empty when this file is not a notebook cell.
+    ///
+    /// Document order approximates run order, as in
+    /// [`crate::load_context`]. Callers outside the resolver, such as Ark's
+    /// diagnostics, use this to see what earlier cells attach.
+    pub fn earlier_notebook_cells(self, db: &dyn SourceDb) -> &[File] {
+        let Some(notebook) = notebook_by_cell(db, self) else {
+            return &[];
+        };
+        let cells = notebook.cells(db);
+        let index = cells.iter().position(|cell| *cell == self).unwrap_or(0);
+        &cells[..index]
     }
 }
 

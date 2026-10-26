@@ -1,0 +1,1299 @@
+//
+// r_object_explorer.rs
+//
+// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
+//
+//
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::ops::Range;
+
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::object_explorer_comm::ChildrenResult;
+use amalthea::comm::object_explorer_comm::FormattedValue;
+use amalthea::comm::object_explorer_comm::ObjectExplorerBackendReply;
+use amalthea::comm::object_explorer_comm::ObjectExplorerBackendRequest;
+use amalthea::comm::object_explorer_comm::ObjectExplorerFrontendEvent;
+use amalthea::comm::object_explorer_comm::ObjectExplorerState;
+use amalthea::comm::object_explorer_comm::ObjectNode;
+use amalthea::comm::object_explorer_comm::ObjectNodeKind;
+use amalthea::comm::object_explorer_comm::SearchParams;
+use amalthea::comm::object_explorer_comm::SearchResult;
+use amalthea::comm::object_explorer_comm::SearchRow;
+use amalthea::comm::object_explorer_comm::SearchRowMatchKind;
+use amalthea::comm::variables_comm::ClipboardFormatFormat;
+use amalthea::comm::variables_comm::Variable;
+use anyhow::anyhow;
+use harp::environment::Binding;
+use harp::environment::BindingValue;
+use harp::environment::Environment;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use harp::r::attrib_for_each;
+use harp::syntax::str_quote;
+use harp::syntax::sym_quote_invalid;
+use harp::utils::r_chr_get_owned_utf8;
+use harp::utils::r_env_is_ns_env;
+use harp::utils::r_env_is_pkg_env;
+use harp::utils::r_inherits;
+use harp::utils::r_is_data_frame;
+use harp::utils::r_is_matrix;
+use harp::utils::r_is_object;
+use harp::utils::r_is_s4;
+use harp::utils::r_typeof;
+use libr::*;
+use stdext::unwrap;
+
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
+use crate::comm_handler::EnvironmentChanged;
+use crate::console::Console;
+use crate::data_explorer::r_data_explorer::DataExplorerMode;
+use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
+use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
+use crate::variables::variable::is_explorable;
+use crate::variables::variable::is_s7_value;
+use crate::variables::variable::parse_custom_access_key;
+use crate::variables::variable::parse_index;
+use crate::variables::variable::EnvironmentVariableNode;
+use crate::variables::variable::PositronVariable;
+use crate::variables::variable::S7_PROPERTY_ACCESS_KEY_PREFIX;
+
+pub const OBJECT_EXPLORER_COMM_NAME: &str = "positron.objectExplorer";
+pub const POSITRON_OBJECT_EXPLORER_MIME: &str = "application/vnd.positron.objectExplorer+json";
+
+/// The most nodes a search visits before it stops early.
+const SEARCH_NODE_BUDGET: usize = 200_000;
+
+/// The most bindings an environment fingerprint collects. Changes in place
+/// beyond these aren't detected.
+const FINGERPRINT_BINDING_BUDGET: usize = 10_000;
+
+/// The number of children a search fetches at a time.
+const SEARCH_PAGE_SIZE: usize = 1_000;
+
+/// The R backend for Positron's Object Explorer: serves one R object, one
+/// level and one page of children at a time.
+pub struct RObjectExplorer {
+    /// The title of the explorer.
+    title: String,
+
+    /// The explored object.
+    root: RObject,
+
+    /// R expression that evaluates to the explored object, if any.
+    root_accessor: Option<String>,
+
+    /// The top-level variable the explored object was read from, if any. The
+    /// explorer is updated when the variable is reassigned and closed when it
+    /// is removed.
+    binding: Option<DataObjectEnvInfo>,
+
+    /// The access key path from the binding's value to the explored object.
+    path_in_binding: Vec<String>,
+
+    /// Whether the explorer is shown inline only, rather than in an editor.
+    inline: bool,
+
+    /// The bindings and attributes reachable from the explored object if it
+    /// is an environment, to detect changes made in place.
+    fingerprint: EnvironmentFingerprint,
+}
+
+impl std::fmt::Debug for RObjectExplorer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RObjectExplorer")
+            .field("title", &self.title)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RObjectExplorer {
+    /// Creates an object explorer. Must be called from the R thread.
+    ///
+    /// - `title`: The title of the explorer.
+    /// - `root`: The object to explore.
+    /// - `root_accessor`: R expression that evaluates to the object, if any.
+    /// - `binding`: The variable the object was read from, if any, and the
+    ///   access key path from the variable's value to the object.
+    /// - `inline`: Whether the explorer is shown inline only.
+    pub fn new(
+        title: String,
+        root: RObject,
+        root_accessor: Option<String>,
+        binding: Option<(DataObjectEnvInfo, Vec<String>)>,
+        inline: bool,
+    ) -> Self {
+        let (binding, path_in_binding) = match binding {
+            Some((binding, path)) => (Some(binding), path),
+            None => (None, vec![]),
+        };
+        let fingerprint = EnvironmentFingerprint::new(root.sexp);
+        Self {
+            title,
+            root,
+            root_accessor,
+            binding,
+            path_in_binding,
+            inline,
+            fingerprint,
+        }
+    }
+
+    /// Checks the binding for a new value. Returns false if the explorer
+    /// should close because the explored object is gone or its accessor now
+    /// selects a different object.
+    fn update(&mut self, ctx: &CommHandlerContext) -> anyhow::Result<bool> {
+        let Some(binding) = &self.binding else {
+            return Ok(true);
+        };
+
+        let env = Environment::new(binding.env.clone());
+        if !env.exists(binding.name.as_str()) {
+            return Ok(false);
+        }
+
+        // Never run R code from a comm update: unforced promises and active
+        // bindings are left alone.
+        let value = match Binding::new(&env, binding.name.as_str().into())?.value {
+            BindingValue::Standard { object } | BindingValue::Altrep { object, .. } => object,
+            BindingValue::Active { .. } | BindingValue::Promise { .. } => return Ok(true),
+        };
+        // The path's positional keys may now lead to a different element.
+        if path_accessor(&binding.name, value.clone(), &self.path_in_binding) != self.root_accessor
+        {
+            return Ok(false);
+        }
+        let node = PositronVariable::resolve_object_from_path(value, &self.path_in_binding);
+        let Ok(EnvironmentVariableNode::Concrete { object }) = node else {
+            return Ok(false);
+        };
+        if !is_explorable(object.sexp) {
+            return Ok(false);
+        }
+
+        let fingerprint = EnvironmentFingerprint::new(object.sexp);
+        if object.sexp == self.root.sexp && fingerprint.is_same(&self.fingerprint) {
+            return Ok(true);
+        }
+
+        self.root = object;
+        self.fingerprint = fingerprint;
+        ctx.send_event(&ObjectExplorerFrontendEvent::Update);
+        Ok(true)
+    }
+
+    fn handle_rpc(
+        &mut self,
+        request: ObjectExplorerBackendRequest,
+    ) -> anyhow::Result<ObjectExplorerBackendReply> {
+        match request {
+            ObjectExplorerBackendRequest::GetState => Ok(
+                ObjectExplorerBackendReply::GetStateReply(ObjectExplorerState {
+                    title: self.title.clone(),
+                    connected: true,
+                    error_message: None,
+                }),
+            ),
+
+            ObjectExplorerBackendRequest::GetRoot => {
+                let var =
+                    PositronVariable::from(String::new(), self.title.clone(), self.root.sexp).var();
+                Ok(ObjectExplorerBackendReply::GetRootReply(object_node(
+                    var,
+                    self.root_accessor.clone(),
+                    false,
+                )))
+            },
+
+            ObjectExplorerBackendRequest::GetChildren(params) => {
+                let start = params.start.max(0) as usize;
+                let end = start.saturating_add(params.limit.max(0) as usize);
+                let (children, total) = self.children(&params.path, start..end)?;
+                Ok(ObjectExplorerBackendReply::GetChildrenReply(
+                    ChildrenResult {
+                        children,
+                        total: total as i64,
+                    },
+                ))
+            },
+
+            ObjectExplorerBackendRequest::Search(params) => {
+                Ok(ObjectExplorerBackendReply::SearchReply(self.search(params)))
+            },
+
+            ObjectExplorerBackendRequest::FormatValue(params) => {
+                Ok(ObjectExplorerBackendReply::FormatValueReply(
+                    self.format_value(&params.path, params.max_length)?,
+                ))
+            },
+
+            ObjectExplorerBackendRequest::ViewTable(params) => {
+                Ok(ObjectExplorerBackendReply::ViewTableReply(
+                    self.view_table(&params.path, params.title)?,
+                ))
+            },
+
+            // Opens a full explorer on the same object, e.g. from an inline one.
+            ObjectExplorerBackendRequest::OpenObjectExplorer => {
+                let explorer = RObjectExplorer::new(
+                    self.title.clone(),
+                    self.root.clone(),
+                    self.root_accessor.clone(),
+                    None,
+                    false,
+                );
+                let id = Console::get_mut()
+                    .comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))?;
+                Ok(ObjectExplorerBackendReply::OpenObjectExplorerReply(id))
+            },
+        }
+    }
+
+    /// Resolves the node at a path.
+    fn resolve(&self, path: &[String]) -> anyhow::Result<Resolved> {
+        let mut resolved = Resolved::new(
+            EnvironmentVariableNode::Concrete {
+                object: self.root.clone(),
+            },
+            self.root_accessor.clone(),
+            HashSet::new(),
+        );
+        for key in path {
+            let accessor = resolved.accessor.as_ref().and_then(|accessor| {
+                let selector = ChildSelector::new(&resolved.node).selector(key)?;
+                Some(format!("{accessor}{selector}"))
+            });
+            resolved = resolved.child(key, accessor)?;
+        }
+        Ok(resolved)
+    }
+
+    /// Gets the nodes of the children of the object at `path` in `range`, and
+    /// the total number of children.
+    fn children(
+        &self,
+        path: &[String],
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<ObjectNode>, usize)> {
+        let parent = self.resolve(path)?;
+        let selector = ChildSelector::new(&parent.node);
+        self.child_nodes(&parent, &selector, path, range)
+    }
+
+    /// Gets the nodes of the children of `parent`, the object at `path`, in
+    /// `range`, and the total number of children.
+    fn child_nodes(
+        &self,
+        parent: &Resolved,
+        selector: &ChildSelector,
+        path: &[String],
+        range: Range<usize>,
+    ) -> anyhow::Result<(Vec<ObjectNode>, usize)> {
+        let (variables, total) =
+            PositronVariable::inspect_children(self.root.clone(), path, range)?;
+
+        let nodes = variables
+            .into_iter()
+            .map(|var| {
+                let accessor = parent
+                    .accessor
+                    .as_ref()
+                    .zip(selector.selector(&var.access_key))
+                    .map(|(accessor, selector)| format!("{accessor}{selector}"));
+                let is_cycle = var.has_children && is_cycle(parent, &var);
+                object_node(var, accessor, is_cycle)
+            })
+            .collect();
+
+        Ok((nodes, total))
+    }
+
+    /// Searches names and leaf values, depth first, returning matches and the
+    /// ancestors that lead to them, in pre-order.
+    fn search(&self, params: SearchParams) -> SearchResult {
+        let mut search = Search {
+            needle: params.query.to_lowercase(),
+            max_depth: params.max_depth.max(0) as usize,
+            max_results: params.max_results.max(0) as usize,
+            rows: vec![],
+            pending: vec![],
+            matches: 0,
+            visited: 0,
+            truncated: false,
+        };
+        match self.resolve(&[]) {
+            Ok(root) => {
+                self.search_children(&mut search, &root, &[]);
+            },
+            Err(err) => log::error!("Object explorer search failed: {err:?}"),
+        }
+        SearchResult {
+            rows: search.rows,
+            total_matches: search.matches as i64,
+            truncated: search.truncated,
+        }
+    }
+
+    /// Visits the children of `parent`, the object at `path`, and their
+    /// descendants. Returns true when the search must stop.
+    fn search_children(&self, search: &mut Search, parent: &Resolved, path: &[String]) -> bool {
+        let selector = ChildSelector::new(&parent.node);
+        let mut start = 0;
+        loop {
+            let page = start..start + SEARCH_PAGE_SIZE;
+            let (children, total) = match self.child_nodes(parent, &selector, path, page) {
+                Ok(page) => page,
+                Err(err) => {
+                    log::warn!("Object explorer search skipped {path:?}: {err:?}");
+                    return false;
+                },
+            };
+            for node in children {
+                if self.search_node(search, parent, path, node) {
+                    return true;
+                }
+            }
+            start += SEARCH_PAGE_SIZE;
+            if start >= total {
+                return false;
+            }
+        }
+    }
+
+    /// Visits a child of `parent`, the object at `path`, and its descendants.
+    /// Returns true when the search must stop.
+    fn search_node(
+        &self,
+        search: &mut Search,
+        parent: &Resolved,
+        path: &[String],
+        node: ObjectNode,
+    ) -> bool {
+        if search.visited >= SEARCH_NODE_BUDGET || search.matches >= search.max_results {
+            search.truncated = true;
+            return true;
+        }
+        search.visited += 1;
+
+        let mut child_path = path.to_vec();
+        child_path.push(node.access_key.clone());
+
+        // A truncated display value is matched on the full value instead.
+        let is_leaf = !node.has_children && !node.is_cycle;
+        let full_value = if is_leaf && node.is_truncated {
+            self.format_text(&child_path).ok()
+        } else {
+            None
+        };
+        let match_kind = search.match_kind(&node, full_value.as_deref());
+        let matched = match_kind.is_some();
+        if let Some(match_kind) = match_kind {
+            for (ancestor_path, ancestor_node, emitted) in search.pending.iter_mut() {
+                if !*emitted {
+                    search.rows.push(SearchRow {
+                        path: ancestor_path.clone(),
+                        node: ancestor_node.clone(),
+                        match_kind: SearchRowMatchKind::Ancestor,
+                    });
+                    *emitted = true;
+                }
+            }
+            search.rows.push(SearchRow {
+                path: child_path.clone(),
+                node: node.clone(),
+                match_kind,
+            });
+            search.matches += 1;
+        }
+
+        if child_path.len() < search.max_depth && node.has_children {
+            let child = match parent.child(&node.access_key, node.accessor.clone()) {
+                Ok(child) => child,
+                Err(err) => {
+                    log::warn!("Object explorer search skipped {child_path:?}: {err:?}");
+                    return false;
+                },
+            };
+            search.pending.push((child_path.clone(), node, matched));
+            let stop = self.search_children(search, &child, &child_path);
+            search.pending.pop();
+            return stop;
+        }
+        false
+    }
+
+    /// Opens a data explorer on the table at `path`, returning its comm id.
+    fn view_table(&self, path: &[String], title: String) -> anyhow::Result<String> {
+        let object = match PositronVariable::resolve_object_from_path(self.root.clone(), path)? {
+            EnvironmentVariableNode::Concrete { object }
+                if harp::table_kind(object.sexp).is_some() =>
+            {
+                object
+            },
+            _ => return Err(anyhow!("Can't view {path:?} as a table")),
+        };
+        let explorer = RDataExplorer::new(title, object, None, DataExplorerMode::Full)?;
+        Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
+    }
+
+    /// Formats the value of the object at `path` as plain text, cut at
+    /// `max_length` characters.
+    fn format_value(
+        &self,
+        path: &[String],
+        max_length: Option<i64>,
+    ) -> anyhow::Result<FormattedValue> {
+        let content = self.format_text(path)?;
+        let cut = max_length.and_then(|n| content.char_indices().nth(n.max(0) as usize));
+        Ok(match cut {
+            Some((index, _)) => FormattedValue {
+                content: content[..index].to_string(),
+                is_truncated: true,
+            },
+            None => FormattedValue {
+                content,
+                is_truncated: false,
+            },
+        })
+    }
+
+    /// Formats the full value of the object at `path` as plain text. A string
+    /// is its contents, without quotes or escapes.
+    fn format_text(&self, path: &[String]) -> anyhow::Result<String> {
+        let node = PositronVariable::resolve_object_from_path(self.root.clone(), path)?;
+        let string = match &node {
+            EnvironmentVariableNode::Concrete { object }
+                if r_typeof(object.sexp) == STRSXP && object.length() == 1 =>
+            {
+                Some((object, 0))
+            },
+            EnvironmentVariableNode::AtomicVectorElement { object, index }
+                if r_typeof(object.sexp) == STRSXP =>
+            {
+                Some((object, *index))
+            },
+            _ => None,
+        };
+        // A missing string is formatted as NA below.
+        if let Some(Ok(string)) =
+            string.map(|(object, index)| r_chr_get_owned_utf8(object.sexp, index))
+        {
+            return Ok(string);
+        }
+        if let EnvironmentVariableNode::Concrete { object } = &node {
+            let printable = match r_typeof(object.sexp) {
+                LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP | CLOSXP => false,
+                _ => !r_is_data_frame(object.sexp),
+            };
+            if printable || r_is_s4(object.sexp) {
+                return Ok(RFunction::from(".ps.object_explorer.format_value")
+                    .add(object.clone())
+                    .call()?
+                    .try_into()?);
+            }
+        }
+        PositronVariable::clip(self.root.clone(), path, &ClipboardFormatFormat::TextPlain)
+    }
+
+    /// The variable path of the explored object, for the frontend to match
+    /// Variables pane items to open explorers.
+    fn variable_path(&self) -> Option<Vec<String>> {
+        let binding = self.binding.as_ref()?;
+        let mut path = vec![binding.name.clone()];
+        path.extend(self.path_in_binding.iter().cloned());
+        Some(path)
+    }
+}
+
+impl CommHandler for RObjectExplorer {
+    fn open_metadata(&self) -> serde_json::Value {
+        serde_json::json!({
+            "title": self.title,
+            "inline_only": self.inline,
+            "variable_path": self.variable_path(),
+        })
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        handle_rpc_request(&ctx.outgoing_tx, OBJECT_EXPLORER_COMM_NAME, msg, |req| {
+            self.handle_rpc(req)
+        });
+    }
+
+    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution { .. } = event else {
+            return;
+        };
+        match self.update(ctx) {
+            Ok(true) => {},
+            Ok(false) => ctx.close_on_exit(),
+            Err(err) => log::error!("Error while checking for object explorer update: {err:?}"),
+        }
+    }
+}
+
+/// The state of a search in progress.
+struct Search {
+    needle: String,
+    max_depth: usize,
+    max_results: usize,
+    rows: Vec<SearchRow>,
+    /// The ancestors of the node being visited, below the root, and whether
+    /// each has been emitted.
+    pending: Vec<(Vec<String>, ObjectNode, bool)>,
+    matches: usize,
+    visited: usize,
+    truncated: bool,
+}
+
+impl Search {
+    /// How a node matches the search, if it does. Values match only on
+    /// leaves, whose display value is the value rather than a summary.
+    /// `full_value` replaces the display value when it is given.
+    fn match_kind(
+        &self,
+        node: &ObjectNode,
+        full_value: Option<&str>,
+    ) -> Option<SearchRowMatchKind> {
+        let name_match = node.display_name.to_lowercase().contains(&self.needle);
+        let is_leaf = !node.has_children && !node.is_cycle;
+        let value = full_value.unwrap_or(&node.display_value);
+        let value_match = is_leaf && value.to_lowercase().contains(&self.needle);
+        match (name_match, value_match) {
+            (true, true) => Some(SearchRowMatchKind::NameAndValue),
+            (true, false) => Some(SearchRowMatchKind::Name),
+            (false, true) => Some(SearchRowMatchKind::Value),
+            (false, false) => None,
+        }
+    }
+}
+
+/// Builds an R expression that selects children of an object, following the
+/// conventions R users write by hand: `[["name"]]` / `[[i]]` for list elements
+/// and bindings, `["name"]` / `[i]` for vector elements, `[, j]` for matrix
+/// columns, `$name` for R6 fields, and `@name` for S4 slots and S7
+/// properties.
+/// `$` is never used for lists because it matches partially.
+enum ChildSelector {
+    /// A list or atomic vector, whose elements are selected by name when the
+    /// name is unique and non-empty, and otherwise by position, with `[[`
+    /// (lists) or `[` (atomic vectors).
+    Named {
+        names: Vec<Option<String>>,
+        counts: HashMap<String, usize>,
+        atomic: bool,
+    },
+    /// A pairlist, whose elements are selected by position.
+    Pairlist,
+    /// A matrix, whose children are its columns.
+    Matrix,
+    /// A matrix column, whose children are its elements.
+    MatrixColumn,
+    /// An environment, whose children are its bindings.
+    Environment,
+    /// An R6 object, whose public fields are selected with `$`.
+    R6,
+    /// An S4 object, whose slots are selected with `@`.
+    S4,
+    /// An S7 object, whose properties are selected with `@`. Its `.data`
+    /// child has no selector, since `S7::S7_data()` wraps the parent's
+    /// accessor rather than extending it.
+    S7,
+    /// Children that no R code selects, such as R6 private fields.
+    None,
+}
+
+impl ChildSelector {
+    fn new(node: &EnvironmentVariableNode) -> Self {
+        let object = match node {
+            EnvironmentVariableNode::Concrete { object } => object,
+            EnvironmentVariableNode::Matrixcolumn { .. } => return Self::MatrixColumn,
+            _ => return Self::None,
+        };
+
+        if is_s7_value(object.sexp) {
+            return Self::S7;
+        }
+        if r_is_s4(object.sexp) {
+            return Self::S4;
+        }
+        match r_typeof(object.sexp) {
+            ENVSXP if r_inherits(object.sexp, "R6") => Self::R6,
+            ENVSXP => Self::Environment,
+            LISTSXP => Self::Pairlist,
+            LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP if r_is_matrix(object.sexp) => {
+                Self::Matrix
+            },
+            VECSXP | EXPRSXP | LGLSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP => {
+                let names = object.names().unwrap_or_default();
+                let mut counts = HashMap::new();
+                for name in names.iter().flatten() {
+                    *counts.entry(name.clone()).or_insert(0) += 1;
+                }
+                Self::Named {
+                    names,
+                    counts,
+                    atomic: !matches!(r_typeof(object.sexp), VECSXP | EXPRSXP),
+                }
+            },
+            _ => Self::None,
+        }
+    }
+
+    /// The R expression selecting the child with an access key, if any.
+    fn selector(&self, access_key: &str) -> Option<String> {
+        if matches!(parse_custom_access_key(access_key), Ok(Some(_))) {
+            return None;
+        }
+        let position = || parse_index(access_key).ok().map(|i| i + 1);
+        match self {
+            Self::Named {
+                names,
+                counts,
+                atomic,
+            } => {
+                let index = parse_index(access_key).ok()? as usize;
+                let key = match names.get(index).cloned().flatten() {
+                    Some(name) if !name.is_empty() && counts.get(&name) == Some(&1) => {
+                        str_quote(&name)
+                    },
+                    _ => (index + 1).to_string(),
+                };
+                if *atomic {
+                    Some(format!("[{key}]"))
+                } else {
+                    Some(format!("[[{key}]]"))
+                }
+            },
+            Self::Pairlist => Some(format!("[[{}]]", position()?)),
+            Self::Matrix => Some(format!("[, {}]", position()?)),
+            Self::MatrixColumn => Some(format!("[{}]", position()?)),
+            Self::Environment => Some(format!("[[{}]]", str_quote(access_key))),
+            Self::R6 if access_key.starts_with('<') => None,
+            Self::R6 => Some(format!("${}", sym_quote_invalid(access_key))),
+            Self::S4 => Some(format!("@{}", sym_quote_invalid(access_key))),
+            Self::S7 => {
+                let name = access_key.strip_prefix(S7_PROPERTY_ACCESS_KEY_PREFIX)?;
+                Some(format!("@{}", sym_quote_invalid(name)))
+            },
+            Self::None => None,
+        }
+    }
+}
+
+/// A resolved node, with its accessor and the environments from the root to
+/// it (the only objects that can contain themselves).
+struct Resolved {
+    node: EnvironmentVariableNode,
+    accessor: Option<String>,
+    environments: HashSet<SEXP>,
+}
+
+impl Resolved {
+    fn new(
+        node: EnvironmentVariableNode,
+        accessor: Option<String>,
+        mut environments: HashSet<SEXP>,
+    ) -> Self {
+        if let EnvironmentVariableNode::Concrete { object } = &node {
+            if r_typeof(object.sexp) == ENVSXP {
+                environments.insert(object.sexp);
+            }
+        }
+        Self {
+            node,
+            accessor,
+            environments,
+        }
+    }
+
+    /// Resolves the child with an access key, given its accessor.
+    fn child(&self, access_key: &String, accessor: Option<String>) -> harp::Result<Self> {
+        let node = PositronVariable::get_child_node_at(self.node.clone(), access_key)?;
+        Ok(Self::new(node, accessor, self.environments.clone()))
+    }
+}
+
+/// Whether a child of `parent` is an environment that is also one of its
+/// ancestors.
+fn is_cycle(parent: &Resolved, child: &Variable) -> bool {
+    match PositronVariable::get_child_node_at(parent.node.clone(), &child.access_key) {
+        Ok(EnvironmentVariableNode::Concrete { object }) => {
+            r_typeof(object.sexp) == ENVSXP && parent.environments.contains(&object.sexp)
+        },
+        _ => false,
+    }
+}
+
+/// What an explored environment holds, to detect changes made in place.
+struct EnvironmentFingerprint {
+    /// The bindings of the environment and of the environments reachable
+    /// through them, such as an R6 object's private fields.
+    bindings: Vec<Binding>,
+
+    /// The attributes of the same environments, as `(tag, value)` pairs.
+    /// Setting a property of an S7 object that extends an environment sets
+    /// an attribute in place, without changing any binding.
+    attributes: Vec<(RObject, RObject)>,
+}
+
+impl EnvironmentFingerprint {
+    /// Empty for objects that aren't environments. Global, package, and
+    /// namespace environments aren't entered. Stops after
+    /// `FINGERPRINT_BINDING_BUDGET` bindings.
+    fn new(value: SEXP) -> Self {
+        let mut fingerprint = Self {
+            bindings: vec![],
+            attributes: vec![],
+        };
+        let mut visited = HashSet::new();
+        let mut pending = vec![value];
+        while let Some(env) = pending.pop() {
+            if r_typeof(env) != ENVSXP ||
+                env == unsafe { R_GlobalEnv } ||
+                r_env_is_pkg_env(env) ||
+                r_env_is_ns_env(env) ||
+                !visited.insert(env)
+            {
+                continue;
+            }
+            attrib_for_each(env, |tag, value| {
+                fingerprint
+                    .attributes
+                    .push((RObject::from(tag), RObject::from(value)));
+            });
+            for binding in Environment::view(env).iter().filter_map(Result::ok) {
+                if fingerprint.bindings.len() == FINGERPRINT_BINDING_BUDGET {
+                    return fingerprint;
+                }
+                if let BindingValue::Standard { object } = &binding.value {
+                    pending.push(object.sexp);
+                }
+                fingerprint.bindings.push(binding);
+            }
+        }
+        fingerprint
+    }
+
+    /// Compares bindings and attributes by their pointers.
+    fn is_same(&self, other: &Self) -> bool {
+        let attribute_id = |(tag, value): &(RObject, RObject)| (tag.sexp, value.sexp);
+        self.bindings
+            .iter()
+            .map(Binding::id)
+            .eq(other.bindings.iter().map(Binding::id)) &&
+            self.attributes
+                .iter()
+                .map(attribute_id)
+                .eq(other.attributes.iter().map(attribute_id))
+    }
+}
+
+/// Builds an object explorer node from a Variables pane variable.
+fn object_node(var: Variable, accessor: Option<String>, is_cycle: bool) -> ObjectNode {
+    // Both enums serialize to the same strings.
+    let kind = serde_json::to_value(&var.kind)
+        .and_then(serde_json::from_value)
+        .unwrap_or(ObjectNodeKind::Other);
+    ObjectNode {
+        access_key: var.access_key,
+        display_name: var.display_name,
+        display_type: var.display_type,
+        display_value: var.display_value,
+        kind,
+        length: var.length,
+        has_children: var.has_children && !is_cycle,
+        is_truncated: var.is_truncated,
+        is_cycle,
+        accessor,
+    }
+}
+
+/// Opens an R object in the Object Explorer. Called from `View()`.
+///
+/// - `x`: The object.
+/// - `title`: The title of the explorer.
+/// - `var`: The name of the variable holding the object in `env`, or `""`.
+/// - `env`: The environment holding the variable, or `NULL`.
+/// - `accessor`: R expression that evaluates to the object, or `""`.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_view_object(
+    x: SEXP,
+    title: SEXP,
+    var: SEXP,
+    env: SEXP,
+    accessor: SEXP,
+) -> anyhow::Result<SEXP> {
+    let title = unwrap!(String::try_from(RObject::view(title)), Err(_) => String::new());
+    let var = unwrap!(String::try_from(RObject::view(var)), Err(_) => String::new());
+    let accessor = unwrap!(String::try_from(RObject::view(accessor)), Err(_) => String::new());
+
+    let binding = if env != R_NilValue && !var.is_empty() {
+        Some((
+            DataObjectEnvInfo {
+                name: var,
+                env: RObject::new(env),
+            },
+            vec![],
+        ))
+    } else {
+        None
+    };
+    let accessor = if accessor.is_empty() {
+        title.clone()
+    } else {
+        accessor
+    };
+
+    let explorer = RObjectExplorer::new(title, RObject::new(x), Some(accessor), binding, false);
+    Console::get_mut().comm_open_backend(OBJECT_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+    Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_explorable(x: SEXP) -> anyhow::Result<SEXP> {
+    Ok(RObject::from(is_explorable(x)).sexp)
+}
+
+/// The title of an inline object explorer for a printed value, if it is nested
+/// data worth exploring inline in a notebook: a non-empty plain list, or a
+/// plain environment other than the global one. Classed objects are left to
+/// their print methods.
+pub(crate) fn inline_explorer_title(value: SEXP) -> Option<&'static str> {
+    if r_is_object(value) || r_is_matrix(value) {
+        return None;
+    }
+    match r_typeof(value) {
+        VECSXP if unsafe { Rf_xlength(value) > 0 } => Some("list"),
+        ENVSXP if value != unsafe { R_GlobalEnv } => Some("environment"),
+        _ => None,
+    }
+}
+
+/// Builds the R expression that selects the object at an access key path below a
+/// named object, if there is such code.
+pub(crate) fn path_accessor(name: &str, object: RObject, path: &[String]) -> Option<String> {
+    let mut node = EnvironmentVariableNode::Concrete { object };
+    let mut accessor = name.to_string();
+    for key in path {
+        accessor += &ChildSelector::new(&node).selector(key)?;
+        node = PositronVariable::get_child_node_at(node, key).ok()?;
+    }
+    Some(accessor)
+}
+
+#[cfg(test)]
+mod tests {
+    use amalthea::comm::event::CommEvent;
+    use amalthea::socket::comm::CommOutgoingTx;
+    use amalthea::socket::iopub::IOPubMessage;
+    use crossbeam::channel::bounded;
+
+    use super::*;
+    use crate::fixtures::package_is_installed;
+    use crate::r_task;
+
+    fn explorer(code: &str) -> RObjectExplorer {
+        let value = harp::parse_eval_global(code).unwrap();
+        RObjectExplorer::new(
+            String::from("x"),
+            value,
+            Some(String::from("x")),
+            None,
+            false,
+        )
+    }
+
+    fn to_path(path: &[&str]) -> Vec<String> {
+        path.iter().map(|key| key.to_string()).collect()
+    }
+
+    fn children(explorer: &RObjectExplorer, path: &[&str]) -> Vec<ObjectNode> {
+        explorer.children(&to_path(path), 0..1000).unwrap().0
+    }
+
+    fn names(nodes: &[ObjectNode]) -> Vec<String> {
+        nodes.iter().map(|node| node.display_name.clone()).collect()
+    }
+
+    fn accessors(nodes: &[ObjectNode]) -> Vec<Option<String>> {
+        nodes.iter().map(|node| node.accessor.clone()).collect()
+    }
+
+    fn some(values: &[&str]) -> Vec<Option<String>> {
+        values.iter().map(|value| Some(value.to_string())).collect()
+    }
+
+    #[test]
+    fn test_object_explorer_list_accessors() {
+        r_task(|| {
+            let explorer =
+                explorer(r#"list(a = 1, b = list(c = 2), 3, d = 4, d = 5, `odd "name"` = 6)"#);
+
+            let nodes = children(&explorer, &[]);
+            assert_eq!(
+                accessors(&nodes),
+                some(&[
+                    r#"x[["a"]]"#,
+                    r#"x[["b"]]"#,
+                    "x[[3]]",
+                    "x[[4]]",
+                    "x[[5]]",
+                    r#"x[["odd \"name\""]]"#,
+                ])
+            );
+            assert_eq!(
+                accessors(&children(&explorer, &["1"])),
+                some(&[r#"x[["b"]][["c"]]"#])
+            );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_vector_and_matrix_accessors() {
+        r_task(|| {
+            let explorer = explorer("list(v = c(a = 1, b = 2), u = 1:2, m = matrix(1:4, 2))");
+
+            assert_eq!(
+                accessors(&children(&explorer, &["0"])),
+                some(&[r#"x[["v"]]["a"]"#, r#"x[["v"]]["b"]"#])
+            );
+            assert_eq!(
+                accessors(&children(&explorer, &["1"])),
+                some(&[r#"x[["u"]][1]"#, r#"x[["u"]][2]"#])
+            );
+            assert_eq!(
+                accessors(&children(&explorer, &["2"])),
+                some(&[r#"x[["m"]][, 1]"#, r#"x[["m"]][, 2]"#])
+            );
+            assert_eq!(
+                accessors(&children(&explorer, &["2", "1"])),
+                some(&[r#"x[["m"]][, 2][1]"#, r#"x[["m"]][, 2][2]"#])
+            );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_environment_and_pairlist() {
+        r_task(|| {
+            let explorer =
+                explorer("local({ e <- new.env(); e$b <- 1; e$a <- pairlist(p = 1, 2); e })");
+
+            let nodes = children(&explorer, &[]);
+            assert_eq!(names(&nodes), vec!["a", "b"]);
+            assert_eq!(accessors(&nodes), some(&[r#"x[["a"]]"#, r#"x[["b"]]"#]));
+            assert_eq!(
+                accessors(&children(&explorer, &["a"])),
+                some(&[r#"x[["a"]][[1]]"#, r#"x[["a"]][[2]]"#])
+            );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_environment_cycle() {
+        r_task(|| {
+            let explorer = explorer("local({ e <- new.env(); e$self <- e; e$n <- 1; e })");
+
+            let nodes = children(&explorer, &[]);
+            let cycle = nodes
+                .iter()
+                .find(|node| node.display_name == "self")
+                .unwrap();
+            assert!(cycle.is_cycle);
+            assert!(!cycle.has_children);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_s4_slots() {
+        r_task(|| {
+            harp::parse_eval_global(
+                r#"setClass("OEPoint", representation(x = "numeric", `bad name` = "numeric"))"#,
+            )
+            .unwrap();
+            let explorer = explorer(r#"new("OEPoint", x = 1, `bad name` = 2)"#);
+
+            assert_eq!(
+                accessors(&children(&explorer, &[])),
+                some(&["x@x", "x@`bad name`"])
+            );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_s7_properties() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+            harp::parse_eval_global(
+                r#"
+                OETagged <- S7::new_class("OETagged", parent = S7::class_list, properties = list(
+                    label = S7::class_character,
+                    `bad name` = S7::class_numeric
+                ))
+                OEEnv <- S7::new_S3_class("OEEnv", constructor = function(.data = new.env()) {
+                    structure(.data, class = "OEEnv")
+                })
+                OEStore <- S7::new_class("OEStore", parent = OEEnv, properties = list(
+                    tag = S7::class_character
+                ))
+                OEMeasure <- S7::new_class("OEMeasure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                OEDog <- S7::new_class("OEDog", properties = list(name = S7::class_character))
+            "#,
+            )
+            .unwrap();
+
+            // `.data` has no accessor, and neither do its children
+            let tagged = explorer(r#"OETagged(list(a = 1, b = 2), label = "hi", `bad name` = 1)"#);
+            let nodes = children(&tagged, &[]);
+            assert_eq!(names(&nodes), vec![".data", "label", "bad name"]);
+            assert_eq!(accessors(&nodes), vec![
+                None,
+                Some(String::from("x@label")),
+                Some(String::from("x@`bad name`"))
+            ]);
+            assert_eq!(
+                accessors(&children(&tagged, &[&nodes[0].access_key])),
+                vec![None, None]
+            );
+
+            let store = explorer(r#"local({ x <- OEStore(tag = "abc"); x$count <- 1; x })"#);
+            let nodes = children(&store, &[]);
+            assert_eq!(names(&nodes), vec![".data", "tag"]);
+            assert_eq!(accessors(&nodes), vec![None, Some(String::from("x@tag"))]);
+
+            let measure = explorer(r#"OEMeasure(c(1.5, 2.5), units = "cm")"#);
+            let nodes = children(&measure, &[]);
+            assert_eq!(names(&nodes), vec![".data", "units"]);
+            assert_eq!(accessors(&nodes), vec![None, Some(String::from("x@units"))]);
+
+            let dog = explorer(r#"OEDog(name = "Rex")"#);
+            let nodes = children(&dog, &[]);
+            assert_eq!(names(&nodes), vec!["name"]);
+            assert_eq!(accessors(&nodes), some(&["x@name"]));
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_s7_is_explorable() {
+        r_task(|| {
+            if !package_is_installed("S7") {
+                return;
+            }
+            harp::parse_eval_global(
+                r#"
+                OEMeasure <- S7::new_class("OEMeasure", parent = S7::class_double, properties = list(
+                    units = S7::class_character
+                ))
+                OEDog <- S7::new_class("OEDog", properties = list(name = S7::class_character))
+                OETagged <- S7::new_class("OETagged", parent = S7::class_list)
+                OEFrame <- S7::new_class("OEFrame", parent = S7::class_data.frame)
+                OEFun <- S7::new_class("OEFun", parent = S7::class_function)
+            "#,
+            )
+            .unwrap();
+
+            let explorable =
+                |code: &str| is_explorable(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(explorable(r#"OEMeasure(1, units = "cm")"#));
+            assert!(explorable(r#"OEDog(name = "Rex")"#));
+            assert!(explorable("OETagged(list(1))"));
+            assert!(!explorable("OEFrame(data.frame(a = 1))"));
+            assert!(!explorable("OEFun(function(x) x)"));
+            assert!(!explorable("OEDog"));
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_r6() {
+        r_task(|| {
+            if !package_is_installed("R6") {
+                return;
+            }
+            let explorer = explorer(
+                "R6::R6Class('C', public = list(field = 1, method = function() 1), private = list(secret = 2))$new()",
+            );
+
+            let nodes = children(&explorer, &[]);
+            assert_eq!(names(&nodes), vec!["field", "private", "methods"]);
+            assert_eq!(accessors(&nodes), vec![
+                Some(String::from("x$field")),
+                None,
+                None
+            ]);
+            assert_eq!(accessors(&children(&explorer, &["<private>"])), vec![None]);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_paging() {
+        r_task(|| {
+            let explorer = explorer("as.list(1:2500)");
+
+            let (nodes, total) = explorer.children(&[], 1000..2000).unwrap();
+            assert_eq!(total, 2500);
+            assert_eq!(nodes.len(), 1000);
+            assert_eq!(nodes[0].display_name, "[[1001]]");
+            assert_eq!(nodes[999].access_key, "1999");
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_format_value() {
+        r_task(|| {
+            let explorer =
+                explorer(r#"list(v = 1:500, l = list(a = 1), s = "one\ntwo", c = c("x", NA))"#);
+            let format = |key: &str, max_length: Option<i64>| {
+                explorer.format_value(&to_path(&[key]), max_length).unwrap()
+            };
+
+            assert!(format("0", None).content.ends_with("500"));
+            assert!(format("1", None).content.starts_with("$a"));
+            assert_eq!(format("2", None).content, "one\ntwo");
+            assert_eq!(
+                (
+                    format("2", Some(3)).content,
+                    format("2", Some(3)).is_truncated
+                ),
+                (String::from("one"), true)
+            );
+            assert!(!format("2", Some(7)).is_truncated);
+
+            let element = |index: &str| {
+                explorer
+                    .format_value(&to_path(&["3", index]), None)
+                    .unwrap()
+                    .content
+            };
+            assert_eq!(
+                (element("0"), element("1")),
+                (String::from("x"), String::from("NA"))
+            );
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_search() {
+        r_task(|| {
+            let explorer = explorer(
+                r#"list(alpha = list(beta = list(1, "needle", list(gamma = "needle"))), delta = "haystack")"#,
+            );
+            let search = |max_depth: i64, max_results: i64| {
+                explorer.search(SearchParams {
+                    query: String::from("NEEDLE"),
+                    max_depth,
+                    max_results,
+                })
+            };
+
+            let result = search(10, 1000);
+            let rows: Vec<String> = result
+                .rows
+                .iter()
+                .map(|row| format!("{}:{:?}", row.path.join("/"), row.match_kind))
+                .collect();
+            assert_eq!(rows, vec![
+                "0:Ancestor",
+                "0/0:Ancestor",
+                "0/0/1:Value",
+                "0/0/2:Ancestor",
+                "0/0/2/0:Value",
+            ]);
+            assert_eq!(result.total_matches, 2);
+            assert!(!result.truncated);
+
+            assert_eq!(search(3, 1000).rows.len(), 3);
+            assert!(search(10, 1).truncated);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_search_past_truncated_string() {
+        r_task(|| {
+            let explorer = explorer(r#"list(text = paste0(strrep("x", 2000), "needle"))"#);
+            let result = explorer.search(SearchParams {
+                query: String::from("needle"),
+                max_depth: 10,
+                max_results: 1000,
+            });
+            assert_eq!(result.total_matches, 1);
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_closes_when_accessor_moves() {
+        r_task(|| {
+            harp::parse_eval_global("oe_x <- list(a = 1, b = list(c = 2))").unwrap();
+            let env = RObject::new(unsafe { R_GlobalEnv });
+            let path = to_path(&["1"]);
+            let value = harp::parse_eval_global("oe_x").unwrap();
+            let mut explorer = RObjectExplorer::new(
+                String::from(r#"oe_x[["b"]]"#),
+                harp::parse_eval_global(r#"oe_x[["b"]]"#).unwrap(),
+                path_accessor("oe_x", value, &path),
+                Some((
+                    DataObjectEnvInfo {
+                        name: String::from("oe_x"),
+                        env,
+                    },
+                    path,
+                )),
+                false,
+            );
+
+            let (iopub_tx, _iopub_rx) = bounded::<IOPubMessage>(10);
+            let (comm_event_tx, _) = bounded::<CommEvent>(10);
+            let ctx = CommHandlerContext::new(
+                CommOutgoingTx::new(String::from("oe"), iopub_tx),
+                comm_event_tx,
+            );
+
+            harp::parse_eval_global("oe_x <- list(z = 0, b = list(c = 3))").unwrap();
+            assert!(explorer.update(&ctx).unwrap());
+
+            harp::parse_eval_global("oe_x <- list(z = 0, a = list(1), b = list(c = 3))").unwrap();
+            assert!(!explorer.update(&ctx).unwrap());
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_is_explorable() {
+        r_task(|| {
+            let explorable =
+                |code: &str| is_explorable(harp::parse_eval_global(code).unwrap().sexp);
+            assert!(explorable("list(a = 1)"));
+            assert!(explorable("new.env()"));
+            assert!(explorable("pairlist(a = 1)"));
+            assert!(explorable("expression(1 + 1)"));
+            assert!(!explorable("mtcars"));
+            assert!(explorable("1:3"));
+            assert!(explorable("c(a = 'a', b = 'b')"));
+            assert!(!explorable("matrix(1:4, 2)"));
+            assert!(!explorable("NULL"));
+            assert!(!explorable("matrix(list(1, 2, 3, 4), 2)"));
+        })
+    }
+
+    #[test]
+    fn test_object_explorer_inline_explorer_title() {
+        r_task(|| {
+            let title =
+                |code: &str| inline_explorer_title(harp::parse_eval_global(code).unwrap().sexp);
+            assert_eq!(title("list(a = 1)"), Some("list"));
+            assert_eq!(title("new.env()"), Some("environment"));
+            assert_eq!(title("list()"), None);
+            assert_eq!(title("globalenv()"), None);
+            assert_eq!(title("R.version"), None);
+            assert_eq!(title("t.test(1:10)"), None);
+        })
+    }
+}

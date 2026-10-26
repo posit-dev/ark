@@ -9,7 +9,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use aether_path::AbsPathBuf;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
@@ -24,13 +26,12 @@ use super::source_handler::TestSourceHandler;
 use super::utils::did_change;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
-use super::utils::source_scheduler_for_test;
 use super::utils::test_client;
-use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
+use crate::lsp::harness::LspHarness;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -85,6 +86,37 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     assert_eq!(packages[0].files(db).len(), 1);
 }
 
+/// Starting a session runs the production `initialize`, so it must keep the
+/// workspace the harness prepared, index it, and hand back an idle loop. A
+/// benchmark that measured an edit against an unsettled session would race
+/// startup diagnostics.
+#[tokio::test]
+async fn test_start_indexes_the_prepared_workspace_and_settles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .write(&pkg);
+    write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
+
+    let folder = AbsPathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+    let mut harness = LspHarness::new(OakDatabase::new());
+    harness.set_workspace_folders(vec![folder.clone()]);
+
+    let session = harness.start(&[]).await;
+
+    assert!(session.is_settled());
+    assert_eq!(session.world().workspace.folders, vec![folder]);
+
+    let db = session.world().db();
+    let roots = db.workspace_roots().roots(db).clone();
+    assert_eq!(roots.len(), 1);
+    let packages = roots[0].packages(db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(db), "pkg");
+}
+
 /// Db-holding work (diagnostics, index warmup) and unbounded I/O (package source
 /// fetches) run on separate executors, so saturating the source pool can't stall a
 /// main-loop write: the analysis pool stays free to drain the queued diagnostics
@@ -95,8 +127,6 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
 /// aborts the test with a diagnosis instead of hanging to the harness timeout.
 #[tokio::test]
 async fn test_main_loop_write_survives_saturated_source_pool() {
-    let _aux = init_aux_for_test();
-
     // One shared "entered" sender: with five gates and a 2-thread source pool, only two
     // can ever be inside `handle()` at once, but which two is unpredictable.
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -122,14 +152,9 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
-    let mut state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
-    );
+    let mut session = LspHarness::with_default_source_fetching(db)
+        .start_with_sources(&[], handler)
+        .await;
 
     // A workspace package using all five library packages via `::`, so the scan hands
     // the scheduler five dependencies to fetch.
@@ -146,10 +171,10 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
     write_sources(&myproj.join("R"), &[("use.R", &uses)]);
     let script = workspace.path().join("script.R");
 
-    state
-        .handle_event_once(did_change_workspace_folders(workspace.path()))
+    session
+        .handle_once(did_change_workspace_folders(workspace.path()))
         .await;
-    state.pump_scans_to_quiescence().await;
+    session.pump_scans_to_quiescence().await;
 
     // The source pool workers are now parked in a fetch that salsa cancellation can't
     // reach. Index warmup went to the analysis pool, so it isn't queued behind them.
@@ -159,13 +184,53 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
 
     // Goes through, no holds outstanding. Ends the tick by queueing a diagnostics
     // pass, which needs an analysis thread to run on.
-    state.handle_event_once(did_open(&script, "x <- 1\n")).await;
+    session.handle_once(did_open(&script, "x <- 1\n")).await;
 
     // The write that has to drain that pinned hold.
-    state
-        .handle_event_once(did_change(&script, "x <- 2\n", 1))
+    session
+        .handle_once(did_change(&script, "x <- 2\n", 1))
         .await;
 
     // Let the still-gated workers finish so the test process can exit cleanly.
     drop(releases);
+}
+
+/// `settle()` must report a worker panic while waiting because the missing
+/// `SourceCompleted` event leaves the source scheduler permanently pending. The
+/// timeout ensures that failing to observe the report does not hang the test.
+#[tokio::test]
+#[should_panic(expected = "background failure")]
+async fn test_settle_reports_a_panicking_source_worker() {
+    let mut behavior = HashMap::new();
+    behavior.insert(String::from("donor1"), TestBehavior::Panic);
+    let handler = Arc::new(TestSourceHandler::new(behavior));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor1")
+        .version("0.0.0")
+        .built("dummy")
+        .write(&lib.path().join("donor1"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut session = LspHarness::with_default_source_fetching(db)
+        .start_with_sources(&[], handler)
+        .await;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor1::foo()\n")]);
+
+    session
+        .handle_once(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(30), session.settle())
+        .await
+        .unwrap();
 }

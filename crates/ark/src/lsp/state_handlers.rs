@@ -13,8 +13,6 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use oak_db::File;
 use oak_scan::DbScan;
-use oak_scan::FileEvent;
-use oak_scan::FileEventKind;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionOptions;
@@ -31,7 +29,6 @@ use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
 use tower_lsp_server::ls_types::ExecuteCommandOptions;
-use tower_lsp_server::ls_types::FileChangeType;
 use tower_lsp_server::ls_types::FileSystemWatcher;
 use tower_lsp_server::ls_types::FoldingRangeProviderCapability;
 use tower_lsp_server::ls_types::FormattingOptions;
@@ -59,7 +56,6 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp_server::ls_types::WorkspaceServerCapabilities;
-use tracing::Instrument;
 
 use crate::console::ConsoleNotification;
 use crate::lsp;
@@ -229,20 +225,19 @@ pub(super) fn effective_workspace_paths(params: &InitializeParams) -> Vec<AbsPat
         .collect()
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) async fn handle_initialized(
     client: &tower_lsp_server::Client,
     lsp_state: &mut LspState,
     state: &mut WorldState,
     events_tx: &TokioUnboundedSender<Event>,
 ) {
-    let span = tracing::info_span!("handle_initialized").entered();
-
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
-    // Watch R files and DESCRIPTION. We get notified on any disk change;
-    // the handler skips editor-owned URLs since those are tracked via
-    // `textDocument/did*` instead.
+    // Editor-owned R files are tracked via `textDocument/did*`, so the handler
+    // skips their disk events. `DESCRIPTION` and environment sentinels still
+    // trigger rescans even when open in the editor.
     let watchers = vec![
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
@@ -250,6 +245,10 @@ pub(crate) async fn handle_initialized(
         },
         FileSystemWatcher {
             glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/{.Rprofile,.Renviron}".to_string()),
             kind: None,
         },
     ];
@@ -295,11 +294,7 @@ pub(crate) async fn handle_initialized(
         }
     }
 
-    client
-        .register_capability(regs)
-        .instrument(span.exit())
-        .await
-        .log_err();
+    client.register_capability(regs).await.log_err();
 
     update_config(
         open_file_wire_uris(state),
@@ -585,33 +580,21 @@ pub(crate) fn did_change_watched_files(
     // for those URLs. Their content comes from `did_open` / `did_change`.
     let editor_owned: HashSet<FilePath> = state.open_files.keys().cloned().collect();
 
-    let events: Vec<FileEvent> = params
+    // The change type is dropped: the scheduler reconciles each path against
+    // the disk when it applies.
+    let paths: Vec<FilePath> = params
         .changes
         .iter()
-        .filter_map(|change| {
-            Some(FileEvent {
-                path: change.uri.to_document_path().log_err()?,
-                kind: file_event_kind(change.typ)?,
-            })
-        })
+        .filter_map(|change| change.uri.to_document_path().log_err())
         .collect();
 
     let requests =
         lsp_state
             .oak_scheduler
-            .apply_watcher_events(state.db_mut(), events, &editor_owned);
+            .apply_watcher_events(state.db_mut(), paths, &editor_owned);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
 
     Ok(())
-}
-
-fn file_event_kind(kind: FileChangeType) -> Option<FileEventKind> {
-    match kind {
-        FileChangeType::CREATED => Some(FileEventKind::Created),
-        FileChangeType::CHANGED => Some(FileEventKind::Changed),
-        FileChangeType::DELETED => Some(FileEventKind::Deleted),
-        _ => None,
-    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -678,6 +661,7 @@ fn to_std_paths(paths: &[AbsPathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) async fn did_change_configuration(
     _params: DidChangeConfigurationParams,
     client: &tower_lsp_server::Client,
@@ -693,9 +677,7 @@ pub(crate) async fn did_change_configuration(
 
     let was_enabled = state.config.oak.source_fetching_enabled;
 
-    let result = update_config(open_file_wire_uris(state), client, capabilities, state)
-        .instrument(tracing::info_span!("did_change_configuration"))
-        .await;
+    let result = update_config(open_file_wire_uris(state), client, capabilities, state).await;
 
     // Report only changes after startup. `handle_initialized()` reports the initial state.
     if state.config.oak.source_fetching_enabled != was_enabled {

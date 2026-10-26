@@ -12,13 +12,26 @@ pub fn env_flag(name: &str) -> bool {
 /// Returns `None` for unset or unrecognized values so callers preserve a
 /// lower-precedence setting.
 pub fn env_flag_opt(name: &str) -> Option<bool> {
-    match std::env::var(name) {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" => Some(true),
-            "0" | "false" => Some(false),
-            _ => None,
-        },
-        Err(_) => None,
+    let value = std::env::var(name).ok()?;
+    parse_flag(&value)
+}
+
+/// Accepts `1`/`true` and `0`/`false`, in any case.
+fn parse_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Some(true),
+        "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Accepts a positive integer. Callers read the variable themselves because
+/// an invalid count calls for different policies: a production override
+/// warns and falls back, while a test knob fails.
+pub fn parse_positive_count(value: &str) -> Option<usize> {
+    match value.trim().parse::<usize>() {
+        Ok(count) if count > 0 => Some(count),
+        _ => None,
     }
 }
 
@@ -36,6 +49,16 @@ mod tests {
     use super::env_flag;
     use super::env_flag_opt;
     use super::is_ci;
+    use super::parse_positive_count;
+
+    #[test]
+    fn test_parse_positive_count_rejects_zero_and_non_integers() {
+        assert_eq!(parse_positive_count(" 2 "), Some(2));
+        assert_eq!(parse_positive_count("0"), None);
+        assert_eq!(parse_positive_count("-1"), None);
+        assert_eq!(parse_positive_count("1.5"), None);
+        assert_eq!(parse_positive_count(""), None);
+    }
 
     /// Preserve the distinction between an absent override and an explicit
     /// false override.

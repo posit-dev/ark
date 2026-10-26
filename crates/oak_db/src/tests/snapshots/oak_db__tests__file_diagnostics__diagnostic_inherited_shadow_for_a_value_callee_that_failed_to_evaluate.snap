@@ -1,0 +1,10 @@
+---
+source: crates/oak_db/src/tests/file_diagnostics.rs
+expression: "render(\"w/helpers.R\", helpers_source, helpers.diagnostics(&db))"
+---
+info[inherited-shadow]: This `c()` call resolves differently depending on the sourcing context.
+                        It resolves through package `base` when the file is sourced on its own, and to a binding in `main.R` when sourced by `main.R`.
+ --> w/helpers.R:1:8
+  |
+1 | source(c(path))
+  |        ^^^^^^^

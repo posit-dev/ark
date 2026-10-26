@@ -182,6 +182,8 @@ pub enum IopubExpectation {
     ExecuteInput,
     /// An `ExecuteResult` message.
     ExecuteResult,
+    /// Any `CommMsg` message.
+    CommMsg,
 }
 
 fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
@@ -229,6 +231,7 @@ fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
         IopubExpectation::DebugEvent => matches!(msg, Message::DebugEvent(_)),
         IopubExpectation::ExecuteInput => matches!(msg, Message::ExecuteInput(_)),
         IopubExpectation::ExecuteResult => matches!(msg, Message::ExecuteResult(_)),
+        IopubExpectation::CommMsg => matches!(msg, Message::CommMsg(_)),
     }
 }
 
@@ -1732,7 +1735,8 @@ impl DummyArkFrontend {
         let total_expected: usize = sequences.iter().map(|s| s.len()).sum();
 
         while collected.len() < total_expected {
-            let msg = match self.recv_iopub_with_timeout(RECV_TIMEOUT) {
+            let pending = self.pending_iopub_messages.borrow_mut().pop_front();
+            let msg = match pending.or_else(|| self.recv_iopub_with_timeout(RECV_TIMEOUT)) {
                 Some(msg) => msg,
                 None => {
                     let mut status = String::new();

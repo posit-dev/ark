@@ -1,4 +1,7 @@
+use std::fs;
+
 use oak_db::DbInputs;
+use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
 use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
@@ -21,6 +24,7 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
+use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::LspState;
@@ -112,6 +116,104 @@ fn test_notebook_did_open_skips_cells_without_text_documents() {
     open(&mut state, &[0, 1, 2], &[(0, "x <- 1\n"), (2, "x\n")]);
 
     assert_eq!(definition_uri(&state, 2, 0, 0), Some(cell_uri(0)));
+}
+
+/// A state with the `penguins` package installed and only `library()` on the
+/// search path, so the package's exports count as defined only after a
+/// `library(penguins)` call.
+fn penguins_state(library: &tempfile::TempDir) -> WorldState {
+    let mut db = oak_db::OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
+
+    let mut state = WorldState::with_db(db);
+    state.console_scopes = vec![vec!["library".to_string()]];
+    state
+}
+
+fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
+    let uri = cell_uri(handle);
+    let file = state
+        .open_files
+        .values()
+        .find(|open_file| *open_file.wire_uri() == uri)
+        .expect("cell is open")
+        .file();
+
+    generate_diagnostics(file, state.snapshot(), false, &uri)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+#[test]
+fn test_notebook_diagnostics_see_library_in_earlier_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(penguins)\n"),
+        (1, "path_to_file()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_diagnostics_ignore_library_in_later_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "path_to_file()\n"),
+        (1, "library(penguins)\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 0), vec![
+        "No symbol named 'path_to_file' in scope.".to_string()
+    ]);
+}
+
+fn write_package(library: &tempfile::TempDir, name: &str, description: &str, namespace: &str) {
+    let package = library.path().join(name);
+    fs::create_dir(&package).unwrap();
+    fs::write(package.join("DESCRIPTION"), description).unwrap();
+    fs::write(package.join("NAMESPACE"), namespace).unwrap();
+}
+
+#[test]
+fn test_notebook_diagnostics_see_depends_of_library_in_earlier_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    write_package(
+        &library,
+        "colony",
+        "Package: colony\nVersion: 1.0\nDepends: penguins\n",
+        "",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(colony)\n"),
+        (1, "path_to_file()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_diagnostics_see_tidyverse_members_in_earlier_cell() {
+    // `library(tidyverse)` attaches its members by name, so `tidyverse`
+    // itself does not need to be installed.
+    let library = tempfile::tempdir().unwrap();
+    write_package(
+        &library,
+        "dplyr",
+        "Package: dplyr\nVersion: 1.0\n",
+        "export(mutate)\n",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(tidyverse)\n"),
+        (1, "mutate()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
 }
 
 #[test]

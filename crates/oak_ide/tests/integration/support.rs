@@ -40,6 +40,42 @@ pub fn upsert(db: &mut OakDatabase, name: &str, contents: &str) -> File {
     db.upsert_editor(FilePath::from_url(&file_url(name)), contents.to_string())
 }
 
+pub fn cell_url(notebook: &str, handle: usize) -> Url {
+    Url::parse(&format!(
+        "vscode-notebook-cell:/project/R/{notebook}#W{handle}s"
+    ))
+    .unwrap()
+}
+
+pub fn open_notebook(db: &mut OakDatabase, notebook: &str, sources: &[&str]) -> Vec<File> {
+    let handles: Vec<usize> = (0..sources.len()).collect();
+    open_notebook_with_handles(db, notebook, &handles, sources)
+}
+
+pub fn open_notebook_with_handles(
+    db: &mut OakDatabase,
+    notebook: &str,
+    handles: &[usize],
+    sources: &[&str],
+) -> Vec<File> {
+    let cells: Vec<File> = handles
+        .iter()
+        .zip(sources)
+        .map(|(&handle, contents)| {
+            db.upsert_editor(
+                FilePath::from_url(&cell_url(notebook, handle)),
+                contents.to_string(),
+            )
+        })
+        .collect();
+    db.set_notebook_cells(FilePath::from_url(&file_url(notebook)), cells.clone());
+    cells
+}
+
+pub fn offset_of(db: &OakDatabase, file: File, needle: &str) -> TextSize {
+    TextSize::from(file.source_text(db).rfind(needle).unwrap() as u32)
+}
+
 pub fn offset(n: u32) -> TextSize {
     TextSize::from(n)
 }
@@ -79,7 +115,7 @@ pub fn place_in_workspace_scripts(db: &mut OakDatabase, files: Vec<File>) {
         "file:///project/R/"
     };
     let url = FilePath::from_url(&Url::parse(raw).unwrap());
-    let root = Root::new(db, url, RootKind::Workspace, files, vec![]);
+    let root = Root::new(db, url, RootKind::Workspace, files, vec![], vec![]);
     db.workspace_roots().set_roots(db).to(vec![root]);
 }
 
@@ -170,9 +206,14 @@ fn install_pkg(
         })
         .collect();
     pkg.set_files(db).to(files.clone());
-    let root = Root::new(db, FilePath::from_url(&root_url), kind, Vec::new(), vec![
-        pkg,
-    ]);
+    let root = Root::new(
+        db,
+        FilePath::from_url(&root_url),
+        kind,
+        Vec::new(),
+        vec![pkg],
+        Vec::new(),
+    );
     match kind {
         // Append rather than replace, so a test can install several library
         // packages into the database.

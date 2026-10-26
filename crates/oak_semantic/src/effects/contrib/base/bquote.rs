@@ -5,6 +5,8 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 
+use crate::effects::inert_argument_effects;
+use crate::effects::BoundArguments;
 use crate::effects::CallContext;
 use crate::effects::EffectHandler;
 use crate::effects::Formals;
@@ -21,9 +23,11 @@ pub(crate) struct BquoteHandler;
 impl EffectHandler for BquoteHandler {
     type Output = ResolvedArgumentEffects;
 
-    fn resolve(&self, call: &RCall, ctx: &CallContext<'_>) -> Option<ResolvedArgumentEffects> {
+    fn resolve(&self, call: &RCall, ctx: &mut CallContext<'_>) -> Option<ResolvedArgumentEffects> {
         let formals: Formals = &["expr", "where", "splice"];
-        let bound = ctx.bind_arguments(call, formals);
+        let Some(bound) = BoundArguments::new(call, formals) else {
+            return Some(inert_argument_effects(call));
+        };
 
         // `..()` only splices under `splice = TRUE`.
         let splice = bound

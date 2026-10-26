@@ -82,6 +82,14 @@ just test -p ark
 
 Put integration tests under `crates/<crate>/tests/integration/`, with a `main.rs` that declares each test file as a module (`mod library;`). Don't add loose `*.rs` files directly under `tests/`. Each top-level file there compiles as its own test binary, so consolidating them into one `integration` binary keeps build and link times down and saves on disk space.
 
+### Running Benchmarks
+
+```sh
+just bench
+```
+
+See the `bench*` recipes in the `justfile` for comparing against baselines and for how fixtures are populated.
+
 ### Running Clippy
 
 ```sh
@@ -91,10 +99,10 @@ just clippy
 ### Formatting
 
 ```sh
-cargo +nightly fmt --all
+just format
 ```
 
-This requires the nightly toolchain because `.rustfmt.toml` uses nightly-only options.
+This runs `cargo +nightly fmt --all` for Rust and `air format .` for R. The nightly toolchain is required because `.rustfmt.toml` uses nightly-only options, and [Air](https://posit-dev.github.io/air/) must be on the `PATH` or installed as a Positron or VS Code extension.
 
 ### Kernel and DAP Test Infrastructure
 
@@ -159,11 +167,13 @@ The following R packages are required for tests:
 - data.table
 - dplyr
 - rstudioapi
+- S7
 - tibble
 - haven
 - htmltools
 - R6
 - readr
+- renv
 
 ### Installation
 

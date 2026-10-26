@@ -6,10 +6,10 @@ use oak_db::Db;
 use oak_db::Definition;
 use oak_db::File;
 use oak_db::Name;
+use oak_db::NameSpelling;
 use oak_db::RootKind;
 
 use crate::find_references;
-use crate::FileRange;
 use crate::RenameEdit;
 
 /// Identify the renamable identifier at `offset`, returning its range and
@@ -18,8 +18,9 @@ use crate::RenameEdit;
 /// Returns `Ok(None)` when the cursor isn't on something we can rename (a
 /// non-identifier, a `pkg::sym` namespace access, or a `$`/`@` member name),
 /// so the client simply offers no rename. Returns `Err` when the cursor is on
-/// a renamable identifier that we still refuse, today only a symbol defined in
-/// an installed package, so the client can surface why at prepare time.
+/// a renamable identifier that we still refuse, a symbol defined in an
+/// installed package or bound by a name we can't rewrite (`assign(c("x"), 1)`),
+/// so the client can surface why at prepare time.
 pub fn prepare_rename(
     db: &dyn Db,
     file: File,
@@ -37,9 +38,10 @@ pub fn prepare_rename(
 ///
 /// Returns `Err` when the cursor isn't on a renamable identifier, when the
 /// symbol resolves to a definition in an installed package (which we can't
-/// edit), when `new_name` isn't a valid R name, or when nothing in the database
-/// binds the cursor's symbol. In that last case a rename would produce no
-/// edits, so we refuse rather than silently succeed.
+/// edit), when `new_name` isn't a valid R name, when nothing in the database
+/// binds the cursor's symbol, or when a site isn't a name we can rewrite in
+/// place (a computed name or a raw string). With no binding a rename would
+/// produce no edits, so we refuse rather than silently succeed.
 pub fn rename(
     db: &dyn Db,
     file: File,
@@ -59,37 +61,47 @@ pub fn rename(
         ));
     }
 
-    let edits = sites
+    // Refuse the whole rename if any site can't be rewritten in place, as with
+    // the computed name in `assign(c("x"), 1)`. Skipping that binding would
+    // leave it under the old name while renaming its uses.
+    sites
         .into_iter()
         .map(|site| {
-            let new_text = render_at_site(db, &site, &new_name);
-            RenameEdit {
+            let delimiter = editable_delimiter(db, site.file, site.range)?;
+            Ok(RenameEdit {
                 file: site.file,
                 range: site.range,
-                new_text,
-            }
+                new_text: render(delimiter, &new_name),
+            })
         })
-        .collect();
-    Ok(edits)
+        .collect()
 }
 
 /// Preserve quoted sites because removing their quotes changes a binding name
 /// into a variable reference.
-fn render_at_site(db: &dyn Db, site: &FileRange, new_name: &RName) -> String {
-    let source = site.file.source_text(db);
-    match string_delimiter(&source[..], site.range) {
+fn render(delimiter: Option<char>, new_name: &RName) -> String {
+    match delimiter {
         Some(delimiter) => new_name.quoted(delimiter),
         None => new_name.identifier().to_string(),
     }
 }
 
-/// The opening quote of the string literal at `range` in `source`, or `None`
-/// when the site is a bare identifier.
-fn string_delimiter(source: &str, range: TextRange) -> Option<char> {
-    let slice = &source[usize::from(range.start())..usize::from(range.end())];
-    match slice.chars().next() {
-        Some(delimiter @ ('"' | '\'')) => Some(delimiter),
-        _ => None,
+/// The opening quote of the name at `range`, or `None` for an identifier.
+/// Errors when the site isn't a name that `render()` can rewrite in place.
+fn editable_delimiter(db: &dyn Db, file: File, range: TextRange) -> anyhow::Result<Option<char>> {
+    let source = file.source_text(db);
+    let text = &source[usize::from(range.start())..usize::from(range.end())];
+    match file.name_spelling_at(db, range) {
+        Some(NameSpelling::Identifier) => Ok(None),
+        Some(NameSpelling::Quoted(delimiter)) => Ok(Some(delimiter)),
+        // A new name could need different dashes or brackets to delimit it,
+        // so raw strings are not rewritten.
+        Some(NameSpelling::RawString) => Err(anyhow!(
+            "Can't rename: symbol is bound by a raw string (`{text}`)."
+        )),
+        None => Err(anyhow!(
+            "Can't rename: symbol is bound by a computed name (`{text}`)."
+        )),
     }
 }
 
@@ -106,6 +118,17 @@ fn renamable_at<'db>(
         return Err(anyhow!(
             "Can't rename: symbol is defined in an installed package."
         ));
+    }
+
+    // Refuse at prepare time when a definition reaching the cursor can't be
+    // rewritten, so the client doesn't ask for a new name in vain. `rename()`
+    // still checks every site, including definitions this lookup doesn't
+    // reach.
+    for def in &defs {
+        let Some(name_range) = def.name_range(db) else {
+            continue;
+        };
+        editable_delimiter(db, def.file(db), name_range)?;
     }
 
     Ok(Some((range, name)))
