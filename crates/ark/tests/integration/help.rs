@@ -278,6 +278,12 @@ local({
     for (query in c("<-", "<<-", "<=", "%<>%")) {
         stopifnot(identical(.ps.help.searchPattern(query), query))
     }
+    # The start-of-word anchor keeps its meaning as a word boundary.
+    stopifnot(identical(.ps.help.searchPattern("\\<lm"), "\\blm"))
+    stopifnot(identical(
+        utils::help.search(.ps.help.searchPattern("\\<lm"), package = NULL)$matches,
+        utils::help.search("\\<lm", package = NULL)$matches
+    ))
     TRUE
 })
 "#,
@@ -776,6 +782,12 @@ fn test_help_punctuation_suggestions_open_exact_target() {
     "#,
     );
 
+    let mut has_data_table = false;
+    frontend.execute_request(
+        "isTRUE(requireNamespace('data.table', quietly = TRUE))",
+        |result| has_data_table = result.contains("TRUE"),
+    );
+
     for (package, alias, target) in [
         ("arkhelpaliases", "$.data.frame", "Extract"),
         ("data.table", ":=", "assign"),
@@ -789,6 +801,9 @@ fn test_help_punctuation_suggestions_open_exact_target() {
         ("methods", "$<-,envRefClass-method", "stdRefClass"),
         ("methods", "$<-,localRefClass-method", "localRefClass"),
     ] {
+        if package == "data.table" && !has_data_table {
+            continue;
+        }
         // Select the exact suggestion and round-trip it through the Help RPC.
         frontend.send_shell(CommWireMsg {
             comm_id: comm_id.clone(),

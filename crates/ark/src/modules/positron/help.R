@@ -72,11 +72,13 @@ help <- function(topic, package = NULL) {
     }
 
     # Tests have no `Console` to receive the navigation.
-    if (!in_ark_tests()) {
-        utils::browseURL(url)
+    if (in_ark_tests()) {
+        return(TRUE)
     }
 
-    TRUE
+    # Browse directly, not through `options(browser)`: the Help pane must receive the
+    # navigation even if the user has set a different browser.
+    isTRUE(.ps.Call("ps_browse_url", url))
 }
 
 # Build the help server URL that runs `help.search()` for `query`. Each query has
@@ -122,9 +124,12 @@ help <- function(topic, package = NULL) {
     if (!valid || !grepl("[[:alnum:]]", query)) {
         query <- gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", query)
     }
-    # The results page shows the pattern without HTML escaping, so a `<` that would
-    # open a tag (as in `<script>`) is written as the equivalent regexp escape `\x3C`.
+    # The results page shows the pattern without HTML escaping, so the pattern must not
+    # contain a `<` that opens a tag (as in `<script>`). The start-of-word anchor `\<`
+    # (a `<` after an odd number of backslashes) becomes the word boundary `\b`. Any
+    # other `<` before a tag character becomes `\x3C`, which matches the same text.
     # A `<` before anything else (`<-`, `<=`, `%<>%`) is plain text and stays as is.
+    query <- gsub("(?<!\\\\)((?:\\\\\\\\)*)\\\\<", "\\1\\\\b", query, perl = TRUE)
     gsub("<(?=[[:alpha:]/!?])", "\\\\x3C", query, perl = TRUE)
 }
 
