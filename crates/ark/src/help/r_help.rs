@@ -325,7 +325,7 @@ enum HelpTopic {
     // no obvious expression syntax — e.g. "abs", "base::abs"
     Simple(String),
     // contains expression syntax — e.g. "tensorflow::tf$abs", "model@coef"
-    // after checking for a literal package-qualified help alias
+    // such that there will never exist a help topic with that name
     Expression(String),
 }
 

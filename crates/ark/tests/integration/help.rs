@@ -191,6 +191,39 @@ fn test_help_search_empty_query() {
 }
 
 #[test]
+fn test_help_search_padded_query() {
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    # Capture native results while exercising normalization at the search entry point.
+    search <- .ps.help.searchHelp
+    environment(search) <- new.env(parent = environment(search))
+    results <- NULL
+    environment(search)$.ps.help.searchResults <- function(query) {
+        results <<- .ps.help.searchResults(query)
+        results
+    }
+
+    stopifnot(search("lm"))
+    expected <- results
+    stopifnot(nrow(expected$matches) > 0L)
+    for (query in c(" lm ", "\tlm\n")) {
+        stopifnot(search(query))
+        stopifnot(identical(results, expected))
+    }
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
+    }));
+}
+
+#[test]
 fn test_help_search_query_edge_cases() {
     let r_help = TestRHelp::new();
     for query in [
@@ -527,6 +560,11 @@ local({
     now <- 100
     scans <- 0L
     metadata_checks <- 0L
+    builds <- 0L
+    cache$unique <- function(...) {
+        builds <<- builds + 1L
+        base::unique(...)
+    }
     cache$proc.time <- function() c(elapsed = now)
     cache$list.dirs <- function(...) {
         scans <<- scans + 1L
@@ -538,8 +576,14 @@ local({
         }
         base::file.info(paths, ...)
     }
-    on.exit(rm(list = c("proc.time", "list.dirs", "file.info"), envir = cache), add = TRUE)
-    .ps.help.searchIndex()
+    on.exit(rm(list = c("proc.time", "list.dirs", "file.info", "unique"), envir = cache), add = TRUE)
+    stopifnot(.ps.help.searchHelp("lm"))
+    stopifnot(is.null(cache$index), builds == 0L)
+    expected <- .ps.help.getHelpTopics("lm", 5L)
+    stopifnot(builds == 1L)
+    stopifnot(.ps.help.searchHelp("lm"))
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), expected))
+    stopifnot(builds == 1L)
     old_paths <- .libPaths()
     library <- tempfile("ark-help-index-")
     dir.create(library)
@@ -552,6 +596,7 @@ local({
     stopifnot(nrow(.ps.help.getHelpTopics("lm", 1L)) == 1L)
     stopifnot(identical(.ps.help.getHelpTopics(" LM ", 5L), .ps.help.getHelpTopics("lm", 5L)))
     stopifnot(scans == before_paths_change + length(.libPaths()))
+    stopifnot(builds == 2L)
     initial_scans <- scans
     initial_checks <- metadata_checks
     marker <- "zzzz_ark_help_cache_alias"
@@ -569,12 +614,14 @@ local({
     stopifnot(nrow(.ps.help.getHelpTopics(marker, 50L)) == 0L)
     stopifnot(scans == initial_scans, metadata_checks == initial_checks)
     now <- 160
+    stopifnot(.ps.help.searchHelp(marker))
+    stopifnot(is.null(cache$index), builds == 2L)
     stopifnot(identical(unname(as.list(.ps.help.getHelpTopics(marker, 50L))), list("stats", marker)))
     stopifnot(scans == initial_scans + length(.libPaths()))
-    stopifnot(metadata_checks == initial_checks + 1L)
+    stopifnot(metadata_checks == initial_checks + 1L, builds == 3L)
     # Repeated requests do not repeat the full scan after expiry has been handled.
     .ps.help.getHelpTopics(marker, 50L)
-    stopifnot(metadata_checks == initial_checks + 1L)
+    stopifnot(metadata_checks == initial_checks + 1L, builds == 3L)
     stopifnot(nrow(utils::help.search(marker, agrep = FALSE)$matches) > 0L)
     unlink(file.path(library, "stats"), recursive = TRUE)
     Sys.setFileTime(library, Sys.time() + 4)
@@ -584,6 +631,106 @@ local({
 })
 
 "#, ARK_ENVS.positron_ns).unwrap().to::<bool>().unwrap()
+    }));
+}
+
+#[test]
+fn test_help_index_failed_rebuild() {
+    assert!(r_task(|| {
+        harp::parse_eval0(
+            r#"
+local({
+    old_paths <- .libPaths()
+    library <- tempfile("ark-help-broken-")
+    dir.create(library)
+    on.exit({ .libPaths(old_paths); unlink(library, recursive = TRUE) }, add = TRUE)
+    package <- file.path(library, "stats")
+    dir.create(package)
+    stopifnot(all(file.copy(
+        file.path(find.package("stats"), c("Meta", "DESCRIPTION")),
+        package,
+        recursive = TRUE
+    )))
+    metadata <- file.path(package, "Meta", "hsearch.rds")
+    healthy <- readRDS(metadata)
+    writeLines("not an R serialization", metadata)
+    .libPaths(c(library, old_paths))
+
+    cache <- environment(.ps.help.searchIndex)
+    now <- 100
+    cache$proc.time <- function() c(elapsed = now)
+    on.exit(rm("proc.time", envir = cache), add = TRUE)
+    rebuilds <- 0L
+    suppressMessages(trace(
+        "help.search",
+        where = asNamespace("utils"),
+        tracer = function() { rebuilds <<- rebuilds + 1L },
+        print = FALSE
+    ))
+    on.exit(suppressMessages(untrace("help.search", where = asNamespace("utils"))), add = TRUE)
+    empty <- data.frame(package = character(), label = character())
+
+    # A real corrupt file fails the initial rebuild, with no usable index.
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 1L, is.null(cache$matches), is.null(cache$index))
+    stopifnot(cache$last_checked == now)
+    now <- 159
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(is.null(.ps.help.searchIndex(build = FALSE)))
+    stopifnot(rebuilds == 1L)
+
+    # Unchanged metadata must still permit a retry when the cooldown expires.
+    now <- 160
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 2L)
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 2L)
+
+    # A library-path change permits an immediate retry during the cooldown.
+    extra <- tempfile("ark-help-extra-")
+    dir.create(extra)
+    on.exit(unlink(extra, recursive = TRUE), add = TRUE)
+    .libPaths(c(extra, library, old_paths))
+    now <- 161
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 3L)
+
+    # Repair in place: detection waits until the next metadata check.
+    saveRDS(healthy, metadata)
+    Sys.setFileTime(metadata, Sys.time() + 2)
+    now <- 220
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 3L)
+    now <- 221
+    recovered <- .ps.help.getHelpTopics("lm", 5L)
+    stopifnot(nrow(recovered) > 0L, recovered$label[[1L]] == "lm")
+    stopifnot(rebuilds == 4L)
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), recovered))
+    stopifnot(rebuilds == 4L)
+
+    # A later failure discards the previously successful index.
+    writeLines("not an R serialization", metadata)
+    Sys.setFileTime(library, Sys.time() + 4)
+    now <- 222
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 5L, is.null(cache$index), is.null(cache$matches))
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), empty))
+    stopifnot(rebuilds == 5L)
+
+    # A changed library signature also allows recovery before the cooldown ends.
+    saveRDS(healthy, metadata)
+    Sys.setFileTime(library, Sys.time() + 6)
+    now <- 223
+    stopifnot(identical(.ps.help.getHelpTopics("lm", 5L), recovered))
+    stopifnot(rebuilds == 6L)
+    TRUE
+})
+"#,
+            ARK_ENVS.positron_ns,
+        )
+        .unwrap()
+        .to::<bool>()
+        .unwrap()
     }));
 }
 

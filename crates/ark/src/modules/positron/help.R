@@ -64,11 +64,12 @@ help <- function(topic, package = NULL) {
 # Search all installed help documentation and show R's native HTML results page.
 #' @export
 .ps.help.searchHelp <- function(query) {
-    if (!nzchar(trimws(query))) {
+    query <- trimws(query)
+    if (!nzchar(query)) {
         return(FALSE)
     }
 
-    .ps.help.searchIndex()
+    .ps.help.searchIndex(build = FALSE)
     results <- .ps.help.searchResults(query)
 
     if (!in_ark_tests()) {
@@ -97,18 +98,21 @@ help <- function(topic, package = NULL) {
     utils::help.search(query, package = NULL)
 }
 
-# Cache sorted aliases, rebuilding native R's search database when library metadata
-# changes. Check library directories on each request, but scan package metadata
-# at most once a minute unless the libraries or search settings change. This avoids
+# Refresh native R's search database when library metadata changes, retaining its
+# matches for a lazily built autocomplete index. Check library directories on each
+# request, but scan package metadata at most once a minute unless the libraries or
+# search settings change. This avoids
 # per-package filesystem calls on every keystroke, especially on network libraries.
 # In-place updates may take a minute to appear, on the next request after expiry.
+# Failed rebuilds use the same cooldown, then retry even if metadata is unchanged.
 .ps.help.searchIndex <- local({
     signature <- NULL
     metadata_signature <- NULL
     last_checked <- -Inf
+    matches <- NULL
     index <- NULL
 
-    function() {
+    function(build = TRUE) {
         libraries <- .libPaths()
         current <- list(
             libraries = libraries,
@@ -121,39 +125,52 @@ help <- function(topic, package = NULL) {
             types = getOption("help.search.types")
         )
         now <- proc.time()[["elapsed"]]
-        if (identical(current, signature) && now - last_checked < 60) {
-            return(index)
+        if (!identical(current, signature) || now - last_checked >= 60) {
+            packages <- unlist(
+                lapply(libraries, list.dirs, recursive = FALSE),
+                use.names = FALSE
+            )
+            metadata <- unlist(
+                lapply(
+                    c("package.rds", "hsearch.rds", "vignette.rds", "demo.rds"),
+                    function(name) file.path(packages, "Meta", name)
+                ),
+                use.names = FALSE
+            )
+            current_metadata <- file.info(metadata)[,
+                c("size", "mtime", "ctime"),
+                drop = FALSE
+            ]
+            last_checked <<- now
+            if (
+                !identical(current, signature) ||
+                    !identical(current_metadata, metadata_signature) ||
+                    is.null(matches)
+            ) {
+                # Record the attempt before rebuilding so errors cannot bypass the cooldown.
+                signature <<- current
+                metadata_signature <<- current_metadata
+                index <<- NULL
+                matches <<- tryCatch(
+                    utils::help.search(
+                        ".",
+                        fields = "alias",
+                        package = NULL,
+                        rebuild = TRUE
+                    )$matches,
+                    error = function(err) NULL
+                )
+            }
         }
 
-        packages <- unlist(
-            lapply(libraries, list.dirs, recursive = FALSE),
-            use.names = FALSE
-        )
-        metadata <- unlist(
-            lapply(
-                c("package.rds", "hsearch.rds", "vignette.rds", "demo.rds"),
-                function(name) file.path(packages, "Meta", name)
-            ),
-            use.names = FALSE
-        )
-        current_metadata <- file.info(metadata)[,
-            c("size", "mtime", "ctime"),
-            drop = FALSE
-        ]
-        if (
-            !identical(current, signature) ||
-                !identical(current_metadata, metadata_signature)
-        ) {
-            matches <- utils::help.search(
-                ".",
-                fields = "alias",
-                package = NULL,
-                rebuild = TRUE
-            )$matches
-            matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
+        if (!build || is.null(matches)) {
+            return(invisible(NULL))
+        }
+        if (is.null(index)) {
+            help_matches <- matches[matches[, "Type"] == "help", , drop = FALSE]
             topics <- unique(data.frame(
-                package = matches[, "Package"],
-                label = matches[, "Entry"]
+                package = help_matches[, "Package"],
+                label = help_matches[, "Entry"]
             ))
             labels <- tolower(topics$label)
             sorted <- order(labels, topics$package)
@@ -161,10 +178,7 @@ help <- function(topic, package = NULL) {
                 labels = labels[sorted],
                 topics = topics[sorted, , drop = FALSE]
             )
-            signature <<- current
-            metadata_signature <<- current_metadata
         }
-        last_checked <<- now
         index
     }
 })
@@ -178,6 +192,9 @@ help <- function(topic, package = NULL) {
         return(data.frame(package = character(), label = character()))
     }
     index <- .ps.help.searchIndex()
+    if (is.null(index)) {
+        return(data.frame(package = character(), label = character()))
+    }
     hits <- which(grepl(query, index$labels, fixed = TRUE))
     labels <- index$labels[hits]
     rank <- ifelse(
