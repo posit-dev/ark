@@ -11,6 +11,23 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// A help topic offered as an autocomplete suggestion.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HelpTopicSuggestion {
+	/// The topic label shown to the user.
+	pub label: String,
+
+	/// The exact topic value used to open help.
+	pub topic: String,
+
+	/// Optional context such as the package containing the topic.
+	pub detail: Option<String>,
+
+	/// Optional package to send unchanged with topic when opening this
+	/// suggestion.
+	pub package: Option<String>
+}
+
 /// Possible values for Kind in ShowHelp
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ShowHelpKind {
@@ -32,6 +49,32 @@ pub enum ShowHelpKind {
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
+
+	/// Optional package containing a literal documentation alias. When
+	/// supplied, topic is an exact alias, not an expression. Omit for normal
+	/// help resolution.
+	pub package_name: Option<String>,
+}
+
+/// Parameters for the SearchHelp method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchHelpParams {
+	/// The help query to search for
+	pub query: String,
+
+	/// Opaque identifier supplied by the frontend for this UI search. Echo it
+	/// in the resulting Show Help notification.
+	pub search_id: String,
+}
+
+/// Parameters for the GetHelpTopics method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GetHelpTopicsParams {
+	/// The text to match against help topic labels.
+	pub query: String,
+
+	/// Maximum number of suggestions to return, from 1 to 50.
+	pub limit: i64,
 }
 
 /// Parameters for the ShowHelp method.
@@ -45,6 +88,11 @@ pub struct ShowHelpParams {
 
 	/// Whether to focus the Help pane when the content is displayed.
 	pub focus: bool,
+
+	/// Identifier of the UI search that requested this navigation, if any.
+	/// Omit for console help and other help navigation. The frontend ignores
+	/// identifiers that are no longer current.
+	pub search_id: Option<String>,
 }
 
 /**
@@ -62,6 +110,20 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
 
+	/// Search the active interpreter's help system.
+	///
+	/// Searches interpreter-wide help and displays the resulting page via a
+	/// Show Help notification.
+	#[serde(rename = "search_help")]
+	SearchHelp(SearchHelpParams),
+
+	/// Find help topics for autocomplete.
+	///
+	/// Returns at most limit matching help topic suggestions, filtered and
+	/// ranked by the backend. An empty query returns no suggestions.
+	#[serde(rename = "get_help_topics")]
+	GetHelpTopics(GetHelpTopicsParams),
+
 }
 
 /**
@@ -69,10 +131,18 @@ pub enum HelpBackendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
+
+	/// Whether the search results navigation was requested. This does not
+	/// confirm that the frontend displayed or finished loading the page.
+	SearchHelpReply(bool),
+
+	/// Help topic suggestions.
+	GetHelpTopicsReply(Vec<HelpTopicSuggestion>),
 
 }
 
@@ -89,6 +159,7 @@ pub enum HelpFrontendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum HelpFrontendReply {
 }
 
