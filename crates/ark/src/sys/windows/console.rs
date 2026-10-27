@@ -34,7 +34,6 @@ use crate::console::r_show_message;
 use crate::console::r_suicide;
 use crate::console::r_write_console;
 use crate::console::Console;
-use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(args: &Vec<String>) {
     unsafe {
@@ -47,13 +46,10 @@ pub fn setup_r(args: &Vec<String>) {
         //   it alters the env vars, which we then reset to our own paths in `R_SetParams()`.
         // - `rhome` and `home` need to be set before `R_SetParams()` because it accesses them.
         // - We convert to a `mut` pointer because the R API requires it, but it doesn't modify them.
-        // - `CString::new()` handles adding a nul terminator for us.
         let r_home = get_r_home();
-        let r_home = CString::new(r_home).unwrap();
         let r_home = r_home.as_ptr() as *mut c_char;
 
         let user_home = get_user_home();
-        let user_home = CString::new(user_home).unwrap();
         let user_home = user_home.as_ptr() as *mut c_char;
 
         // Note that R does a lot of initialization here that's not accessible
@@ -168,52 +164,31 @@ pub fn run_activity_handlers() {
 // RStudio does use `get_R_HOME()`, but they have a custom helper instead of `getRUser()`.
 // https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/r/session/RDiscovery.cpp#L42
 // https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/shared_core/system/Win32User.cpp#L164
-fn get_r_home() -> String {
+//
+// We pass the bytes from `get_R_HOME()` and `getRUser()` back to R unchanged, since
+// they are already in the native encoding that `Rstart` expects. Don't round-trip them
+// through UTF-8 with `localeCP` here: R's `localeCP` keeps its compiled-in default of 1252
+// until R sets up its locale, so the conversion would mangle non-ASCII paths and
+// `readconsolecfg()` would then fail to find `Rconsole` and exit with status 10.
+// https://github.com/posit-dev/positron/issues/12303
+fn get_r_home() -> CString {
     let r_path = unsafe { get_R_HOME() };
 
     if r_path.is_null() {
         panic!("`get_R_HOME()` failed to report an R home.");
     }
 
-    let r_path_ctr = unsafe { CStr::from_ptr(r_path) };
-
-    // Removes nul terminator
-    let path = r_path_ctr.to_bytes();
-
-    // Try conversion to UTF-8
-    let path = match system_to_utf8(path) {
-        Ok(path) => path,
-        Err(err) => {
-            let path = r_path_ctr.to_string_lossy().to_string();
-            panic!("Failed to convert R home to UTF-8. Path '{path}'. Error: {err:?}.");
-        },
-    };
-
-    path.to_string()
+    unsafe { CStr::from_ptr(r_path) }.to_owned()
 }
 
-fn get_user_home() -> String {
+fn get_user_home() -> CString {
     let r_path = unsafe { libr::getRUser() };
 
     if r_path.is_null() {
         panic!("`getRUser()` failed to report a user home directory.");
     }
 
-    let r_path_ctr = unsafe { CStr::from_ptr(r_path) };
-
-    // Removes nul terminator
-    let path = r_path_ctr.to_bytes();
-
-    // Try conversion to UTF-8
-    let path = match system_to_utf8(path) {
-        Ok(path) => path,
-        Err(err) => {
-            let path = r_path_ctr.to_string_lossy().to_string();
-            panic!("Failed to convert user home to UTF-8. Path '{path}'. Error: {err:?}.");
-        },
-    };
-
-    path.to_string()
+    unsafe { CStr::from_ptr(r_path) }.to_owned()
 }
 
 #[cfg_attr(not(test), no_mangle)]
