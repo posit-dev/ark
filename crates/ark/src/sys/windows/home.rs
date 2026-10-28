@@ -269,11 +269,31 @@ mod tests {
     }
 
     #[test]
+    fn test_to_native_non_ascii() {
+        // Relies on "native" `co::CP::ACP` being UTF-8 via our manifest
+        assert_eq!(
+            to_native(OsStr::new(r"C:\Strøm")).as_bytes(),
+            b"C:\\Str\xC3\xB8m"
+        );
+        assert_eq!(
+            to_native(OsStr::new(r"C:\中")).as_bytes(),
+            b"C:\\\xE4\xB8\xAD"
+        );
+    }
+
+    #[test]
     fn test_to_native() {
         assert_eq!(
             to_native(OsStr::new(r"C:\Users\foo")),
             CString::from(c"C:\\Users\\foo")
         );
         assert_eq!(to_native(OsStr::new("")), CString::default());
+    }
+
+    #[test]
+    fn test_user_home_from_r_user() {
+        // Ensures non-ASCII `R_USER` passes through as the right UTF-8 bytes
+        unsafe { env::set_var("R_USER", r"C:\Users\Strøm\") };
+        assert_eq!(user_home().as_bytes(), b"C:\\Users\\Str\xC3\xB8m");
     }
 }
