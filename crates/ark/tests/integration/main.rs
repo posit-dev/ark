@@ -43,6 +43,8 @@ mod kernel_srcref;
 mod kernel_stdin;
 mod kernel_stream_capture;
 mod kernel_variables;
+#[cfg(windows)]
+mod kernel_windows_home;
 mod llm_tools;
 mod lsp;
 mod lsp_completions;
