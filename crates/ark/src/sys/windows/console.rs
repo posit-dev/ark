@@ -8,11 +8,9 @@
 use std::ffi::c_char;
 use std::ffi::c_int;
 use std::ffi::CStr;
-use std::ffi::CString;
 use std::mem::MaybeUninit;
 
 use libr::cmdlineoptions;
-use libr::get_R_HOME;
 use libr::readconsolecfg;
 use libr::run_Rmainloop;
 use libr::setup_Rmainloop;
@@ -25,6 +23,8 @@ use libr::Rboolean_FALSE;
 use once_cell::sync::Lazy;
 use regex::bytes::Regex;
 
+use super::home::r_home;
+use super::home::user_home;
 use super::strings::code_page_to_utf8;
 use super::strings::get_system_code_page;
 use crate::console::r_busy;
@@ -46,10 +46,10 @@ pub fn setup_r(args: &Vec<String>) {
         //   it alters the env vars, which we then reset to our own paths in `R_SetParams()`.
         // - `rhome` and `home` need to be set before `R_SetParams()` because it accesses them.
         // - We convert to a `mut` pointer because the R API requires it, but it doesn't modify them.
-        let r_home = get_r_home();
+        let r_home = r_home();
         let r_home = r_home.as_ptr() as *mut c_char;
 
-        let user_home = get_user_home();
+        let user_home = user_home();
         let user_home = user_home.as_ptr() as *mut c_char;
 
         // Note that R does a lot of initialization here that's not accessible
@@ -157,38 +157,6 @@ pub fn run_r() {
 
 pub fn run_activity_handlers() {
     // Nothing to do on Windows
-}
-
-// TODO: Windows
-// It is possible we will want to use something other than `get_R_HOME()` and `getRUser()` for these.
-// RStudio does use `get_R_HOME()`, but they have a custom helper instead of `getRUser()`.
-// https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/r/session/RDiscovery.cpp#L42
-// https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/shared_core/system/Win32User.cpp#L164
-//
-// We pass the bytes from `get_R_HOME()` and `getRUser()` back to R unchanged, since
-// they are already in the native encoding that `Rstart` expects. Don't round-trip them
-// through UTF-8 with `localeCP` here: R's `localeCP` keeps its compiled-in default of 1252
-// until R sets up its locale, so the conversion would mangle non-ASCII paths and
-// `readconsolecfg()` would then fail to find `Rconsole` and exit with status 10.
-// https://github.com/posit-dev/positron/issues/12303
-fn get_r_home() -> CString {
-    let r_path = unsafe { get_R_HOME() };
-
-    if r_path.is_null() {
-        panic!("`get_R_HOME()` failed to report an R home.");
-    }
-
-    unsafe { CStr::from_ptr(r_path) }.to_owned()
-}
-
-fn get_user_home() -> CString {
-    let r_path = unsafe { libr::getRUser() };
-
-    if r_path.is_null() {
-        panic!("`getRUser()` failed to report a user home directory.");
-    }
-
-    unsafe { CStr::from_ptr(r_path) }.to_owned()
 }
 
 #[cfg_attr(not(test), no_mangle)]

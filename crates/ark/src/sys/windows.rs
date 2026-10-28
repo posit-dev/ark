@@ -7,6 +7,7 @@
 
 pub mod console;
 pub mod control;
+mod home;
 mod locale;
 pub mod parent_monitor;
 pub mod path;
