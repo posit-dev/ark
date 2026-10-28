@@ -12,11 +12,6 @@ use winsafe::co::WC;
 use winsafe::MultiByteToWideChar;
 use winsafe::WideCharToMultiByte;
 
-pub fn system_to_utf8(x: &[u8]) -> anyhow::Result<String> {
-    let code_page = get_system_code_page();
-    code_page_to_utf8(x, code_page)
-}
-
 /// Convert a string encoded in the `code_page` to UTF-8
 ///
 /// Only useful on Windows, on other systems we are always in UTF-8.
