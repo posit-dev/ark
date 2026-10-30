@@ -47,6 +47,7 @@ mod kernel_variables;
 mod kernel_windows_home;
 mod llm_tools;
 mod lsp;
+mod lsp_busy;
 mod lsp_completions;
 mod object_explorer;
 mod options;
