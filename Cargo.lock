@@ -460,6 +460,7 @@ dependencies = [
  "futures",
  "harp",
  "home",
+ "indexmap 2.14.0",
  "insta",
  "itertools 0.15.0",
  "libc",
