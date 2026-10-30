@@ -75,8 +75,9 @@ struct CompletionItemWithSource {
 
 /// Gets completions from all composite sources, with deduplication and sorting
 ///
-/// The first source pushed wins a duplicate, so push order matters. A later
-/// `VARIABLE` duplicate still gives the kept item its kind and `sort_text`.
+/// The first source pushed wins a duplicate, so push order matters. The
+/// exception is a later `VARIABLE` duplicate, which replaces a kept item that
+/// is not a `VARIABLE`.
 pub(crate) fn get_completions(
     completion_context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
@@ -172,13 +173,13 @@ fn insert_completions(
             kind = item.kind,
         );
 
-        // Objects defined in this document keep the `VARIABLE` icon and rank.
-        // Take its `sort_text` too, since the search path pre-sets one.
+        // A `VARIABLE` from this document (an assignment or a parameter)
+        // replaces the kept item, so it shows its own icon, rank, and docs
         if item.kind == Some(CompletionItemKind::VARIABLE) &&
             existing.item.kind != Some(CompletionItemKind::VARIABLE)
         {
-            existing.item.kind = item.kind;
-            existing.item.sort_text = item.sort_text;
+            existing.item = item;
+            existing.source = source_name.to_string();
         }
     }
 }
@@ -265,7 +266,9 @@ mod tests {
     use indexmap::IndexMap;
     use tower_lsp_server::ls_types::CompletionItem;
     use tower_lsp_server::ls_types::CompletionItemKind;
-    use tower_lsp_server::ls_types::CompletionItemLabelDetails;
+    use tower_lsp_server::ls_types::Documentation;
+    use tower_lsp_server::ls_types::MarkupContent;
+    use tower_lsp_server::ls_types::MarkupKind;
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
@@ -360,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn test_object_collision_with_variable_takes_variable_kind_and_sort_bin() {
+    fn test_object_collision_with_variable_is_replaced_by_variable() {
         let mut search_path_item = item("outPath", CompletionItemKind::STRUCT);
         search_path_item.detail = Some("search path".to_string());
         // The search path source pre-sets `sort_text` to sort words first
@@ -375,7 +378,7 @@ mod tests {
 
         let items = finalize_completions(completions);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].detail, Some("search path".to_string()));
+        assert_eq!(items[0].detail, Some("document".to_string()));
         assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
         assert_eq!(items[0].sort_text, Some("2-outPath".to_string()));
     }
@@ -485,16 +488,31 @@ mod tests {
                 assert_eq!(items.len(), 1);
                 assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
                 assert_eq!(items[0].sort_text, Some("2-outPath".to_string()));
-                // Kept the search path item, the only source that sets label
-                // details (empty for the global env)
-                assert_eq!(
-                    items[0].label_details,
-                    Some(CompletionItemLabelDetails {
-                        detail: None,
-                        description: None,
-                    })
-                );
+                assert_eq!(items[0].label_details, None);
+                assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
             }
+        });
+    }
+
+    #[test]
+    fn test_document_object_replaces_shadowed_package_object() {
+        r_task(|| {
+            // Not run, so only base's `letters` is on the search path
+            let items = completions_with_label("letters <- 1:3\nlett@", "letters");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+            assert_eq!(items[0].label_details, None);
+            assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
+        });
+    }
+
+    #[test]
+    fn test_parameter_replaces_shadowed_package_object() {
+        r_task(|| {
+            let items = completions_with_label("f <- function(letters) lett@", "letters");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+            assert_eq!(items[0].label_details, None);
         });
     }
 
@@ -540,6 +558,13 @@ mod tests {
             kind: Some(kind),
             ..Default::default()
         }
+    }
+
+    fn defined_on_line_docs(line: usize) -> Documentation {
+        Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("Defined in this document on line {line}."),
+        })
     }
 
     fn completions_with_label(code: &str, label: &str) -> Vec<CompletionItem> {
