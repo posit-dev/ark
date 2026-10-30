@@ -319,7 +319,17 @@ impl LspClient {
                 }
                 self.reader.get_ref().set_read_timeout(Some(remaining))?;
 
-                match self.try_recv_any()? {
+                let message = match self.try_recv_any() {
+                    Ok(message) => message,
+                    Err(err) if is_timeout(&err) => {
+                        return Err(anyhow::anyhow!(
+                            "Timed out waiting for LSP responses within {timeout:?}"
+                        ));
+                    },
+                    Err(err) => return Err(err),
+                };
+
+                match message {
                     LspMessage::Response { id, result, error } => {
                         let Some(position) = positions.get(&id) else {
                             return Err(anyhow::anyhow!("Unexpected LSP response id: {id}"));
@@ -412,13 +422,7 @@ impl LspClient {
                 // A benign notification, e.g. `window/logMessage`; keep waiting for the close.
                 Ok(_) => continue,
                 Err(err) => {
-                    let timed_out = err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
-                        matches!(
-                            io_err.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        )
-                    });
-                    if timed_out {
+                    if is_timeout(&err) {
                         panic!(
                             "Server did not close the connection within {timeout:?} after `exit`"
                         );
@@ -465,13 +469,7 @@ impl LspClient {
                     "Unexpected message while waiting for log message containing {substring:?}: {other:?}"
                 ),
                 Err(err) => {
-                    let timed_out = err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
-                        matches!(
-                            io_err.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        )
-                    });
-                    if timed_out {
+                    if is_timeout(&err) {
                         panic!(
                             "No log message containing {substring:?} received within {timeout:?}"
                         );
@@ -636,7 +634,8 @@ impl LspClient {
             .unwrap_or_else(|err| panic!("Failed to receive LSP message: {err}"))
     }
 
-    /// Return read errors so [`wait_for_log_message()`] can distinguish timeouts.
+    /// Return read errors so [`wait_for_log_message()`] and [`recv_responses()`]
+    /// can distinguish timeouts.
     fn try_recv_any(&mut self) -> anyhow::Result<LspMessage> {
         let message = self.recv_message()?;
         let has_id = message.contains_key("id");
@@ -747,6 +746,17 @@ impl LspClient {
 
         Ok(message)
     }
+}
+
+/// Whether a receive error is the socket read timeout expiring. The error kind
+/// differs by platform.
+fn is_timeout(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
+        matches!(
+            io_err.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        )
+    })
 }
 
 impl Drop for LspClient {
