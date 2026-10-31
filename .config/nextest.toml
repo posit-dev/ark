@@ -14,3 +14,9 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 # Each fuzz block runs thousands of scenarios, not one query.
 filter = 'package(oak_db) & test(/^tests::fuzz::test_block_/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
+
+[[profile.ci.overrides]]
+# TEMPORARY: Show output of the deliberately failing tests even when nextest
+# reports them as passing, to expose the masked failures on Linux.
+filter = 'test(/deliberate/)'
+success-output = "immediate"

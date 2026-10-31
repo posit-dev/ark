@@ -45,6 +45,7 @@ mod kernel_stream_capture;
 mod kernel_variables;
 #[cfg(windows)]
 mod kernel_windows_home;
+mod linux_exit_status;
 mod llm_tools;
 mod lsp;
 mod lsp_completions;
