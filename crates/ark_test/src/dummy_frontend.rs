@@ -1913,7 +1913,7 @@ impl DummyArkFrontend {
         // https://github.com/r-lib/cli/blob/1220ed092c03e167ff0062e9839c81d7258a4600/R/onload.R#L33-L40
         unsafe { std::env::set_var("R_CLI_HIDE_CURSOR", "false") };
 
-        // On Linux, register an atexit handler that calls `_exit(0)` to skip
+        // On Linux, register an exit handler that calls `_exit()` to skip
         // library fini sections (`.fini_array` destructors). libgomp's
         // `.fini_array` destructor can trigger a re-initialization crash on
         // Ubuntu CI runners:
@@ -1928,10 +1928,10 @@ impl DummyArkFrontend {
         //
         // In glibc, `_dl_fini()` (which runs `.fini_array` destructors for all
         // loaded shared objects) is itself an atexit handler, registered by the
-        // dynamic linker at process startup. Since atexit is LIFO and `_dl_fini`
-        // is registered before any user code, it executes after all
+        // dynamic linker at process startup. Since exit handlers run LIFO and
+        // `_dl_fini` is registered before any user code, it executes after all
         // user-registered handlers. Our handler, registered here during test
-        // init, executes before `_dl_fini` and calls `_exit(0)` to terminate
+        // init, executes before `_dl_fini` and calls `_exit()` to terminate
         // the process, preventing `_dl_fini` from ever running. Registering
         // early also means handlers registered later (by R, Rust runtime, etc.)
         // execute before ours, so normal cleanup still happens.
@@ -1939,12 +1939,26 @@ impl DummyArkFrontend {
         // From exit(3): "If one of these functions [from atexit] does not
         // return (e.g., it calls _exit(2)), then none of the remaining
         // functions is called, and further exit processing [...] is abandoned."
+        //
+        // We register with glibc's `on_exit()` rather than `atexit()` because
+        // its handler receives the status passed to `exit()`, which we must
+        // forward to `_exit()`. libtest exits with a non-zero status when a
+        // test fails, and exiting with a hard-coded `0` would make nextest
+        // report the failing test as passing. `on_exit()` and `atexit()`
+        // handlers share the same LIFO list, so the ordering above still
+        // holds. The `libc` crate doesn't bind `on_exit()`, so we declare it.
         #[cfg(target_os = "linux")]
         unsafe {
-            extern "C" fn skip_fini() {
-                unsafe { libc::_exit(0) };
+            unsafe extern "C" {
+                fn on_exit(
+                    function: extern "C" fn(libc::c_int, *mut libc::c_void),
+                    arg: *mut libc::c_void,
+                ) -> libc::c_int;
             }
-            libc::atexit(skip_fini);
+            extern "C" fn skip_fini(status: libc::c_int, _arg: *mut libc::c_void) {
+                unsafe { libc::_exit(status) };
+            }
+            on_exit(skip_fini, std::ptr::null_mut());
         }
 
         let connection = DummyConnection::new();
