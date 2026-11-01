@@ -115,15 +115,26 @@
         workingDir <- dirname(path)
     }
     if (!dir.exists(workingDir)) {
-        stop("The working directory '", workingDir, "' does not exist.", call. = FALSE)
+        stop(
+            "The working directory '",
+            workingDir,
+            "' does not exist.",
+            call. = FALSE
+        )
     }
     workingDir <- normalizePath(workingDir, winslash = "/")
 
     if (isTRUE(importEnv)) {
-        warning("`importEnv = TRUE` is not supported in Positron and is ignored.", call. = FALSE)
+        warning(
+            "`importEnv = TRUE` is not supported in Positron and is ignored.",
+            call. = FALSE
+        )
     }
     if (is_string(exportEnv) && nzchar(exportEnv)) {
-        warning("`exportEnv` is not supported in Positron and is ignored.", call. = FALSE)
+        warning(
+            "`exportEnv` is not supported in Positron and is ignored.",
+            call. = FALSE
+        )
     }
 
     # Braces make one expression so a failed setwd() stops the job before source()
