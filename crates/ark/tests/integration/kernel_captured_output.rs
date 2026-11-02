@@ -40,6 +40,7 @@ fn wait_until_task_polled(frontend: &DummyArkFrontend) {
 }
 
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_pending_idle_task_does_not_swallow_stdout() {
     let frontend = DummyArkFrontend::lock();
 
@@ -65,6 +66,7 @@ fn test_pending_idle_task_does_not_swallow_stdout() {
 }
 
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_pending_idle_task_does_not_swallow_autoprint() {
     let frontend = DummyArkFrontend::lock();
 
@@ -84,6 +86,7 @@ fn test_pending_idle_task_does_not_swallow_autoprint() {
 }
 
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_pending_idle_task_does_not_swallow_stderr() {
     let frontend = DummyArkFrontend::lock();
 
@@ -109,6 +112,7 @@ fn test_pending_idle_task_does_not_swallow_stderr() {
 }
 
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_multiple_pending_tasks_do_not_swallow_output() {
     let frontend = DummyArkFrontend::lock();
 
