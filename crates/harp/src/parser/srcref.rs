@@ -5,8 +5,6 @@
 //
 //
 
-use core::f64;
-
 use anyhow::anyhow;
 use stdext::result::ResultExt;
 use stdext::unwrap;
