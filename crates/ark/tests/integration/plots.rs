@@ -997,6 +997,7 @@ fn test_plot_during_frontend_ready() {
 /// This exercises the `capture_execution_context` fallback path where no
 /// context was pushed via `graphics_on_execute_request`.
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_plot_without_execution_context_has_empty_metadata() {
     let frontend = DummyArkFrontend::lock();
 

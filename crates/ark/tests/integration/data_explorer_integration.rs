@@ -38,6 +38,7 @@ use ark_test::DummyArkFrontend;
 ///    randomly among ready channels, so multiple idle tasks could run
 ///    first (~1500ms+).
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_kernel_request_priority_over_idle_tasks() {
     let frontend = DummyArkFrontend::lock();
 
