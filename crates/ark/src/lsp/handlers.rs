@@ -74,6 +74,7 @@ use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
 use crate::lsp::traits::url::UriExt;
 use crate::r_task;
+use crate::r_task::try_idle_task;
 
 pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
 
@@ -207,23 +208,34 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
     let position = params.text_document_position_params.position;
     let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
 
-    let context = DocumentContext::new(
-        file.tree_sitter(db),
-        file.source_text(db).as_str(),
-        file.line_index(db),
-        encoding,
-        point,
-        None,
-    );
+    // Owned copies so the closure can be sent to the R thread
+    let tree = file.tree_sitter(db).clone();
+    let contents = file.source_text(db).clone();
+    let line_index = file.line_index(db).clone();
 
-    // request hover information
-    let result = r_task(|| r_hover(&context));
+    // Only runs if R is idle, so a busy R doesn't block the LSP main loop
+    let result = try_idle_task(move |_capture| {
+        let context = DocumentContext::new(&tree, &contents, &line_index, encoding, point, None);
+        r_hover(&context)
+    });
+
+    let Some(result) = result else {
+        log::trace!("Skipping hover: R is busy");
+        return Ok(None);
+    };
 
     // unwrap errors
-    let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
-        return Ok(None);
-    });
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => {
+            lsp::log_error!("{err:?}");
+            return Ok(None);
+        },
+        Err(err) => {
+            lsp::log_error!("{err:?}");
+            return Ok(None);
+        },
+    };
 
     // unwrap empty options
     let result = unwrap!(result, None => {
@@ -254,23 +266,36 @@ pub(crate) fn handle_signature_help(
     let position = params.text_document_position_params.position;
     let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
 
-    let context = DocumentContext::new(
-        file.tree_sitter(db),
-        file.source_text(db).as_str(),
-        file.line_index(db),
-        encoding,
-        point,
-        None,
-    );
+    // Owned copies so the closure can be sent to the R thread
+    let tree = file.tree_sitter(db).clone();
+    let contents = file.source_text(db).clone();
+    let line_index = file.line_index(db).clone();
 
-    // request signature help
-    let result = r_task(|| r_signature_help(&context));
+    // Only runs if R is idle, so a busy R doesn't block the LSP main loop
+    // TODO: Once formals and argument matching are computed statically (#1095),
+    // show the signature while R is busy and only skip the parameter docs.
+    let result = try_idle_task(move |_capture| {
+        let context = DocumentContext::new(&tree, &contents, &line_index, encoding, point, None);
+        r_signature_help(&context)
+    });
+
+    let Some(result) = result else {
+        log::trace!("Skipping signature help: R is busy");
+        return Ok(None);
+    };
 
     // unwrap errors
-    let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
-        return Ok(None);
-    });
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => {
+            lsp::log_error!("{err:?}");
+            return Ok(None);
+        },
+        Err(err) => {
+            lsp::log_error!("{err:?}");
+            return Ok(None);
+        },
+    };
 
     // unwrap empty options
     let result = unwrap!(result, None => {

@@ -108,28 +108,39 @@ pub(crate) fn take_receivers() -> (
 /// than one tick to give a chance to ReadConsole to pick up the TryIdle task.
 const TRY_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Attempt to run `f` on the R thread if it is currently idle at a prompt.
+/// Attempt to run `f` on the R thread if it is currently idle at a top-level or
+/// browser prompt.
 ///
 /// Returns `None` if R was busy, i.e. the Console event loop did not accept the
 /// task within `TRY_IDLE_TIMEOUT`. Otherwise returns `Some` with the outcome:
 /// `Ok` if `f` ran cleanly, `Err` if it raised an R error.
+///
+/// Like [r_task()], a Rust panic in `f` is re-raised on the calling thread if the
+/// caller has a recovery boundary.
 pub(crate) fn try_idle_task<F, T>(f: F) -> Option<harp::Result<T>>
 where
     F: FnOnce(&mut ConsoleOutputCapture) -> T + Send + 'static,
     T: Send + 'static,
 {
-    let result: SharedOption<harp::Result<T>> = Arc::new(Mutex::new(None));
+    // Unlike `r_task()`, no unit-test escape hatch. Callers can legitimately
+    // arrive before the Console is initialized (e.g. a DAP evaluate during
+    // startup), and "R is not idle yet" must yield `None`, not run `f` against
+    // a freshly initialized test R.
+
+    let caller_recovers_panic = panic::recovers_panic();
+    let result: SharedOption<harp::Result<std::thread::Result<T>>> = SharedOption::default();
     let (done_tx, done_rx) = bounded::<()>(1);
 
     let result_clone = Arc::clone(&result);
     let task = TryIdleTask {
         fun: Box::new(move |capture| {
             // Run `f` inside `r_sandbox` so an R error longjumps back to here
-            // rather than unwinding past this frame. The `done` signal must
-            // stay outside the sandbox: a longjump skips everything between
-            // the error and the sandbox `setjmp`, so signalling inside would
-            // strand the caller forever in `recv()`.
-            let res = r_sandbox(|| f(capture));
+            // rather than unwinding past this frame. A panic is caught inside
+            // the sandbox so it doesn't unwind through its C frames. The `done`
+            // signal must stay outside the sandbox: a longjump skips everything
+            // between the error and the sandbox `setjmp`, so signalling inside
+            // would strand the caller forever in `recv()`.
+            let res = r_sandbox(|| run_catching_panic(caller_recovers_panic, || f(capture)));
             *result_clone.lock().unwrap() = Some(res);
             let _ = done_tx.send(());
         }),
@@ -152,8 +163,30 @@ where
         return None;
     }
 
-    let out = result.lock().unwrap().take();
-    out
+    let out = result.lock().unwrap().take()?;
+    match out {
+        Ok(Ok(value)) => Some(Ok(value)),
+        Ok(Err(payload)) => std::panic::resume_unwind(payload),
+        Err(err) => Some(Err(err)),
+    }
+}
+
+/// Run `f` on the R thread. If the caller can recover panics, catch any unwind
+/// so it can be ferried back and re-raised on the calling thread instead of
+/// escaping through R's C frames.
+///
+/// Without a recovering caller, don't install a boundary on the R thread. The
+/// production panic hook must abort rather than let the process continue after
+/// losing a thread.
+fn run_catching_panic<T>(
+    caller_recovers_panic: bool,
+    f: impl FnOnce() -> T,
+) -> std::thread::Result<T> {
+    if caller_recovers_panic {
+        panic::catch_unwind_payload(Recovery::Always, f)
+    } else {
+        Ok(f())
+    }
 }
 
 pub enum QueuedRTask {
@@ -298,24 +331,15 @@ where
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
 
-    // Stores the outcome of `f`. If the caller can recover panics, catch any unwind
-    // on the R thread instead of letting it escape through `r_sandbox`'s C frames.
-    // The payload is ferried back and re-raised below, on the calling thread.
-    //
-    // Without a recovering caller, don't install a boundary on the R thread. The
-    // production panic hook must abort rather than let the process continue after
-    // losing a thread.
+    // Stores the outcome of `f`. A panic payload is re-raised below, on the
+    // calling thread. See `run_catching_panic()`.
     let caller_recovers_panic = panic::recovers_panic();
     let result: SharedOption<std::thread::Result<T>> = SharedOption::default();
 
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let caught = if caller_recovers_panic {
-                panic::catch_unwind_payload(Recovery::Always, f)
-            } else {
-                Ok(f())
-            };
+            let caught = run_catching_panic(caller_recovers_panic, f);
             *result.lock().unwrap() = Some(caught);
         };
 
