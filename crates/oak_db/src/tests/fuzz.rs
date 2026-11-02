@@ -61,7 +61,7 @@ fn check_block(block: u64, iters: usize) {
     for (walk, iters) in walk_iters(iters).enumerate() {
         let result = Check::new()
             .iters(iters)
-            .shrink_iters(SHRINK_ITERS)
+            .max_shrink_iters(SHRINK_ITERS)
             .seed(walk_seed(block, walk))
             .run_with(ScenarioMutator, seed_corpus(block), |scenario| {
                 runner.check(scenario)
