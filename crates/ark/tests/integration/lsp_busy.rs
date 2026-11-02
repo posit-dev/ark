@@ -61,16 +61,12 @@ fn test_lsp_signature_help_busy() -> anyhow::Result<()> {
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    let start = std::time::Instant::now();
 
     let id = lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 0, 8));
-    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT);
-    eprintln!("DEBUG responses after {:?}: {responses:?}", start.elapsed());
-    let responses = responses?;
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
     assert_eq!(responses, vec![Value::Null]);
 
     frontend.recv_iopub_idle();
-    eprintln!("DEBUG idle after {:?}", start.elapsed());
     frontend.recv_shell_execute_reply();
 
     Ok(())
@@ -86,16 +82,12 @@ fn test_lsp_hover_busy() -> anyhow::Result<()> {
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    let start = std::time::Instant::now();
 
     let id = lsp.send_request_raw("textDocument/hover", position_params(&uri, 0, 2));
-    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT);
-    eprintln!("DEBUG responses after {:?}: {responses:?}", start.elapsed());
-    let responses = responses?;
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
     assert_eq!(responses, vec![Value::Null]);
 
     frontend.recv_iopub_idle();
-    eprintln!("DEBUG idle after {:?}", start.elapsed());
     frontend.recv_shell_execute_reply();
 
     Ok(())
@@ -112,7 +104,6 @@ fn test_lsp_signature_help_busy_does_not_stall_main_loop() -> anyhow::Result<()>
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    let start = std::time::Instant::now();
 
     let signature_help_id =
         lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 1, 8));
@@ -120,14 +111,11 @@ fn test_lsp_signature_help_busy_does_not_stall_main_loop() -> anyhow::Result<()>
         "textDocument/documentSymbol",
         json!({ "textDocument": { "uri": uri } }),
     );
-    let responses = lsp.recv_responses(&[signature_help_id, symbols_id], BUSY_TIMEOUT);
-    eprintln!("DEBUG responses after {:?}: {responses:?}", start.elapsed());
-    let responses = responses?;
+    let responses = lsp.recv_responses(&[signature_help_id, symbols_id], BUSY_TIMEOUT)?;
     assert_eq!(responses[0], Value::Null);
     assert_eq!(responses[1][0]["name"], "foo");
 
     frontend.recv_iopub_idle();
-    eprintln!("DEBUG idle after {:?}", start.elapsed());
     frontend.recv_shell_execute_reply();
 
     Ok(())
@@ -144,21 +132,17 @@ fn test_lsp_hover_busy_does_not_stall_main_loop() -> anyhow::Result<()> {
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    let start = std::time::Instant::now();
 
     let hover_id = lsp.send_request_raw("textDocument/hover", position_params(&uri, 1, 2));
     let symbols_id = lsp.send_request_raw(
         "textDocument/documentSymbol",
         json!({ "textDocument": { "uri": uri } }),
     );
-    let responses = lsp.recv_responses(&[hover_id, symbols_id], BUSY_TIMEOUT);
-    eprintln!("DEBUG responses after {:?}: {responses:?}", start.elapsed());
-    let responses = responses?;
+    let responses = lsp.recv_responses(&[hover_id, symbols_id], BUSY_TIMEOUT)?;
     assert_eq!(responses[0], Value::Null);
     assert_eq!(responses[1][0]["name"], "foo");
 
     frontend.recv_iopub_idle();
-    eprintln!("DEBUG idle after {:?}", start.elapsed());
     frontend.recv_shell_execute_reply();
 
     Ok(())
