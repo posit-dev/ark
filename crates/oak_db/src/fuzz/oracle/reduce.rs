@@ -68,7 +68,7 @@ fn reduce_with<R: Reference>(
 
     let outcome = Check::new()
         .iters(0)
-        .shrink_iters(shrink_iters)
+        .max_shrink_iters(shrink_iters)
         .seed(seed)
         .run_with(ScenarioMutator, [scenario], |candidate| {
             let outcome = compare(runner, candidate, reference());
