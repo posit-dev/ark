@@ -34,6 +34,7 @@ use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterComparisonOp;
+use amalthea::comm::data_explorer_comm::FilterGlobalSearch;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
@@ -75,6 +76,7 @@ use harp::utils::r_is_promise;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_value;
 use harp::vector::CharacterVector;
+use harp::vector::LogicalVector;
 use harp::vector::Vector;
 use harp::ColumnNames;
 use harp::TableKind;
@@ -98,6 +100,7 @@ use crate::data_explorer::format::format_string;
 use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
+use crate::data_explorer::utils::view_rows_to_table_rows;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::r_task::RTask;
@@ -149,6 +152,18 @@ pub(crate) struct DataObjectShape {
     pub kind: TableKind,
 }
 
+/// The rows that pass the row filters, as computed by `.ps.filter_rows`.
+struct FilteredRows {
+    /// The (1-based) row indices that pass all filters.
+    indices: Vec<i32>,
+
+    /// The error of each filter, where None means no error happened.
+    errors: Vec<Option<String>>,
+
+    /// The number of rows the global search scanned when `max_cells` limited it.
+    rows_scanned: Option<i64>,
+}
+
 /// The R backend for Positron's Data Explorer.
 pub struct RDataExplorer {
     /// The human-readable title of the data viewer.
@@ -189,6 +204,14 @@ pub struct RDataExplorer {
     /// data viewer.
     view_indices: Option<Vec<i32>>,
 
+    /// Environment caching the display strings the global search computes
+    /// for each column of the current table.
+    search_cache: RObject,
+
+    /// The number of leading candidate rows the global search scanned, when
+    /// `max_cells` limited it.
+    global_search_rows_scanned: Option<i64>,
+
     /// The display mode for this explorer. `Inline` renders a compact grid
     /// in a notebook cell output; `Full` opens the full Data Explorer panel.
     explorer_mode: DataExplorerMode,
@@ -220,11 +243,17 @@ impl RDataExplorer {
             sorted_indices: None,
             filtered_indices: None,
             view_indices: None,
+            search_cache: Self::new_search_cache()?,
+            global_search_rows_scanned: None,
             sort_keys: vec![],
             row_filters: vec![],
             col_filters: vec![],
             explorer_mode,
         })
+    }
+
+    fn new_search_cache() -> anyhow::Result<RObject> {
+        Ok(RFunction::new("base", "new.env").call()?)
     }
 
     pub(crate) fn shape(&self) -> &DataObjectShape {
@@ -273,6 +302,7 @@ impl RDataExplorer {
             false
         } else {
             self.table.set(RObject::new(new));
+            self.search_cache = Self::new_search_cache()?;
             true
         };
 
@@ -351,15 +381,19 @@ impl RDataExplorer {
     // Should be called whenever there's a schema update, ie. when `self.shape` changes.
     fn row_filters_update(&mut self) -> anyhow::Result<()> {
         for rf in self.row_filters.iter_mut() {
+            // Filters without a column (global search) apply to any schema
+            let Some(column_schema) = &rf.column_schema else {
+                continue;
+            };
             let new_schema = self
                 .shape
                 .columns
                 .iter()
-                .find(|c| c.column_name == rf.column_schema.column_name);
+                .find(|c| c.column_name == column_schema.column_name);
 
             match new_schema {
                 Some(schema) => {
-                    rf.column_schema = schema.clone();
+                    rf.column_schema = Some(schema.clone());
                     let is_valid = Self::is_valid_filter(rf)?;
                     rf.is_valid = Some(is_valid);
                     rf.error_message = if is_valid {
@@ -664,15 +698,19 @@ impl RDataExplorer {
     /// Filter all the rows in the data object according to the row filters in
     /// self.row_filters.
     ///
-    /// Returns a tuple containing a vector of all the row indices that pass the filters and
-    /// a character vector of errors, where None means no error happened.
-    fn filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
+    /// Returns the row indices that pass the filters, the errors of each filter,
+    /// and the number of rows the global search scanned.
+    fn filter_rows(&self) -> anyhow::Result<FilteredRows> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
         // all row indices.
         if self.row_filters.is_empty() {
-            return Ok(((1..=self.shape.num_rows).collect(), vec![]));
+            return Ok(FilteredRows {
+                indices: (1..=self.shape.num_rows).collect(),
+                errors: vec![],
+                rows_scanned: None,
+            });
         }
 
         // Convert each filter to an R object by marshaling through the JSON
@@ -693,11 +731,12 @@ impl RDataExplorer {
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
             .param("table", self.table.get().sexp)
             .param("row_filters", filters)
+            .param("search_cache", self.search_cache.sexp)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
 
         // Handle errors that occured in the filters
-        let row_indices = match result.get("indices") {
+        let indices = match result.get("indices") {
             Some(indices) => Vec::<i32>::try_from(indices.clone())?,
             None => bail!("Unexpected output from .ps.filter_rows. Expected 'indices' field."),
         };
@@ -707,7 +746,16 @@ impl RDataExplorer {
             None => bail!("Unexpected output from .ps.filter_rows. Expected 'errors' field."),
         };
 
-        Ok((row_indices, errors))
+        let rows_scanned = match result.get("rows_scanned") {
+            Some(rows_scanned) => Option::<i64>::try_from(rows_scanned.clone())?,
+            None => bail!("Unexpected output from .ps.filter_rows. Expected 'rows_scanned' field."),
+        };
+
+        Ok(FilteredRows {
+            indices,
+            errors,
+            rows_scanned,
+        })
     }
 
     // Compute filtered indices out of the current `row_filters`.
@@ -715,22 +763,42 @@ impl RDataExplorer {
     // Implicitly updates the `row_filters` with validity status and error messages, if they
     // fail during the computation.
     fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
+        self.global_search_rows_scanned = None;
+        if self.global_search().is_none() {
+            self.search_cache = Self::new_search_cache()?;
+        }
+
         if self.row_filters.is_empty() {
             return Ok((None, None));
         }
 
-        let (indices, errors) = self.filter_rows()?;
+        let filtered = self.filter_rows()?;
+        self.global_search_rows_scanned = filtered.rows_scanned;
         // this is called for the side-effect of updating the row_filters with validty status and
         // error messages
-        let had_errors = Some(self.apply_filter_errors(errors)?);
+        let had_errors = Some(self.apply_filter_errors(filtered.errors)?);
 
-        Ok((Some(indices), had_errors))
+        Ok((Some(filtered.indices), had_errors))
+    }
+
+    /// The parameters of the active global search filter, if any.
+    fn global_search(&self) -> Option<&FilterGlobalSearch> {
+        self.row_filters
+            .iter()
+            .filter(|filter| filter.is_valid != Some(false))
+            .find_map(|filter| match &filter.params {
+                Some(RowFilterParams::GlobalSearch(search)) => Some(search),
+                _ => None,
+            })
     }
 
     // Check if a filter is valid by looking at it's type and the type of the column its applied to.
     // Uses logic similar to python side: https://github.com/posit-dev/positron/blob/aafe313a261fd133b9f4a9f87c92bb10dc9966ad/extensions/positron-python/python_files/positron/positron_ipykernel/data_explorer.py#L743-L744
     fn is_valid_filter(filter: &RowFilter) -> anyhow::Result<bool> {
-        let display_type = &filter.column_schema.type_display;
+        let Some(column_schema) = &filter.column_schema else {
+            return Ok(filter.filter_type == RowFilterType::GlobalSearch);
+        };
+        let display_type = &column_schema.type_display;
         let filter_type = &filter.filter_type;
 
         let is_compare_supported = |x: &ColumnDisplayType| {
@@ -769,7 +837,10 @@ impl RDataExplorer {
             RowFilterType::IsTrue | RowFilterType::IsFalse => {
                 Ok(display_type == &ColumnDisplayType::Boolean)
             },
-            RowFilterType::IsNull | RowFilterType::NotNull | RowFilterType::SetMembership => {
+            RowFilterType::IsNull |
+            RowFilterType::NotNull |
+            RowFilterType::SetMembership |
+            RowFilterType::GlobalSearch => {
                 // Filters always supported
                 Ok(true)
             },
@@ -1000,6 +1071,9 @@ impl RDataExplorer {
             display_name: self.title.clone(),
             connected: Some(true),
             error_message: None,
+            available_sheets: None,
+            total_num_rows: None,
+            global_search_rows_scanned: self.global_search_rows_scanned,
             table_shape: TableShape {
                 num_rows: match self.filtered_indices {
                     Some(ref indices) => indices.len() as i64,
@@ -1072,6 +1146,7 @@ impl RDataExplorer {
                         RowFilterType::NotNull,
                         RowFilterType::Search,
                         RowFilterType::SetMembership,
+                        RowFilterType::GlobalSearch,
                     ]
                     .iter()
                     .map(|row_filter_type| RowFilterTypeSupportStatus {
@@ -1115,26 +1190,57 @@ impl RDataExplorer {
         columns: Vec<ColumnSelection>,
         format_options: FormatOptions,
     ) -> anyhow::Result<DataExplorerBackendReply> {
+        let search = self.global_search();
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
+        let mut search_matches: Vec<Vec<bool>> = Vec::new();
         for selection in columns {
+            let rows = self.get_row_selection_indices(selection.spec);
+            if let Some(search) = search {
+                let table_rows = view_rows_to_table_rows(&self.view_indices, &rows);
+                search_matches.push(self.search_cells(
+                    search,
+                    selection.column_index,
+                    table_rows,
+                )?);
+            }
+
             let tbl = tbl_subset_with_view_indices(
                 self.table.get().sexp,
                 &self.view_indices,
-                Some(self.get_row_selection_indices(selection.spec)),
+                Some(rows),
                 Some(vec![selection.column_index]),
             )?;
 
             // The column will be always at index 0 because we already selected a single column above.
             let column = tbl_get_column(tbl.sexp, 0, self.shape.kind)?;
-            let formatted = format::format_column(column.sexp, &format_options);
-            column_data.push(formatted.clone());
+            column_data.push(format::format_column(column.sexp, &format_options));
         }
 
         let response = TableData {
             columns: column_data,
+            search_matches: search.map(|_| search_matches),
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
+    }
+
+    /// Whether each of the given (1-based) table rows of a column matches the
+    /// global search.
+    fn search_cells(
+        &self,
+        search: &FilterGlobalSearch,
+        column_index: i64,
+        rows: Vec<i64>,
+    ) -> anyhow::Result<Vec<bool>> {
+        let matches = RFunction::new("", ".ps.search_cells")
+            .param("table", self.table.get().sexp)
+            .param("term", search.term.as_str())
+            .param("column_index", (column_index + 1) as i32)
+            .param("rows", &rows)
+            .param("search_cache", self.search_cache.sexp)
+            .call_in(ARK_ENVS.positron_ns)?;
+        let matches = LogicalVector::new(matches.sexp)?;
+        Ok(matches.iter().map(|x| x.unwrap_or(false)).collect())
     }
 
     fn get_row_labels(
