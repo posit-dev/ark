@@ -2072,6 +2072,11 @@ impl Console {
                     status_tx.send(RTaskStatus::Started).unwrap();
                 }
 
+                // When the caller recovers panics, `task.fun` enters a panic
+                // boundary on this thread. An R error escaping it longjumps to
+                // `r_sandbox()` over that boundary's guard, so restore the state
+                // from this frame, which the jump doesn't cross.
+                let _boundary = panic::preserve_boundary();
                 let result = task.start_info.span.in_scope(|| r_sandbox(task.fun));
 
                 // Unblock caller via the notification channel

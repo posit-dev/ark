@@ -857,6 +857,15 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
     Ok(libr::R_NilValue)
 }
 
+/// Whether the R thread would recover a panic rather than abort. Integration
+/// tests check that a task's R error doesn't leave a panic boundary behind.
+#[cfg(debug_assertions)]
+#[harp::register]
+unsafe extern "C-unwind" fn ps_test_recovers_panic() -> anyhow::Result<SEXP> {
+    stdext::assert_testing();
+    Ok(libr::Rf_ScalarLogical(panic::recovers_panic() as i32))
+}
+
 /// Spawn an idle task that evaluates an R expression. Used in integration tests.
 #[cfg(debug_assertions)]
 #[harp::register]

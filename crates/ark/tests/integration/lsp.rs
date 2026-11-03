@@ -239,6 +239,27 @@ fn test_lsp_panic_across_r_task_ends_session() {
     lsp.disconnect_abruptly();
 }
 
+// An R error escaping `r_task()` panics in the caller's recovery boundary. The
+// error longjumps over the panic boundary that the task entered on the R
+// thread, and that boundary must not outlive the task.
+#[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
+fn test_lsp_r_error_across_r_task_restores_r_thread_boundary() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Panic while handling event");
+    lsp.send_notification("ark/testRErrorRTask", json!({}));
+
+    lsp.recv_server_request("window/showMessageRequest");
+    lsp.expect_server_closes_connection(Duration::from_secs(5));
+    lsp.disconnect_abruptly();
+
+    frontend.execute_request(r#".Call("ps_test_recovers_panic")"#, |result| {
+        assert_eq!(result, "[1] FALSE");
+    });
+}
+
 // A panic outside the per-event boundary must still show the crash dialog before shutdown.
 #[test]
 fn test_lsp_panicking_main_loop_reports_crash() {

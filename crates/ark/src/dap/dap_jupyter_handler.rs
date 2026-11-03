@@ -100,6 +100,8 @@ impl DapJupyterHandler {
             "evaluate" => Some(self.handle_evaluate(seq, request)),
             #[cfg(feature = "testing")]
             "ark/testPanicTryRTask" => Some(self.handle_test_panic_try_r_task(seq, command)),
+            #[cfg(feature = "testing")]
+            "ark/testRErrorTryRTask" => Some(self.handle_test_r_error_try_r_task(seq, command)),
             "configurationDone" => Some(Ok(self.success_response(
                 seq,
                 "configurationDone",
@@ -227,6 +229,23 @@ impl DapJupyterHandler {
             || -> () { panic!("Test panic in a try task") },
             EVALUATE_START_WITHIN,
             |()| Err(anyhow::anyhow!("Test try task did not panic")),
+        )
+    }
+
+    /// Raise an R error that escapes a try task, so tests can check that it
+    /// becomes an error response and leaves no panic boundary on the R thread.
+    #[cfg(feature = "testing")]
+    fn handle_test_r_error_try_r_task(
+        &self,
+        seq: i64,
+        command: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.try_r_task_response(
+            seq,
+            command,
+            || -> () { unsafe { libr::Rf_error(c"Test R error in a try task".as_ptr()) } },
+            EVALUATE_START_WITHIN,
+            |()| Err(anyhow::anyhow!("Test try task did not raise an R error")),
         )
     }
 

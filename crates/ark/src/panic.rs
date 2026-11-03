@@ -135,6 +135,21 @@ pub(crate) fn test_boundary() -> CatchBoundary {
     catch_boundary(Recovery::Always)
 }
 
+/// Restore this thread's boundary state when the returned guard drops, without
+/// entering a boundary.
+///
+/// An R error longjumps over Rust frames without running their destructors. If it
+/// jumps over a [`CatchBoundary`] guard, the thread stays marked as recovering
+/// panics, so a later panic on it would unwind instead of aborting. Hold this guard
+/// in a frame outside the R error's landing point, such as the caller of
+/// `r_sandbox()`, so it drops normally after the jump.
+#[must_use]
+pub(crate) fn preserve_boundary() -> CatchBoundary {
+    CatchBoundary {
+        previous: BOUNDARY.get(),
+    }
+}
+
 /// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
 /// unwind safety is asserted on the caller's behalf.
 pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Result<T, String> {
@@ -303,6 +318,19 @@ mod tests {
             panic!("Expected a panic payload");
         };
         assert_eq!(message(&payload), "harness panic");
+        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
+    }
+
+    #[test]
+    fn test_preserve_boundary_restores_state_after_skipped_guard() {
+        let _outer = catch_boundary(Recovery::ReleaseOnly);
+        {
+            let _preserved = preserve_boundary();
+
+            // Stands in for an R longjump skipping the guard's destructor
+            std::mem::forget(catch_boundary(Recovery::Always));
+            assert!(recovers_panic());
+        }
         assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
     }
 

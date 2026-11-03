@@ -1236,6 +1236,57 @@ fn test_notebook_try_r_task_panic_is_error_reply() {
     assert_eq!(reply["body"]["result"], "2");
 }
 
+/// An R error escaping a try task started from a Control request becomes an
+/// error reply. The error longjumps over the panic boundary that the task
+/// entered on the R thread, and that boundary must not outlive the task:
+/// otherwise a later panic on the R thread would unwind instead of aborting.
+#[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
+fn test_notebook_try_r_task_r_error_is_error_reply() {
+    ark::panic::install();
+
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Wait for R to reach its first prompt
+    notebook_evaluate(&frontend, 1, "1");
+    assert_r_thread_aborts_on_panic(&frontend);
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "ark/testRErrorTryRTask",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], false);
+    let message = reply["message"].as_str().unwrap();
+    assert!(message.starts_with("Internal error while running R task:"));
+    assert!(message.contains("Test R error in a try task"));
+
+    assert_r_thread_aborts_on_panic(&frontend);
+
+    let reply = notebook_evaluate(&frontend, 3, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+}
+
+/// Assert that no panic boundary is active on the R thread at top level.
+#[track_caller]
+fn assert_r_thread_aborts_on_panic(frontend: &DummyArkFrontendNotebook) {
+    frontend.send_execute_request(
+        r#".Call("ps_test_recovers_panic")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] FALSE");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// A runaway expression in the watch pane must not freeze the kernel. The
 /// evaluation runs on the R main thread, so a `with_timeout()` deadline
 /// interrupts it and reports an error rather than blocking forever. The
