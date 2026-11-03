@@ -23,11 +23,12 @@ fn find_debug_event<'a>(msgs: &'a [Message], event: &str) -> &'a serde_json::Val
 
 /// Send an `evaluate` `debug_request` and return the reply.
 ///
-/// `evaluate` runs through `try_r_task()`, which runs it if R is at a prompt.
-/// Once R is at a prompt a single attempt lands. The only time it reports "R is
-/// busy" here is cold start, before R has reached its first prompt, so we
-/// re-send until it's ready. Busy replies come back immediately, so we pace the
-/// attempts with a short sleep. The control thread brackets each attempt with
+/// `evaluate` runs through `try_r_task()`, which runs it only if R can serve it.
+/// This re-sends until R can, for waits that nothing announces: cold start,
+/// before R has reached its first prompt, and a callback returning to the
+/// top-level event loop. Use `notebook_evaluate_once()` when the request
+/// follows a readiness announcement and must land on the first attempt. Busy
+/// replies come back immediately, so we pace the attempts with a short sleep. The control thread brackets each attempt with
 /// busy/idle on IOPub, and the R-thread evaluation emits nothing there (printed
 /// output is captured), so each is the same busy/reply/idle as any other
 /// control-only request.
@@ -1596,4 +1597,206 @@ fn test_notebook_evaluate_busy_at_stdin_browser_prompt() {
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+/// A single `evaluate` sent on receipt of a notebook execute reply must
+/// succeed rather than report "R is busy". Like
+/// [`test_notebook_evaluate_right_after_stopped()`], this checks notification
+/// ordering end to end without forcing the request into the gap before the
+/// event loop starts.
+#[test]
+fn test_notebook_evaluate_right_after_execute_reply() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Wait for R to reach its first prompt
+    notebook_evaluate(&frontend, 1, "1");
+
+    frontend.send_execute_request("x <- 1", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_shell_execute_reply();
+
+    // Do not retry, since that could hide rejection of the first request.
+    let (reply, _) = notebook_evaluate_once(&frontend, 2, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    frontend.recv_iopub_interleaved(&[&[IopubExpectation::IdleShell], &[
+        IopubExpectation::BusyControl,
+        IopubExpectation::IdleControl,
+    ]]);
+}
+
+/// A `browser()` entered from a callback in the top-level event loop serves
+/// `evaluate`. R reports busy while evaluating a user expression at that
+/// prompt and after `continue` while the rest of the callback runs. Returning
+/// from the inner prompt must not reopen admission for the outer loop, which
+/// is still blocked in the callback. `evaluate` succeeds once that loop resumes.
+#[test]
+fn test_notebook_evaluate_nested_browser_lifecycle() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let entered_expr = MarkerFile::new("nested-browser-entered-expr");
+    let release_expr = MarkerFile::new("nested-browser-release-expr");
+    let entered_callback = MarkerFile::new("nested-browser-entered-callback");
+    let release_callback = MarkerFile::new("nested-browser-release-callback");
+
+    // Attach so the browser is served over DAP rather than routed to stdin
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_debug_event(); // thread started
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // The idle task runs in the top-level event loop once this request
+    // completes. Its `browser()` is a nested prompt.
+    let callback = format!(
+        "{{ browser(); file.create('{entered}'); while (!file.exists('{release}')) Sys.sleep(0.01) }}",
+        entered = entered_callback.r_path(),
+        release = release_callback.r_path(),
+    );
+    frontend.send_execute_request(
+        &format!(r#"invisible(.Call("ps_test_spawn_eval_idle_task", "{callback}"))"#),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // The nested prompt serves `evaluate`
+    let (reply, _) = notebook_evaluate_once(&frontend, 2, "1 + 1");
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    // Busy while a user expression runs at the nested prompt. Its execute
+    // reply is withheld while debugging in notebook mode, so we don't wait
+    // for it.
+    frontend.send_execute_request(
+        &format!(
+            "file.create('{entered}'); while (!file.exists('{release}')) Sys.sleep(0.01)",
+            entered = entered_expr.r_path(),
+            release = release_expr.r_path(),
+        ),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    entered_expr.wait_for();
+
+    assert_notebook_evaluate_busy(&frontend, 3);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+
+    // Back at the nested prompt, which announces itself with `invalidated`
+    release_expr.create();
+    let invalidated = frontend.recv_iopub_debug_event();
+    assert_eq!(invalidated["event"], "invalidated");
+
+    let (reply, _) = notebook_evaluate_once(&frontend, 4, "1 + 1");
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    // Busy after `continue` while the rest of the callback runs
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+    let msgs = frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[IopubExpectation::DebugEvent],
+    ]);
+    find_debug_event(&msgs, "continued");
+    entered_callback.wait_for();
+
+    assert_notebook_evaluate_busy(&frontend, 6);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+
+    // No notification marks the callback's return to the top-level event
+    // loop, so retry until that loop serves `evaluate` again.
+    release_callback.create();
+    let reply = notebook_evaluate(&frontend, 7, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 8,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+}
+
+/// A temporary file that R code creates to signal the test, or that the test
+/// creates to release R code. Removed on drop, including when an assertion
+/// fails.
+struct MarkerFile {
+    path: std::path::PathBuf,
+}
+
+impl MarkerFile {
+    fn new(name: &str) -> Self {
+        let file_name = format!("ark-{name}-{}", std::process::id());
+        Self {
+            path: std::env::temp_dir().join(file_name),
+        }
+    }
+
+    /// The path in a form that can be pasted in an R string.
+    fn r_path(&self) -> String {
+        self.path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn create(&self) {
+        std::fs::write(&self.path, "").unwrap();
+    }
+
+    fn wait_for(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !self.path.exists() {
+            if std::time::Instant::now() >= deadline {
+                panic!("R never created {}", self.path.display());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for MarkerFile {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Can't remove {}: {err:?}", self.path.display());
+            }
+        }
+    }
+}
+
+/// Assert that a single `evaluate` reports "R is busy" without waiting out
+/// its start timeout.
+#[track_caller]
+fn assert_notebook_evaluate_busy(frontend: &DummyArkFrontendNotebook, seq: i64) {
+    let (reply, elapsed) = notebook_evaluate_once(frontend, seq, "1 + 1");
+    assert_eq!(reply["success"], false);
+    assert_eq!(reply["message"], "R is busy");
+    assert!(elapsed < std::time::Duration::from_millis(200));
 }

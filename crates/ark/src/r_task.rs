@@ -7,12 +7,10 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
@@ -38,8 +36,8 @@ static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 /// not input)
 static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
-/// Queue for `try_r_task()`. `Console::read_console()` registers each prompt
-/// here with a `TryTaskFrame`.
+/// Queue for [`try_r_task()`]. The Console admits tasks before announcing a
+/// serving prompt and while its event loop serves them.
 pub(crate) static TRY_TASKS: LazyLock<TryTasks> = LazyLock::new(TryTasks::new);
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
@@ -263,11 +261,17 @@ where
 /// is the usual cause of the last case. Once `f` has started, this blocks
 /// until it finishes, however long that takes.
 ///
-/// `Console::read_console()` registers each prompt with a `TryTaskFrame`
-/// before announcing idleness to frontends. Only the innermost frame can
-/// admit `f`. This lets requests triggered by an idle notification, such as
-/// a DAP `evaluate` request after `stopped`, queue before the event loop starts.
-/// See `TryTasks::submit()` for timeout and rejection behavior.
+/// [`TryTasks`] owns a single admission flag. The Console closes admission
+/// at `r_read_console()` entry and after `read_console()` returns, before
+/// evaluating pending input or returning control to R. Closing rejects queued
+/// tasks. Admission opens just before `debug_start()` sends `invalidated` or
+/// `stopped`, before `handle_active_request()` sends the execute reply, and
+/// before each attempt to take a try task in a `WaitFor::ExecuteRequest` loop.
+/// This lets try tasks submitted in response to those notifications queue
+/// before the event loop serves them. Input prompts and notebook browser
+/// prompts routed to stdin never open admission. An inner prompt returning
+/// does not reopen admission for an outer loop still blocked in a callback.
+/// See [`TryTasks::submit()`] for timeout and rejection behavior.
 ///
 /// Like `r_task()`, `f` may borrow from the caller's stack, Rust panics in `f`
 /// are re-raised on the caller's thread, and an R error escaping `f` panics.
@@ -400,13 +404,13 @@ fn join_task<T>(
     }
 }
 
-/// Queue for `try_r_task()`, admitting tasks only while the innermost
-/// prompt is configured to serve them.
+/// Queue for [`try_r_task()`], admitting tasks only while open.
 ///
-/// `Console::read_console()` registers every prompt, including input
-/// prompts that do not serve tasks. For example, `readline()` called from a
-/// `later` callback makes callers receive `None` immediately, even if the
-/// outer event loop serves tasks.
+/// Requesting threads submit tasks and reclaim them on timeout. Only the R
+/// thread opens, closes and pops. Returning from an inner prompt does not
+/// reopen admission for an outer event loop still blocked in a callback.
+/// The Console must explicitly reopen admission before a serving prompt's
+/// announcement or when its event loop is about to take a try task.
 pub(crate) struct TryTasks {
     state: Mutex<TryTasksState>,
 
@@ -418,22 +422,10 @@ pub(crate) struct TryTasks {
 }
 
 struct TryTasksState {
-    /// One entry per live `TryTaskFrame`, innermost last. `true` if that
-    /// frame's event loop serves try tasks. `queue` is empty unless the last
-    /// entry is `true`.
-    frames: Vec<bool>,
+    /// Whether tasks are admitted. `queue` is empty while closed.
+    open: bool,
     next_id: u64,
     queue: VecDeque<(u64, RTaskSync)>,
-}
-
-impl TryTasksState {
-    fn top_serves(&self) -> bool {
-        matches!(self.frames.last(), Some(true))
-    }
-
-    fn is_top(&self, index: usize) -> bool {
-        index + 1 == self.frames.len()
-    }
 }
 
 impl TryTasks {
@@ -441,7 +433,7 @@ impl TryTasks {
         let (wake_tx, wake_rx) = bounded::<()>(1);
         Self {
             state: Mutex::new(TryTasksState {
-                frames: Vec::new(),
+                open: false,
                 next_id: 0,
                 queue: VecDeque::new(),
             }),
@@ -455,24 +447,56 @@ impl TryTasks {
         rx.take().expect("`take_wake_rx()` can only be called once")
     }
 
-    /// Register the innermost prompt, with `serving` indicating whether its
-    /// event loop serves try tasks. A non-serving frame rejects queued tasks
-    /// because the outer event loop cannot resume until this prompt returns.
-    pub(crate) fn frame(&self, serving: bool) -> TryTaskFrame<'_> {
-        let mut state = self.state.lock().unwrap();
-        state.frames.push(serving);
-        let index = state.frames.len() - 1;
-        Self::reject_unserved(state);
+    /// Admit try tasks without discarding queued tasks. Called on the R
+    /// thread before announcing a serving prompt or taking a try task.
+    pub(crate) fn open(&self) {
+        self.state.lock().unwrap().open = true;
+    }
 
-        TryTaskFrame {
-            tasks: self,
-            index,
-            _not_send: PhantomData,
+    /// Stop admitting try tasks and reject those queued, without waiting for
+    /// `start_within` to expire. Called on the R thread whenever R takes
+    /// control back from Ark's event loop.
+    ///
+    /// Task closures are dropped after releasing the lock. Their destructors
+    /// may run arbitrary code and reacquire this non-reentrant mutex.
+    pub(crate) fn close(&self) {
+        let rejected = {
+            let mut state = self.state.lock().unwrap();
+            state.open = false;
+            std::mem::take(&mut state.queue)
+        };
+
+        for (_, task) in rejected {
+            let RTaskSync { fun, status_tx, .. } = task;
+
+            // The closure may borrow from the caller's stack. Drop it before
+            // `Rejected` lets the caller return.
+            drop(fun);
+
+            if let Some(status_tx) = status_tx {
+                if let Err(err) = status_tx.send(RTaskStatus::Rejected) {
+                    log::error!("`try_r_task()`: Can't reject task: {err:?}");
+                }
+            }
         }
     }
 
-    /// Queue `f` for the event loop of the innermost frame and wait for it.
-    /// Returns `None` without waiting if that frame doesn't serve try tasks.
+    /// Take the next try task for `handle_task()`, or return `None` if closed
+    /// or empty. Taking a task commits to running it, so its caller can no
+    /// longer reclaim it on timeout.
+    pub(crate) fn pop(&self) -> Option<QueuedRTask> {
+        let mut state = self.state.lock().unwrap();
+        if !state.open {
+            return None;
+        }
+        state
+            .queue
+            .pop_front()
+            .map(|(_, task)| QueuedRTask::Sync(task))
+    }
+
+    /// Queue `f` for the serving event loop and wait for it. Returns `None`
+    /// without waiting while closed.
     ///
     /// When `start_within` expires, the caller reclaims a still-queued task
     /// and drops it on its own thread. This releases captured values such as
@@ -480,7 +504,7 @@ impl TryTasks {
     /// event loop has already taken the task to run it, the caller waits for
     /// completion. If the task was taken for rejection, the caller waits for
     /// its closure to be dropped before receiving `None`. Queued tasks are
-    /// rejected when the innermost frame stops serving them.
+    /// rejected by `close()`.
     pub(crate) fn submit<'env, F, T>(&self, f: F, start_within: Duration) -> Option<T>
     where
         F: FnOnce() -> T,
@@ -562,12 +586,12 @@ impl TryTasks {
         }
     }
 
-    /// Queue `task` if the innermost frame serves try tasks. Otherwise hand it
-    /// back so the caller drops it on its own thread.
+    /// Queue `task` if open. Otherwise hand it back so the caller drops it on
+    /// its own thread.
     fn push(&self, task: RTaskSync) -> Result<u64, RTaskSync> {
         let id = {
             let mut state = self.state.lock().unwrap();
-            if !state.top_serves() {
+            if !state.open {
                 return Err(task);
             }
             let id = state.next_id;
@@ -592,95 +616,6 @@ impl TryTasks {
         let mut state = self.state.lock().unwrap();
         let index = state.queue.iter().position(|(task_id, _)| *task_id == id)?;
         state.queue.remove(index).map(|(_, task)| task)
-    }
-
-    /// Reject queued tasks when the innermost frame does not serve them or
-    /// no frame remains, without waiting for `start_within` to expire. Called
-    /// after every frame-stack change.
-    ///
-    /// Consumes the guard to release the lock before dropping task closures.
-    /// Their destructors may run arbitrary code and reacquire this
-    /// non-reentrant mutex.
-    fn reject_unserved(mut state: MutexGuard<'_, TryTasksState>) {
-        if state.top_serves() {
-            return;
-        }
-        let rejected = std::mem::take(&mut state.queue);
-        drop(state);
-
-        for (_, task) in rejected {
-            let RTaskSync { fun, status_tx, .. } = task;
-
-            // The closure may borrow from the caller's stack. Drop it before
-            // `Rejected` lets the caller return.
-            drop(fun);
-
-            if let Some(status_tx) = status_tx {
-                if let Err(err) = status_tx.send(RTaskStatus::Rejected) {
-                    log::error!("`try_r_task()`: Can't reject task: {err:?}");
-                }
-            }
-        }
-    }
-}
-
-/// One prompt in the `TryTasks` stack, registered by `TryTasks::frame()`
-/// and removed on drop. Only the innermost frame admits and serves tasks.
-/// Dropping it preserves queued tasks if the outer frame serves them,
-/// otherwise it rejects them.
-///
-/// Frames must be created and dropped in LIFO order on the R thread.
-/// `!Send` prevents moving a frame to another thread.
-pub(crate) struct TryTaskFrame<'a> {
-    tasks: &'a TryTasks,
-    index: usize,
-    _not_send: PhantomData<*const ()>,
-}
-
-impl TryTaskFrame<'_> {
-    /// Stop serving try tasks at this prompt, rejecting those queued. Must be
-    /// called on the innermost frame: rejection only looks at the top.
-    pub(crate) fn suspend(&self) {
-        let mut state = self.tasks.state.lock().unwrap();
-        debug_assert!(state.is_top(self.index));
-        if let Some(serving) = state.frames.get_mut(self.index) {
-            *serving = false;
-        }
-        TryTasks::reject_unserved(state);
-    }
-
-    /// Whether this prompt's event loop serves try tasks.
-    pub(crate) fn serves(&self) -> bool {
-        let state = self.tasks.state.lock().unwrap();
-        matches!(state.frames.get(self.index), Some(true))
-    }
-
-    /// Take the next try task off the queue, to be run with `handle_task()`.
-    /// Returns `None` unless this frame is the innermost one and serves.
-    /// Taking a task off the queue commits to running it. Its caller can no
-    /// longer reclaim it.
-    pub(crate) fn pop(&self) -> Option<QueuedRTask> {
-        let mut state = self.tasks.state.lock().unwrap();
-        if !state.is_top(self.index) || !state.top_serves() {
-            return None;
-        }
-        state
-            .queue
-            .pop_front()
-            .map(|(_, task)| QueuedRTask::Sync(task))
-    }
-}
-
-impl Drop for TryTaskFrame<'_> {
-    fn drop(&mut self) {
-        let mut state = self.tasks.state.lock().unwrap();
-        debug_assert!(state.is_top(self.index));
-
-        // Entries above this one remain only if their frame's destructor was
-        // skipped, e.g. by an R longjump. Debug builds catch that with the
-        // assertion above; in release builds `truncate()` discards them too.
-        state.frames.truncate(self.index);
-        TryTasks::reject_unserved(state);
     }
 }
 
@@ -934,7 +869,8 @@ unsafe extern "C-unwind" fn ps_test_spawn_eval_idle_task(code: SEXP) -> anyhow::
 }
 
 // Protocol tests for `TryTasks`, without R. A scoped thread stands in for
-// the R thread, registering prompts and running tasks with `run_task()`.
+// the R thread, opening and closing admission and running tasks with
+// `run_task()`.
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -948,13 +884,12 @@ mod tests {
 
     use super::QueuedRTask;
     use super::RTaskStatus;
-    use super::TryTaskFrame;
     use super::TryTasks;
     use crate::panic;
     use crate::panic::Recovery;
 
-    /// Long enough that the frame stack or the task decides the outcome,
-    /// never `start_within`.
+    /// Long enough that admission or the task decides the outcome, never
+    /// `start_within`.
     const NEVER: Duration = Duration::from_secs(60);
 
     /// Records which thread drops it, to observe where and when a closure
@@ -983,28 +918,24 @@ mod tests {
         status_tx.send(RTaskStatus::Finished(Ok(()))).unwrap();
     }
 
-    /// Waits for a wake-up and pops from `frame`, like the event loop.
-    fn pop_next(frame: &TryTaskFrame, wake_rx: &Receiver<()>) -> QueuedRTask {
+    /// Waits for a wake-up and pops from `tasks`, like the event loop.
+    fn pop_next(tasks: &TryTasks, wake_rx: &Receiver<()>) -> QueuedRTask {
         loop {
             wake_rx.recv().unwrap();
-            if let Some(task) = frame.pop() {
+            if let Some(task) = tasks.pop() {
                 return task;
             }
         }
     }
 
     #[test]
-    fn test_try_task_refused_without_frame() {
+    fn test_try_task_refused_while_closed() {
         let tasks = TryTasks::new();
         assert_eq!(tasks.submit(|| 1, NEVER), None);
-    }
 
-    #[test]
-    fn test_try_task_refused_when_top_does_not_serve() {
-        let tasks = TryTasks::new();
-        let _outer = tasks.frame(true);
-        let _inner = tasks.frame(false);
-        assert_eq!(tasks.submit(|| 1, NEVER), None);
+        tasks.open();
+        tasks.close();
+        assert_eq!(tasks.submit(|| 2, NEVER), None);
     }
 
     #[test]
@@ -1016,9 +947,9 @@ mod tests {
         std::thread::scope(|scope| {
             let (ready_tx, ready_rx) = bounded::<()>(0);
             scope.spawn(move || {
-                let frame = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
-                run_task(pop_next(&frame, &wake_rx));
+                run_task(pop_next(tasks, &wake_rx));
             });
 
             ready_rx.recv().unwrap();
@@ -1036,10 +967,10 @@ mod tests {
             let (done_tx, done_rx) = bounded::<()>(0);
             scope.spawn(move || {
                 // Keep the task queued until the caller reclaims it on timeout.
-                let frame = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
                 done_rx.recv().unwrap();
-                assert!(frame.pop().is_none());
+                assert!(tasks.pop().is_none());
             });
 
             ready_rx.recv().unwrap();
@@ -1069,9 +1000,9 @@ mod tests {
             let (ready_tx, ready_rx) = bounded::<()>(0);
             let (popped_tx, popped_rx) = bounded::<()>(0);
             scope.spawn(move || {
-                let frame = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
-                let task = pop_next(&frame, &wake_rx);
+                let task = pop_next(tasks, &wake_rx);
                 popped_tx.send(()).unwrap();
                 run_task(task);
             });
@@ -1092,17 +1023,18 @@ mod tests {
     }
 
     #[test]
-    fn test_try_task_rejected_when_last_frame_dropped() {
+    fn test_try_task_rejected_on_close() {
         let tasks = &TryTasks::new();
         let wake_rx = tasks.take_wake_rx();
 
         std::thread::scope(|scope| {
             let (ready_tx, ready_rx) = bounded::<()>(0);
             let r_thread = scope.spawn(move || {
-                let frame = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
                 wake_rx.recv().unwrap();
-                drop(frame);
+                tasks.close();
+                assert!(tasks.pop().is_none());
             });
             let r_thread_id = r_thread.thread().id();
 
@@ -1121,24 +1053,22 @@ mod tests {
     }
 
     #[test]
-    fn test_try_task_kept_when_nested_frame_dropped_over_serving_frame() {
+    fn test_try_task_kept_when_opened_again() {
         let tasks = &TryTasks::new();
         let wake_rx = tasks.take_wake_rx();
 
         std::thread::scope(|scope| {
             let (ready_tx, ready_rx) = bounded::<()>(0);
             scope.spawn(move || {
-                let outer = tasks.frame(true);
-                let inner = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
+
+                // Reopening at the event loop's service point must preserve
+                // tasks queued while admission is already open.
                 wake_rx.recv().unwrap();
+                tasks.open();
 
-                // A serving outer frame cannot take tasks from an inner prompt.
-                assert!(outer.pop().is_none());
-                drop(inner);
-
-                let task = outer.pop().unwrap();
-                run_task(task);
+                run_task(tasks.pop().unwrap());
             });
 
             ready_rx.recv().unwrap();
@@ -1147,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_task_nested_non_serving_frame_rejects_and_refuses() {
+    fn test_try_task_served_after_close_and_open() {
         let tasks = &TryTasks::new();
         let wake_rx = tasks.take_wake_rx();
 
@@ -1155,54 +1085,32 @@ mod tests {
             let (step_tx, step_rx) = bounded::<()>(0);
             let (resume_tx, resume_rx) = bounded::<()>(0);
             scope.spawn(move || {
-                let outer = tasks.frame(true);
+                tasks.open();
                 step_tx.send(()).unwrap();
 
                 wake_rx.recv().unwrap();
-                let inner = tasks.frame(false);
+                tasks.close();
                 step_tx.send(()).unwrap();
 
                 resume_rx.recv().unwrap();
-                drop(inner);
+                tasks.open();
                 step_tx.send(()).unwrap();
 
-                run_task(pop_next(&outer, &wake_rx));
+                run_task(pop_next(tasks, &wake_rx));
             });
 
-            // Queued for `outer`, rejected when `inner` is pushed
+            // Queued while open, rejected by `close()`
             step_rx.recv().unwrap();
             assert_eq!(tasks.submit(|| 1, NEVER), None);
 
-            // Refused while `inner` is the innermost frame
+            // Refused while closed
             step_rx.recv().unwrap();
             assert_eq!(tasks.submit(|| 2, NEVER), None);
             resume_tx.send(()).unwrap();
 
-            // Served by `outer` once `inner` is gone
+            // Served once open again
             step_rx.recv().unwrap();
             assert_eq!(tasks.submit(|| 3, NEVER), Some(3));
-        });
-    }
-
-    #[test]
-    fn test_try_task_rejected_on_suspend() {
-        let tasks = &TryTasks::new();
-        let wake_rx = tasks.take_wake_rx();
-
-        std::thread::scope(|scope| {
-            let (ready_tx, ready_rx) = bounded::<()>(0);
-            scope.spawn(move || {
-                let frame = tasks.frame(true);
-                ready_tx.send(()).unwrap();
-                wake_rx.recv().unwrap();
-
-                frame.suspend();
-                assert!(!frame.serves());
-                assert!(frame.pop().is_none());
-            });
-
-            ready_rx.recv().unwrap();
-            assert_eq!(tasks.submit(|| 1, NEVER), None);
         });
     }
 
@@ -1214,9 +1122,9 @@ mod tests {
         std::thread::scope(|scope| {
             let (ready_tx, ready_rx) = bounded::<()>(0);
             scope.spawn(move || {
-                let frame = tasks.frame(true);
+                tasks.open();
                 ready_tx.send(()).unwrap();
-                run_task(pop_next(&frame, &wake_rx));
+                run_task(pop_next(tasks, &wake_rx));
             });
 
             ready_rx.recv().unwrap();
