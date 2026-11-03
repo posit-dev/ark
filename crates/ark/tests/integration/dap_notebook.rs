@@ -1633,6 +1633,7 @@ fn test_notebook_evaluate_right_after_execute_reply() {
 /// from the inner prompt must not reopen admission for the outer loop, which
 /// is still blocked in the callback. `evaluate` succeeds once that loop resumes.
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "Requires debug-only test routines")]
 fn test_notebook_evaluate_nested_browser_lifecycle() {
     let frontend = DummyArkFrontendNotebook::lock();
 
