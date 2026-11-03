@@ -1202,6 +1202,40 @@ fn test_notebook_evaluate_error() {
     assert_eq!(reply["body"]["result"], "2");
 }
 
+/// A panic in a try task started from a Control request becomes an error reply
+/// rather than aborting the kernel. With the production panic hook installed,
+/// a missing recovery boundary on Control would abort the test process.
+#[test]
+fn test_notebook_try_r_task_panic_is_error_reply() {
+    ark::panic::install();
+
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Wait for R to reach its first prompt
+    notebook_evaluate(&frontend, 1, "1");
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "ark/testPanicTryRTask",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], false);
+    assert_eq!(
+        reply["message"],
+        "Internal error while running R task: Test panic in a try task"
+    );
+
+    // Both the Control thread and the R thread keep serving requests
+    let reply = notebook_evaluate(&frontend, 3, "1 + 1");
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["result"], "2");
+}
+
 /// A runaway expression in the watch pane must not freeze the kernel. The
 /// evaluation runs on the R main thread, so a `with_timeout()` deadline
 /// interrupts it and reports an error rather than blocking forever. The

@@ -39,6 +39,8 @@ use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task;
 use crate::request::RRequest;
 
@@ -96,6 +98,8 @@ impl DapJupyterHandler {
             "dumpCell" => Some(self.handle_dump_cell(seq, request)),
             "debugInfo" => Some(self.handle_debug_info(seq)),
             "evaluate" => Some(self.handle_evaluate(seq, request)),
+            #[cfg(feature = "testing")]
+            "ark/testPanicTryRTask" => Some(self.handle_test_panic_try_r_task(seq, command)),
             "configurationDone" => Some(Ok(self.success_response(
                 seq,
                 "configurationDone",
@@ -154,30 +158,76 @@ impl DapJupyterHandler {
         // expression is interrupted and doesn't freeze the kernel. R errors
         // can't escape it: `with_timeout()` converts them into
         // `EvaluateOutcome::Error`.
-        let outcome = r_task::try_r_task(
+        self.try_r_task_response(
+            seq,
+            "evaluate",
             || {
                 let mut capture = Console::get_mut().start_capture();
                 DapHandler::evaluate(state, expression, frame_id, &mut capture)
             },
             EVALUATE_START_WITHIN,
-        );
+            |outcome| match outcome {
+                EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
+                    Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
+                },
+                EvaluateOutcome::Ok(_) => {
+                    Err(anyhow::anyhow!("Unexpected response body from evaluate"))
+                },
+                EvaluateOutcome::TimedOut => {
+                    Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
+                },
+                EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
+            },
+        )
+    }
 
-        let Some(outcome) = outcome else {
-            return Ok(self.error_response(seq, "evaluate", "R is busy"));
-        };
+    /// Run `f` with `try_r_task()` and build the response for `command` from
+    /// its value. R being busy and `f` panicking both become error responses.
+    ///
+    /// Requests are handled on the Control thread, which has no enclosing
+    /// panic boundary. Without the one installed here, the production panic
+    /// hook would abort the kernel when `f` panics.
+    fn try_r_task_response<'env, F, T>(
+        &self,
+        seq: i64,
+        command: &str,
+        f: F,
+        start_within: Duration,
+        respond: impl FnOnce(T) -> anyhow::Result<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value>
+    where
+        F: FnOnce() -> T,
+        F: 'env + Send,
+        T: 'env + Send,
+    {
+        let outcome = panic::catch_unwind(Recovery::Always, || r_task::try_r_task(f, start_within));
 
         match outcome {
-            EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
-                Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
-            },
-            EvaluateOutcome::Ok(_) => {
-                Err(anyhow::anyhow!("Unexpected response body from evaluate"))
-            },
-            EvaluateOutcome::TimedOut => {
-                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
-            },
-            EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
+            Ok(Some(value)) => respond(value),
+            Ok(None) => Ok(self.error_response(seq, command, "R is busy")),
+            Err(message) => Ok(self.error_response(
+                seq,
+                command,
+                &format!("Internal error while running R task: {message}"),
+            )),
         }
+    }
+
+    /// Panic in a try task so tests can check that the panic becomes an error
+    /// response instead of aborting the kernel.
+    #[cfg(feature = "testing")]
+    fn handle_test_panic_try_r_task(
+        &self,
+        seq: i64,
+        command: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.try_r_task_response(
+            seq,
+            command,
+            || -> () { panic!("Test panic in a try task") },
+            EVALUATE_START_WITHIN,
+            |()| Err(anyhow::anyhow!("Test try task did not panic")),
+        )
     }
 
     fn handle_console_event(&self, event: DapConsoleEvent) {

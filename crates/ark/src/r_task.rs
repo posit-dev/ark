@@ -278,6 +278,10 @@ where
 /// When queued, `f` runs through `handle_task()` with `R_Interactive` off.
 /// When called from the R thread or in unit tests, it runs inline as is.
 ///
+/// Callers must run inside a `panic::catch_unwind()` boundary, checked in debug
+/// builds. Without one, the production panic hook aborts the kernel when `f`
+/// panics.
+///
 /// Values that must be dropped on every path, such as a `WorldStateSnapshot`
 /// that parks salsa writes, should stay on the caller's stack and be
 /// borrowed by `f`. If `f` owned them, an R longjump out of `f` would skip
@@ -288,6 +292,8 @@ where
     F: 'env + Send,
     T: 'env + Send,
 {
+    panic::assert_in_catch_boundary();
+
     if !Console::is_initialized() {
         // Escape hatch for unit tests, which run without a Console. Unlike in
         // `r_task()`, this is gated on `cfg!(test)` rather than `IS_TESTING`:

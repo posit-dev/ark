@@ -111,8 +111,9 @@ fn in_catch_boundary() -> bool {
     BOUNDARY.get().is_some()
 }
 
-/// Assert that Salsa database access runs inside a declared `catch_unwind()` boundary.
-/// Salsa queries can panic on cycles.
+/// Assert that code which can panic by design runs inside a declared `catch_unwind()`
+/// boundary: Salsa database access, which panics on query cycles, and `try_r_task()`,
+/// which re-raises panics from its closure on the caller's thread.
 ///
 /// Unit tests invoke handlers without their normal boundaries, so `cfg!(test)` exempts
 /// them. The `testing` feature gets no exemption because Ark's own dev-dependency
