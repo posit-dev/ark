@@ -301,7 +301,12 @@ pub struct FilterGlobalSearch {
 	/// only the leading floor(max_cells / searched_columns) candidate rows
 	/// are scanned and the backend reports global_search_rows_scanned in its
 	/// state. Absent or 0 means unlimited.
-	pub max_cells: Option<i64>
+	pub max_cells: Option<i64>,
+
+	/// The options the frontend formats data values with, so numeric terms
+	/// match floating point values as they are displayed. Absent means
+	/// numeric terms match the values unrounded.
+	pub format_options: Option<FormatOptions>
 }
 
 /// Parameters for the 'search' filter type

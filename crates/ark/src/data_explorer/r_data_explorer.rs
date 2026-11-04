@@ -491,6 +491,7 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::GetRowLabelsReply(
                     TableRowLabels {
                         row_labels: vec![row_labels],
+                        search_matches: None,
                     },
                 ))
             },
@@ -1254,7 +1255,7 @@ impl RDataExplorer {
 
         let matches = RFunction::new("", ".ps.search_cells")
             .param("table", self.table.get().sexp)
-            .param("term", search.term.as_str())
+            .param("search", RObject::try_from(serde_json::to_value(search)?)?)
             .param("columns", &columns)
             .param("rows", RObject::try_from(rows)?)
             .call_in(ARK_ENVS.positron_ns)?;

@@ -193,8 +193,7 @@ col_filter_indices <- function(col, idx = NULL) {
             {
                 result <- .ps.search_rows(
                     table,
-                    params$term,
-                    params$max_cells,
+                    params,
                     indices,
                     search_cache
                 )
@@ -221,11 +220,11 @@ col_filter_indices <- function(col, idx = NULL) {
 # the term as a case-insensitive substring of their displayed text, and missing
 # values match the null markers. Only `rows` (row indices) are scanned, limited
 # to `max_cells` cells. Returns the matching rows and, when `max_cells` limited
-# the scan, the number of rows scanned.
-.ps.search_rows <- function(table, term, max_cells, rows, cache) {
-    query <- .ps.search_query(term)
+# the scan, the number of rows scanned. `search` holds the filter's params.
+.ps.search_rows <- function(table, search, rows, cache) {
+    query <- .ps.search_query(search)
     columns <- .ps.search_columns(table)
-    max_cells <- max_cells %||% 0
+    max_cells <- search$max_cells %||% 0
 
     # Formatted text is cached only when `max_cells` bounds its size
     use_cache <- max_cells > 0
@@ -267,8 +266,8 @@ col_filter_indices <- function(col, idx = NULL) {
 
 # Whether each of `rows[[k]]` of column `columns[k]` matches the global search,
 # concatenated across columns
-.ps.search_cells <- function(table, term, columns, rows) {
-    query <- .ps.search_query(term)
+.ps.search_cells <- function(table, search, columns, rows) {
+    query <- .ps.search_query(search)
     n <- nrow(table)
     matches <- Map(
         function(j, rows) {
@@ -284,11 +283,14 @@ col_filter_indices <- function(col, idx = NULL) {
     as.logical(unlist(matches, use.names = FALSE))
 }
 
-.ps.search_query <- function(term) {
-    term <- enc2utf8(term)
+.ps.search_query <- function(search) {
+    term <- enc2utf8(search$term)
     list(
         pattern = .ps.regex_escape(term),
-        numeric = .ps.search_numeric_matcher(trimws(term)),
+        numeric = .ps.search_numeric_matcher(
+            trimws(term),
+            search$format_options
+        ),
         null = tolower(trimws(term)) %in%
             c("null", "na", "nan", "none", "nat", "<na>")
     )
@@ -296,8 +298,9 @@ col_filter_indices <- function(col, idx = NULL) {
 
 # Returns a function matching numeric values against a numeric term: a value
 # matches when truncating it toward zero at the term's decimals gives the term.
+# Doubles are first rounded as displayed with `format_options`, when given.
 # Non-numeric terms match no numeric value.
-.ps.search_numeric_matcher <- function(term) {
+.ps.search_numeric_matcher <- function(term, format_options = NULL) {
     if (grepl("^[+-]?[0-9]{1,3}(,[0-9]{3})+(\\.[0-9]*)?$", term)) {
         term <- gsub(",", "", term, fixed = TRUE)
     }
@@ -310,6 +313,9 @@ col_filter_indices <- function(col, idx = NULL) {
     eps <- step * 1e-9
 
     function(x) {
+        if (is.double(x) && !is.null(format_options)) {
+            x <- .ps.search_displayed(x, format_options)
+        }
         in_range <- if (value > 0) {
             x >= value - eps & x < value + step - eps
         } else if (value < 0) {
@@ -363,6 +369,23 @@ col_filter_indices <- function(col, idx = NULL) {
     !is.data.frame(col) &&
         !(is.list(col) && !is.object(col)) &&
         length(col) == n
+}
+
+# Doubles rounded as `format_dbl_value()` displays them, with NA for those it
+# displays in scientific notation
+.ps.search_displayed <- function(x, options) {
+    magnitude <- abs(x)
+    medium <- (magnitude >= 1 & magnitude < 10^options$max_integral_digits) |
+        magnitude == 0
+    small <- magnitude < 1 & magnitude >= 10^-options$small_num_digits
+    digits <- ifelse(
+        medium,
+        options$large_num_digits,
+        options$small_num_digits
+    )
+    shown <- round(x, digits)
+    shown[!(medium | small) | is.na(x)] <- NA
+    shown
 }
 
 # Whether each of `col[rows]` matches. `text()` returns the displayed text of

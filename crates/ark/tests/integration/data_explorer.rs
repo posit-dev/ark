@@ -640,12 +640,21 @@ impl RowFilterBuilder {
     }
 
     fn global_search(term: &str, max_cells: Option<i64>) -> RowFilter {
+        Self::global_search_formatted(term, max_cells, None)
+    }
+
+    fn global_search_formatted(
+        term: &str,
+        max_cells: Option<i64>,
+        format_options: Option<FormatOptions>,
+    ) -> RowFilter {
         RowFilter {
             column_schema: None,
             filter_type: RowFilterType::GlobalSearch,
             params: Some(RowFilterParams::GlobalSearch(FilterGlobalSearch {
                 term: term.to_string(),
                 max_cells,
+                format_options,
             })),
             filter_id: uuid::Uuid::new_v4().to_string(),
             condition: RowFilterCondition::And,
@@ -3195,6 +3204,40 @@ fn test_global_search_numeric_precision() {
     assert_global_search_rows(&setup, "3.1", 0);
     assert_global_search_rows(&setup, "Inf", 0);
     assert_global_search_rows(&setup, "nan", 14);
+}
+
+#[test]
+fn test_global_search_display_rounding() {
+    // Displayed: 3.00, 2.99, -3.00, 1.0000, 0.1235, 1.23e+09, 1.0000e-05
+    let setup = TestSetup::from_expression(
+        "data.frame(dbl = c(2.996, 2.994, -2.996, 0.99996, 0.12346, 1234567890.5, 0.00001))",
+        None,
+    )
+    .unwrap();
+
+    let assert_rows = |term: &str, format_options: Option<FormatOptions>, expected_rows: i64| {
+        let filter = RowFilterBuilder::global_search_formatted(term, None, format_options);
+        TestAssertions::assert_row_filters_applied(
+            &setup,
+            vec![filter],
+            expected_rows,
+            Some(false),
+        );
+    };
+    let options = || Some(default_format_options());
+
+    assert_rows("3.00", options(), 1);
+    assert_rows("3", options(), 1);
+    assert_rows("2.99", options(), 1);
+    assert_rows("-3", options(), 1);
+    assert_rows("1.0000", options(), 1);
+    assert_rows("0.1235", options(), 1);
+    assert_rows("0.12346", options(), 0);
+    assert_rows("1234567890", options(), 0);
+    assert_rows("0", options(), 1);
+
+    // Without format options, values match unrounded
+    assert_rows("2.99", None, 2);
 }
 
 #[test]
