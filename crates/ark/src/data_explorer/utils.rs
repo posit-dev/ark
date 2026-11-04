@@ -26,9 +26,9 @@ pub fn view_rows_to_table_rows(view_indices: &Option<Vec<i32>>, rows: &[i64]) ->
     match view_indices {
         Some(view_indices) => rows
             .iter()
-            .map(|i| view_indices[*i as usize] as i64)
+            .map(|row| view_indices[*row as usize] as i64)
             .collect(),
-        None => rows.iter().map(|i| i + 1).collect(),
+        None => rows.iter().map(|row| row + 1).collect(),
     }
 }
 

@@ -133,17 +133,18 @@ col_filter_indices <- function(col, idx = NULL) {
     for (i in seq_along(row_filters)) {
         row_filter <- row_filters[[i]]
 
+        # The first global search runs last, on the rows that pass the other
+        # filters. Any others are ignored. It is retried even when marked
+        # invalid, since its errors depend on the data.
+        if (identical(row_filter$filter_type, "global_search")) {
+            search_index <- search_index %||% i
+            next
+        }
+
         # Do not try to apply filters that are already marked as invalid.
         if (!is.null(row_filter$is_valid) && !row_filter$is_valid) {
             row_filters_errors[i] <- row_filter$error_message %||%
                 "Invalid filter for unknown reason"
-            next
-        }
-
-        # The first global search runs last, on the rows that pass the other
-        # filters. Any others are ignored.
-        if (identical(row_filter$filter_type, "global_search")) {
-            search_index <- search_index %||% i
             next
         }
 
@@ -226,10 +227,10 @@ col_filter_indices <- function(col, idx = NULL) {
     columns <- .ps.search_columns(table)
     max_cells <- max_cells %||% 0
 
+    # Formatted text is cached only when `max_cells` bounds its size
+    use_cache <- max_cells > 0
     rows_scanned <- NA_integer_
-    if (
-        max_cells > 0 && as.double(length(rows)) * length(columns) > max_cells
-    ) {
+    if (use_cache && as.double(length(rows)) * length(columns) > max_cells) {
         rows_scanned <- as.integer(max_cells %/% length(columns))
         rows <- rows[seq_len(rows_scanned)]
     }
@@ -251,6 +252,9 @@ col_filter_indices <- function(col, idx = NULL) {
         text <- function() {
             if (.ps.is_plain_text(col)) {
                 return(col[rows[pending]])
+            }
+            if (!use_cache) {
+                return(.ps.search_text(col, rows[pending]))
             }
             key <- as.character(j)
             if (is.null(cache[[key]])) {
@@ -322,11 +326,17 @@ col_filter_indices <- function(col, idx = NULL) {
 
 # Indices of the searched columns, with 0 standing for character row names
 .ps.search_columns <- function(table) {
-    n <- nrow(table)
-    columns <- Filter(
-        function(j) .ps.is_searchable(.ps.search_col(table, j), n),
-        seq_len(ncol(table))
-    )
+    # Matrix columns share the matrix's type, so are searchable unless it is a
+    # list
+    columns <- if (is.matrix(table)) {
+        if (is.list(table)) integer() else seq_len(ncol(table))
+    } else {
+        n <- nrow(table)
+        Filter(
+            function(j) .ps.is_searchable(.subset2(table, j), n),
+            seq_len(ncol(table))
+        )
+    }
     if (is.character(.ps.search_row_names(table))) {
         columns <- c(0L, columns)
     }

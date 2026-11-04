@@ -867,6 +867,7 @@ impl RDataExplorer {
             match error {
                 None => {
                     self.row_filters[i].is_valid = Some(true);
+                    self.row_filters[i].error_message = None;
                 },
                 Some(error) => {
                     self.row_filters[i].is_valid = Some(false);
@@ -1209,10 +1210,9 @@ impl RDataExplorer {
             })
             .collect();
 
-        let search_matches = match self.global_search() {
-            Some(search) => Some(self.search_cells(search, &selections)?),
-            None => None,
-        };
+        let search_matches = self
+            .global_search()
+            .and_then(|search| self.search_cells(search, &selections).log_err());
 
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(selections.len());
         for (column_index, rows) in selections {
@@ -1259,7 +1259,7 @@ impl RDataExplorer {
             .param("rows", RObject::try_from(rows)?)
             .call_in(ARK_ENVS.positron_ns)?;
         let matches = LogicalVector::new(matches.sexp)?;
-        let mut matches = matches.iter().map(|x| x.unwrap_or(false));
+        let mut matches = matches.iter().map(|matched| matched.unwrap_or(false));
 
         Ok(selections
             .iter()
