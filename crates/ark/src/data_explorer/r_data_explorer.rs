@@ -64,7 +64,6 @@ use amalthea::comm::data_explorer_comm::TableShape;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::socket::comm::CommOutgoingTx;
 use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -738,17 +737,29 @@ impl RDataExplorer {
         // Handle errors that occured in the filters
         let indices = match result.get("indices") {
             Some(indices) => Vec::<i32>::try_from(indices.clone())?,
-            None => bail!("Unexpected output from .ps.filter_rows. Expected 'indices' field."),
+            None => {
+                return Err(anyhow!(
+                    "Unexpected output from .ps.filter_rows. Expected 'indices' field."
+                ))
+            },
         };
 
         let errors = match result.get("errors") {
             Some(errors) => Vec::<Option<String>>::try_from(errors.clone())?,
-            None => bail!("Unexpected output from .ps.filter_rows. Expected 'errors' field."),
+            None => {
+                return Err(anyhow!(
+                    "Unexpected output from .ps.filter_rows. Expected 'errors' field."
+                ))
+            },
         };
 
         let rows_scanned = match result.get("rows_scanned") {
             Some(rows_scanned) => Option::<i64>::try_from(rows_scanned.clone())?,
-            None => bail!("Unexpected output from .ps.filter_rows. Expected 'rows_scanned' field."),
+            None => {
+                return Err(anyhow!(
+                    "Unexpected output from .ps.filter_rows. Expected 'rows_scanned' field."
+                ))
+            },
         };
 
         Ok(FilteredRows {
@@ -1190,25 +1201,26 @@ impl RDataExplorer {
         columns: Vec<ColumnSelection>,
         format_options: FormatOptions,
     ) -> anyhow::Result<DataExplorerBackendReply> {
-        let search = self.global_search();
-        let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
-        let mut search_matches: Vec<Vec<bool>> = Vec::new();
-        for selection in columns {
-            let rows = self.get_row_selection_indices(selection.spec);
-            if let Some(search) = search {
-                let table_rows = view_rows_to_table_rows(&self.view_indices, &rows);
-                search_matches.push(self.search_cells(
-                    search,
-                    selection.column_index,
-                    table_rows,
-                )?);
-            }
+        let selections: Vec<(i64, Vec<i64>)> = columns
+            .into_iter()
+            .map(|selection| {
+                let rows = self.get_row_selection_indices(selection.spec);
+                (selection.column_index, rows)
+            })
+            .collect();
 
+        let search_matches = match self.global_search() {
+            Some(search) => Some(self.search_cells(search, &selections)?),
+            None => None,
+        };
+
+        let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(selections.len());
+        for (column_index, rows) in selections {
             let tbl = tbl_subset_with_view_indices(
                 self.table.get().sexp,
                 &self.view_indices,
                 Some(rows),
-                Some(vec![selection.column_index]),
+                Some(vec![column_index]),
             )?;
 
             // The column will be always at index 0 because we already selected a single column above.
@@ -1218,29 +1230,41 @@ impl RDataExplorer {
 
         let response = TableData {
             columns: column_data,
-            search_matches: search.map(|_| search_matches),
+            search_matches,
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
 
-    /// Whether each of the given (1-based) table rows of a column matches the
-    /// global search.
+    /// Whether each of the selected (0-based) view rows of each column matches
+    /// the global search.
     fn search_cells(
         &self,
         search: &FilterGlobalSearch,
-        column_index: i64,
-        rows: Vec<i64>,
-    ) -> anyhow::Result<Vec<bool>> {
+        selections: &[(i64, Vec<i64>)],
+    ) -> anyhow::Result<Vec<Vec<bool>>> {
+        let columns: Vec<i64> = selections
+            .iter()
+            .map(|(column_index, _)| column_index + 1)
+            .collect();
+        let rows = selections
+            .iter()
+            .map(|(_, rows)| RObject::from(&view_rows_to_table_rows(&self.view_indices, rows)))
+            .collect::<Vec<RObject>>();
+
         let matches = RFunction::new("", ".ps.search_cells")
             .param("table", self.table.get().sexp)
             .param("term", search.term.as_str())
-            .param("column_index", (column_index + 1) as i32)
-            .param("rows", &rows)
-            .param("search_cache", self.search_cache.sexp)
+            .param("columns", &columns)
+            .param("rows", RObject::try_from(rows)?)
             .call_in(ARK_ENVS.positron_ns)?;
         let matches = LogicalVector::new(matches.sexp)?;
-        Ok(matches.iter().map(|x| x.unwrap_or(false)).collect())
+        let mut matches = matches.iter().map(|x| x.unwrap_or(false));
+
+        Ok(selections
+            .iter()
+            .map(|(_, rows)| matches.by_ref().take(rows.len()).collect())
+            .collect())
     }
 
     fn get_row_labels(

@@ -126,7 +126,7 @@ col_filter_indices <- function(col, idx = NULL) {
 
     # Create the initial set of indices
     indices <- rep(TRUE, nrow(table))
-    row_filters_errors <- character(length(row_filters))
+    row_filters_errors <- rep(NA_character_, length(row_filters))
     search_index <- NULL
     rows_scanned <- NA_integer_
 
@@ -140,9 +140,10 @@ col_filter_indices <- function(col, idx = NULL) {
             next
         }
 
-        # The global search runs last, on the rows that pass the other filters
+        # The first global search runs last, on the rows that pass the other
+        # filters. Any others are ignored.
         if (identical(row_filter$filter_type, "global_search")) {
-            search_index <- i
+            search_index <- search_index %||% i
             next
         }
 
@@ -233,34 +234,53 @@ col_filter_indices <- function(col, idx = NULL) {
         rows <- rows[seq_len(rows_scanned)]
     }
 
+    # The cache holds formatted text of the scanned rows, so it is stale when
+    # they change
+    if (!identical(cache$rows, rows)) {
+        rm(list = ls(cache), envir = cache)
+        cache$rows <- rows
+    }
+
     matches <- logical(length(rows))
     for (j in columns) {
-        pending <- !matches
-        matches[pending] <- .ps.search_match(
-            table,
-            j,
-            rows[pending],
-            query,
-            cache
-        )
+        pending <- which(!matches)
+        if (length(pending) == 0L) {
+            break
+        }
+        col <- .ps.search_col(table, j)
+        text <- function() {
+            if (.ps.is_plain_text(col)) {
+                return(col[rows[pending]])
+            }
+            key <- as.character(j)
+            if (is.null(cache[[key]])) {
+                cache[[key]] <- .ps.search_text(col, rows)
+            }
+            cache[[key]][pending]
+        }
+        matches[pending] <- .ps.search_match(col, rows[pending], query, text)
     }
 
     list(rows = rows[matches], rows_scanned = rows_scanned)
 }
 
-# Whether each of `rows` of column `column_index` matches the global search
-.ps.search_cells <- function(table, term, column_index, rows, search_cache) {
-    col <- .ps.search_col(table, column_index)
-    if (!.ps.is_searchable(col, nrow(table))) {
-        return(logical(length(rows)))
-    }
-    .ps.search_match(
-        table,
-        column_index,
-        rows,
-        .ps.search_query(term),
-        search_cache
+# Whether each of `rows[[k]]` of column `columns[k]` matches the global search,
+# concatenated across columns
+.ps.search_cells <- function(table, term, columns, rows) {
+    query <- .ps.search_query(term)
+    n <- nrow(table)
+    matches <- Map(
+        function(j, rows) {
+            col <- .ps.search_col(table, j)
+            if (!.ps.is_searchable(col, n)) {
+                return(logical(length(rows)))
+            }
+            .ps.search_match(col, rows, query)
+        },
+        columns,
+        rows
     )
+    as.logical(unlist(matches, use.names = FALSE))
 }
 
 .ps.search_query <- function(term) {
@@ -338,17 +358,21 @@ col_filter_indices <- function(col, idx = NULL) {
         length(col) == n
 }
 
-# Whether each of `rows` of column `j` matches. A column that fails to search
-# (e.g. its `format()` method errors) matches nothing.
-.ps.search_match <- function(table, j, rows, query, cache) {
-    col <- .ps.search_col(table, j)
+# Whether each of `col[rows]` matches. `text()` returns the displayed text of
+# `col[rows]`. A column that fails to search (e.g. its `format()` method errors)
+# matches nothing.
+.ps.search_match <- function(
+    col,
+    rows,
+    query,
+    text = function() .ps.search_text(col, rows)
+) {
     tryCatch(
         {
             matches <- if (is.numeric(col) && !is.object(col)) {
                 query$numeric(col[rows])
             } else {
-                text <- .ps.search_text(col, j, cache)[rows]
-                grepl(query$pattern, text, perl = TRUE, ignore.case = TRUE)
+                grepl(query$pattern, text(), perl = TRUE, ignore.case = TRUE)
             }
             if (query$null) {
                 matches <- matches | is.na(col[rows])
@@ -359,26 +383,26 @@ col_filter_indices <- function(col, idx = NULL) {
     )
 }
 
-# The displayed text of a column, cached for columns that need formatting
-.ps.search_text <- function(col, j, cache) {
-    if (is.factor(col) || (is.character(col) && !is.object(col))) {
-        return(col)
+# Columns whose values are their displayed text
+.ps.is_plain_text <- function(col) {
+    is.factor(col) || (is.character(col) && !is.object(col))
+}
+
+# The displayed text of `col[rows]`
+.ps.search_text <- function(col, rows) {
+    x <- col[rows]
+    if (.ps.is_plain_text(col)) {
+        return(x)
     }
 
-    key <- as.character(j)
-    if (!is.null(cache[[key]])) {
-        return(cache[[key]])
-    }
-
-    text <- if (is.object(col)) {
-        .ps.Call("ps_format_vec", col)
+    text <- if (is.object(x)) {
+        .ps.Call("ps_format_vec", x)
     } else {
-        as.character(col)
+        as.character(x)
     }
-    stopifnot(is.character(text), length(text) == length(col))
+    stopifnot(is.character(text), length(text) == length(x))
     text <- trimws(text, whitespace = " ")
-    text[is.na(col)] <- NA
-    cache[[key]] <- text
+    text[is.na(x)] <- NA
     text
 }
 
