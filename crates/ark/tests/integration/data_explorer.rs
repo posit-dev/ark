@@ -3140,9 +3140,9 @@ fn test_global_search_column_types() {
                     "2024-01-06 09:00:00"
                 ), tz = "UTC"),
                 dur = as.difftime(c(3, 5, 7, 9, 11), units = "days"),
-                bad = structure(1:5, class = "test_bad_format"),
                 row.names = c("alpha", "beta", "gamma", "delta", "epsilon")
             )
+            search_df$bad <- structure(1:5, class = "test_bad_format")
             search_df$lst <- list("zzz", 2, 3, 4, 5)
             "#,
         )
