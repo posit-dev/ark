@@ -250,10 +250,7 @@ col_filter_indices <- function(col, idx = NULL) {
         }
         col <- .ps.search_col(table, j)
         text <- function() {
-            if (.ps.is_plain_text(col)) {
-                return(col[rows[pending]])
-            }
-            if (!use_cache) {
+            if (!use_cache || .ps.is_plain_text(col)) {
                 return(.ps.search_text(col, rows[pending]))
             }
             key <- as.character(j)
