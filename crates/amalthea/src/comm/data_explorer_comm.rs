@@ -173,7 +173,12 @@ pub struct TableData {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableRowLabels {
 	/// Zero or more arrays of row labels
-	pub row_labels: Vec<Vec<String>>
+	pub row_labels: Vec<Vec<String>>,
+
+	/// For each row label, whether it matched the active global_search
+	/// filter. Parallel to row_labels. Omitted when no global search is
+	/// active or the backend does not compute per-label matches.
+	pub search_matches: Option<Vec<Vec<bool>>>
 }
 
 /// Formatting options for returning data values as strings
