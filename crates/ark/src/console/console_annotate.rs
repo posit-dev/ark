@@ -1265,6 +1265,45 @@ mod tests {
     }
 
     #[test]
+    fn test_inject_breakpoints_sibling_brace_lists() {
+        // Injecting into the first sibling must not shift the second sibling's coordinates.
+        let code = "{\n  {\n    x <- 1\n    y <- 2\n  }\n  {\n    z <- 3\n    w <- 4\n  }\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 9,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 2, BreakpointState::Unverified),
+            Breakpoint::new(2, 6, BreakpointState::Unverified),
+        ];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
+        assert_eq!(
+            breakpoints
+                .iter()
+                .map(|breakpoint| (
+                    breakpoint.id,
+                    breakpoint.line,
+                    breakpoint.state,
+                    breakpoint.injected
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, 2, BreakpointState::Unverified, true),
+                (2, 6, BreakpointState::Unverified, true),
+            ]
+        );
+    }
+
+    #[test]
     fn test_inject_breakpoints_inside_multiline_expr_anchors_to_start() {
         // A breakpoint on an intermediate line of a multiline expression should
         // anchor to the start of that expression.
