@@ -21,7 +21,7 @@ use crate::treesitter::NodeTypeExt;
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
     /// We store extracted components of a `File` + `&dyn ArkDb` here because
-    /// the latter can't be sent over an `r_task()`.
+    /// the latter can't be sent to the R thread via `r_task()` or `try_r_task()`.
     pub tree: &'a tree_sitter::Tree,
     pub contents: &'a str,
     pub line_index: &'a biome_line_index::LineIndex,
