@@ -28,10 +28,10 @@ fn find_debug_event<'a>(msgs: &'a [Message], event: &str) -> &'a serde_json::Val
 /// before R has reached its first prompt, and a callback returning to the
 /// top-level event loop. Use `notebook_evaluate_once()` when the request
 /// follows a readiness announcement and must land on the first attempt. Busy
-/// replies come back immediately, so we pace the attempts with a short sleep. The control thread brackets each attempt with
-/// busy/idle on IOPub, and the R-thread evaluation emits nothing there (printed
-/// output is captured), so each is the same busy/reply/idle as any other
-/// control-only request.
+/// replies come back immediately, so we pace the attempts with a short sleep.
+/// The control thread brackets each attempt with busy/idle on IOPub, and the
+/// R-thread evaluation emits nothing there (printed output is captured), so
+/// each is the same busy/reply/idle as any other control-only request.
 fn notebook_evaluate(
     frontend: &DummyArkFrontendNotebook,
     seq: i64,

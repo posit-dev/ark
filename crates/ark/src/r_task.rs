@@ -244,7 +244,7 @@ where
         let trace = std::backtrace::Backtrace::force_capture();
         panic!(
             "Task `status` value must be `Started`: {status:?}\n\
-             Backtrace of calling thread:\n\n
+             Backtrace of calling thread:\n\n\
              {trace}"
         );
     };
@@ -383,7 +383,7 @@ fn join_task<T>(
         let trace = std::backtrace::Backtrace::force_capture();
         panic!(
             "Task `status` value must be `Finished`: {status:?}\n\
-             Backtrace of calling thread:\n\n
+             Backtrace of calling thread:\n\n\
              {trace}"
         );
     };
@@ -585,8 +585,8 @@ impl TryTasks {
                 let trace = std::backtrace::Backtrace::force_capture();
                 panic!(
                     "Task `status` value must be `Started` or `Rejected`: {status:?}\n\
-                 Backtrace of calling thread:\n\n
-                 {trace}"
+                     Backtrace of calling thread:\n\n\
+                     {trace}"
                 );
             },
         }
