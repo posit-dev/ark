@@ -676,6 +676,12 @@ impl GlobalState {
                         LspNotification::TestPanicRTask => {
                             crate::r_task(|| panic!("Test panic in an R task"));
                         },
+                        #[cfg(feature = "testing")]
+                        LspNotification::TestRErrorRTask => {
+                            crate::r_task(|| -> () {
+                                unsafe { libr::Rf_error(c"Test R error in an R task".as_ptr()) }
+                            });
+                        },
                     }
                 },
 

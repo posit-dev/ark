@@ -18,6 +18,7 @@
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_event::DebugEvent;
@@ -29,6 +30,7 @@ use dap::requests::Request;
 use dap::responses::ResponseBody;
 use stdext::result::ResultExt;
 
+use crate::console::Console;
 use crate::dap::dap_notebook;
 use crate::dap::dap_server::DapConsoleEvent;
 use crate::dap::dap_server::DapHandler;
@@ -37,8 +39,16 @@ use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
+use crate::panic;
+use crate::panic::Recovery;
 use crate::r_task;
 use crate::request::RRequest;
+
+/// How long `evaluate` waits for R to start the evaluation when R is at a
+/// prompt but its event loop is occupied, e.g. by an idle task. Requests are
+/// handled serially on the Control socket, so this also delays interrupts and
+/// shutdowns queued behind the `evaluate`.
+const EVALUATE_START_WITHIN: Duration = Duration::from_millis(200);
 
 pub struct DapJupyterHandler {
     handler: DapHandler,
@@ -83,11 +93,15 @@ impl DapJupyterHandler {
 
         // Handle Jupyter Debug Protocol extensions and commands not in the
         // `dap` crate's `Command` enum, plus `evaluate` which requires
-        // running R code via `try_idle_task`.
+        // running R code via `try_r_task()`.
         let result = match command {
             "dumpCell" => Some(self.handle_dump_cell(seq, request)),
             "debugInfo" => Some(self.handle_debug_info(seq)),
             "evaluate" => Some(self.handle_evaluate(seq, request)),
+            #[cfg(feature = "testing")]
+            "ark/testPanicTryRTask" => Some(self.handle_test_panic_try_r_task(seq, command)),
+            #[cfg(feature = "testing")]
+            "ark/testRErrorTryRTask" => Some(self.handle_test_r_error_try_r_task(seq, command)),
             "configurationDone" => Some(Ok(self.success_response(
                 seq,
                 "configurationDone",
@@ -135,46 +149,104 @@ impl DapJupyterHandler {
         let args: EvaluateArguments =
             serde_json::from_value(request.get("arguments").cloned().unwrap_or_default())?;
 
-        let state = self.handler.state.clone();
-        let expression = args.expression;
+        let state = &self.handler.state;
+        let expression = args.expression.as_str();
         let frame_id = args.frame_id;
 
         // This runs only if R is idle. Even though we stopped at some point,
         // causing the Evaluate request, R could be busy evaluating the next
-        // expression already, in which case `try_idle_task()` returns `None`.
+        // expression already, in which case `try_r_task()` returns `None`.
         // `DapHandler::evaluate()` runs the eval under a timeout so a runaway
-        // expression is interrupted and doesn't freeze the kernel.
-        let outcome = r_task::try_idle_task(move |capture| {
-            DapHandler::evaluate(&state, &expression, frame_id, capture)
-        });
-
-        let Some(outcome) = outcome else {
-            return Ok(self.error_response(seq, "evaluate", "R is busy"));
-        };
-
-        let outcome = match outcome {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                // `DapHandler::evaluate()` doesn't touch R outside of `with_timeout()`,
-                // which already converts any escaping error into `EvaluateOutcome::Error`
-                // (see `DapHandler::evaluate()`). So this shouldn't be reachable.
-                log::error!("Jupyter DAP: Unexpected error from `try_idle_task`: {err:?}");
-                return Ok(self.error_response(seq, "evaluate", &err.to_string()));
+        // expression is interrupted and doesn't freeze the kernel. R errors
+        // can't escape it: `with_timeout()` converts them into
+        // `EvaluateOutcome::Error`.
+        self.try_r_task_response(
+            seq,
+            "evaluate",
+            || {
+                let mut capture = Console::get_mut().start_capture();
+                DapHandler::evaluate(state, expression, frame_id, &mut capture)
             },
-        };
+            EVALUATE_START_WITHIN,
+            |outcome| match outcome {
+                EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
+                    Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
+                },
+                EvaluateOutcome::Ok(_) => {
+                    Err(anyhow::anyhow!("Unexpected response body from evaluate"))
+                },
+                EvaluateOutcome::TimedOut => {
+                    Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
+                },
+                EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
+            },
+        )
+    }
+
+    /// Run `f` with `try_r_task()` and build the response for `command` from
+    /// its value. R being busy and `f` panicking both become error responses.
+    ///
+    /// Requests are handled on the Control thread, which has no enclosing
+    /// panic boundary. Without the one installed here, the production panic
+    /// hook would abort the kernel when `f` panics.
+    fn try_r_task_response<'env, F, T>(
+        &self,
+        seq: i64,
+        command: &str,
+        f: F,
+        start_within: Duration,
+        respond: impl FnOnce(T) -> anyhow::Result<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value>
+    where
+        F: FnOnce() -> T,
+        F: 'env + Send,
+        T: 'env + Send,
+    {
+        let outcome = panic::catch_unwind(Recovery::Always, || r_task::try_r_task(f, start_within));
 
         match outcome {
-            EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
-                Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
-            },
-            EvaluateOutcome::Ok(_) => {
-                Err(anyhow::anyhow!("Unexpected response body from evaluate"))
-            },
-            EvaluateOutcome::TimedOut => {
-                Ok(self.error_response(seq, "evaluate", "Evaluation timed out"))
-            },
-            EvaluateOutcome::Error(err) => Ok(self.error_response(seq, "evaluate", &err)),
+            Ok(Some(value)) => respond(value),
+            Ok(None) => Ok(self.error_response(seq, command, "R is busy")),
+            Err(message) => Ok(self.error_response(
+                seq,
+                command,
+                &format!("Internal error while running R task: {message}"),
+            )),
         }
+    }
+
+    /// Panic in a try task so tests can check that the panic becomes an error
+    /// response instead of aborting the kernel.
+    #[cfg(feature = "testing")]
+    fn handle_test_panic_try_r_task(
+        &self,
+        seq: i64,
+        command: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.try_r_task_response(
+            seq,
+            command,
+            || -> () { panic!("Test panic in a try task") },
+            EVALUATE_START_WITHIN,
+            |()| Err(anyhow::anyhow!("Test try task did not panic")),
+        )
+    }
+
+    /// Raise an R error that escapes a try task, so tests can check that it
+    /// becomes an error response and leaves no panic boundary on the R thread.
+    #[cfg(feature = "testing")]
+    fn handle_test_r_error_try_r_task(
+        &self,
+        seq: i64,
+        command: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.try_r_task_response(
+            seq,
+            command,
+            || -> () { unsafe { libr::Rf_error(c"Test R error in a try task".as_ptr()) } },
+            EVALUATE_START_WITHIN,
+            |()| Err(anyhow::anyhow!("Test try task did not raise an R error")),
+        )
     }
 
     fn handle_console_event(&self, event: DapConsoleEvent) {
