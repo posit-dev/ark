@@ -238,7 +238,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=ceaf1cffaf84c66acb117a44155fb8ada7aefbaf#ceaf1cffaf84c66acb117a44155fb8ada7aefbaf"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -247,7 +247,7 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=ceaf1cffaf84c66acb117a44155fb8ada7aefbaf#ceaf1cffaf84c66acb117a44155fb8ada7aefbaf"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -257,13 +257,13 @@ dependencies = [
  "serde",
  "tracing",
  "tree-sitter",
- "tree-sitter-r 1.1.0",
+ "tree-sitter-r 1.2.0 (git+https://github.com/r-lib/tree-sitter-r?rev=37a6b1b5c8cc2426fd6ec16ca818cc98597d755b)",
 ]
 
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=ceaf1cffaf84c66acb117a44155fb8ada7aefbaf#ceaf1cffaf84c66acb117a44155fb8ada7aefbaf"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -502,7 +502,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tree-sitter",
- "tree-sitter-r 1.2.0",
+ "tree-sitter-r 1.2.0 (git+https://github.com/r-lib/tree-sitter-r?rev=95aff097aa927a66bb357f715b58cde821be8867)",
  "url",
  "uuid",
  "walkdir",
@@ -4474,8 +4474,8 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-r"
-version = "1.1.0"
-source = "git+https://github.com/r-lib/tree-sitter-r?rev=daa26a2ff0d9546e9125c7d8bcec046027f02070#daa26a2ff0d9546e9125c7d8bcec046027f02070"
+version = "1.2.0"
+source = "git+https://github.com/r-lib/tree-sitter-r?rev=37a6b1b5c8cc2426fd6ec16ca818cc98597d755b#37a6b1b5c8cc2426fd6ec16ca818cc98597d755b"
 dependencies = [
  "cc",
  "tree-sitter-language",
