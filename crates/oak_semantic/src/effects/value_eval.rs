@@ -4,7 +4,6 @@ use aether_syntax::RCall;
 use biome_rowan::AstNode;
 use biome_rowan::TextRange;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 
 use crate::effects::CallContext;
 use crate::effects::CalleeOrigin;
@@ -46,7 +45,10 @@ impl CallContext<'_> {
     pub fn resolve_static_value(&mut self, value: &AnyRExpression) -> Option<StaticValue> {
         match value {
             AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-                Some(StaticValue::Character(vec![s.string_text()?]))
+                Some(StaticValue::Character(vec![s
+                    .inner_string_text()
+                    .ok()?
+                    .to_string()]))
             },
             AnyRExpression::RNullExpression(_) => Some(StaticValue::Null),
             AnyRExpression::RCall(call) => {

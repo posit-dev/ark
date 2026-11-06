@@ -25,10 +25,10 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.13.0"
-aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "b8ead5f024da1ddaf118722045bcda430bac1530" }
+aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "aa552899dece399c7f6234d0741b66c628696b0f" }
 aether_lsp_utils = { path = "crates/aether_lsp_utils" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "b8ead5f024da1ddaf118722045bcda430bac1530" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "b8ead5f024da1ddaf118722045bcda430bac1530" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "aa552899dece399c7f6234d0741b66c628696b0f" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "aa552899dece399c7f6234d0741b66c628696b0f" }
 aether_path = { path = "crates/aether_path" }
 amalthea = { path = "crates/amalthea" }
 annotate-snippets = "0.12.16"
