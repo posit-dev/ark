@@ -3,6 +3,7 @@ use aether_syntax::AnyRSelector;
 use aether_syntax::RCall;
 use aether_syntax::RIdentifier;
 use aether_syntax::RStringValue;
+use aether_syntax::RSyntaxKind;
 use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
 
@@ -28,20 +29,51 @@ impl RIdentifierExt for RIdentifier {
 }
 
 pub trait RStringValueExt {
-    /// Return the string contents without surrounding quotes.
+    /// Return the string contents without surrounding delimiters.
     ///
-    /// Works around `RStringValue::inner_string_text()` in `aether_syntax`
-    /// which checks for node kind `R_STRING_VALUE` instead of token kind
-    /// `R_STRING_LITERAL`, so it never actually strips the delimiters.
+    /// TODO(air): Replace with `RStringValue::inner_string_text()` once Air is
+    /// fully updated.
     fn string_text(&self) -> Option<String>;
 }
 
 impl RStringValueExt for RStringValue {
     fn string_text(&self) -> Option<String> {
-        let token = self.value_token().ok()?;
+        let token = self.value().ok()?;
         let text = token.text_trimmed();
-        Some(text[1..text.len() - 1].to_string())
+
+        match token.kind() {
+            RSyntaxKind::R_DOUBLE_QUOTED_STRING_LITERAL => {
+                Some(text.strip_prefix('"')?.strip_suffix('"')?.to_string())
+            },
+            RSyntaxKind::R_SINGLE_QUOTED_STRING_LITERAL => {
+                Some(text.strip_prefix('\'')?.strip_suffix('\'')?.to_string())
+            },
+            RSyntaxKind::R_RAW_STRING_LITERAL => Some(raw_string_inner(text)?.to_string()),
+            _ => None,
+        }
     }
+}
+
+fn raw_string_inner(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(['r', 'R'])?;
+
+    let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+    let rest = &rest[quote.len_utf8()..];
+
+    let dashes = rest.len() - rest.trim_start_matches('-').len();
+    let rest = &rest[dashes..];
+
+    let close_bracket = match rest.chars().next()? {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        _ => return None,
+    };
+    let rest = &rest[1..];
+
+    let rest = rest.strip_suffix(quote)?;
+    let rest = rest.strip_suffix(&"-".repeat(dashes))?;
+    rest.strip_suffix(close_bracket)
 }
 
 pub trait AnyRSelectorExt {
@@ -50,7 +82,7 @@ pub trait AnyRSelectorExt {
     ///
     /// Returns [None] for [aether_syntax::AnyRSelector::RDotDotI] and
     /// [aether_syntax::AnyRSelector::RDots], which we don't consider standard
-    /// identifiers.
+    /// identifiers, and for [aether_syntax::AnyRSelector::RBogusSelector].
     fn identifier_text(&self) -> Option<String>;
 }
 
@@ -60,6 +92,7 @@ impl AnyRSelectorExt for AnyRSelector {
             AnyRSelector::RIdentifier(node) => Some(node.name_text()),
             AnyRSelector::RStringValue(node) => node.string_text(),
             AnyRSelector::RDots(_) | AnyRSelector::RDotDotI(_) => None,
+            AnyRSelector::RBogusSelector(_) => None,
         }
     }
 }
@@ -122,6 +155,27 @@ mod tests {
     fn string_single_quoted() {
         assert_matches!(parse_single_expr("'world'"), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
             assert_eq!(s.string_text().unwrap(), "world");
+        });
+    }
+
+    #[test]
+    fn string_raw() {
+        assert_matches!(parse_single_expr("r\"(hello)\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.string_text().unwrap(), "hello");
+        });
+    }
+
+    #[test]
+    fn string_raw_with_dashes_and_brackets() {
+        assert_matches!(parse_single_expr("R'--[a)-\"b]--'"), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.string_text().unwrap(), "a)-\"b");
+        });
+    }
+
+    #[test]
+    fn string_raw_braces() {
+        assert_matches!(parse_single_expr("r\"{x}\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.string_text().unwrap(), "x");
         });
     }
 }

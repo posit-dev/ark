@@ -87,6 +87,15 @@ fn test_classify_on_operator_is_none() {
 }
 
 #[test]
+fn test_classify_in_trailing_whitespace_is_none() {
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "x   <- 1\n");
+
+    // i.e. `x @ <- 1`, cursor in the whitespace, not touching either.
+    assert!(Identifier::classify(&db, file, offset(2)).is_none());
+}
+
+#[test]
 fn test_classify_on_namespace_symbol() {
     // "dplyr::mutate": `dplyr` 0..5, `::` 5..7, `mutate` 7..13.
     let mut db = TestDb::new();
@@ -142,6 +151,27 @@ fn test_classify_inside_namespace_operator() {
             assert_eq!(package.text(&db).as_str(), "dplyr");
             assert_eq!(name.text(&db).as_str(), "mutate");
             assert_eq!(visibility, NamespaceVisibility::Internal);
+        },
+        other => panic!("expected NamespaceAccess, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classify_after_namespace_operator_with_whitespace() {
+    let mut db = TestDb::new();
+    let file = make_file(&mut db, "dplyr:: mutate\n");
+
+    // i.e. `dplyr::@ mutate`, we still classify as namespace access
+    // even though we aren't touching `mutate`
+    match Identifier::classify(&db, file, offset(7)) {
+        Some(Identifier::NamespaceAccess {
+            package,
+            name,
+            visibility,
+        }) => {
+            assert_eq!(package.text(&db).as_str(), "dplyr");
+            assert_eq!(name.text(&db).as_str(), "mutate");
+            assert_eq!(visibility, NamespaceVisibility::Exported);
         },
         other => panic!("expected NamespaceAccess, got {other:?}"),
     }

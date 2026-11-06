@@ -27,6 +27,7 @@ use oak_core::syntax_ext::RIdentifierExt;
 use smallvec::SmallVec;
 
 use super::assignment_name;
+use super::for_variable_name;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -181,13 +182,16 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // snapshot. Assignments inside the body are conditional
                 // (body may not execute for empty sequences).
                 if let Ok(variable) = stmt.variable() {
-                    self.add_definition(
-                        &variable.name_text(),
-                        SymbolFlags::IS_BOUND,
-                        DefinitionKind::ForVariable(AstPtr::new(stmt)),
-                        variable.syntax().text_trimmed_range(),
-                    );
+                    if let Some(name) = for_variable_name(&variable) {
+                        self.add_definition(
+                            &name,
+                            SymbolFlags::IS_BOUND,
+                            DefinitionKind::ForVariable(AstPtr::new(stmt)),
+                            variable.syntax().text_trimmed_range(),
+                        );
+                    }
                 }
+
                 if let Ok(sequence) = stmt.sequence() {
                     self.walk_expression(&sequence);
                 }
@@ -389,6 +393,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                         ddi.syntax().text_trimmed_range(),
                     );
                 },
+                AnyRParameterName::RBogusParameterName(_) => {},
             }
         }
 

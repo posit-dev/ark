@@ -30,6 +30,7 @@ use std::iter;
 use std::sync::Arc;
 
 use aether_syntax::AnyRExpression;
+use aether_syntax::AnyRForVariable;
 use aether_syntax::AnyRValue;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RRoot;
@@ -451,6 +452,15 @@ fn assignment_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
             Some((name, range))
         },
         _ => None,
+    }
+}
+
+fn for_variable_name(variable: &AnyRForVariable) -> Option<String> {
+    match variable {
+        AnyRForVariable::RIdentifier(ident) => Some(ident.name_text()),
+        AnyRForVariable::RDots(_) => Some(String::from("...")),
+        AnyRForVariable::RDotDotI(ddi) => Some(ddi.syntax().text_trimmed().to_string()),
+        AnyRForVariable::RBogusForVariable(_) => None,
     }
 }
 

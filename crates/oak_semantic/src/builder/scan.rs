@@ -22,6 +22,7 @@ use rustc_hash::FxHashSet;
 
 use super::assignment_name;
 use super::effects::attach_search_path;
+use super::for_variable_name;
 use super::is_assignment;
 use super::is_right_assignment;
 use super::is_super_assignment;
@@ -194,10 +195,9 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 // The for-variable is always bound (R sets it to NULL for empty
                 // sequences), so it binds before the body regardless of flow.
                 if let Ok(variable) = stmt.variable() {
-                    self.record_binding(
-                        variable.name_text(),
-                        variable.syntax().text_trimmed_range(),
-                    );
+                    if let Some(name) = for_variable_name(&variable) {
+                        self.record_binding(name, variable.syntax().text_trimmed_range());
+                    }
                 }
 
                 if let Ok(sequence) = stmt.sequence() {
@@ -782,11 +782,14 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             let Ok(param) = param else { continue };
             let Ok(name) = param.name() else { continue };
             let text = match &name {
-                AnyRParameterName::RIdentifier(ident) => ident.name_text(),
-                AnyRParameterName::RDots(_) => String::from("..."),
-                AnyRParameterName::RDotDotI(ddi) => ddi.syntax().text_trimmed().to_string(),
+                AnyRParameterName::RIdentifier(ident) => Some(ident.name_text()),
+                AnyRParameterName::RDots(_) => Some(String::from("...")),
+                AnyRParameterName::RDotDotI(ddi) => Some(ddi.syntax().text_trimmed().to_string()),
+                AnyRParameterName::RBogusParameterName(_) => None,
             };
-            self.record_binding(text, name.syntax().text_trimmed_range());
+            if let Some(text) = text {
+                self.record_binding(text, name.syntax().text_trimmed_range());
+            }
         }
 
         for param in params.items().iter() {
