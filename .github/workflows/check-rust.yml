@@ -4,8 +4,7 @@ on:
   push:
     branches:
       - main
-  # TEMPORARY: disabled while investigating arm64 repos
-  # pull_request:
+  pull_request:
 
 jobs:
   formatting:

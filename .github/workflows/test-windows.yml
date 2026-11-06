@@ -13,8 +13,7 @@ jobs:
       matrix:
         config:
           # x64
-          # TEMPORARY: x64 disabled while investigating arm64 repos
-          # - { rust: 'stable', r: 'release', runs_on: 'windows-latest' }
+          - { rust: 'stable', r: 'release', runs_on: 'windows-latest' }
           # arm64
           - { rust: 'stable', r: 'release', runs_on: 'windows-11-arm' }
     timeout-minutes: 60
@@ -49,7 +48,7 @@ jobs:
       - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          # TEMPORARY: does dev pak use the r-universe arm64 binaries and reuse the cache?
+          # Revert to release pak: https://github.com/posit-dev/ark/issues/1471
           pak-version: devel
           dependencies: '"hard"'
           packages:
