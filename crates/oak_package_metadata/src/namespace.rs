@@ -7,7 +7,6 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
 use oak_core::syntax_ext::AnyRStatementExt;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 use stdext::SortedVec;
 
 /// Parsed NAMESPACE file
@@ -137,7 +136,9 @@ fn collect_arg_identifiers(
 fn directive_name(value: &AnyRExpression) -> Option<String> {
     match value {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-        AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => string.string_text(),
+        AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => {
+            Some(string.inner_string_text().ok()?.to_string())
+        },
         _ => None,
     }
 }

@@ -39,7 +39,6 @@ use biome_rowan::AstNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
@@ -447,7 +446,7 @@ fn assignment_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
         },
         // `"x" <- 1` is equivalent to `x <- 1` in R
         AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-            let name = s.string_text()?;
+            let name = s.inner_string_text().ok()?.to_string();
             let range = s.syntax().text_trimmed_range();
             Some((name, range))
         },

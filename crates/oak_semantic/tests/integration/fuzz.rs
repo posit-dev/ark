@@ -755,7 +755,7 @@ fn test_source_path_with_quote_and_backslash_renders_valid_r() {
     .text;
     assert_eq!(text, "source(\"a\\\"b\\\\c.R\")\n");
 
-    // `RStringValueExt::string_text()` strips the delimiters and returns the
+    // `RStringValue::inner_string_text()` strips the delimiters and returns the
     // token's raw text, so the path Oak sees keeps the escapes rather than the
     // characters R would resolve them to.
     let index = index_with_base(&text);
