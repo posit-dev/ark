@@ -18,7 +18,6 @@
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_event::DebugEvent;
@@ -43,12 +42,6 @@ use crate::panic;
 use crate::panic::Recovery;
 use crate::r_task;
 use crate::request::RRequest;
-
-/// How long `evaluate` waits for R to start the evaluation when R is at a
-/// prompt but its event loop is occupied, e.g. by an idle task. Requests are
-/// handled serially on the Control socket, so this also delays interrupts and
-/// shutdowns queued behind the `evaluate`.
-const EVALUATE_START_WITHIN: Duration = Duration::from_millis(200);
 
 pub struct DapJupyterHandler {
     handler: DapHandler,
@@ -167,7 +160,6 @@ impl DapJupyterHandler {
                 let mut capture = Console::get_mut().start_capture();
                 DapHandler::evaluate(state, expression, frame_id, &mut capture)
             },
-            EVALUATE_START_WITHIN,
             |outcome| match outcome {
                 EvaluateOutcome::Ok(ResponseBody::Evaluate(eval)) => {
                     Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
@@ -194,7 +186,6 @@ impl DapJupyterHandler {
         seq: i64,
         command: &str,
         f: F,
-        start_within: Duration,
         respond: impl FnOnce(T) -> anyhow::Result<serde_json::Value>,
     ) -> anyhow::Result<serde_json::Value>
     where
@@ -202,7 +193,7 @@ impl DapJupyterHandler {
         F: 'env + Send,
         T: 'env + Send,
     {
-        let outcome = panic::catch_unwind(Recovery::Always, || r_task::try_r_task(f, start_within));
+        let outcome = panic::catch_unwind(Recovery::Always, || r_task::try_r_task(f));
 
         match outcome {
             Ok(Some(value)) => respond(value),
@@ -227,7 +218,6 @@ impl DapJupyterHandler {
             seq,
             command,
             || -> () { panic!("Test panic in a try task") },
-            EVALUATE_START_WITHIN,
             |()| Err(anyhow::anyhow!("Test try task did not panic")),
         )
     }
@@ -244,7 +234,6 @@ impl DapJupyterHandler {
             seq,
             command,
             || -> () { unsafe { libr::Rf_error(c"Test R error in a try task".as_ptr()) } },
-            EVALUATE_START_WITHIN,
             |()| Err(anyhow::anyhow!("Test try task did not raise an R error")),
         )
     }

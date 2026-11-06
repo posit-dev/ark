@@ -40,6 +40,13 @@ static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new)
 /// serving prompt and while its event loop serves them.
 pub(crate) static TRY_TASKS: LazyLock<TryTasks> = LazyLock::new(TryTasks::new);
 
+/// How long [`try_r_task()`] waits for its task to start when R is at a
+/// prompt but its event loop is occupied, e.g. by an idle task. Callers run
+/// on loops that handle requests one at a time, such as the Control socket
+/// and the LSP main loop, so this also delays the requests queued behind them,
+/// including interrupts on Control. It does not bound the task's execution.
+const TRY_TASK_START_WITHIN: Duration = Duration::from_millis(200);
+
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -257,7 +264,7 @@ where
 ///
 /// Returns `None` if R is busy: it is evaluating code or waiting at an input
 /// prompt, it left its prompt before `f` could start, or `f` did not start
-/// within `start_within`. A long-running idle task occupying the event loop
+/// within [`TRY_TASK_START_WITHIN`]. A long-running idle task occupying the event loop
 /// is the usual cause of the last case. Once `f` has started, this blocks
 /// until it finishes, however long that takes.
 ///
@@ -286,7 +293,7 @@ where
 /// that parks salsa writes, should stay on the caller's stack and be
 /// borrowed by `f`. If `f` owned them, an R longjump out of `f` would skip
 /// their destructor.
-pub(crate) fn try_r_task<'env, F, T>(f: F, start_within: Duration) -> Option<T>
+pub(crate) fn try_r_task<'env, F, T>(f: F) -> Option<T>
 where
     F: FnOnce() -> T,
     F: 'env + Send,
@@ -313,7 +320,7 @@ where
         return Some(f());
     }
 
-    TRY_TASKS.submit(f, start_within)
+    TRY_TASKS.submit(f, TRY_TASK_START_WITHIN)
 }
 
 /// Box `f` as a `RTaskSync` that can be sent to the R thread, with a slot

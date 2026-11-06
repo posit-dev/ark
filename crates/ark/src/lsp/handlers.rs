@@ -5,8 +5,6 @@
 //
 //
 
-use std::time::Duration;
-
 use anyhow::anyhow;
 use serde_json::Value;
 use stdext::result::ResultExt;
@@ -79,12 +77,6 @@ use crate::r_task;
 use crate::r_task::try_r_task;
 
 pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
-
-/// How long an R-dependent handler waits for R to start its task when R is at
-/// a prompt but its event loop is occupied, e.g. by an idle task. When R is
-/// busy evaluating code, `try_r_task()` gives up immediately. Keep this short:
-/// the LSP main loop is blocked while it waits.
-const R_TASK_START_WITHIN: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Eq, PartialEq, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -226,7 +218,7 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
     );
 
     // Skip rather than block the LSP main loop while R is busy
-    let Some(result) = try_r_task(|| r_hover(&context), R_TASK_START_WITHIN) else {
+    let Some(result) = try_r_task(|| r_hover(&context)) else {
         log::trace!("Skipping hover: R is busy");
         return Ok(None);
     };
@@ -278,7 +270,7 @@ pub(crate) fn handle_signature_help(
     // Skip rather than block the LSP main loop while R is busy
     // TODO: Once formals and argument matching are computed statically (#1095),
     // show the signature while R is busy and only skip the parameter docs.
-    let Some(result) = try_r_task(|| r_signature_help(&context), R_TASK_START_WITHIN) else {
+    let Some(result) = try_r_task(|| r_signature_help(&context)) else {
         log::trace!("Skipping signature help: R is busy");
         return Ok(None);
     };
