@@ -1,5 +1,6 @@
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRSelector;
+use aether_syntax::AnyRStatement;
 use aether_syntax::RCall;
 use aether_syntax::RIdentifier;
 use aether_syntax::RStringValue;
@@ -97,6 +98,23 @@ impl AnyRSelectorExt for AnyRSelector {
     }
 }
 
+pub trait AnyRStatementExt {
+    /// The expression of an [aether_syntax::RExpressionStatement].
+    ///
+    /// Returns [None] for an [aether_syntax::REmptyStatement] (a lone `;`)
+    /// and for an expression statement whose expression is missing.
+    fn expression(&self) -> Option<AnyRExpression>;
+}
+
+impl AnyRStatementExt for AnyRStatement {
+    fn expression(&self) -> Option<AnyRExpression> {
+        match self {
+            AnyRStatement::RExpressionStatement(statement) => statement.expression().ok(),
+            AnyRStatement::REmptyStatement(_) => None,
+        }
+    }
+}
+
 pub trait RCallExt {
     /// The value expression of the argument at `position`, counting in call
     /// order. `None` when there's no argument there or it has no value.
@@ -127,7 +145,8 @@ mod tests {
 
     fn parse_single_expr(code: &str) -> AnyRExpression {
         let parsed = aether_parser::parse(code, RParserOptions::default());
-        parsed.tree().expressions().iter().next().unwrap()
+        let statement = parsed.tree().statements().iter().next().unwrap();
+        statement.expression().unwrap()
     }
 
     #[test]

@@ -92,9 +92,9 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
 
     let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.begin_scan();
-    builder.scan_expression_list(&root.expressions());
+    builder.scan_statement_list(&root.statements());
     builder.scan_deferred_bodies(0);
-    builder.walk_expression_list(&root.expressions());
+    builder.walk_statement_list(&root.statements());
     builder.finish()
 }
 
