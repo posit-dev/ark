@@ -133,7 +133,7 @@ tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tree-sitter = "0.24.7"
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "37a6b1b5c8cc2426fd6ec16ca818cc98597d755b" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "d459b97a9a11dd81643ab674938bede2874663b0" }
 ureq = "3.3.0"
 url = "2.5.8"
 uuid = { version = "1.23.1", features = ["v4"] }

@@ -257,7 +257,7 @@ dependencies = [
  "serde",
  "tracing",
  "tree-sitter",
- "tree-sitter-r 1.2.0 (git+https://github.com/r-lib/tree-sitter-r?rev=d459b97a9a11dd81643ab674938bede2874663b0)",
+ "tree-sitter-r",
 ]
 
 [[package]]
@@ -502,7 +502,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tree-sitter",
- "tree-sitter-r 1.2.0 (git+https://github.com/r-lib/tree-sitter-r?rev=37a6b1b5c8cc2426fd6ec16ca818cc98597d755b)",
+ "tree-sitter-r",
  "url",
  "uuid",
  "walkdir",
@@ -4471,15 +4471,6 @@ name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
-
-[[package]]
-name = "tree-sitter-r"
-version = "1.2.0"
-source = "git+https://github.com/r-lib/tree-sitter-r?rev=37a6b1b5c8cc2426fd6ec16ca818cc98597d755b#37a6b1b5c8cc2426fd6ec16ca818cc98597d755b"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
 
 [[package]]
 name = "tree-sitter-r"
