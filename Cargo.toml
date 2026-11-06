@@ -25,10 +25,10 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.13.0"
-aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "ceaf1cffaf84c66acb117a44155fb8ada7aefbaf" }
 aether_lsp_utils = { path = "crates/aether_lsp_utils" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "ceaf1cffaf84c66acb117a44155fb8ada7aefbaf" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "ceaf1cffaf84c66acb117a44155fb8ada7aefbaf" }
 aether_path = { path = "crates/aether_path" }
 amalthea = { path = "crates/amalthea" }
 annotate-snippets = "0.12.16"
@@ -133,7 +133,7 @@ tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tree-sitter = "0.24.7"
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "95aff097aa927a66bb357f715b58cde821be8867" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "37a6b1b5c8cc2426fd6ec16ca818cc98597d755b" }
 ureq = "3.3.0"
 url = "2.5.8"
 uuid = { version = "1.23.1", features = ["v4"] }

@@ -1057,9 +1057,17 @@ fn test_unary_minus() {
 }
 
 #[test]
-fn test_return_expression() {
+fn test_return_call() {
+    // `return(x)` is an ordinary call and the callee `return` is recorded as a
+    // use, like any other function
     let index = index("function() return(x)");
     let fun = ScopeId::from(1);
+
+    assert_eq!(index.symbols(fun).len(), 2);
+    assert_eq!(index.uses(fun).len(), 2);
+
+    let ret = index.symbols(fun).get("return").unwrap();
+    assert_eq!(ret.flags(), SymbolFlags::IS_USED);
 
     let x = index.symbols(fun).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_USED);

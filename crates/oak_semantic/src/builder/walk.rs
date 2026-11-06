@@ -226,8 +226,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             // Generic fallback: walk over descendant nodes and collect their
             // `AnyRExpression` children, letting `walk_expression`
             // handle their contents. This covers `RUnaryExpression`,
-            // `RParenthesizedExpression`, `RReturnExpression`, literals, and
-            // any future expression types without needing explicit arms.
+            // `RParenthesizedExpression`, literals, and any future expression
+            // types without needing explicit arms.
             //
             // NOTE: This also means that identifiers and assignments inside
             // quoting constructs (`~`, `quote()`, `bquote()`) are recorded as

@@ -35,7 +35,6 @@ pub enum NodeType {
     Identifier,
     DotDotI,
     Dots,
-    Return,
     Next,
     Break,
     True,
@@ -80,7 +79,6 @@ fn node_type(x: &Node) -> NodeType {
         "identifier" => NodeType::Identifier,
         "dot_dot_i" => NodeType::DotDotI,
         "dots" => NodeType::Dots,
-        "return" => NodeType::Return,
         "next" => NodeType::Next,
         "break" => NodeType::Break,
         "true" => NodeType::True,
@@ -343,8 +341,7 @@ impl NodeTypeExt for Node<'_> {
     fn is_keyword(&self) -> bool {
         matches!(
             self.node_type(),
-            NodeType::Return |
-                NodeType::Next |
+            NodeType::Next |
                 NodeType::Break |
                 NodeType::True |
                 NodeType::False |
