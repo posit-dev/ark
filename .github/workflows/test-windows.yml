@@ -59,6 +59,40 @@ jobs:
           # https://github.com/briansmith/ring/blob/main/BUILDING.md
           windows-path-include-rtools: false
 
+      # TEMPORARY: find out where the arm64 R installation gets its
+      # cran.r-universe.dev repo from. `--vanilla` skips the site and user
+      # profiles (including the one setup-r writes), so any repo still set
+      # here comes from the R installation itself.
+      - name: Show where the default repos come from (arm64, TEMPORARY)
+        if: runner.arch == 'ARM64'
+        shell: Rscript --vanilla {0}
+        run: |
+          cat("R.version.string: ", R.version.string, "\n", sep = "")
+          cat("R.home(): ", R.home(), "\n", sep = "")
+          cat("R_REPOSITORIES env var: ", Sys.getenv("R_REPOSITORIES", "<unset>"), "\n", sep = "")
+
+          cat("::group::getOption('repos') with --vanilla\n")
+          print(getOption("repos"))
+          cat("::endgroup::\n")
+
+          show_file <- function(path) {
+            cat("::group::", path, "\n", sep = "")
+            if (nzchar(path) && file.exists(path)) {
+              writeLines(readLines(path))
+            } else {
+              cat("<does not exist>\n")
+            }
+            cat("::endgroup::\n")
+          }
+          show_file(file.path(R.home("etc"), "repositories"))
+          show_file(file.path(R.home("etc"), "Rprofile.site"))
+          show_file(Sys.getenv("R_PROFILE"))
+          show_file(file.path(Sys.getenv("USERPROFILE"), "Documents", ".Rprofile"))
+
+          cat("::group::Files in R.home('etc')\n")
+          print(list.files(R.home("etc"), recursive = TRUE))
+          cat("::endgroup::\n")
+
       - name: Install R Packages Required For Tests
         if: runner.arch != 'ARM64'
         uses: r-lib/actions/setup-r-dependencies@v2
