@@ -49,7 +49,7 @@ pub(crate) fn index_with_base_exporting_local(source: &str) -> SemanticIndex {
 pub(crate) fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
 
-    if parsed.has_error() {
+    if parsed.has_errors() {
         panic!("source has syntax errors: {source}");
     }
 

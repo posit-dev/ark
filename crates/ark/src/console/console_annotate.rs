@@ -190,9 +190,12 @@ pub(super) fn annotate_input(
     // directives are shifted by 1 line.
     let annotated_code = if let Some(breakpoints) = breakpoints {
         let parse = aether_parser::parse(code, Default::default());
-        if let Some(err) = parse.error() {
+        if let Some(diagnostic) = parse.diagnostics().first() {
             // Shouldn't happen since we're only operating on code that was parsed by R
-            return Err(anyhow!("Parse error in `annotate_input()`: {err}"));
+            return Err(anyhow!(
+                "Parse error in `annotate_input()`: {message}",
+                message = diagnostic.message
+            ));
         }
 
         let root = parse.tree();
@@ -344,9 +347,12 @@ fn annotate_braced_block(
     let line_index = LineIndex::new(&wrapped);
 
     let parse = aether_parser::parse(&wrapped, Default::default());
-    if let Some(err) = parse.error() {
+    if let Some(diagnostic) = parse.diagnostics().first() {
         // Shouldn't happen since we're only operating on code that was parsed by R
-        return Err(anyhow!("Parse error in `annotate_braced_block()`: {err}"));
+        return Err(anyhow!(
+            "Parse error in `annotate_braced_block()`: {message}",
+            message = diagnostic.message
+        ));
     }
 
     let root = parse.tree();

@@ -33,8 +33,11 @@ impl Namespace {
     pub fn parse(contents: &str) -> anyhow::Result<Self> {
         let parsed = aether_parser::parse(contents, RParserOptions::default());
 
-        if let Some(err) = parsed.error() {
-            return Err(anyhow::anyhow!("Failed to parse NAMESPACE file: {err:?}"));
+        if let Some(diagnostic) = parsed.diagnostics().first() {
+            return Err(anyhow::anyhow!(
+                "Failed to parse NAMESPACE file: {message}",
+                message = diagnostic.message
+            ));
         }
 
         let root = parsed.tree();

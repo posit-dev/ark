@@ -238,7 +238,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6280a6760b7ca36e14591b6cc43f4a2cd30c6028#6280a6760b7ca36e14591b6cc43f4a2cd30c6028"
+source = "git+https://github.com/posit-dev/air?rev=b8ead5f024da1ddaf118722045bcda430bac1530#b8ead5f024da1ddaf118722045bcda430bac1530"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -247,14 +247,13 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6280a6760b7ca36e14591b6cc43f4a2cd30c6028#6280a6760b7ca36e14591b6cc43f4a2cd30c6028"
+source = "git+https://github.com/posit-dev/air?rev=b8ead5f024da1ddaf118722045bcda430bac1530#b8ead5f024da1ddaf118722045bcda430bac1530"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
  "biome_parser",
  "biome_rowan",
  "biome_unicode_table",
- "serde",
  "tracing",
  "tree-sitter",
  "tree-sitter-r",
@@ -263,7 +262,7 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6280a6760b7ca36e14591b6cc43f4a2cd30c6028#6280a6760b7ca36e14591b6cc43f4a2cd30c6028"
+source = "git+https://github.com/posit-dev/air?rev=b8ead5f024da1ddaf118722045bcda430bac1530#b8ead5f024da1ddaf118722045bcda430bac1530"
 dependencies = [
  "biome_rowan",
  "serde",
