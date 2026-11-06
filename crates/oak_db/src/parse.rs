@@ -12,12 +12,12 @@ use biome_rowan::SendNode;
 pub(crate) struct OakParse(SendNode);
 
 impl OakParse {
-    pub(crate) fn new(parse: aether_parser::Parse) -> Self {
+    pub(crate) fn new(parse: aether_parser::RParse) -> Self {
         Self(
             parse
                 .syntax()
                 .as_send()
-                .expect("`Parse::syntax()` returns the root node"),
+                .expect("`RParse::syntax()` returns the root node"),
         )
     }
 

@@ -52,7 +52,7 @@ use crate::resolvers::TestImportsResolver;
 fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
 
-    if parsed.has_error() {
+    if parsed.has_errors() {
         panic!("source has syntax errors: {source}");
     }
 
@@ -61,7 +61,7 @@ fn build_with(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
 
 fn build_test_index(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    if parsed.has_error() {
+    if parsed.has_errors() {
         panic!("source has syntax errors: {source}");
     }
     build_index(&parsed.tree(), resolver)
@@ -1310,7 +1310,7 @@ fn test_assign_value_handle_points_at_value_expression() {
     // The stored `value` handle resolves to the value argument, which is what a
     // type checker infers the binding's type from.
     let parsed = parse("assign(\"x\", 1 + 2)", RParserOptions::default());
-    assert!(!parsed.has_error());
+    assert!(!parsed.has_errors());
     let root = parsed.tree().syntax().clone();
     let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
 
@@ -1360,7 +1360,7 @@ fn test_assign_named_value_handle_points_at_value_expression() {
         "assign(value = 1 + 2, x = \"x\")",
         RParserOptions::default(),
     );
-    assert!(!parsed.has_error());
+    assert!(!parsed.has_errors());
     let root = parsed.tree().syntax().clone();
     let index = build_index(&parsed.tree(), TestImportsResolver::with_base());
 
