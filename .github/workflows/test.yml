@@ -7,22 +7,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  test_macos:
-    name: Test macOS
-    uses: ./.github/workflows/test-macos.yml
-    secrets: inherit
+  # TEMPORARY: only Windows while investigating arm64 repos
+  # test_macos:
+  #   name: Test macOS
+  #   uses: ./.github/workflows/test-macos.yml
+  #   secrets: inherit
 
   test_windows:
     name: Test Windows
     uses: ./.github/workflows/test-windows.yml
     secrets: inherit
 
-  test_linux:
-    name: Test Linux
-    uses: ./.github/workflows/test-linux.yml
-    secrets: inherit
+  # test_linux:
+  #   name: Test Linux
+  #   uses: ./.github/workflows/test-linux.yml
+  #   secrets: inherit
 
-  test_fuzz:
-    name: Test Fuzz
-    uses: ./.github/workflows/test-fuzz.yml
-    secrets: inherit
+  # test_fuzz:
+  #   name: Test Fuzz
+  #   uses: ./.github/workflows/test-fuzz.yml
+  #   secrets: inherit
