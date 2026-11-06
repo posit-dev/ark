@@ -1,7 +1,7 @@
 #
 # r_data_explorer.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -120,16 +120,26 @@ col_filter_indices <- function(col, idx = NULL) {
     col
 }
 
-.ps.filter_rows <- function(table, row_filters) {
+.ps.filter_rows <- function(table, row_filters, search_cache = new.env()) {
     # Are we working with a matrix here?
     is_matrix <- is.matrix(table)
 
     # Create the initial set of indices
     indices <- rep(TRUE, nrow(table))
-    row_filters_errors <- character(length(row_filters))
+    row_filters_errors <- rep(NA_character_, length(row_filters))
+    search_index <- NULL
+    rows_scanned <- NA_integer_
 
     for (i in seq_along(row_filters)) {
         row_filter <- row_filters[[i]]
+
+        # The first global search runs last, on the rows that pass the other
+        # filters. Any others are ignored. It is retried even when marked
+        # invalid, since its errors depend on the data.
+        if (identical(row_filter$filter_type, "global_search")) {
+            search_index <- search_index %||% i
+            next
+        }
 
         # Do not try to apply filters that are already marked as invalid.
         if (!is.null(row_filter$is_valid) && !row_filter$is_valid) {
@@ -175,11 +185,255 @@ col_filter_indices <- function(col, idx = NULL) {
         )
     }
 
+    indices <- which(indices)
+
+    if (!is.null(search_index)) {
+        params <- row_filters[[search_index]]$params
+        row_filters_errors[search_index] <- tryCatch(
+            {
+                result <- .ps.search_rows(
+                    table,
+                    params,
+                    indices,
+                    search_cache
+                )
+                indices <- result$rows
+                rows_scanned <- result$rows_scanned
+                NA
+            },
+            error = function(e) {
+                e$message
+            }
+        )
+    }
+
     # Return the indices of the rows that pass all filters
     list(
-        indices = which(indices),
-        errors = row_filters_errors
+        indices = indices,
+        errors = row_filters_errors,
+        rows_scanned = rows_scanned
     )
+}
+
+# Global search: matches a row when any searched column matches the term.
+# Numeric columns match numeric terms by implied precision, other columns match
+# the term as a case-insensitive substring of their displayed text, and missing
+# values match the null markers. Only `rows` (row indices) are scanned, limited
+# to `max_cells` cells. Returns the matching rows and, when `max_cells` limited
+# the scan, the number of rows scanned. `search` holds the filter's params.
+.ps.search_rows <- function(table, search, rows, cache) {
+    query <- .ps.search_query(search)
+    columns <- .ps.search_columns(table)
+    max_cells <- search$max_cells %||% 0
+
+    # Formatted text is cached only when `max_cells` bounds its size
+    use_cache <- max_cells > 0
+    rows_scanned <- NA_integer_
+    if (use_cache && as.double(length(rows)) * length(columns) > max_cells) {
+        rows_scanned <- as.integer(max_cells %/% length(columns))
+        rows <- rows[seq_len(rows_scanned)]
+    }
+
+    # The cache holds formatted text of the scanned rows, so it is stale when
+    # they change
+    if (!identical(cache$rows, rows)) {
+        rm(list = ls(cache), envir = cache)
+        cache$rows <- rows
+    }
+
+    matches <- logical(length(rows))
+    for (j in columns) {
+        pending <- which(!matches)
+        if (length(pending) == 0L) {
+            break
+        }
+        col <- .ps.search_col(table, j)
+        text <- function() {
+            if (!use_cache || .ps.is_plain_text(col)) {
+                return(.ps.search_text(col, rows[pending]))
+            }
+            key <- as.character(j)
+            if (is.null(cache[[key]])) {
+                cache[[key]] <- .ps.search_text(col, rows)
+            }
+            cache[[key]][pending]
+        }
+        matches[pending] <- .ps.search_match(col, rows[pending], query, text)
+    }
+
+    list(rows = rows[matches], rows_scanned = rows_scanned)
+}
+
+# Whether each of `rows[[k]]` of column `columns[k]` matches the global search,
+# concatenated across columns
+.ps.search_cells <- function(table, search, columns, rows) {
+    query <- .ps.search_query(search)
+    n <- nrow(table)
+    matches <- Map(
+        function(j, rows) {
+            col <- .ps.search_col(table, j)
+            if (!.ps.is_searchable(col, n)) {
+                return(logical(length(rows)))
+            }
+            .ps.search_match(col, rows, query)
+        },
+        columns,
+        rows
+    )
+    as.logical(unlist(matches, use.names = FALSE))
+}
+
+.ps.search_query <- function(search) {
+    term <- enc2utf8(search$term)
+    list(
+        pattern = .ps.regex_escape(term),
+        numeric = .ps.search_numeric_matcher(
+            trimws(term),
+            search$format_options
+        ),
+        null = tolower(trimws(term)) %in%
+            c("null", "na", "nan", "none", "nat", "<na>")
+    )
+}
+
+# Returns a function matching numeric values against a numeric term: a value
+# matches when truncating it toward zero at the term's decimals gives the term.
+# Doubles are first rounded as displayed with `format_options`, when given.
+# Non-numeric terms match no numeric value.
+.ps.search_numeric_matcher <- function(term, format_options = NULL) {
+    if (grepl("^[+-]?[0-9]{1,3}(,[0-9]{3})+(\\.[0-9]*)?$", term)) {
+        term <- gsub(",", "", term, fixed = TRUE)
+    }
+    if (!grepl("^[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)$", term)) {
+        return(function(x) logical(length(x)))
+    }
+
+    value <- as.numeric(term)
+    step <- 10^-nchar(sub("^[^.]*\\.?", "", term))
+    eps <- step * 1e-9
+
+    function(x) {
+        if (is.double(x) && !is.null(format_options)) {
+            x <- .ps.search_displayed(x, format_options)
+        }
+        in_range <- if (value > 0) {
+            x >= value - eps & x < value + step - eps
+        } else if (value < 0) {
+            x > value - step + eps & x <= value + eps
+        } else {
+            x > -step + eps & x < step - eps
+        }
+        is.finite(x) & in_range
+    }
+}
+
+# Indices of the searched columns, with 0 standing for character row names
+.ps.search_columns <- function(table) {
+    # Matrix columns share the matrix's type, so are searchable unless it is a
+    # list
+    columns <- if (is.matrix(table)) {
+        if (is.list(table)) integer() else seq_len(ncol(table))
+    } else {
+        n <- nrow(table)
+        Filter(
+            function(j) .ps.is_searchable(.subset2(table, j), n),
+            seq_len(ncol(table))
+        )
+    }
+    if (is.character(.ps.search_row_names(table))) {
+        columns <- c(0L, columns)
+    }
+    columns
+}
+
+.ps.search_col <- function(table, j) {
+    if (j == 0L) {
+        .ps.search_row_names(table)
+    } else if (is.matrix(table)) {
+        table[, j]
+    } else {
+        .subset2(table, j)
+    }
+}
+
+.ps.search_row_names <- function(table) {
+    if (is.matrix(table)) {
+        rownames(table)
+    } else {
+        .row_names_info(table, 0L)
+    }
+}
+
+# Plain lists and nested data frames are not searched
+.ps.is_searchable <- function(col, n) {
+    !is.data.frame(col) &&
+        !(is.list(col) && !is.object(col)) &&
+        length(col) == n
+}
+
+# Doubles rounded as `format_dbl_value()` displays them, with NA for those it
+# displays in scientific notation
+.ps.search_displayed <- function(x, options) {
+    magnitude <- abs(x)
+    medium <- (magnitude >= 1 & magnitude < 10^options$max_integral_digits) |
+        magnitude == 0
+    small <- magnitude < 1 & magnitude >= 10^-options$small_num_digits
+    digits <- ifelse(
+        medium,
+        options$large_num_digits,
+        options$small_num_digits
+    )
+    shown <- round(x, digits)
+    shown[!(medium | small) | is.na(x)] <- NA
+    shown
+}
+
+# Whether each of `col[rows]` matches. `text()` returns the displayed text of
+# `col[rows]`. A column that fails to search (e.g. its `format()` method errors)
+# matches nothing.
+.ps.search_match <- function(
+    col,
+    rows,
+    query,
+    text = function() .ps.search_text(col, rows)
+) {
+    tryCatch(
+        {
+            matches <- if (is.numeric(col) && !is.object(col)) {
+                query$numeric(col[rows])
+            } else {
+                grepl(query$pattern, text(), perl = TRUE, ignore.case = TRUE)
+            }
+            if (query$null) {
+                matches <- matches | is.na(col[rows])
+            }
+            matches
+        },
+        error = function(e) logical(length(rows))
+    )
+}
+
+# Columns whose values are their displayed text
+.ps.is_plain_text <- function(col) {
+    is.factor(col) || (is.character(col) && !is.object(col))
+}
+
+# The displayed text of `col[rows]`
+.ps.search_text <- function(col, rows) {
+    x <- col[rows]
+    if (.ps.is_plain_text(col)) {
+        return(x)
+    }
+
+    text <- if (is.object(x)) {
+        .ps.Call("ps_format_vec", x)
+    } else {
+        as.character(x)
+    }
+    stopifnot(is.character(text), length(text) == length(x))
+    text <- trimws(text, whitespace = " ")
+    text[is.na(x)] <- NA
+    text
 }
 
 # Filter functions; each accepts a column and a set of parameters
