@@ -565,6 +565,9 @@ impl TryTasks {
             Ok(status) => status,
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(task) = self.remove(id) {
+                    log::info!(
+                        "`try_r_task()`: Task didn't start in time, R's event loop is occupied"
+                    );
                     drop(task);
                     return None;
                 }
