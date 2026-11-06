@@ -5,6 +5,7 @@ use aether_syntax::RArgument;
 use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
+use oak_core::syntax_ext::AnyRStatementExt;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use stdext::SortedVec;
@@ -42,8 +43,8 @@ impl Namespace {
         let mut imports = Vec::new();
         let mut package_imports = Vec::new();
 
-        for expr in root.expressions().iter() {
-            let AnyRExpression::RCall(call) = expr else {
+        for statement in root.statements().iter() {
+            let Some(AnyRExpression::RCall(call)) = statement.expression() else {
                 continue;
             };
             let Ok(AnyRExpression::RIdentifier(fn_ident)) = call.function() else {

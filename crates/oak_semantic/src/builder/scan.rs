@@ -6,8 +6,8 @@ use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
-use aether_syntax::RExpressionList;
 use aether_syntax::RParameters;
+use aether_syntax::RStatementList;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
@@ -16,6 +16,7 @@ use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
+use oak_core::syntax_ext::AnyRStatementExt;
 use oak_core::syntax_ext::RIdentifierExt;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
@@ -94,9 +95,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         }
     }
 
-    pub(super) fn scan_expression_list(&mut self, list: &RExpressionList) {
-        for expr in list.iter() {
-            self.scan_expression(&expr);
+    pub(super) fn scan_statement_list(&mut self, list: &RStatementList) {
+        for statement in list.iter() {
+            if let Some(expr) = statement.expression() {
+                self.scan_expression(&expr);
+            };
         }
     }
 
@@ -139,8 +142,8 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
                 self.record_enclosing_flow(func.syntax().text_trimmed_range());
             },
 
-            AnyRExpression::RBracedExpressions(braced) => {
-                self.scan_expression_list(&braced.expressions());
+            AnyRExpression::RBracedStatements(braced) => {
+                self.scan_statement_list(&braced.statements());
             },
 
             AnyRExpression::RBinaryExpression(bin) => {

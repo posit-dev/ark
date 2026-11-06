@@ -4,6 +4,7 @@ use aether_syntax::AnyRExpression;
 use aether_syntax::RCall;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
+use oak_core::syntax_ext::AnyRStatementExt;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_semantic::build_index;
 use oak_semantic::effects;
@@ -1057,7 +1058,8 @@ impl ScopeContext for BaseOnlyScope {
 #[test]
 fn test_static_value_with_explicit_scope_context() {
     let parsed = parse("c(\"a\", c(NULL, \"b\"))", RParserOptions::default());
-    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let statement = parsed.tree().statements().iter().next().unwrap();
+    let expr = statement.expression().unwrap();
     let mut scope = BaseOnlyScope;
     let mut ctx = CallContext::new(&mut scope);
     assert_eq!(
@@ -1073,7 +1075,8 @@ fn test_static_value_with_explicit_scope_context() {
 fn test_static_value_records_callee_imports() {
     let source = "c(\"a\", paste0(\"b\"))";
     let parsed = parse(source, RParserOptions::default());
-    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let statement = parsed.tree().statements().iter().next().unwrap();
+    let expr = statement.expression().unwrap();
     let mut scope = BaseOnlyScope;
     let mut ctx = CallContext::new(&mut scope);
 
@@ -1092,7 +1095,8 @@ fn test_static_value_records_callee_imports() {
 fn test_static_value_records_each_call_site_once() {
     let source = "c(\"a\", c(\"b\"))";
     let parsed = parse(source, RParserOptions::default());
-    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let statement = parsed.tree().statements().iter().next().unwrap();
+    let expr = statement.expression().unwrap();
     let mut scope = BaseOnlyScope;
     let mut ctx = CallContext::new(&mut scope);
 
@@ -1197,7 +1201,8 @@ impl ScopeContext for LocalOnlyScope {
 #[test]
 fn test_static_value_skips_local_callees() {
     let parsed = parse("c(\"a\")", RParserOptions::default());
-    let expr = parsed.tree().expressions().iter().next().unwrap();
+    let statement = parsed.tree().statements().iter().next().unwrap();
+    let expr = statement.expression().unwrap();
     let mut scope = LocalOnlyScope;
     let mut ctx = CallContext::new(&mut scope);
     assert_eq!(ctx.resolve_static_value(&expr), None);
