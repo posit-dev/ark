@@ -47,7 +47,6 @@ jobs:
           tool: cargo-nextest
 
       - name: Install R
-        id: setup-r
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
@@ -66,24 +65,13 @@ jobs:
           dependencies: '"hard"'
           packages: ${{ env.R_TEST_PACKAGES }}
 
-      # On windows-11-arm, `setup-r-dependencies` restores its library cache but
-      # then pak rebuilds every package from source anyway (~20 min, mostly
-      # stringi). Until that's resolved upstream, cache the library ourselves
-      # and only install packages that are missing from it.
-      #
-      # The key includes a hash of this file, so editing the package list saves
-      # a fresh cache. `restore-keys` lets that run start from the previous
-      # library and build only what's new.
-      - name: Restore R Package Library (arm64)
-        if: runner.arch == 'ARM64'
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.R_LIBS_USER }}
-          key: r-lib-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-r.outputs.installed-r-version }}-${{ hashFiles('.github/workflows/test-windows.yml') }}
-          restore-keys: |
-            r-lib-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-r.outputs.installed-r-version }}-
-
-      - name: Install Missing R Packages Required For Tests (arm64)
+      # On windows-11-arm, pak treats the default CRAN repo (cran.r-universe.dev,
+      # set by the R arm64 build) as source-only and builds every package from
+      # source (~20 min, mostly stringi). It also never reuses those packages
+      # from the `setup-r-dependencies` cache, so it pays that cost on every run.
+      # `install.packages()` gets r-universe's arm64 binaries instead, which
+      # takes seconds, so no cache is needed.
+      - name: Install R Packages Required For Tests (arm64)
         if: runner.arch == 'ARM64'
         shell: Rscript {0}
         run: |
@@ -92,17 +80,12 @@ jobs:
           .libPaths(c(lib, .libPaths()))
 
           pkgs <- strsplit(Sys.getenv("R_TEST_PACKAGES"), "[[:space:]]+")[[1]]
-          missing <- setdiff(pkgs, rownames(installed.packages()))
-          message("Already installed: ", paste(setdiff(pkgs, missing), collapse = ", "))
-          message("Installing: ", paste(missing, collapse = ", "))
-          if (length(missing)) {
-            install.packages(missing, lib = lib)
-          }
+          install.packages(pkgs, lib = lib)
 
           # `install.packages()` only warns on failure, so check explicitly
-          still_missing <- setdiff(pkgs, rownames(installed.packages()))
-          if (length(still_missing)) {
-            stop("Failed to install: ", paste(still_missing, collapse = ", "))
+          missing <- setdiff(pkgs, rownames(installed.packages()))
+          if (length(missing)) {
+            stop("Failed to install: ", paste(missing, collapse = ", "))
           }
 
       - name: Build
@@ -115,69 +98,3 @@ jobs:
           R_PROFILE_USER: ${{ github.workspace }}/.github/Rprofile
         run: |
           cargo nextest run
-
-  # TEMPORARY: diagnose why pak reinstalls from-source packages on arm64.
-  # Installs `glue` via `setup-r-dependencies`, then installs from a fresh
-  # lockfile into the same library to see whether pak plans a reinstall.
-  # Compare the default repos (CRAN = cran.r-universe.dev, set by the R arm64
-  # build) with an explicit CRAN mirror. Remove before merging.
-  windows-arm-pak-debug:
-    name: "pak debug, OS: windows-11-arm, cran: ${{ matrix.cran || 'default' }}"
-    runs-on: windows-11-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        cran: ['', 'https://cloud.r-project.org']
-    timeout-minutes: 30
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install R
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: release
-          use-public-rspm: true
-          cran: ${{ matrix.cran }}
-          windows-path-include-rtools: false
-
-      - name: Install glue with setup-r-dependencies
-        uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          cache: false
-          packages: glue
-
-      - name: Inspect installed glue and re-run lockfile install
-        shell: Rscript {0}
-        run: |
-          library(pak, lib.loc = Sys.getenv("R_LIB_FOR_PAK"))
-          lib <- Sys.getenv("R_LIBS_USER")
-
-          cat("::group::pak version\n")
-          print(packageVersion("pak", lib.loc = Sys.getenv("R_LIB_FOR_PAK")))
-          cat("::endgroup::\n")
-
-          cat("::group::getOption('repos')\n")
-          print(getOption("repos"))
-          cat("::endgroup::\n")
-
-          cat("::group::Installed glue DESCRIPTION\n")
-          desc <- read.dcf(file.path(lib, "glue", "DESCRIPTION"))
-          fields <- c("Package", "Version", "Repository", "Built", "RemoteType", "RemoteRepos", "RemotePkgPlatform", "RemoteSha")
-          print(t(desc[, intersect(fields, colnames(desc)), drop = FALSE]))
-          cat("::endgroup::\n")
-
-          cat("::group::pak::lib_status() for glue\n")
-          status <- pak::lib_status(lib)
-          print(as.list(status[status$package == "glue", ]))
-          cat("::endgroup::\n")
-
-          cat("::group::Fresh lockfile entry for glue\n")
-          pak::lockfile_create("glue", lockfile = "debug.lock", lib = NULL)
-          writeLines(readLines("debug.lock"))
-          cat("::endgroup::\n")
-
-          # The key output: "Will install 1 package" means pak doesn't accept
-          # the glue it just installed as satisfying the lockfile.
-          pak::lockfile_install("debug.lock", lib = lib)
