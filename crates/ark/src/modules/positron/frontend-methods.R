@@ -74,6 +74,21 @@
 }
 
 #' @export
+.ps.ui.executeCodeInNewSession <- function(code, sessionName) {
+    tryCatch(
+        parse(text = code),
+        error = function(e) {
+            stop(
+                "Can't run code in a new session because it does not parse: ",
+                conditionMessage(e),
+                call. = FALSE
+            )
+        }
+    )
+    .ps.Call("ps_ui_execute_code_in_new_session", code, sessionName)
+}
+
+#' @export
 .ps.ui.showMessage <- function(message) {
     .ps.Call("ps_ui_show_message", message)
 }
