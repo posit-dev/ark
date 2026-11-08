@@ -42,6 +42,9 @@ use crate::lsp::completions::request::UniqueRequest;
 /// A source that returns an error declines its slot, preserving the static
 /// fallback without preventing other sources from answering.
 pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
+    #[cfg(any(test, feature = "testing"))]
+    test_hooks::raise_r_error_on_sentinel(&request);
+
     let RCompletionRequest {
         custom,
         unique,
@@ -195,6 +198,30 @@ pub(crate) mod expected_errors {
             );
         };
         EXPECTED.set(Some(count + 1));
+    }
+}
+
+/// Completing `.ark_test_completions_r_error$` raises an R error that
+/// escapes [r_completions()]. This tests request-level recovery rather than
+/// the per-source fallback for errors caught by `harp`.
+#[cfg(any(test, feature = "testing"))]
+mod test_hooks {
+    use crate::lsp::completions::request::RCompletionRequest;
+    use crate::lsp::completions::request::UniqueRequest;
+
+    const R_ERROR_OBJECT: &str = ".ark_test_completions_r_error";
+
+    pub(super) fn raise_r_error_on_sentinel(request: &RCompletionRequest) {
+        let Some(UniqueRequest::Extractor { object, .. }) = &request.unique else {
+            return;
+        };
+        if object != R_ERROR_OBJECT {
+            return;
+        }
+
+        // The R longjump skips the request's destructor, leaking its heap
+        // allocations. The request owns no database handles or R objects.
+        unsafe { libr::Rf_error(c"Test R error in the session completion pass".as_ptr()) }
     }
 }
 

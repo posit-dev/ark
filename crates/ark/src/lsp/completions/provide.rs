@@ -7,7 +7,6 @@
 
 use tower_lsp_server::ls_types::CompletionItem;
 
-use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::request::RCompletionReplies;
 use crate::lsp::completions::request::RCompletionRequest;
@@ -16,6 +15,7 @@ use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::composite::CompositeCompletions;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
@@ -42,7 +42,7 @@ enum StaticAnswer {
 /// Doesn't call R, so it can run while R is busy.
 pub(crate) fn static_completions(
     document_context: &DocumentContext,
-    state: &WorldStateSnapshot,
+    state: &WorldState,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
     log::info!(
         "static_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
@@ -184,6 +184,16 @@ mod tests {
         let completions = finish(completions, RCompletionReplies::default());
         let item = find_completion_by_label(&completions, "NULL").unwrap();
         assert_eq!(item.kind, Some(CompletionItemKind::KEYWORD));
+    }
+
+    #[test]
+    fn test_static_answers_have_no_session_slots() {
+        let (text, point, _) = point_and_offset_from_cursor("#' @|", b'|');
+        let (_, request) = static_completions_at(&text, point).unwrap();
+        assert!(!request.has_session_slots());
+
+        let (_, request) = static_completions_at_cursor("foo$@").unwrap();
+        assert!(request.has_session_slots());
     }
 
     /// See `test_custom_overrides_dollar()` for the session's answer.

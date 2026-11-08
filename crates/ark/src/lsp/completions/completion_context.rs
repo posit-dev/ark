@@ -9,19 +9,19 @@ use std::cell::OnceCell;
 
 use tree_sitter::Node;
 
-use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::state::WorldState;
 use crate::treesitter::node_find_containing_call;
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,
-    pub(crate) state: &'a WorldStateSnapshot,
+    pub(crate) state: &'a WorldState,
     containing_call_cell: OnceCell<Option<Node<'a>>>,
     function_context_cell: OnceCell<anyhow::Result<FunctionContext>>,
 }
 
 impl<'a> CompletionContext<'a> {
-    pub fn new(document_context: &'a DocumentContext, state: &'a WorldStateSnapshot) -> Self {
+    pub fn new(document_context: &'a DocumentContext, state: &'a WorldState) -> Self {
         Self {
             document_context,
             state,

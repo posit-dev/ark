@@ -79,7 +79,7 @@ mod tests {
 
     fn custom_request_at_cursor(code: &str) -> Option<CustomRequest> {
         let (text, point) = point_from_cursor(code);
-        let state = WorldState::default().snapshot();
+        let state = WorldState::default();
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
         let context = CompletionContext::new(&document_context, &state);

@@ -8,7 +8,12 @@
 // The lsp files in ark_test are for only integration tests with the Jupyter
 // kernel, i.e. LSP features that require dynamic access to the R session.
 
+use std::time::Duration;
+
 use ark_test::DummyArkFrontend;
+use serde_json::json;
+use serde_json::Value;
+use tower_lsp_server::ls_types as lsp_types;
 
 /// Helper to get completion position at end of text (before trailing newline)
 fn end_position(text: &str) -> u32 {
@@ -325,4 +330,126 @@ outer()
 
     frontend.debug_send_quit();
     dap.recv_continued();
+}
+
+/// A custom callback's items replace the whole completion list.
+#[test]
+fn test_lsp_completions_custom_callback() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    frontend.execute_request_invisibly("f <- function(arg) NULL");
+    frontend.execute_request_invisibly(
+        ".ps.completions.registerCustomCompletionHandler('pkg', 'f', 'arg', \
+         function(position) .ps.completions.createCustomCompletions(c('one', 'two')))",
+    );
+
+    let text = "f(arg)\n";
+    let uri = lsp.open_document("custom_callback.R", text);
+    let items = lsp.completions(&uri, 0, 5);
+
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, vec!["one", "two"]);
+
+    // With R idle the answer is complete, so the editor filters it as the
+    // user types instead of requesting again on every keystroke
+    let result = lsp.send_request("textDocument/completion", position_params(&uri, 0, 5));
+    assert!(result.is_array());
+}
+
+/// A custom callback that raises an R error declines, leaving the call's
+/// argument completions.
+#[test]
+fn test_lsp_completions_custom_callback_error() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Session completion source `custom` failed");
+
+    frontend.execute_request_invisibly("f <- function(arg) NULL");
+    frontend.execute_request_invisibly(
+        ".ps.completions.registerCustomCompletionHandler('pkg', 'f', 'arg', \
+         function(position) stop('boom'))",
+    );
+
+    let text = "f(arg)\n";
+    let uri = lsp.open_document("custom_callback_error.R", text);
+    let items = lsp.completions(&uri, 0, 5);
+
+    assert_eq!(items[0].label, "arg = ");
+}
+
+/// When R is idle, completion resolve adds documentation. When R is busy,
+/// `test_lsp_completion_resolve_busy()` expects the item unchanged.
+#[test]
+fn test_lsp_completion_resolve_idle() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let item = json!({
+        "label": "paste",
+        "data": { "Function": { "name": "paste", "package": "base" } },
+    });
+    let resolved = lsp.send_request("completionItem/resolve", item);
+
+    let documentation = resolved["documentation"]["value"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(documentation.contains("Concatenate Strings"));
+}
+
+/// An R error that escapes the session pass fails the request without
+/// blocking later document changes. A leaked Salsa handle would block the
+/// database write needed to apply the change.
+#[test]
+fn test_lsp_completions_escaping_r_error_does_not_park_writes() -> anyhow::Result<()> {
+    ark::panic::install();
+
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.allow_log_message("Panic while handling request");
+
+    let text = ".ark_test_completions_r_error$\n";
+    let uri = lsp.open_document("escaping_r_error.R", text);
+
+    let message = lsp.send_request_expect_error(
+        "textDocument/completion",
+        position_params(&uri, 0, end_position(text)),
+    );
+    assert!(message.contains("Test R error in the session completion pass"));
+
+    lsp.send_notification(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": uri, "version": 1 },
+            "contentChanges": [{ "text": "fo_changed <- 1\nfo\n" }],
+        }),
+    );
+
+    let completion_id =
+        lsp.send_request_raw("textDocument/completion", position_params(&uri, 1, 2));
+    let symbols_id = lsp.send_request_raw(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let responses = lsp.recv_responses(&[completion_id, symbols_id], Duration::from_secs(10))?;
+
+    let labels: Vec<&str> = responses[0]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| item["label"].as_str().unwrap_or_default())
+        .collect();
+    assert!(labels.contains(&"fo_changed"));
+    assert_eq!(responses[1][0]["name"], "fo_changed");
+
+    Ok(())
+}
+
+fn position_params(uri: &lsp_types::Uri, line: u32, character: u32) -> Value {
+    json!({
+        "textDocument": { "uri": uri },
+        "position": { "line": line, "character": character },
+    })
 }

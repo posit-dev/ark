@@ -12,6 +12,7 @@ use stdext::unwrap;
 use tower_lsp_server::ls_types::CodeActionParams;
 use tower_lsp_server::ls_types::CodeActionResponse;
 use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionList;
 use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::CompletionResponse;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingParams;
@@ -48,7 +49,9 @@ use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::finish;
 use crate::lsp::completions::r_completions;
 use crate::lsp::completions::resolve_completion;
+use crate::lsp::completions::resolve_target;
 use crate::lsp::completions::static_completions;
+use crate::lsp::completions::RCompletionReplies;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
@@ -172,31 +175,59 @@ pub(crate) fn handle_completion(
     );
     lsp::log_info!("Completion context: {:#?}", context);
 
-    // Snapshot so the closure captures by value. `r_task()` sends the closure
-    // across threads, and `&WorldState` isn't `Send` because `OakDatabase`'s
-    // salsa storage keeps thread-local query state. `snapshot()` hands
-    // the reader a `WorldStateSnapshot`, so the background thread can query oak
-    // but can't call a setter.
-    // TODO(oak/completions): We don't really need a snapshot here since
-    // completions are serviced from the main loop, it's only needed for the
-    // `r_task()`.
-    let state = state.snapshot();
-    let completions = r_task(move || -> anyhow::Result<Vec<CompletionItem>> {
-        let (completions, request) = static_completions(&context, &state)?;
-        let replies = r_completions(request);
-        Ok(finish(completions, replies))
-    })?;
+    let (completions, request) = static_completions(&context, state)?;
 
-    if !completions.is_empty() {
-        Ok(Some(CompletionResponse::Array(completions)))
+    // Without session slots the static items are the whole answer. Skipping
+    // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event
+    // loop occupied by another task.
+    if !request.has_session_slots() {
+        return Ok(completion_array(finish(
+            completions,
+            RCompletionReplies::default(),
+        )));
+    }
+
+    // Keep database handles out of the closure. An escaping R error skips
+    // destructors, and a leaked Salsa handle would block later writes.
+    let Some(replies) = try_r_task(|| r_completions(request)) else {
+        log::trace!("Skipping session completions: R is busy");
+
+        // Every session slot keeps its static fallback. Marked incomplete so
+        // the editor requests again on the next keystroke instead of filtering
+        // this list, and gets the session items once R is idle.
+        return Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete: true,
+            items: finish(completions, RCompletionReplies::default()),
+        })));
+    };
+
+    Ok(completion_array(finish(completions, replies)))
+}
+
+fn completion_array(completions: Vec<CompletionItem>) -> Option<CompletionResponse> {
+    if completions.is_empty() {
+        None
     } else {
-        Ok(None)
+        Some(CompletionResponse::Array(completions))
     }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<CompletionItem> {
-    r_task(|| resolve_completion(&mut item))?;
+    // Most item kinds have no documentation to add. Deciding that before the
+    // hop avoids waiting up to `TRY_TASK_START_WITHIN` for an R event loop
+    // occupied by another task.
+    let Some(target) = resolve_target(&item)? else {
+        return Ok(item);
+    };
+
+    // If R cannot accept the task, return the item unresolved rather than
+    // wait for R to become available and block the LSP main loop.
+    let Some(result) = try_r_task(|| resolve_completion(&mut item, &target)) else {
+        log::trace!("Skipping completion resolve: R is busy");
+        return Ok(item);
+    };
+    result?;
     Ok(item)
 }
 

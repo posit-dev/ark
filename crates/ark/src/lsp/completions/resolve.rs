@@ -5,7 +5,7 @@
 //
 //
 
-use anyhow::bail;
+use anyhow::anyhow;
 use stdext::*;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::Documentation;
@@ -15,33 +15,69 @@ use tower_lsp_server::ls_types::MarkupKind;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::help::RHtmlHelp;
 
-pub fn resolve_completion(item: &mut CompletionItem) -> anyhow::Result<bool> {
+/// The documentation a completion item can be resolved with, rendered by
+/// [resolve_completion()] in the session
+#[derive(Debug, PartialEq)]
+pub(crate) enum ResolveTarget {
+    Function {
+        name: String,
+        package: Option<String>,
+    },
+    Package {
+        name: String,
+    },
+    Parameter {
+        name: String,
+        function: String,
+    },
+}
+
+/// Decodes what resolving `item` needs, or `None` when its kind has no
+/// documentation to add. Runs without R, so the handler only hops to the R
+/// thread for items that need it.
+pub(crate) fn resolve_target(item: &CompletionItem) -> anyhow::Result<Option<ResolveTarget>> {
     let Some(data) = item.data.clone() else {
-        bail!("Completion '{}' has no associated data", item.label);
+        return Err(anyhow!(
+            "Completion '{label}' has no associated data",
+            label = item.label
+        ));
     };
 
-    let data: CompletionData = unwrap!(serde_json::from_value(data), Err(err) => {
-        bail!("Completion `data` can't be deserialized: {err:?}.");
-    });
+    let data: CompletionData = serde_json::from_value(data)
+        .map_err(|err| anyhow!("Completion `data` can't be deserialized: {err:?}."))?;
 
-    match data {
-        CompletionData::DataVariable { name: _, owner: _ } => Ok(false),
-        CompletionData::Directory { path: _ } => Ok(false),
-        CompletionData::File { path: _ } => Ok(false),
-        CompletionData::Function { name, package } => {
-            resolve_function_completion_item(item, name.as_str(), package.as_deref())
+    let target = match data {
+        CompletionData::Function { name, package } => ResolveTarget::Function { name, package },
+        CompletionData::Package { name } => ResolveTarget::Package { name },
+        CompletionData::Parameter { name, function } => ResolveTarget::Parameter { name, function },
+        CompletionData::DataVariable { .. } |
+        CompletionData::Directory { .. } |
+        CompletionData::File { .. } |
+        CompletionData::Object { .. } |
+        CompletionData::Keyword { .. } |
+        CompletionData::RoxygenTag { .. } |
+        CompletionData::ScopeVariable { .. } |
+        CompletionData::ScopeParameter { .. } |
+        CompletionData::Snippet { .. } |
+        CompletionData::Unknown => return Ok(None),
+    };
+
+    Ok(Some(target))
+}
+
+/// Adds the documentation of `target` to `item`. Must run on the R thread.
+pub(crate) fn resolve_completion(
+    item: &mut CompletionItem,
+    target: &ResolveTarget,
+) -> anyhow::Result<bool> {
+    match target {
+        ResolveTarget::Function { name, package } => {
+            resolve_function_completion_item(item, name, package.as_deref())
         },
-        CompletionData::Package { name } => resolve_package_completion_item(item, name.as_str()),
-        CompletionData::Parameter { name, function } => {
-            resolve_parameter_completion_item(item, name.as_str(), function.as_str())
+        ResolveTarget::Package { name } => resolve_package_completion_item(item, name),
+        ResolveTarget::Parameter { name, function } => {
+            resolve_parameter_completion_item(item, name, function)
         },
-        CompletionData::Object { name: _ } => Ok(false),
-        CompletionData::Keyword { name: _ } => Ok(false),
-        CompletionData::RoxygenTag { tag: _ } => Ok(false),
-        CompletionData::ScopeVariable { name: _ } => Ok(false),
-        CompletionData::ScopeParameter { name: _ } => Ok(false),
-        CompletionData::Snippet { text: _ } => Ok(false),
-        CompletionData::Unknown => Ok(false),
     }
 }
 
@@ -108,4 +144,41 @@ fn resolve_parameter_completion_item(
     item.detail = Some(format!("{}()", function));
     item.documentation = Some(Documentation::MarkupContent(markup));
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tower_lsp_server::ls_types::CompletionItem;
+
+    use crate::lsp::completions::resolve::resolve_target;
+    use crate::lsp::completions::resolve::ResolveTarget;
+
+    fn item_with_data(data: Option<serde_json::Value>) -> CompletionItem {
+        CompletionItem {
+            label: "item".to_string(),
+            data,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_resolve_target() {
+        let keyword = item_with_data(Some(json!({ "Keyword": { "name": "for" } })));
+        assert_eq!(resolve_target(&keyword).unwrap(), None);
+
+        let function = item_with_data(Some(
+            json!({ "Function": { "name": "paste", "package": "base" } }),
+        ));
+        assert_eq!(
+            resolve_target(&function).unwrap(),
+            Some(ResolveTarget::Function {
+                name: String::from("paste"),
+                package: Some(String::from("base")),
+            })
+        );
+
+        assert!(resolve_target(&item_with_data(None)).is_err());
+        assert!(resolve_target(&item_with_data(Some(json!({ "Bogus": {} })))).is_err());
+    }
 }

@@ -28,4 +28,6 @@ mod tests;
 pub(crate) use provide::finish;
 pub(crate) use provide::static_completions;
 pub(crate) use r_completions::r_completions;
+pub(crate) use request::RCompletionReplies;
 pub(crate) use resolve::resolve_completion;
+pub(crate) use resolve::resolve_target;

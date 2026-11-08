@@ -66,9 +66,8 @@ fn static_completions_in(
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
     let doc = TestDocument::new(text);
     let document_context = doc.context(point);
-    let snapshot = state.snapshot();
 
-    match static_completions(&document_context, &snapshot) {
+    match static_completions(&document_context, &state) {
         Ok(completions) => Ok(completions),
         Err(err) => Err(anyhow::anyhow!("Failed to get completions: {err}")),
     }

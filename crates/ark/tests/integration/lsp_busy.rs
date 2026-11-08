@@ -7,6 +7,8 @@
 
 // Hover and signature help need R. When R is busy, they should answer `null`
 // promptly instead of blocking the LSP main loop until R is back at a prompt.
+// Completions answer with their static items, and completion resolve returns
+// the item unchanged.
 
 use std::time::Duration;
 
@@ -141,6 +143,225 @@ fn test_lsp_hover_busy_does_not_stall_main_loop() -> anyhow::Result<()> {
     let responses = lsp.recv_responses(&[hover_id, symbols_id], BUSY_TIMEOUT)?;
     assert_eq!(responses[0], Value::Null);
     assert_eq!(responses[1][0]["name"], "foo");
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+/// Labels of a completion list answered while R is busy. The list is marked
+/// incomplete so the editor asks again once R may be idle.
+fn busy_completion_labels(response: &Value) -> Vec<&str> {
+    assert_eq!(response["isIncomplete"], true);
+    let Some(items) = response["items"].as_array() else {
+        panic!("Expected a completion list, got: {response}");
+    };
+    items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default())
+        .collect()
+}
+
+// `foo$` requires session names. When R is busy, unrelated sources must
+// not fill the empty result.
+#[test]
+fn test_lsp_completions_busy_extractor_is_empty() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document("completions_busy_extractor.R", "foo$\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 4));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    assert_eq!(busy_completion_labels(&responses[0]), Vec::<&str>::new());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// In `x["|"]`, `|` marks the cursor. String subsetting requires session
+// names, and while R is busy the string context must not be filled with
+// keywords or other composite items. That it isn't recognized as a file path
+// is checked by `test_string_subset_lists_no_files_without_session()`.
+#[test]
+fn test_lsp_completions_busy_string_subset_is_empty() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document("completions_busy_string_subset.R", "x[\"\"]\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 3));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    assert_eq!(busy_completion_labels(&responses[0]), Vec::<&str>::new());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// Keywords and symbols from documents in the workspace remain available
+// while R is busy. Search-path symbols such as `format()` require the session.
+#[test]
+fn test_lsp_completions_busy_identifier() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    lsp.open_document(
+        "completions_busy_workspace.R",
+        "fo_workspace <- function() NULL\n",
+    );
+    let uri = lsp.open_document("completions_busy_identifier.R", "fo_document <- 1\nfo\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 1, 2));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let labels = busy_completion_labels(&responses[0]);
+    assert!(labels.contains(&"for"));
+    assert!(labels.contains(&"fo_document"));
+    assert!(labels.contains(&"fo_workspace"));
+    assert!(!labels.contains(&"format"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// When R is busy, an unavailable custom callback must not suppress the
+// fallback list, which starts with argument names from the workspace function.
+#[test]
+fn test_lsp_completions_busy_call_arguments() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document(
+        "completions_busy_call_arguments.R",
+        "f <- function(arg_one, arg_two) NULL\nf(arg)\n",
+    );
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 1, 5));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let labels = busy_completion_labels(&responses[0]);
+    assert_eq!(labels[0..2], ["arg_one = ", "arg_two = "]);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// The roxygen tag answer comes from static sources only, so it is complete
+// even though R is busy.
+#[test]
+fn test_lsp_completions_busy_static_answer_is_complete() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document("completions_busy_static.R", "#' @\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 4));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    // Either a plain array or `null`, never an incomplete list
+    assert_eq!(responses[0]["isIncomplete"], Value::Null);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// A document-symbol request queued behind a completion must not wait for R.
+#[test]
+fn test_lsp_completions_busy_does_not_stall_main_loop() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document("completions_main_loop.R", "foo <- 1\nfo\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let completion_id =
+        lsp.send_request_raw("textDocument/completion", position_params(&uri, 1, 2));
+    let symbols_id = lsp.send_request_raw(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let responses = lsp.recv_responses(&[completion_id, symbols_id], BUSY_TIMEOUT)?;
+    assert!(busy_completion_labels(&responses[0]).contains(&"foo"));
+    assert_eq!(responses[1][0]["name"], "foo");
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+#[test]
+fn test_lsp_completion_resolve_busy() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let item = json!({
+        "label": "paste",
+        "data": { "Function": { "name": "paste", "package": "base" } },
+    });
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("completionItem/resolve", item.clone());
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    assert_eq!(responses, vec![item]);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+#[test]
+fn test_lsp_completion_resolve_static_item_busy() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let item = json!({
+        "label": "for",
+        "data": { "Keyword": { "name": "for" } },
+    });
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("completionItem/resolve", item.clone());
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    assert_eq!(responses, vec![item]);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();

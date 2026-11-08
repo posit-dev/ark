@@ -10,7 +10,6 @@ use oak_db::OakDatabase;
 use super::catch_cancellation;
 use crate::lsp::config::LspConfig;
 use crate::lsp::db::ArkDb;
-use crate::lsp::state::Workspace;
 use crate::lsp::state::WorldState;
 use crate::panic;
 
@@ -21,7 +20,6 @@ use crate::panic;
 pub(crate) struct WorldStateSnapshot {
     /// Private so readers can only reach it through [`Self::db`].
     db: OakDatabase,
-    pub(crate) workspace: Workspace,
     pub(crate) console_scopes: Vec<Vec<String>>,
     pub(crate) installed_packages: Vec<String>,
     pub(crate) config: LspConfig,
@@ -32,18 +30,15 @@ pub(crate) struct WorldStateSnapshot {
 impl WorldState {
     /// Take a read-only snapshot of the world for a background reader.
     ///
-    /// The snapshot holds a Salsa handle, which parks the next main-loop write
-    /// until it drops. That's safe on the [`AnalysisPool`], whose tasks unwind
-    /// on cancellation. The only other caller is `handle_completion()`, which
-    /// hands the snapshot to `r_task()` and blocks until it returns, so that
-    /// handle can't outlive the tick that made it.
+    /// The snapshot's Salsa handle blocks main-loop writes until it drops.
+    /// Tasks on the [`AnalysisPool`](super::AnalysisPool) unwind on cancellation,
+    /// dropping their snapshots so the writer can proceed.
     pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
         WorldStateSnapshot {
             db: self.db().snapshot(),
             console_scopes: self.console_scopes.clone(),
             installed_packages: self.installed_packages.clone(),
             config: self.config.clone(),
-            workspace: self.workspace.clone(),
         }
     }
 }

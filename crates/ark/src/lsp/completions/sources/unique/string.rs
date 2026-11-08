@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(recognize_string(&context).unwrap(), Some(Recognized::Empty));
 
         // Check for same result when consulting (potentially all) unique sources
-        let state = WorldState::default().snapshot();
+        let state = WorldState::default();
         let completion_context = CompletionContext::new(&context, &state);
         let mut request = RCompletionRequest::default();
         let res = unique::get_completions(&completion_context, &mut request).unwrap();

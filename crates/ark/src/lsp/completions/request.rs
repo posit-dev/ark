@@ -35,6 +35,32 @@ pub(crate) struct RCompletionRequest {
     pub(crate) composite: CompositeRequest,
 }
 
+impl RCompletionRequest {
+    /// Whether any source needs the session, as opposed to an answer the
+    /// static pass completed, such as roxygen tags
+    pub(crate) fn has_session_slots(&self) -> bool {
+        // Destructured so that a new field must be classified here
+        let Self {
+            custom,
+            unique,
+            composite,
+        } = self;
+        let CompositeRequest {
+            pipe_root,
+            call,
+            subset,
+            search_path,
+        } = composite;
+
+        custom.is_some() ||
+            unique.is_some() ||
+            pipe_root.is_some() ||
+            call.is_some() ||
+            subset.is_some() ||
+            search_path.is_some()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct CustomRequest {
     pub(crate) arguments: CallArguments,

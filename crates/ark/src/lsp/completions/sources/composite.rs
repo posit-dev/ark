@@ -423,7 +423,7 @@ mod tests {
     }
 
     fn static_composite_completions(document_context: &DocumentContext) -> Vec<CompletionItem> {
-        let state = WorldState::default().snapshot();
+        let state = WorldState::default();
         let context = CompletionContext::new(document_context, &state);
         let (completions, _) = get_completions(&context).unwrap();
 
