@@ -13,6 +13,7 @@ use crate::lsp::completions::request::RCompletionReplies;
 use crate::lsp::completions::request::RCompletionRequest;
 use crate::lsp::completions::request::SlotReply;
 use crate::lsp::completions::sources::composite;
+use crate::lsp::completions::sources::composite::CompositeCompletions;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
@@ -30,15 +31,15 @@ enum StaticAnswer {
     /// A unique source ended the search. The request's unique slot, if any,
     /// belongs to this source.
     Unique(Vec<CompletionItem>),
-    /// No unique source applies.
-    Composite(Vec<CompletionItem>),
+    /// No unique source applies. The request's composite slots are merged
+    /// with these items.
+    Composite(CompositeCompletions),
 }
 
 /// Recognizes the completion context, collects items, and builds an owned
 /// [RCompletionRequest] for session-dependent sources.
 ///
-/// When no unique source ends the search, composite sources evaluate R code,
-/// so this must run within `r_task()`.
+/// Doesn't call R, so it can run while R is busy.
 pub(crate) fn static_completions(
     document_context: &DocumentContext,
     state: &WorldStateSnapshot,
@@ -60,9 +61,11 @@ pub(crate) fn static_completions(
         Some(items) => StaticAnswer::Unique(items),
         // At this point we aren't in a "unique" completion case, so just return a
         // set of reasonable completions from composite sources
-        None => StaticAnswer::Composite(
-            composite::get_completions(&completion_context)?.unwrap_or_default(),
-        ),
+        None => {
+            let (completions, composite) = composite::get_completions(&completion_context)?;
+            request.composite = composite;
+            StaticAnswer::Composite(completions)
+        },
     };
 
     Ok((StaticCompletions { answer }, request))
@@ -73,20 +76,25 @@ pub(crate) fn finish(
     completions: StaticCompletions,
     replies: RCompletionReplies,
 ) -> Vec<CompletionItem> {
-    let RCompletionReplies { custom, unique } = replies;
+    let RCompletionReplies {
+        custom,
+        unique,
+        composite,
+    } = replies;
 
     // Custom callbacks take priority over `$`, `@`, and composite sources,
     // including when the callback returns no items.
     if let SlotReply::Override(items) = custom {
         return items;
     }
+    debug_assert!(
+        matches!(custom, SlotReply::Decline),
+        "The custom slot only declines or overrides"
+    );
 
     match completions.answer {
-        StaticAnswer::Unique(items) => match unique {
-            SlotReply::Decline => items,
-            SlotReply::Fill(items) | SlotReply::Override(items) => items,
-        },
-        StaticAnswer::Composite(items) => items,
+        StaticAnswer::Unique(items) => unique.items_or(items),
+        StaticAnswer::Composite(completions) => completions.merge(composite),
     }
 }
 
@@ -102,7 +110,6 @@ mod tests {
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::static_completions_at;
     use crate::lsp::completions::tests::utils::static_completions_at_cursor;
-    use crate::r_task;
 
     #[test]
     fn test_dollar_is_empty_without_session() {
@@ -150,18 +157,33 @@ mod tests {
 
     #[test]
     fn test_call_argument_reaches_composite_sources_without_session() {
-        r_task(|| {
-            let (completions, request) =
-                static_completions_at_cursor("arg_value <- 1\nf(arg@)").unwrap();
+        let (completions, request) =
+            static_completions_at_cursor("arg_value <- 1\nf(arg@)").unwrap();
 
-            // Only the session can determine whether a custom callback applies.
-            assert!(request.custom.is_some());
-            assert_eq!(request.unique, None);
+        // Only the session can determine whether a custom callback applies.
+        assert!(request.custom.is_some());
+        assert_eq!(request.unique, None);
+        assert!(request.composite.call.is_some());
+        assert!(request.composite.search_path.is_some());
 
-            let completions = finish(completions, RCompletionReplies::default());
-            let item = find_completion_by_label(&completions, "arg_value").unwrap();
-            assert_eq!(item.kind, Some(CompletionItemKind::VARIABLE));
-        })
+        let completions = finish(completions, RCompletionReplies::default());
+        let item = find_completion_by_label(&completions, "arg_value").unwrap();
+        assert_eq!(item.kind, Some(CompletionItemKind::VARIABLE));
+    }
+
+    #[test]
+    fn test_composite_without_session() {
+        let (completions, request) = static_completions_at_cursor("@").unwrap();
+
+        assert_eq!(request.composite.call, None);
+        assert_eq!(request.composite.pipe_root, None);
+        assert_eq!(request.composite.subset, None);
+        assert!(request.composite.search_path.is_some());
+
+        // Keywords are static
+        let completions = finish(completions, RCompletionReplies::default());
+        let item = find_completion_by_label(&completions, "NULL").unwrap();
+        assert_eq!(item.kind, Some(CompletionItemKind::KEYWORD));
     }
 
     /// See `test_custom_overrides_dollar()` for the session's answer.

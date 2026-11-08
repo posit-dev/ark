@@ -16,9 +16,9 @@ use libr::Rf_findVarInFrame;
 use libr::SEXP;
 use tower_lsp_server::ls_types::CompletionItem;
 
-use crate::lsp::completions::completion_item::completion_item_from_lazydata;
-use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::function_context::FunctionContext;
+use crate::lsp::completions::r_completions::completion_item::completion_item_from_lazydata;
+use crate::lsp::completions::r_completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 
 /// Symbols of `package`'s namespace after `pkg::` (exports and lazydata) or

@@ -9,6 +9,18 @@ use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::r_completions::object_names::completions_from_evaluated_object_names;
+use crate::lsp::completions::request::SubsetRequest;
+
+/// Names of the evaluated `object` inside `x[|]` or `x[[|]]`, where `|` marks
+/// the cursor. Names are double quoted except with `data.table`'s `[`.
+pub(super) fn r_subset_completions(request: &SubsetRequest) -> anyhow::Result<Vec<CompletionItem>> {
+    log::trace!("r_subset_completions()");
+
+    let SubsetRequest { object, operator } = request;
+    let completions =
+        completions_from_evaluated_object_names(object, QuoteStyle::Double, Some(*operator))?;
+    Ok(completions.unwrap_or_default())
+}
 
 /// Names of the evaluated `object` inside `x["|"]`, without added quotes
 /// because they are inserted into the string under the cursor.
@@ -24,10 +36,85 @@ pub(super) fn r_string_subset_completions(object: &str) -> anyhow::Result<Vec<Co
 #[cfg(test)]
 mod tests {
     use harp::eval::parse_eval_global;
+    use tower_lsp_server::ls_types::CompletionItem;
 
+    use crate::fixtures::package_is_installed;
     use crate::lsp::completions::r_completions::subset::r_string_subset_completions;
+    use crate::lsp::completions::r_completions::subset::r_subset_completions;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::lsp::completions::tests::utils::request_at_cursor;
     use crate::r_task;
+
+    fn subset_completions_at_cursor(code_with_cursor: &str) -> Vec<CompletionItem> {
+        let request = request_at_cursor(code_with_cursor)
+            .composite
+            .subset
+            .unwrap();
+        r_subset_completions(&request).unwrap()
+    }
+
+    #[test]
+    fn test_subset_completions() {
+        r_task(|| {
+            parse_eval_global("foo <- list(b = 1, a = 2)").unwrap();
+
+            let completions = subset_completions_at_cursor("foo[@]");
+            assert_eq!(completions.len(), 2);
+
+            let completion = completions.first().unwrap();
+            assert_eq!(completion.label, "b".to_string());
+            assert_eq!(completion.insert_text, Some("\"b\"".to_string()));
+
+            let completion = completions.get(1).unwrap();
+            assert_eq!(completion.label, "a".to_string());
+            assert_eq!(completion.insert_text, Some("\"a\"".to_string()));
+
+            parse_eval_global("remove(foo)").unwrap();
+        })
+    }
+
+    #[test]
+    fn test_data_table_subset_completions() {
+        r_task(|| {
+            if !package_is_installed("data.table") {
+                return;
+            }
+
+            parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
+
+            let completions = subset_completions_at_cursor("x[@]");
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.first().unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None);
+
+            let completions = subset_completions_at_cursor("x[, c(@)]");
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.first().unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None);
+
+            // A selected column does not suppress the other column completions.
+            let completions = subset_completions_at_cursor("x[, c(mpg,@)]");
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.first().unwrap();
+            // TODO: Exclude the selected `mpg` column or rank it after other columns.
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None);
+
+            let completions = subset_completions_at_cursor("x[[@]]");
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.first().unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, Some("\"mpg\"".to_string()));
+
+            parse_eval_global("remove(x)").unwrap();
+        })
+    }
 
     #[test]
     fn test_string_subset_completions() {

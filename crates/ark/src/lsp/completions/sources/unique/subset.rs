@@ -20,7 +20,7 @@ use crate::treesitter::NodeTypeExt;
 /// `x[match(foo, "|")]`, may use strings for another purpose and are excluded.
 /// Recognition suppresses file path completions even if the object has no names.
 ///
-/// Unlike `composite::subset::completions_from_subset()`, this recognizes names
+/// Unlike `composite::subset::recognize_subset()`, this recognizes names
 /// inside a string. Those names need no added quotes and are not combined with
 /// generic completions.
 pub(super) fn node_find_object_for_string_subset<'tree>(

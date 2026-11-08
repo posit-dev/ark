@@ -1,45 +1,23 @@
 //
 // subset.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
-use tower_lsp_server::ls_types::CompletionItem;
-
-use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::completion_item::QuoteStyle;
-use crate::lsp::completions::r_completions::object_names::completions_from_evaluated_object_names;
 use crate::lsp::completions::request::SubsetOperator;
+use crate::lsp::completions::request::SubsetRequest;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
-use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) struct SubsetSource;
-
-impl CompletionSource for SubsetSource {
-    fn name(&self) -> &'static str {
-        "subset"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_subset(completion_context.document_context)
-    }
-}
-
 /// Checks for `[` and `[[` completions
 ///
 /// `$` and `@` are handled elsewhere as they can't be composed with other
 /// completions.
-pub(crate) fn completions_from_subset(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+pub(super) fn recognize_subset(context: &DocumentContext) -> anyhow::Result<Option<SubsetRequest>> {
     let mut node = context.node;
     let mut needs_completions = false;
 
@@ -77,10 +55,10 @@ pub(crate) fn completions_from_subset(
     let Some(child) = node.child(0) else {
         // There is almost definitely a child here. If there isn't,
         // we "tried" to do subset completions but found nothing.
-        return Ok(Some(vec![]));
+        return Ok(None);
     };
 
-    let text = child.node_as_str(context.contents)?.to_string();
+    let object = child.node_as_str(context.contents)?.to_string();
 
     let operator = if node.is_subset() {
         SubsetOperator::Single
@@ -88,124 +66,58 @@ pub(crate) fn completions_from_subset(
         SubsetOperator::Double
     };
 
-    completions_from_evaluated_object_names(&text, QuoteStyle::Double, Some(operator))
+    Ok(Some(SubsetRequest { object, operator }))
 }
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
-    use crate::fixtures::package_is_installed;
-    use crate::lsp::completions::sources::composite::subset::completions_from_subset;
+    use crate::lsp::completions::request::SubsetOperator;
+    use crate::lsp::completions::request::SubsetRequest;
+    use crate::lsp::completions::sources::composite::subset::recognize_subset;
     use crate::lsp::document_context::TestDocument;
-    use crate::r_task;
 
-    #[test]
-    fn test_subset_completions() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
-            // Set up a list with names
-            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
-
-            // Right after the `[`
-            let point = Point { row: 0, column: 4 };
-            let doc = TestDocument::new("foo[]");
-            let context = doc.context(point);
-
-            let completions = completions_from_subset(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 2);
-
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "b".to_string());
-            assert_eq!(completion.insert_text, Some("\"b\"".to_string()));
-
-            let completion = completions.get(1).unwrap();
-            assert_eq!(completion.label, "a".to_string());
-            assert_eq!(completion.insert_text, Some("\"a\"".to_string()));
-
-            // Right before the `[`
-            let point = Point { row: 0, column: 3 };
-            let doc = TestDocument::new("foo[]");
-            let context = doc.context(point);
-            let completions = completions_from_subset(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Right after the `]`
-            let point = Point { row: 0, column: 5 };
-            let doc = TestDocument::new("foo[]");
-            let context = doc.context(point);
-            let completions = completions_from_subset(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Clean up
-            harp::parse_eval("remove(foo)", options.clone()).unwrap();
-        })
+    fn subset_request_at(code: &str, point: Point) -> Option<SubsetRequest> {
+        let doc = TestDocument::new(code);
+        let context = doc.context(point);
+        recognize_subset(&context).unwrap()
     }
 
     #[test]
-    fn test_data_table_subset_completions() {
-        r_task(|| {
-            if !package_is_installed("data.table") {
-                return;
-            }
+    fn test_recognize_subset() {
+        assert_eq!(
+            subset_request_at("foo[]", Point { row: 0, column: 4 }),
+            Some(SubsetRequest {
+                object: String::from("foo"),
+                operator: SubsetOperator::Single,
+            })
+        );
 
-            harp::parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
+        assert_eq!(
+            subset_request_at("foo[]", Point { row: 0, column: 3 }),
+            None
+        );
 
-            // Works for single comlumn name completion
-            let point = Point { row: 0, column: 2 };
-            let doc = TestDocument::new("x[]");
-            let context = doc.context(point);
+        assert_eq!(
+            subset_request_at("foo[]", Point { row: 0, column: 5 }),
+            None
+        );
 
-            let completions = completions_from_subset(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 11);
+        assert_eq!(
+            subset_request_at("x[, c()]", Point { row: 0, column: 6 }),
+            Some(SubsetRequest {
+                object: String::from("x"),
+                operator: SubsetOperator::Single,
+            })
+        );
 
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "mpg".to_string());
-            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
-
-            // Works when completing inside a `c` call
-            let point = Point { row: 0, column: 6 };
-            let doc = TestDocument::new("x[, c()]");
-            let context = doc.context(point);
-
-            let completions = completions_from_subset(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 11);
-
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "mpg".to_string());
-            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
-
-            // Works when completing inside a `c` call with a collumn already selected
-            let point = Point { row: 0, column: 10 };
-            let doc = TestDocument::new("x[, c(mpg,)]");
-            let context = doc.context(point);
-
-            let completions = completions_from_subset(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 11);
-
-            let completion = completions.first().unwrap();
-            // TODO: ideally we could assert that mpg doesn't appear again, or appears at the end
-            assert_eq!(completion.label, "mpg".to_string());
-            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
-
-            // Works completing subset2
-            let point = Point { row: 0, column: 3 };
-            let doc = TestDocument::new("x[[]]");
-            let context = doc.context(point);
-
-            let completions = completions_from_subset(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 11);
-
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "mpg".to_string());
-            assert_eq!(completion.insert_text, Some("\"mpg\"".to_string())); // Enquoted result
-
-            harp::parse_eval_global("remove(x)").unwrap();
-        })
+        assert_eq!(
+            subset_request_at("x[[]]", Point { row: 0, column: 3 }),
+            Some(SubsetRequest {
+                object: String::from("x"),
+                operator: SubsetOperator::Double,
+            })
+        );
     }
 }

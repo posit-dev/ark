@@ -4,10 +4,14 @@
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 
+use aether_path::FilePath;
+use oak_db::OakDatabase;
+use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::CompletionTextEdit;
 use tree_sitter::Point;
+use url::Url;
 
 use crate::fixtures::point_from_cursor;
 use crate::lsp::completions::finish;
@@ -26,7 +30,7 @@ pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec
     Ok(finish(completions, replies))
 }
 
-/// Runs only the static pass. Composite sources require the R thread.
+/// Runs only the static pass.
 pub(crate) fn static_completions_at_cursor(
     cursor_text: &str,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
@@ -38,11 +42,33 @@ pub(crate) fn static_completions_at(
     text: &str,
     point: Point,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
+    static_completions_in(WorldState::default(), text, point)
+}
+
+/// Runs only the static pass, with `workspace_text` as the contents of a
+/// workspace file.
+pub(crate) fn static_completions_with_workspace(
+    cursor_text: &str,
+    workspace_text: &str,
+) -> (StaticCompletions, RCompletionRequest) {
+    let mut db = OakDatabase::new();
+    let path = FilePath::from_url(&Url::parse("file:///workspace.R").unwrap());
+    db.upsert_editor(path, workspace_text.to_string());
+
+    let (text, point) = point_from_cursor(cursor_text);
+    static_completions_in(WorldState::with_db(db), &text, point).unwrap()
+}
+
+fn static_completions_in(
+    state: WorldState,
+    text: &str,
+    point: Point,
+) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
     let doc = TestDocument::new(text);
     let document_context = doc.context(point);
-    let state = WorldState::default().snapshot();
+    let snapshot = state.snapshot();
 
-    match static_completions(&document_context, &state) {
+    match static_completions(&document_context, &snapshot) {
         Ok(completions) => Ok(completions),
         Err(err) => Err(anyhow::anyhow!("Failed to get completions: {err}")),
     }

@@ -8,7 +8,7 @@
 mod call;
 mod document;
 mod keyword;
-pub(crate) mod pipe;
+mod pipe;
 mod search_path;
 mod subset;
 mod workspace;
@@ -20,6 +20,8 @@ use tower_lsp_server::ls_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::request::CompositeReplies;
+use crate::lsp::completions::request::CompositeRequest;
 use crate::lsp::completions::sources::collect_completions;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::completions::sources::CompletionSource;
@@ -73,79 +75,116 @@ struct CompletionItemWithSource {
     source: String,
 }
 
-/// Gets completions from all composite sources, with deduplication and sorting
-///
-/// The first source pushed wins a duplicate, so push order matters. The
-/// exception is a later `VARIABLE` duplicate, which replaces a kept item that
-/// is not a `VARIABLE`.
+/// Static items of each composite source, merged with the session's replies
+/// by [CompositeCompletions::merge()]. The pipe, subset and search path slots
+/// have no static items.
+#[derive(Debug, Default)]
+pub(crate) struct CompositeCompletions {
+    /// Formals of a workspace function named like the callee.
+    call: Vec<CompletionItem>,
+    keyword: Vec<CompletionItem>,
+    document: Vec<CompletionItem>,
+    workspace: Vec<CompletionItem>,
+}
+
+/// Collects static items from composite sources, and the session slots they
+/// need filled.
 pub(crate) fn get_completions(
     completion_context: &CompletionContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<(CompositeCompletions, CompositeRequest)> {
     log::info!("Getting completions from composite sources");
 
-    let mut completions = IndexMap::new();
+    let mut completions = CompositeCompletions::default();
 
     // Call, pipe, and subset completions should show up no matter what when
     // the user requests completions. This allows them to "tab" their way
     // through completions effectively without typing anything.
 
-    // argument completions
-    push_completions(call::CallSource, completion_context, &mut completions)?;
+    // The root supplies both pipe-name completions and the call's S3 dispatch object.
+    let pipe_root = pipe::find_pipe_root(completion_context);
 
-    // pipe completions, such as column names of a data frame
-    push_completions(pipe::PipeSource, completion_context, &mut completions)?;
+    let call = call::recognize_call(completion_context, pipe_root.is_some())?;
+    if let Some(call) = &call {
+        completions.call = call::completions_from_workspace_arguments(
+            completion_context.state.db(),
+            &call.callee,
+            call.position,
+        )?;
+    }
 
     // subset completions (`[` or `[[`)
-    push_completions(subset::SubsetSource, completion_context, &mut completions)?;
+    let subset = subset::recognize_subset(completion_context.document_context)?;
 
     // To offer the rest of the general completions, we should be completing:
     // * on an empty line, outside of any function or expression, or
     // * something that looks like an identifier
+    let mut search_path = None;
     if completion_context.document_context.node.is_program() ||
         is_identifier_like(completion_context.document_context.node)
     {
-        push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
-
-        push_completions(
-            search_path::SearchPathSource,
-            completion_context,
-            &mut completions,
-        )?;
-
-        push_completions(
-            document::DocumentSource,
-            completion_context,
-            &mut completions,
-        )?;
-
-        push_completions(
-            workspace::WorkspaceSource,
-            completion_context,
-            &mut completions,
-        )?;
+        completions.keyword = static_items(keyword::KeywordSource, completion_context)?;
+        search_path = Some(search_path::search_path_request(completion_context)?);
+        completions.document = static_items(document::DocumentSource, completion_context)?;
+        completions.workspace = static_items(workspace::WorkspaceSource, completion_context)?;
     }
 
-    // Simplify to plain old CompletionItems and sort them
-    let completions = finalize_completions(completions);
+    let request = CompositeRequest {
+        pipe_root,
+        call,
+        subset,
+        search_path,
+    };
 
-    Ok(Some(completions))
+    Ok((completions, request))
 }
 
-fn push_completions<S>(
+fn static_items<S>(
     source: S,
     completion_context: &CompletionContext,
-    completions: &mut IndexMap<CompletionItemKey, CompletionItemWithSource>,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Vec<CompletionItem>>
 where
     S: CompletionSource,
 {
-    let source_name = source.name();
+    Ok(collect_completions(source, completion_context)?.unwrap_or_default())
+}
 
-    if let Some(source_completions) = collect_completions(source, completion_context)? {
-        insert_completions(source_name, source_completions, completions);
+impl CompositeCompletions {
+    /// Merges static items and session replies, with deduplication and sorting.
+    ///
+    /// For items with the same [CompletionItemKey], the first source wins,
+    /// except that a later `VARIABLE` replaces a non-`VARIABLE` item. Session
+    /// items replace their slot's static items before deduplication, so source
+    /// precedence does not depend on whether items are static or session-derived.
+    pub(crate) fn merge(self, replies: CompositeReplies) -> Vec<CompletionItem> {
+        let CompositeCompletions {
+            call,
+            keyword,
+            document,
+            workspace,
+        } = self;
+        let CompositeReplies {
+            call: call_reply,
+            pipe: pipe_reply,
+            subset: subset_reply,
+            search_path: search_path_reply,
+        } = replies;
+
+        let mut completions = IndexMap::new();
+
+        insert_completions("call", call_reply.items_or(call), &mut completions);
+        insert_completions("pipe", pipe_reply.items_or(vec![]), &mut completions);
+        insert_completions("subset", subset_reply.items_or(vec![]), &mut completions);
+        insert_completions("keyword", keyword, &mut completions);
+        insert_completions(
+            "search_path",
+            search_path_reply.items_or(vec![]),
+            &mut completions,
+        );
+        insert_completions("document", document, &mut completions);
+        insert_completions("workspace", workspace, &mut completions);
+
+        finalize_completions(completions)
     }
-
-    Ok(())
 }
 
 fn insert_completions(
@@ -262,80 +301,133 @@ fn is_identifier_like(x: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::parse_eval_global;
     use indexmap::IndexMap;
     use tower_lsp_server::ls_types::CompletionItem;
     use tower_lsp_server::ls_types::CompletionItemKind;
-    use tower_lsp_server::ls_types::Documentation;
-    use tower_lsp_server::ls_types::MarkupContent;
-    use tower_lsp_server::ls_types::MarkupKind;
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::request::CompositeReplies;
+    use crate::lsp::completions::request::SlotReply;
     use crate::lsp::completions::sources::composite::finalize_completions;
     use crate::lsp::completions::sources::composite::get_completions;
     use crate::lsp::completions::sources::composite::insert_completions;
     use crate::lsp::completions::sources::composite::is_identifier_like;
-    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::lsp::completions::sources::composite::CompositeCompletions;
+    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
-    use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_completions_on_anonymous_node_keywords() {
-        r_task(|| {
-            // `if`, `for`, and `while` in particular are both tree-sitter
-            // anonymous nodes and keywords, so they need to look like
-            // identifiers that we provide completions for
-            for keyword in ["if", "for", "while"] {
-                let (text, point) = point_from_cursor(&format!("{keyword}@"));
-                let doc = TestDocument::new(&text);
-                let context = doc.context(point);
+        // `if`, `for`, and `while` in particular are both tree-sitter
+        // anonymous nodes and keywords, so they need to look like
+        // identifiers that we provide completions for
+        for keyword in ["if", "for", "while"] {
+            let (text, point) = point_from_cursor(&format!("{keyword}@"));
+            let doc = TestDocument::new(&text);
+            let context = doc.context(point);
 
-                assert!(is_identifier_like(context.node));
-                assert_eq!(
-                    context.node.node_type(),
-                    NodeType::Anonymous(keyword.to_string())
-                );
-            }
-        })
+            assert!(is_identifier_like(context.node));
+            assert_eq!(
+                context.node.node_type(),
+                NodeType::Anonymous(keyword.to_string())
+            );
+        }
     }
 
     #[test]
     fn test_get_completions_on_empty_document() {
-        r_task(|| {
-            let (text, point) = point_from_cursor("@");
-            let doc = TestDocument::new(&text);
-            let document_context = doc.context(point);
-            let state = WorldState::default().snapshot();
-            let context = CompletionContext::new(&document_context, &state);
+        let (text, point) = point_from_cursor("@");
+        let doc = TestDocument::new(&text);
+        let document_context = doc.context(point);
 
-            assert!(context.document_context.node.is_program());
-
-            let completions = get_completions(&context).unwrap();
-            assert!(completions.is_some());
-            assert!(!completions.unwrap().is_empty());
-        });
+        assert!(document_context.node.is_program());
+        assert!(!static_composite_completions(&document_context).is_empty());
     }
 
     #[test]
     fn test_get_completions_on_empty_line_in_non_empty_document() {
-        r_task(|| {
-            let code = "x <- 1:3\n@\nrnorm(3)";
-            let (text, point) = point_from_cursor(code);
-            let doc = TestDocument::new(&text);
-            let document_context = doc.context(point);
-            let state = WorldState::default().snapshot();
-            let context = CompletionContext::new(&document_context, &state);
+        let code = "x <- 1:3\n@\nrnorm(3)";
+        let (text, point) = point_from_cursor(code);
+        let doc = TestDocument::new(&text);
+        let document_context = doc.context(point);
 
-            assert!(context.document_context.node.is_program());
+        assert!(document_context.node.is_program());
+        assert!(!static_composite_completions(&document_context).is_empty());
+    }
 
-            let completions = get_completions(&context).unwrap();
-            assert!(completions.is_some());
-            assert!(!completions.unwrap().is_empty());
-        });
+    #[test]
+    fn test_session_reply_keeps_source_precedence() {
+        let mut call_item = item("x", CompletionItemKind::VARIABLE);
+        call_item.detail = Some("call".to_string());
+        let mut pipe_item = item("x", CompletionItemKind::VARIABLE);
+        pipe_item.detail = Some("pipe".to_string());
+
+        let completions = CompositeCompletions {
+            call: vec![call_item],
+            ..Default::default()
+        };
+        let replies = CompositeReplies {
+            call: SlotReply::Decline,
+            pipe: SlotReply::Fill(vec![pipe_item]),
+            ..Default::default()
+        };
+
+        // Call items take precedence over pipe items even when only the pipe
+        // slot has a session reply.
+        let items = completions.merge(replies);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].detail, Some("call".to_string()));
+    }
+
+    #[test]
+    fn test_session_fill_replaces_static_slot_items() {
+        let completions = CompositeCompletions {
+            call: vec![item("workspace", CompletionItemKind::FIELD)],
+            ..Default::default()
+        };
+        let replies = CompositeReplies {
+            call: SlotReply::Fill(vec![item("session", CompletionItemKind::FIELD)]),
+            ..Default::default()
+        };
+
+        let items = completions.merge(replies);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "session");
+    }
+
+    #[test]
+    fn test_session_search_path_item_is_replaced_by_document_variable() {
+        let completions = CompositeCompletions {
+            document: vec![item("outPath", CompletionItemKind::VARIABLE)],
+            ..Default::default()
+        };
+        let replies = CompositeReplies {
+            search_path: SlotReply::Fill(vec![
+                item("outPath", CompletionItemKind::STRUCT),
+                item("outer", CompletionItemKind::FUNCTION),
+            ]),
+            ..Default::default()
+        };
+
+        // A document `VARIABLE` replaces a search path duplicate without
+        // changing its position in the merged list.
+        let items = completions.merge(replies);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "outPath");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+        assert_eq!(items[1].label, "outer");
+    }
+
+    fn static_composite_completions(document_context: &DocumentContext) -> Vec<CompletionItem> {
+        let state = WorldState::default().snapshot();
+        let context = CompletionContext::new(document_context, &state);
+        let (completions, _) = get_completions(&context).unwrap();
+
+        completions.merge(CompositeReplies::default())
     }
 
     #[test]
@@ -476,102 +568,11 @@ mod tests {
         assert_eq!(items[1].kind, Some(CompletionItemKind::FUNCTION));
     }
 
-    #[test]
-    fn test_object_from_document_and_global_env_is_deduped() {
-        r_task(|| {
-            parse_eval_global("outPath <- 'myDirectory'").unwrap();
-
-            // Mimics retyping in the editor, where every request must give the
-            // same item so the icon and position don't change
-            for _ in 0..5 {
-                let items = completions_with_label("outPath <- 'myDirectory'\nout@", "outPath");
-                assert_eq!(items.len(), 1);
-                assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
-                assert_eq!(items[0].sort_text, Some("2-outPath".to_string()));
-                assert_eq!(items[0].label_details, None);
-                assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
-            }
-        });
-    }
-
-    #[test]
-    fn test_document_object_replaces_shadowed_package_object() {
-        r_task(|| {
-            // Not run, so only base's `letters` is on the search path
-            let items = completions_with_label("letters <- 1:3\nlett@", "letters");
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
-            assert_eq!(items[0].label_details, None);
-            assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
-        });
-    }
-
-    #[test]
-    fn test_parameter_replaces_shadowed_package_object() {
-        r_task(|| {
-            let items = completions_with_label("f <- function(letters) lett@", "letters");
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
-            assert_eq!(items[0].label_details, None);
-        });
-    }
-
-    #[test]
-    fn test_document_only_object_keeps_variable_kind() {
-        r_task(|| {
-            let items = completions_with_label("outPath <- 'myDirectory'\nout@", "outPath");
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
-        });
-    }
-
-    #[test]
-    fn test_pipe_column_wins_over_global_object() {
-        r_task(|| {
-            parse_eval_global("df <- data.frame(xcol = 1); xcol <- 1").unwrap();
-
-            let items = completions_with_label("df |> foo(xcol@)", "xcol");
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
-            assert_eq!(items[0].detail, Some("df".to_string()));
-        });
-    }
-
-    #[test]
-    fn test_subset_column_and_global_object_are_both_kept() {
-        r_task(|| {
-            parse_eval_global("df <- data.frame(x = 1); x <- 1").unwrap();
-
-            // Subset inserts `"x"`, search path inserts `x`
-            let items = completions_with_label("df[x@]", "x");
-            assert_eq!(items.len(), 2);
-            assert_eq!(items[0].insert_text, Some("\"x\"".to_string()));
-            assert_eq!(items[0].detail, Some("df".to_string()));
-            assert_eq!(items[1].kind, Some(CompletionItemKind::STRUCT));
-            assert_eq!(items[1].insert_text, None);
-        });
-    }
-
     fn item(label: &str, kind: CompletionItemKind) -> CompletionItem {
         CompletionItem {
             label: label.to_string(),
             kind: Some(kind),
             ..Default::default()
         }
-    }
-
-    fn defined_on_line_docs(line: usize) -> Documentation {
-        Documentation::MarkupContent(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("Defined in this document on line {line}."),
-        })
-    }
-
-    fn completions_with_label(code: &str, label: &str) -> Vec<CompletionItem> {
-        get_completions_at_cursor(code)
-            .unwrap()
-            .into_iter()
-            .filter(|item| item.label == label)
-            .collect()
     }
 }

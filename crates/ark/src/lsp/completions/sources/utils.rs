@@ -90,15 +90,22 @@ pub(super) fn filter_out_dot_prefixes(
     completions: &mut Vec<CompletionItem>,
 ) {
     // Remove completions that start with `.` unless the user explicitly requested them
-    let user_requested_dot = context
+    if !user_requested_dot(context) {
+        remove_dot_prefixes(completions);
+    }
+}
+
+/// Whether the token under the cursor starts with `.`.
+pub(crate) fn user_requested_dot(context: &DocumentContext) -> bool {
+    context
         .node
         .node_as_str(context.contents)
         .map(|x| x.starts_with("."))
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    if !user_requested_dot {
-        completions.retain(|x| !x.label.starts_with("."));
-    }
+pub(crate) fn remove_dot_prefixes(completions: &mut Vec<CompletionItem>) {
+    completions.retain(|x| !x.label.starts_with("."));
 }
 
 #[derive(PartialEq, Debug)]

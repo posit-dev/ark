@@ -5,22 +5,33 @@
 //
 //
 
+mod call;
+mod completion_item;
 mod custom;
 mod extractor;
 mod file_path;
 mod namespace;
-pub(crate) mod object_names;
+mod object_names;
+mod pipe;
+mod search_path;
 mod subset;
 
 use anyhow::Context;
 use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp;
+use crate::lsp::completions::r_completions::call::r_call_completions;
 use crate::lsp::completions::r_completions::custom::r_custom_completions;
 use crate::lsp::completions::r_completions::extractor::r_extractor_completions;
 use crate::lsp::completions::r_completions::file_path::r_file_path_completions;
 use crate::lsp::completions::r_completions::namespace::r_namespace_completions;
+use crate::lsp::completions::r_completions::pipe::eval_pipe_root;
+use crate::lsp::completions::r_completions::pipe::r_pipe_completions;
+use crate::lsp::completions::r_completions::search_path::r_search_path_completions;
 use crate::lsp::completions::r_completions::subset::r_string_subset_completions;
+use crate::lsp::completions::r_completions::subset::r_subset_completions;
+use crate::lsp::completions::request::CompositeReplies;
+use crate::lsp::completions::request::CompositeRequest;
 use crate::lsp::completions::request::RCompletionReplies;
 use crate::lsp::completions::request::RCompletionRequest;
 use crate::lsp::completions::request::SlotReply;
@@ -31,19 +42,24 @@ use crate::lsp::completions::request::UniqueRequest;
 /// A source that returns an error declines its slot, preserving the static
 /// fallback without preventing other sources from answering.
 pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
-    let RCompletionRequest { custom, unique } = request;
+    let RCompletionRequest {
+        custom,
+        unique,
+        composite,
+    } = request;
 
     let custom = match custom {
         Some(custom) => decline_on_err("custom", r_custom_completions(&custom)),
         None => SlotReply::Decline,
     };
 
-    // A custom override suppresses the unique source's items, so its R
-    // evaluation is unnecessary.
+    // A custom override discards every other slot's items. Skip their R
+    // evaluation to avoid reporting errors from unused completions, such as
+    // a failing `names()` method on a pipe root.
     if matches!(custom, SlotReply::Override(_)) {
         return RCompletionReplies {
             custom,
-            unique: SlotReply::Decline,
+            ..Default::default()
         };
     }
 
@@ -52,7 +68,13 @@ pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
         None => SlotReply::Decline,
     };
 
-    RCompletionReplies { custom, unique }
+    let composite = r_composite_completions(composite);
+
+    RCompletionReplies {
+        custom,
+        unique,
+        composite,
+    }
 }
 
 fn r_unique_completions(request: UniqueRequest) -> SlotReply {
@@ -74,6 +96,51 @@ fn r_unique_completions(request: UniqueRequest) -> SlotReply {
         UniqueRequest::Extractor { object, operator } => {
             fill_or_decline("extractor", r_extractor_completions(&object, operator))
         },
+    }
+}
+
+fn r_composite_completions(request: CompositeRequest) -> CompositeReplies {
+    let CompositeRequest {
+        pipe_root,
+        call,
+        subset,
+        search_path,
+    } = request;
+
+    // Share the evaluated root between S3 dispatch and pipe-name completions.
+    let pipe_root = pipe_root.map(|name| {
+        let object = eval_pipe_root(&name);
+        (name, object)
+    });
+    let pipe_root_object = pipe_root.as_ref().and_then(|(_, object)| object.as_ref());
+
+    let call = match call {
+        Some(call) => decline_on_err("call", r_call_completions(&call, pipe_root_object)),
+        None => SlotReply::Decline,
+    };
+
+    let pipe = match &pipe_root {
+        Some((name, Some(object))) => fill_or_decline("pipe", r_pipe_completions(name, object)),
+        _ => SlotReply::Decline,
+    };
+
+    let subset = match subset {
+        Some(subset) => fill_or_decline("subset", r_subset_completions(&subset)),
+        None => SlotReply::Decline,
+    };
+
+    let search_path = match search_path {
+        Some(search_path) => {
+            fill_or_decline("search_path", r_search_path_completions(&search_path))
+        },
+        None => SlotReply::Decline,
+    };
+
+    CompositeReplies {
+        call,
+        pipe,
+        subset,
+        search_path,
     }
 }
 
@@ -133,12 +200,24 @@ pub(crate) mod expected_errors {
 
 #[cfg(test)]
 mod tests {
+    use harp::eval::parse_eval_global;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
+    use tower_lsp_server::ls_types::CompletionItem;
+    use tower_lsp_server::ls_types::CompletionItemKind;
+    use tower_lsp_server::ls_types::Documentation;
+    use tower_lsp_server::ls_types::MarkupContent;
+    use tower_lsp_server::ls_types::MarkupKind;
 
+    use crate::lsp::completions::finish;
+    use crate::lsp::completions::r_completions;
     use crate::lsp::completions::r_completions::expected_errors::expect_session_errors;
+    use crate::lsp::completions::request::SlotReply;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::lsp::completions::tests::utils::request_at_cursor;
+    use crate::lsp::completions::tests::utils::static_completions_at_cursor;
+    use crate::lsp::completions::tests::utils::static_completions_with_workspace;
     use crate::r_task;
 
     /// See `test_dollar_answers_when_custom_declines()` for the answer
@@ -185,11 +264,253 @@ mod tests {
         })
     }
 
+    #[test]
+    fn test_search_path_and_document_merge() {
+        r_task(|| {
+            harp::parse_eval_global("fo_both <- 1").unwrap();
+
+            let (completions, request) =
+                static_completions_at_cursor("fo_both <- 2\nfo_doc <- 3\nfo@").unwrap();
+            let replies = r_completions(request);
+            assert!(matches!(replies.composite.search_path, SlotReply::Fill(_)));
+
+            let completions = finish(completions, replies);
+
+            let item = find_completion_by_label(&completions, "format").unwrap();
+            assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+
+            let item = find_completion_by_label(&completions, "fo_doc").unwrap();
+            assert_eq!(item.kind, Some(CompletionItemKind::VARIABLE));
+
+            // The document's `VARIABLE` replaces the search path's `STRUCT`.
+            let items = items_with_label(&completions, "fo_both");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+        })
+    }
+
+    #[test]
+    fn test_unevaluable_pipe_root_keeps_other_slots() {
+        r_task(|| {
+            let (completions, request) =
+                static_completions_at_cursor("fo_doc <- 1\nark_no_root |> ark_no_fn(fo@)").unwrap();
+            assert_eq!(
+                request.composite.pipe_root,
+                Some(String::from("ark_no_root"))
+            );
+
+            let replies = r_completions(request);
+            assert_eq!(replies.composite.pipe, SlotReply::Decline);
+            assert_eq!(replies.composite.call, SlotReply::Decline);
+
+            let completions = finish(completions, replies);
+            assert!(find_completion_by_label(&completions, "format").is_some());
+            assert!(find_completion_by_label(&completions, "fo_doc").is_some());
+        })
+    }
+
+    #[test]
+    fn test_composite_error_declines_its_slot() {
+        r_task(|| {
+            define_failing_pipe_root();
+
+            let (completions, n_errors) = expect_session_errors(|| {
+                get_completions_at_cursor("fo_doc <- 1\nark_root |> ark_no_fn(fo@)").unwrap()
+            });
+            assert_eq!(n_errors, 1);
+
+            assert!(find_completion_by_label(&completions, "format").is_some());
+            assert!(find_completion_by_label(&completions, "fo_doc").is_some());
+        })
+    }
+
+    #[test]
+    fn test_custom_override_wins_over_failing_pipe_root() {
+        r_task(|| {
+            define_failing_pipe_root();
+            register_callback(
+                "function(position) .ps.completions.createCustomCompletions(c('one', 'two'))",
+            );
+
+            // Do not use `expect_session_errors()` here. The custom override
+            // must skip the pipe slot, so its failing `names()` method never runs.
+            let completions = get_completions_at_cursor("ark_root |> f(arg@)").unwrap();
+            assert_eq!(labels(&completions), vec!["one", "two"]);
+        })
+    }
+
+    #[test]
+    fn test_custom_override_skips_composite_slots() {
+        r_task(|| {
+            harp::parse_eval_global(
+                "makeActiveBinding('ark_root', function() { ark_root_evaluated <<- TRUE; list(a = 1) }, globalenv())",
+            )
+            .unwrap();
+            register_callback("function(position) .ps.completions.createCustomCompletions('one')");
+
+            let request = request_at_cursor("ark_root |> f(arg@)");
+            assert_eq!(request.composite.pipe_root, Some(String::from("ark_root")));
+            assert!(request.composite.call.is_some());
+            assert!(request.composite.search_path.is_some());
+
+            let replies = r_completions(request);
+            assert!(matches!(replies.custom, SlotReply::Override(_)));
+            assert_eq!(replies.composite.call, SlotReply::Decline);
+            assert_eq!(replies.composite.pipe, SlotReply::Decline);
+            assert_eq!(replies.composite.search_path, SlotReply::Decline);
+
+            let evaluated = harp::parse_eval_global("exists('ark_root_evaluated')").unwrap();
+            assert!(!bool::try_from(evaluated).unwrap());
+        })
+    }
+
+    #[test]
+    fn test_session_formals_replace_workspace_formals() {
+        r_task(|| {
+            harp::parse_eval_global("my_fun <- function(y, x) NULL").unwrap();
+
+            let (completions, request) =
+                static_completions_with_workspace("my_fun(@)", "my_fun <- function(a, y) NULL");
+            let completions = finish(completions, r_completions(request));
+
+            assert_eq!(labels(&completions), vec!["y = ", "x = "]);
+        })
+    }
+
+    #[test]
+    fn test_non_function_callee_has_no_formals() {
+        r_task(|| {
+            harp::parse_eval_global("my_fun <- 1").unwrap();
+
+            let (completions, request) =
+                static_completions_with_workspace("my_fun(@)", "my_fun <- function(a, y) NULL");
+            let completions = finish(completions, r_completions(request));
+
+            assert_eq!(completions, vec![]);
+        })
+    }
+
+    #[test]
+    fn test_object_from_document_and_global_env_is_deduped() {
+        r_task(|| {
+            parse_eval_global("outPath <- 'myDirectory'").unwrap();
+
+            // Mimics retyping in the editor, where every request must give the
+            // same item so the icon and position don't change
+            for _ in 0..5 {
+                let items = completions_with_label("outPath <- 'myDirectory'\nout@", "outPath");
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+                assert_eq!(items[0].sort_text, Some("2-outPath".to_string()));
+                assert_eq!(items[0].label_details, None);
+                assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
+            }
+        });
+    }
+
+    #[test]
+    fn test_document_object_replaces_shadowed_package_object() {
+        r_task(|| {
+            // Not run, so only base's `letters` is on the search path
+            let items = completions_with_label("letters <- 1:3\nlett@", "letters");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+            assert_eq!(items[0].label_details, None);
+            assert_eq!(items[0].documentation, Some(defined_on_line_docs(1)));
+        });
+    }
+
+    #[test]
+    fn test_parameter_replaces_shadowed_package_object() {
+        r_task(|| {
+            let items = completions_with_label("f <- function(letters) lett@", "letters");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+            assert_eq!(items[0].label_details, None);
+        });
+    }
+
+    #[test]
+    fn test_document_only_object_keeps_variable_kind() {
+        r_task(|| {
+            let items = completions_with_label("outPath <- 'myDirectory'\nout@", "outPath");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+        });
+    }
+
+    #[test]
+    fn test_pipe_column_wins_over_global_object() {
+        r_task(|| {
+            parse_eval_global("df <- data.frame(xcol = 1); xcol <- 1").unwrap();
+
+            let items = completions_with_label("df |> foo(xcol@)", "xcol");
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].kind, Some(CompletionItemKind::VARIABLE));
+            assert_eq!(items[0].detail, Some("df".to_string()));
+        });
+    }
+
+    #[test]
+    fn test_subset_column_and_global_object_are_both_kept() {
+        r_task(|| {
+            parse_eval_global("df <- data.frame(x = 1); x <- 1").unwrap();
+
+            // Subset inserts `"x"`, search path inserts `x`
+            let items = completions_with_label("df[x@]", "x");
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].insert_text, Some("\"x\"".to_string()));
+            assert_eq!(items[0].detail, Some("df".to_string()));
+            assert_eq!(items[1].kind, Some(CompletionItemKind::STRUCT));
+            assert_eq!(items[1].insert_text, None);
+        });
+    }
+
+    #[test]
+    fn test_pipe_root_is_evaluated_once() {
+        r_task(|| {
+            harp::parse_eval_global("ark_root_count <- 0L").unwrap();
+            harp::parse_eval_global(
+                "makeActiveBinding('ark_root', function() { ark_root_count <<- ark_root_count + 1L; structure(list(col_a = 1, col_b = 2), class = 'ark_test_class') }, globalenv())",
+            )
+            .unwrap();
+            harp::parse_eval_global("f <- function(x, ...) UseMethod('f')").unwrap();
+            harp::parse_eval_global("f.ark_test_class <- function(x, method_arg, ...) NULL")
+                .unwrap();
+
+            let completions = get_completions_at_cursor("ark_root |> f(@)").unwrap();
+
+            // The call slot dispatches on the root, the pipe slot lists its names
+            assert!(find_completion_by_label(&completions, "method_arg = ").is_some());
+            assert!(find_completion_by_label(&completions, "col_a").is_some());
+
+            let count = harp::parse_eval_global("ark_root_count").unwrap();
+            assert_eq!(i32::try_from(count).unwrap(), 1);
+
+            harp::parse_eval_global("rm(ark_root, ark_root_count, f, f.ark_test_class)").unwrap();
+        })
+    }
+
+    /// Defines `ark_root`, an object whose `names()` method raises an R error.
+    fn define_failing_pipe_root() {
+        harp::parse_eval_global(
+            "registerS3method('names', 'ark_failing', function(x) stop('boom'))",
+        )
+        .unwrap();
+        harp::parse_eval_global("ark_root <- structure(list(), class = 'ark_failing')").unwrap();
+    }
+
     /// Defines `f(arg)` and a custom completion callback for `arg` that
     /// raises an R error.
     fn register_failing_callback() {
+        register_callback("function(position) stop('boom')");
+    }
+
+    /// Defines `f(arg)` and registers `callback` as its custom completion
+    /// callback for `arg`.
+    fn register_callback(callback: &str) {
         harp::parse_eval_global("f <- function(arg) NULL").unwrap();
-        let callback = harp::parse_eval_global("function(position) stop('boom')").unwrap();
+        let callback = harp::parse_eval_global(callback).unwrap();
         RFunction::from(".ps.completions.registerCustomCompletionHandler")
             .add("pkg")
             .add("f")
@@ -197,5 +518,34 @@ mod tests {
             .add(callback)
             .call()
             .unwrap();
+    }
+
+    fn labels(completions: &[CompletionItem]) -> Vec<&str> {
+        completions.iter().map(|item| item.label.as_str()).collect()
+    }
+
+    fn items_with_label<'a>(
+        completions: &'a [CompletionItem],
+        label: &str,
+    ) -> Vec<&'a CompletionItem> {
+        completions
+            .iter()
+            .filter(|item| item.label == label)
+            .collect()
+    }
+
+    fn defined_on_line_docs(line: usize) -> Documentation {
+        Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("Defined in this document on line {line}."),
+        })
+    }
+
+    fn completions_with_label(code: &str, label: &str) -> Vec<CompletionItem> {
+        get_completions_at_cursor(code)
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.label == label)
+            .collect()
     }
 }

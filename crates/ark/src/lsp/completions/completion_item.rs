@@ -7,21 +7,9 @@
 
 use std::fs::DirEntry;
 
-use harp::r_symbol;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote;
 use harp::syntax::sym_quote_invalid;
-use harp::utils::r_env_binding_is_active;
-use harp::utils::r_promise_force_with_rollback;
-use harp::utils::r_promise_is_forced;
-use harp::utils::r_promise_is_lazy_load_binding;
-use harp::utils::r_typeof;
-use libr::R_UnboundValue;
-use libr::Rf_findVarInFrame;
-use libr::Rf_isFunction;
-use libr::PROMSXP;
-use libr::PRVALUE;
-use libr::SEXP;
 use stdext::*;
 use tower_lsp_server::ls_types::Command;
 use tower_lsp_server::ls_types::CompletionItem;
@@ -32,6 +20,7 @@ use tower_lsp_server::ls_types::Documentation;
 use tower_lsp_server::ls_types::InsertTextFormat;
 use tower_lsp_server::ls_types::MarkupContent;
 use tower_lsp_server::ls_types::MarkupKind;
+use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::Range;
 use tower_lsp_server::ls_types::TextEdit;
 use tree_sitter::Node;
@@ -40,9 +29,7 @@ use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
-use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -136,7 +123,7 @@ pub(super) fn completion_item_from_assignment(
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_package(
+pub(super) fn completion_item_from_package(
     package: &str,
     append_colons: bool,
 ) -> anyhow::Result<CompletionItem> {
@@ -288,7 +275,7 @@ pub(super) fn completion_item_from_function(
     Ok(item)
 }
 
-fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
+pub(super) fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
     let description = package.map(|p| {
         // Environments from the search path often have a "package:" prefix.
         // Remove it from display. This creates some rare ambiguities but
@@ -304,7 +291,7 @@ fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
 }
 
 // TODO
-pub(super) unsafe fn completion_item_from_dataset(name: &str) -> anyhow::Result<CompletionItem> {
+pub(super) fn completion_item_from_dataset(name: &str) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(name, CompletionData::Unknown)?;
     item.kind = Some(CompletionItemKind::STRUCT);
     Ok(item)
@@ -348,108 +335,11 @@ pub(super) fn completion_item_from_data_variable(
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_object(
-    name: &str,
-    object: SEXP,
-    envir: SEXP,
-    package: Option<&str>,
-    promise_strategy: PromiseStrategy,
-    function_context: &FunctionContext,
-) -> anyhow::Result<CompletionItem> {
-    if r_typeof(object) == PROMSXP {
-        return completion_item_from_promise(
-            name,
-            object,
-            envir,
-            package,
-            promise_strategy,
-            function_context,
-        );
-    }
-
-    // TODO: For some functions (e.g. S4 generics?) the help file might be
-    // associated with a separate package. See 'stats4::AIC()' for one example.
-    //
-    // In other words, when creating a completion item for these functions,
-    // we should also figure out where we can receive the help from.
-    if Rf_isFunction(object) != 0 {
-        return completion_item_from_function(name, package, function_context);
-    }
-
-    let mut item = completion_item(name, CompletionData::Object {
-        name: name.to_string(),
-    })?;
-
-    item.label_details = Some(item_details(package));
-    item.kind = Some(CompletionItemKind::STRUCT);
-
-    if !is_valid_symbol(name) {
-        item.insert_text = Some(sym_quote(name));
-    }
-
-    Ok(item)
-}
-
 pub(super) fn completion_item_from_variable(name: &str) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(String::from(name), CompletionData::Object {
         name: String::from(name),
     })?;
     item.kind = Some(CompletionItemKind::VALUE);
-    Ok(item)
-}
-
-pub(super) unsafe fn completion_item_from_promise(
-    name: &str,
-    object: SEXP,
-    envir: SEXP,
-    package: Option<&str>,
-    promise_strategy: PromiseStrategy,
-    function_context: &FunctionContext,
-) -> anyhow::Result<CompletionItem> {
-    if r_promise_is_forced(object) {
-        // Promise has already been evaluated before.
-        // Generate completion item from underlying value.
-        let object = PRVALUE(object);
-        return completion_item_from_object(
-            name,
-            object,
-            envir,
-            package,
-            promise_strategy,
-            function_context,
-        );
-    }
-
-    if promise_strategy == PromiseStrategy::Force && r_promise_is_lazy_load_binding(object) {
-        // TODO: Can we do any better here? Can we avoid evaluation?
-        // Namespace completions are the one place we eagerly force unevaluated
-        // promises to be able to determine the object type. Particularly
-        // important for functions, where we also set a `CompletionItem::command()`
-        // to display function signature help after the completion.
-        let object = r_promise_force_with_rollback(object)?;
-        return completion_item_from_object(
-            name,
-            object.sexp,
-            envir,
-            package,
-            promise_strategy,
-            function_context,
-        );
-    }
-
-    // Otherwise we never want to force promises, so we return a fairly
-    // generic completion item
-    let mut item = completion_item(name, CompletionData::Object {
-        name: name.to_string(),
-    })?;
-
-    item.detail = Some("Promise".to_string());
-    item.kind = Some(CompletionItemKind::STRUCT);
-
-    if !is_valid_symbol(name) {
-        item.insert_text = Some(sym_quote(name));
-    }
-
     Ok(item)
 }
 
@@ -470,131 +360,6 @@ pub(super) fn completion_item_from_active_binding(name: &str) -> anyhow::Result<
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_namespace(
-    name: &str,
-    namespace: SEXP,
-    package: &str,
-    function_context: &FunctionContext,
-) -> anyhow::Result<CompletionItem> {
-    // We perform two passes to locate the object. It is normal for the first pass to
-    // error when the `namespace` doesn't have a binding for `name` because the associated
-    // object has been imported and re-exported. For example, the way dplyr imports and
-    // re-exports `rlang::.data` or `tidyselect::all_of()`. In such a case, we'll succeed
-    // in the second pass, when we try again in the imports environment. If both fail,
-    // something is seriously wrong.
-
-    // First, look in the namespace itself.
-    let error_namespace = match completion_item_from_symbol(
-        name,
-        namespace,
-        Some(package),
-        PromiseStrategy::Force,
-        function_context,
-    ) {
-        Ok(item) => return Ok(item),
-        Err(error) => error,
-    };
-
-    // Otherwise, try the imports environment.
-    let imports = harp::env_parent(namespace);
-    let error_imports = match completion_item_from_symbol(
-        name,
-        imports,
-        Some(package),
-        PromiseStrategy::Force,
-        function_context,
-    ) {
-        Ok(item) => return Ok(item),
-        Err(error) => error,
-    };
-
-    // This is really unexpected.
-    Err(anyhow::anyhow!(
-        "Failed to form completion item for '{name}' in namespace '{package}':
-        Namespace environment error: {error_namespace}
-        Imports environment error: {error_imports}"
-    ))
-}
-
-pub(super) unsafe fn completion_item_from_lazydata(
-    name: &str,
-    env: SEXP,
-    package: &str,
-) -> anyhow::Result<CompletionItem> {
-    // Important to use `Simple` here, as lazydata bindings are calls to `lazyLoadDBfetch()`
-    // but we don't want to force them during completion generation because they often take a
-    // long time to load.
-    let promise_strategy = PromiseStrategy::Simple;
-
-    // Lazydata objects are never functions, so this doesn't really matter
-    let dummy_function_context = FunctionContext {
-        name: String::new(),
-        range: Default::default(),
-        usage: FunctionRefUsage::Call,
-        arguments_status: ArgumentsStatus::Absent,
-        cursor_is_at_end: true,
-    };
-
-    match completion_item_from_symbol(
-        name,
-        env,
-        Some(package),
-        promise_strategy,
-        &dummy_function_context,
-    ) {
-        Ok(item) => Ok(item),
-        Err(err) => {
-            // Should be impossible, but we'll be extra safe
-            Err(anyhow::anyhow!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}"))
-        },
-    }
-}
-
-pub(super) unsafe fn completion_item_from_symbol(
-    name: &str,
-    envir: SEXP,
-    package: Option<&str>,
-    promise_strategy: PromiseStrategy,
-    function_context: &FunctionContext,
-) -> anyhow::Result<CompletionItem> {
-    let symbol = r_symbol!(name);
-
-    match r_env_binding_is_active(envir, symbol) {
-        Ok(false) => {
-            // Continue with standard environment completion item creation
-        },
-        Ok(true) => {
-            // We can't even extract out the object for active bindings so they
-            // are handled extremely specially.
-            return completion_item_from_active_binding(name);
-        },
-        Err(err) => {
-            // The only error we anticipate is the case where `envir` doesn't
-            // have a binding for `name`.
-            return Err(anyhow::anyhow!(
-                "Failed to check if binding is active: {err}"
-            ));
-        },
-    }
-
-    let object = Rf_findVarInFrame(envir, symbol);
-
-    if object == R_UnboundValue {
-        return Err(anyhow::anyhow!(
-            "Symbol '{name}' should have been found but wasn't"
-        ));
-    }
-
-    completion_item_from_object(
-        name,
-        object,
-        envir,
-        package,
-        promise_strategy,
-        function_context,
-    )
-}
-
 // This is used when providing completions for a parameter in a document
 // that is considered in-scope at the cursor position.
 pub(super) fn completion_item_from_scope_parameter(
@@ -609,13 +374,15 @@ pub(super) fn completion_item_from_scope_parameter(
     Ok(item)
 }
 
+/// `position` is the cursor position. The `...` item uses an empty edit there
+/// to show its documentation without inserting text.
 pub(super) fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
-    context: &DocumentContext,
+    position: Position,
 ) -> anyhow::Result<CompletionItem> {
     if parameter == "..." {
-        return completion_item_from_dot_dot_dot(callee, context);
+        return completion_item_from_dot_dot_dot(callee, position);
     }
 
     // `data` captured using original `parameter`, before quoting
@@ -646,7 +413,7 @@ pub(super) fn completion_item_from_parameter(
 
 fn completion_item_from_dot_dot_dot(
     callee: &str,
-    context: &DocumentContext,
+    position: Position,
 ) -> anyhow::Result<CompletionItem> {
     // Special behavior for `...` arguments, where we want to show them
     // in quick suggestions (to show help docs for them), but not actually
@@ -660,9 +427,6 @@ fn completion_item_from_dot_dot_dot(
     })?;
 
     item.kind = Some(CompletionItemKind::FIELD);
-
-    let position =
-        lsp_position_from_tree_sitter_point(context.point, context.line_index, context.encoding)?;
 
     let range = Range {
         start: position,

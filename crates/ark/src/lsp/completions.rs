@@ -6,10 +6,11 @@
 //
 
 // `static_completions()` recognizes the context and builds an owned
-// `RCompletionRequest` for session-dependent sources. `r_completions()` answers
-// that request on the R thread, and `finish()` merges the replies with the
-// static items. The composite sources `call`, `pipe`, `subset` and
-// `search_path` call R within `static_completions()`.
+// `RCompletionRequest` for session-dependent sources without calling R.
+// `r_completions()` answers that request on the R thread, and `finish()` merges
+// the replies with the static items. Of the modules that produce completions,
+// only `r_completions` and its submodules call R. `resolve` also calls R, to
+// render help for the selected item.
 
 mod completion_context;
 mod completion_item;

@@ -5,114 +5,27 @@
 //
 //
 
-use harp::error::Error;
-use harp::eval::RParseEvalOptions;
-use harp::object::RObject;
-use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::completion_item::QuoteStyle;
-use crate::lsp::completions::r_completions::object_names::completions_from_object_names;
-use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) struct PipeSource;
-
-impl CompletionSource for PipeSource {
-    fn name(&self) -> &'static str {
-        "pipe"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_pipe(completion_context.pipe_root())
-    }
-}
-
-#[derive(Clone)]
-pub struct PipeRoot {
-    pub(super) name: String,
-
-    /// If `None`, we found a pipe root and tried to evaluate it, but the
-    /// condition was too complex
-    pub(super) object: Option<RObject>,
-}
-
-fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    let Some(root) = root else {
-        // No pipe
-        return Ok(None);
-    };
-
-    let name = root.name;
-
-    let Some(object) = root.object else {
-        // There was a pipe, but can't detect root object
-        return Ok(None);
-    };
-
-    Ok(Some(completions_from_object_names(
-        object,
-        name.as_str(),
-        QuoteStyle::BacktickIfNotSyntactic,
-    )?))
-}
-
-pub fn find_pipe_root(
-    context: &DocumentContext,
-    call_node: Option<Node>,
-) -> anyhow::Result<Option<PipeRoot>> {
+/// Text of the root of the pipe containing the cursor's call, as in `x` for
+/// `x |> foo() %>% bar(|)`, where `|` marks the cursor.
+pub(super) fn find_pipe_root(context: &CompletionContext) -> Option<String> {
     log::trace!("find_pipe_root()");
 
-    let Some(call_node) = call_node else {
-        return Ok(None);
-    };
+    let call_node = context.containing_call_node()?;
 
-    let name = find_pipe_root_name(context, &call_node)?;
-
-    let object = match &name {
-        Some(name) => eval_pipe_root(name),
-        None => None,
-    };
-
-    Ok(name.map(|name| PipeRoot { name, object }))
-}
-
-fn eval_pipe_root(name: &str) -> Option<RObject> {
-    let options = RParseEvalOptions {
-        forbid_function_calls: true,
-        env: console::selected_env(),
-    };
-
-    let value = harp::parse_eval(name, options);
-
-    // If we get an `UnsafeEvaluationError` here from setting
-    // `forbid_function_calls`, we don't want that to prevent
-    // other sources from contributing completions.
-    // If we get a `TryCatchError`, that is typically an 'object not found' error resulting
-    // from the user typing pseudocode. Log those at info level without a full backtrace.
-    let value = match value {
-        Ok(value) => value,
-        Err(err) => match err {
-            Error::UnsafeEvaluationError(_) => return None,
-            Error::TryCatchError(err) => {
-                log::trace!("Can't evaluate pipe root: {}", err.message);
-                return None;
-            },
-            _ => {
-                log::error!("Can't evaluate pipe root: {err:?}");
-                return None;
-            },
+    match find_pipe_root_name(context.document_context, &call_node) {
+        Ok(root) => root,
+        Err(err) => {
+            log::trace!("Error trying to find pipe root: {err}");
+            None
         },
-    };
-
-    Some(value)
+    }
 }
 
 fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<String>> {
@@ -136,7 +49,6 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result
         };
     }
 
-    // Try to evaluate the left-hand side
     let root = lhs.node_as_str(context.contents)?.to_string();
 
     Ok(Some(root))
@@ -162,68 +74,21 @@ fn find_pipe_root_node<'a>(
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::RParseEvalOptions;
-
-    use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
-    use crate::lsp::document_context::TestDocument;
-    use crate::r_task;
-    use crate::treesitter::node_find_containing_call;
+    use crate::lsp::completions::tests::utils::request_at_cursor;
 
     #[test]
     fn test_find_pipe_root_works_with_native_and_magrittr() {
-        r_task(|| {
-            // Place cursor between `()` of `bar()`
-            let (text, point) = point_from_cursor("x |> foo() %>% bar(@)");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let call_node = node_find_containing_call(context.node);
+        let request = request_at_cursor("x |> foo() %>% bar(@)");
+        assert_eq!(request.composite.pipe_root, Some(String::from("x")));
 
-            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
-            assert_eq!(root.name, "x".to_string());
-            assert!(root.object.is_none());
-        });
-
-        r_task(|| {
-            // `%||%` is not a pipe!
-            // Place cursor between `()` of `bar()`
-            let (text, point) = point_from_cursor("x |> foo() %||% bar(@)");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let call_node = node_find_containing_call(context.node);
-
-            let root = find_pipe_root(&context, call_node).unwrap();
-            assert!(root.is_none());
-        });
+        // `%||%` is not a pipe.
+        let request = request_at_cursor("x |> foo() %||% bar(@)");
+        assert_eq!(request.composite.pipe_root, None);
     }
 
     #[test]
-    fn test_find_pipe_root_finds_objects() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
-            // Place cursor between `()`
-            let (text, point) = point_from_cursor("x %>% foo(@)");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let call_node = node_find_containing_call(context.node);
-
-            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
-            assert_eq!(root.name, "x".to_string());
-            assert!(root.object.is_none());
-
-            // Set up a real `x` and try again
-            harp::parse_eval("x <- data.frame(a = 1)", options.clone()).unwrap();
-
-            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
-            assert_eq!(root.name, "x".to_string());
-            assert!(root.object.is_some());
-
-            // Clean up
-            harp::parse_eval("remove(x)", options.clone()).unwrap();
-        });
+    fn test_no_pipe_root_outside_call() {
+        let request = request_at_cursor("x |> fo@");
+        assert_eq!(request.composite.pipe_root, None);
     }
 }
