@@ -5,107 +5,54 @@
 //
 //
 
-use harp::eval::RParseEvalOptions;
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
-use harp::r_symbol;
-use harp::utils::r_env_has;
-use harp::utils::r_typeof;
-use harp::Error;
-use libr::STRSXP;
-use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::console;
-use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::completion_item::completion_item_from_data_variable;
-use crate::lsp::completions::completion_item::QuoteStyle;
-use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
-use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::completions::request::ExtractOperator;
+use crate::lsp::completions::request::UniqueRequest;
+use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) struct DollarSource;
-
-impl CompletionSource for DollarSource {
-    fn name(&self) -> &'static str {
-        "dollar"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_dollar(completion_context.document_context)
-    }
+pub(super) fn recognize_dollar(context: &DocumentContext) -> anyhow::Result<Option<Recognized>> {
+    recognize_extractor(context, ExtractOperator::Dollar)
 }
 
-pub(super) struct AtSource;
-
-impl CompletionSource for AtSource {
-    fn name(&self) -> &'static str {
-        "at"
-    }
-
-    fn provide_completions(
-        &self,
-        builder: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_at(builder.document_context)
-    }
+pub(super) fn recognize_at(context: &DocumentContext) -> anyhow::Result<Option<Recognized>> {
+    recognize_extractor(context, ExtractOperator::At)
 }
 
-fn completions_from_dollar(
+fn recognize_extractor(
     context: &DocumentContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    completions_from_extractor(
-        context,
-        NodeType::ExtractOperator(ExtractOperatorType::Dollar),
-        ".DollarNames",
-    )
-}
+    operator: ExtractOperator,
+) -> anyhow::Result<Option<Recognized>> {
+    let node_type = match operator {
+        ExtractOperator::Dollar => NodeType::ExtractOperator(ExtractOperatorType::Dollar),
+        ExtractOperator::At => NodeType::ExtractOperator(ExtractOperatorType::At),
+    };
 
-fn completions_from_at(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    completions_from_extractor(
-        context,
-        NodeType::ExtractOperator(ExtractOperatorType::At),
-        ".AtNames",
-    )
-}
-
-fn completions_from_extractor(
-    context: &DocumentContext,
-    node_type: NodeType,
-    fun: &str,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    let node = context.node;
-
-    let Some(node) = locate_extractor_node(node, node_type) else {
+    let Some(node) = locate_extractor_node(context.node, node_type) else {
         // Not inside the RHS of an extractor node, let other completions run
         return Ok(None);
     };
 
-    // At this point we know we are inside the RHS of a `$` or `@`, so from this point on
-    // we either return an error or a "unique" set of completions, even if they are empty
-    // (i.e. like if the object we evaluate doesn't exist because the user is typing
-    // pseudocode or made a typo, or if it doesn't have names), to prevent any other
-    // completion sources from running.
-    let mut completions: Vec<CompletionItem> = vec![];
+    // On the RHS of `$` or `@`, suppress later sources even if the object has
+    // no names, cannot be evaluated, or the session pass does not run.
 
     // Get the object to evaluate that we collect completion names for
     let Some(node) = node.child_by_field_name("lhs") else {
-        return Ok(Some(completions));
+        return Ok(Some(Recognized::Empty));
     };
 
     // Extract out its name from the document
-    let text = node.node_as_str(context.contents)?;
+    let object = node.node_as_str(context.contents)?.to_string();
 
-    completions.append(&mut completions_from_extractor_object(text, fun)?);
-
-    Ok(Some(completions))
+    Ok(Some(Recognized::Session(UniqueRequest::Extractor {
+        object,
+        operator,
+    })))
 }
 
 fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
@@ -135,265 +82,74 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
     }
 }
 
-fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Vec<CompletionItem>> {
-    log::trace!("completions_from_extractor_object({text:?}, {fun:?})");
-
-    let mut completions = vec![];
-
-    let env_utils = RFunction::new("base", "asNamespace").add("utils").call()?;
-    let sym = r_symbol!(fun);
-
-    if !r_env_has(*env_utils, sym) {
-        // We'd like to generate these completions, but not a new enough version of R
-        return Ok(completions);
-    }
-
-    let options = RParseEvalOptions {
-        forbid_function_calls: true,
-        env: console::selected_env(),
-    };
-
-    let object = match harp::parse_eval(text, options) {
-        Ok(object) => object,
-        Err(err) => match err {
-            // LHS of the call was too complex to evaluate. This is fine, we know
-            // we are on the RHS of a `$` or `@`, so we return an empty "unique"
-            // completion list to stop the completions search.
-            Error::UnsafeEvaluationError(_) => return Ok(completions),
-            // LHS of the call evaluated to an error. Totally possible if the
-            // user is writing pseudocode. Don't want to propagate an error here.
-            _ => return Ok(completions),
-        },
-    };
-
-    // Both `.DollarNames` and `.AtNames` have the same signature. Also, neither
-    // provide a default value for `pattern` in the generic, but do provide a default
-    // value of `pattern = ""` in the default S3 method. We manually pass through
-    // `pattern = ""` in case we hit an S3 method which forgot to provide a default
-    // value for `pattern` (like R6, posit-dev/positron#6699).
-    let names = RFunction::new("utils", fun)
-        .param("x", object)
-        .param("pattern", "")
-        .call()?;
-
-    if r_typeof(*names) != STRSXP {
-        // Could come from a malformed user supplied S3 method
-        return Ok(completions);
-    }
-
-    let names = names.to::<Vec<String>>()?;
-
-    for name in names {
-        match completion_item_from_data_variable(&name, text, QuoteStyle::BacktickIfNotSyntactic) {
-            Ok(item) => completions.push(item),
-            Err(err) => log::error!("{err:?}"),
-        }
-    }
-
-    // People typically expect that `$` and `@` completions are returned in
-    // the same order as in the underlying object.
-    set_sort_text_by_first_appearance(&mut completions);
-
-    Ok(completions)
-}
-
 #[cfg(test)]
 mod tests {
-    use harp::eval::RParseEvalOptions;
-    use harp::object::r_lgl_get;
-
-    use crate::fixtures::package_is_installed;
+    use crate::fixtures::point_and_offset_from_cursor;
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
+    use crate::lsp::completions::request::ExtractOperator;
+    use crate::lsp::completions::request::UniqueRequest;
+    use crate::lsp::completions::sources::unique::extractor::recognize_at;
+    use crate::lsp::completions::sources::unique::extractor::recognize_dollar;
+    use crate::lsp::completions::sources::unique::Recognized;
     use crate::lsp::document_context::TestDocument;
-    use crate::r_task;
 
-    #[test]
-    fn test_dollar_completions() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
+    fn dollar_at_cursor(code: &str) -> Option<Recognized> {
+        let (text, point) = point_from_cursor(code);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
+        recognize_dollar(&context).unwrap()
+    }
 
-            // Set up a list with names
-            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
-
-            let (text, point) = point_from_cursor("foo$@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 2);
-
-            // Note, no sorting done!
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "b".to_string());
-
-            let completion = completions.get(1).unwrap();
-            assert_eq!(completion.label, "a".to_string());
-
-            let (text, point) = point_from_cursor("foo@$");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let completions = completions_from_dollar(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Clean up
-            harp::parse_eval("remove(foo)", options.clone()).unwrap();
-        })
+    fn extractor_slot(object: &str, operator: ExtractOperator) -> Option<Recognized> {
+        Some(Recognized::Session(UniqueRequest::Extractor {
+            object: String::from(object),
+            operator,
+        }))
     }
 
     #[test]
-    fn test_dollar_completions_on_nonexistent_object() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
+    fn test_dollar_slot() {
+        assert_eq!(
+            dollar_at_cursor("foo$@"),
+            extractor_slot("foo", ExtractOperator::Dollar)
+        );
 
-            // `foo` should not exist in the environment `r_harp::parse_eval()` runs in
-            let exists = harp::parse_eval("exists('foo')", options).unwrap();
-            assert_eq!(r_lgl_get(exists.sexp, 0), 0);
+        // Function calls are recognized here but rejected by session evaluation.
+        assert_eq!(
+            dollar_at_cursor("list(a = 1, b = 2)$@"),
+            extractor_slot("list(a = 1, b = 2)", ExtractOperator::Dollar)
+        );
 
-            let (text, point) = point_from_cursor("foo$@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // No error and empty completions list
-            // (If the user is typing pseudocode, we want to respect that and say that we
-            // recognize they are on the RHS of a `$`, but respond with no completions
-            // because they haven't specified a real object yet)
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 0);
-
-            let (text, point) = point_from_cursor("foo$mat@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // Same as above
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 0);
-        })
+        // The frontend filters names by the identifier under the cursor.
+        assert_eq!(
+            dollar_at_cursor("foo$abc@"),
+            extractor_slot("foo", ExtractOperator::Dollar)
+        );
+        assert_eq!(
+            dollar_at_cursor("foo$a@bc"),
+            extractor_slot("foo", ExtractOperator::Dollar)
+        );
     }
 
     #[test]
-    fn test_dollar_completions_on_complex_lhs() {
-        r_task(|| {
-            let (text, point) = point_from_cursor("list(a = 1, b = 2)$@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // No error and empty completions list
-            // We know we are on the RHS of a `$`, but `r_parse_eval()` will fail on the
-            // LHS "object" because it is too complex, so the right thing to do is to
-            // return an empty completion set to prevent other completion sources from
-            // running.
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 0);
-        })
+    fn test_dollar_slot_before_the_dollar() {
+        // `None` because we have no completions to provide, and we do want other
+        // completion sources to get a chance to run, as you can put arbitrary
+        // expressions on the LHS of a `$` or `@`.
+        assert_eq!(dollar_at_cursor("foo@$"), None);
     }
 
     #[test]
-    fn test_dollar_completions_before_the_dollar() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
+    fn test_at_slot() {
+        // `@` is the default cursor marker.
+        let (text, point, _) = point_and_offset_from_cursor("foo@|", b'|');
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
 
-            // Set up a list with names
-            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
-
-            let (text, point) = point_from_cursor("foo@$");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // `None` because we have no completions to provide, and we do want other
-            // completion sources to get a chance to run, as you can put arbitrary
-            // expressions on the LHS of a `$` or `@`.
-            let completions = completions_from_dollar(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Clean up
-            harp::parse_eval("remove(foo)", options.clone()).unwrap();
-        })
-    }
-
-    #[test]
-    fn test_dollar_completions_in_an_identifier() {
-        r_task(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
-            // Set up a list with names
-            harp::parse_eval("foo <- list(abcd = 1, wxyz = 2)", options.clone()).unwrap();
-
-            let (text, point) = point_from_cursor("foo$abc@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // All names of `foo`, the frontend filters them
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 2);
-            assert_eq!(completions.first().unwrap().label, String::from("abcd"));
-            assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
-
-            let (text, point) = point_from_cursor("foo$a@bc");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // Same as above
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-            assert_eq!(completions.len(), 2);
-            assert_eq!(completions.first().unwrap().label, String::from("abcd"));
-            assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
-
-            // Clean up
-            harp::parse_eval("remove(foo)", options.clone()).unwrap();
-        })
-    }
-
-    #[test]
-    fn test_dollar_completions_on_r6() {
-        r_task(|| {
-            if !package_is_installed("R6") {
-                return;
-            }
-
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
-            // Set up an R6 class object with a method named `abc`
-            harp::parse_eval(
-                r#"
-Foo <- R6::R6Class('Foo', public = list(abc = function() {}))
-foo <- Foo$new()
-"#,
-                options.clone(),
-            )
-            .unwrap();
-
-            let (text, point) = point_from_cursor("foo$@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            // We get some default R6 methods back, but we are looking for `abc`
-            let completions = completions_from_dollar(&context).unwrap().unwrap();
-
-            let completion_labels: Vec<String> = completions
-                .into_iter()
-                .map(|completion| completion.label)
-                .collect();
-
-            assert!(completion_labels.contains(&String::from("abc")));
-
-            // Clean up
-            harp::parse_eval("remove(foo, Foo)", options.clone()).unwrap();
-        })
+        assert_eq!(
+            recognize_at(&context).unwrap(),
+            extractor_slot("foo", ExtractOperator::At)
+        );
+        assert_eq!(recognize_dollar(&context).unwrap(), None);
     }
 }

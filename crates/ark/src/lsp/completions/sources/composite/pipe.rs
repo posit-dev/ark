@@ -14,7 +14,7 @@ use tree_sitter::Node;
 use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::QuoteStyle;
-use crate::lsp::completions::sources::utils::completions_from_object_names;
+use crate::lsp::completions::r_completions::object_names::completions_from_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;

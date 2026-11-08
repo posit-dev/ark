@@ -1,61 +1,29 @@
 //
 // subset.rs
 //
-// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
-use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::lsp::completions::completion_item::QuoteStyle;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
-use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::NodeTypeExt;
 
-/// Checks for `[` and `[[` completions when the user is inside a `""`
+/// Returns the object identifier for string subsetting, such as `x` in
+/// `x["|"]` or `x[c("col", "|")]`, with `|` marking the cursor.
 ///
-/// This is a _unique_ completions case where we may show the user the object's names if:
-/// - We are inside a top level string, like `x["<tab>"]`
-/// - We are inside a simple `c()` call, like `x[c("col", "<tab>")]`
+/// Strings inside `c()` are treated as object names. Other calls, such as
+/// `x[match(foo, "|")]`, may use strings for another purpose and are excluded.
+/// Recognition suppresses file path completions even if the object has no names.
 ///
-/// The latter is just a useful heuristic. For more complex function calls, we don't want
-/// to populate object names because they won't make sense, like `x[match(foo, "<tab>")]`.
-///
-/// Different from `composite::subset::completions_from_subset()`, which applies outside
-/// of `""`, enquotes its completion items, and is composite so it meshes with other
-/// generic completions. We consider this a completely different path.
-pub(super) fn completions_from_string_subset(
-    node: &Node,
-    context: &DocumentContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    log::trace!("completions_from_string_subset()");
-
-    // i.e. find `x` in `x[""]` or `x[c("foo", "")]`
-    let Some(node) = node_find_object_for_string_subset(node, context) else {
-        return Ok(None);
-    };
-
-    // It looks like we should provide subset completions. Regardless of what happens
-    // when getting object names, we should at least return an empty set to stop further
-    // completion sources from running.
-    let mut completions: Vec<CompletionItem> = vec![];
-
-    let text = node.node_as_str(context.contents)?;
-
-    if let Some(mut candidates) =
-        completions_from_evaluated_object_names(text, QuoteStyle::None, node.node_type())?
-    {
-        completions.append(&mut candidates);
-    }
-
-    Ok(Some(completions))
-}
-
-fn node_find_object_for_string_subset<'tree>(
+/// Unlike `composite::subset::completions_from_subset()`, this recognizes names
+/// inside a string. Those names need no added quotes and are not combined with
+/// generic completions.
+pub(super) fn node_find_object_for_string_subset<'tree>(
     node: &Node<'tree>,
     context: &DocumentContext,
 ) -> Option<Node<'tree>> {
@@ -118,150 +86,63 @@ fn node_is_c_call(x: &Node, contents: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::parse_eval_global;
-
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
+    use crate::lsp::completions::sources::unique::subset::node_find_object_for_string_subset;
     use crate::lsp::document_context::TestDocument;
-    use crate::r_task;
+    use crate::lsp::traits::node::NodeExt;
     use crate::treesitter::node_find_string;
 
-    #[test]
-    fn test_string_subset_completions() {
-        r_task(|| {
-            // Set up a list with names
-            parse_eval_global("foo <- list(b = 1, a = 2)").unwrap();
+    fn subset_object_at_cursor(code: &str) -> Option<String> {
+        let (text, point) = point_from_cursor(code);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
+        let node = node_find_string(&context.node).unwrap();
 
-            // Inside top level `""`
-            let (text, point) = point_from_cursor(r#"foo["@"]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-
-            let completion = completions.first().unwrap();
-            assert_eq!(completion.label, "b".to_string());
-            // Not enquoting, so uses `label` directly
-            assert_eq!(completion.insert_text, None);
-
-            let completion = completions.get(1).unwrap();
-            assert_eq!(completion.label, "a".to_string());
-            // Not enquoting, so uses `label` directly
-            assert_eq!(completion.insert_text, None);
-
-            // Inside `""` in `[[`
-            let (text, point) = point_from_cursor(r#"foo[["@"]]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-
-            // Inside `""` as second argument
-            let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-
-            // Inside `""` inside `c()`
-            let (text, point) = point_from_cursor(r#"foo[c("@")]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-
-            // Inside `""` inside `c()` with another string already specified
-            let (text, point) = point_from_cursor(r#"foo[c("a", "@")]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-
-            // Inside `""` inside `fn()` - no completions from string subset!
-            // Instead file path completions should kick in, because this is an arbitrary
-            // function call so subset completions don't make sense, but file ones might.
-            let (text, point) = point_from_cursor(r#"foo[fn("@")]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context).unwrap();
-            assert!(completions.is_none());
-
-            // A fake object that we can't get object names for.
-            // It _looks_ like we want string completions though, so we return an empty set.
-            let (text, point) = point_from_cursor(r#"not_real["@"]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-
-            // Clean up
-            parse_eval_global("remove(foo)").unwrap();
-        })
+        node_find_object_for_string_subset(&node, &context)
+            .map(|object| object.node_as_str(&text).unwrap().to_string())
     }
 
     #[test]
-    fn test_string_subset_completions_on_matrix() {
-        r_task(|| {
-            // Set up a list with names
-            parse_eval_global("foo <- array(1, dim = c(2, 2))").unwrap();
-            parse_eval_global("colnames(foo) <- c('a', 'b')").unwrap();
+    fn test_string_subset_object() {
+        // Inside top level `""`
+        assert_eq!(
+            subset_object_at_cursor(r#"foo["@"]"#),
+            Some(String::from("foo"))
+        );
 
-            let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
+        // Inside `""` in `[[`
+        assert_eq!(
+            subset_object_at_cursor(r#"foo[["@"]]"#),
+            Some(String::from("foo"))
+        );
 
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 2);
-            assert_eq!(completions.first().unwrap().label, "a".to_string());
-            assert_eq!(completions.get(1).unwrap().label, "b".to_string());
+        // Inside `""` as second argument
+        assert_eq!(
+            subset_object_at_cursor(r#"foo[, "@"]"#),
+            Some(String::from("foo"))
+        );
 
-            // Clean up
-            parse_eval_global("remove(foo)").unwrap();
-        })
-    }
+        // Inside `""` inside `c()`
+        assert_eq!(
+            subset_object_at_cursor(r#"foo[c("@")]"#),
+            Some(String::from("foo"))
+        );
 
-    #[test]
-    fn test_string_subset_completions_with_non_syntactic_names() {
-        r_task(|| {
-            // Set up a list with non syntactic name
-            parse_eval_global("x <- list(`_a` = 1)").unwrap();
+        // Inside `""` inside `c()` with another string already specified
+        assert_eq!(
+            subset_object_at_cursor(r#"foo[c("a", "@")]"#),
+            Some(String::from("foo"))
+        );
 
-            let (text, point) = point_from_cursor(r#"x["@"]"#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
+        // Inside `""` inside `fn()` - no completions from string subset!
+        // Instead file path completions should kick in, because this is an arbitrary
+        // function call so subset completions don't make sense, but file ones might.
+        assert_eq!(subset_object_at_cursor(r#"foo[fn("@")]"#), None);
 
-            let completions = completions_from_string_subset(&node, &context)
-                .unwrap()
-                .unwrap();
-            assert_eq!(completions.len(), 1);
-
-            // Note how `_a` isn't backticked! We know we are inserting it directly
-            // into existing double quotes (posit-dev/positron#14909).
-            assert_eq!(completions.first().unwrap().label, "_a".to_string());
-        })
+        // Recognition does not require the object to exist in the session.
+        assert_eq!(
+            subset_object_at_cursor(r#"not_real["@"]"#),
+            Some(String::from("not_real"))
+        );
     }
 }

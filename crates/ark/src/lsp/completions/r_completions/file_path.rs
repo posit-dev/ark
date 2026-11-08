@@ -1,48 +1,38 @@
 //
 // file_path.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::env::current_dir;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use harp::utils::r_is_string;
 use harp::utils::r_normalize_path;
 use stdext::unwrap;
 use tower_lsp_server::ls_types::CompletionItem;
-use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_direntry;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
-use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
 
-pub(super) fn completions_from_string_file_path(
-    node: &Node,
-    context: &DocumentContext,
-) -> anyhow::Result<Vec<CompletionItem>> {
-    log::trace!("completions_from_string_file_path()");
+/// Lists entries of the directory named by `token`, or its parent if the path
+/// is not a directory. `token` includes quotes and escapes from the document.
+pub(super) fn r_file_path_completions(token: &str) -> anyhow::Result<Vec<CompletionItem>> {
+    log::trace!("r_file_path_completions()");
 
     let mut completions: Vec<CompletionItem> = vec![];
 
-    // Get the contents of the string token.
-    //
-    // NOTE: This includes the quotation characters on the string, and so
-    // also includes any internal escapes! We need to decode the R string
-    // by parsing it before searching the path entries.
-    let token = node.node_as_str(context.contents)?;
-
-    // It's entirely possible that we can fail to parse the string, `R_ParseVector()`
-    // can fail in various ways. We silently swallow these because they are unlikely
-    // to report to real file paths and just bail (posit-dev/positron#6584).
+    // Parse the token to decode R string escapes before searching the directory.
+    // Invalid strings, such as unrecognized backslash escapes, produce no
+    // completions rather than a parse error (posit-dev/positron#6584).
     let Ok(contents) = harp::parse_expr(token) else {
         return Ok(completions);
     };
 
-    // Double check that parsing gave a string. It should, because `node` points to
-    // a tree-sitter string node.
+    // The token comes from a tree-sitter string node, but R's parser must also
+    // recognize it as a string.
     if !r_is_string(contents.sexp) {
         return Ok(completions);
     }
@@ -73,7 +63,13 @@ pub(super) fn completions_from_string_file_path(
 
     // look for files in this directory
     log::trace!("Reading directory: {}", path.display());
-    let entries = std::fs::read_dir(path)?;
+    // A string naming no existing directory, such as a URL, is ordinary input
+    // rather than a failure of this source
+    let entries = match std::fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(completions),
+        Err(err) => return Err(err.into()),
+    };
 
     for entry in entries.into_iter() {
         let entry = unwrap!(entry, Err(error) => {
@@ -98,24 +94,33 @@ pub(super) fn completions_from_string_file_path(
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::sources::unique::file_path::completions_from_string_file_path;
-    use crate::lsp::document_context::TestDocument;
+    use crate::lsp::completions::r_completions::file_path::r_file_path_completions;
     use crate::r_task;
-    use crate::treesitter::node_find_string;
 
     #[test]
     fn test_unparseable_string() {
         // https://github.com/posit-dev/positron/issues/6584
         r_task(|| {
             // "\R" is an unrecognized escape character and `R_ParseVector()` errors on it
-            let (text, point) = point_from_cursor(r#" ".\R\utils.R@" "#);
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let node = node_find_string(&context.node).unwrap();
-
-            let completions = completions_from_string_file_path(&node, &context).unwrap();
+            let completions = r_file_path_completions(r#"".\R\utils.R""#).unwrap();
             assert_eq!(completions.len(), 0);
+        })
+    }
+
+    #[test]
+    fn test_missing_directory_is_not_an_error() {
+        r_task(|| {
+            let completions = r_file_path_completions("'https://posit.co/x'").unwrap();
+            assert_eq!(completions.len(), 0);
+        })
+    }
+
+    #[test]
+    fn test_home_directory() {
+        r_task(|| {
+            // Assume home directory is not empty
+            let completions = r_file_path_completions("'~/'").unwrap();
+            assert!(!completions.is_empty());
         })
     }
 }

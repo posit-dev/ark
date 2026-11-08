@@ -29,7 +29,7 @@ pub(crate) enum FunctionRefUsage {
     Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FunctionContext {
     /// The name of the function (could be, and often is, a fragment)
     pub name: String,

@@ -5,6 +5,7 @@
 //
 //
 
+use harp::call::RArgument;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
 use harp::r_null;
@@ -17,21 +18,19 @@ use harp::utils::r_typeof;
 use harp::RSymbol;
 use libr::*;
 use log::info;
-use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp_server::ls_types::Documentation;
 use tower_lsp_server::ls_types::ParameterInformation;
 use tower_lsp_server::ls_types::ParameterLabel;
 use tower_lsp_server::ls_types::SignatureHelp;
 use tower_lsp_server::ls_types::SignatureInformation;
-use tree_sitter::Node;
-use tree_sitter::Point;
 
+use crate::lsp::call_arguments::active_parameter;
+use crate::lsp::call_arguments::call_at;
+use crate::lsp::call_arguments::CallAt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::point::PointExt;
-use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 // TODO: We should probably take a pass through `signature_help()` and rewrite it from
@@ -41,133 +40,120 @@ use crate::treesitter::NodeTypeExt;
 
 /// SAFETY: Requires access to the R runtime.
 pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
-    // Get document AST + completion position.
-    let ast = &context.tree;
-
-    // Find the node closest to the completion point.
-    let node = ast.root_node();
-    let Some(mut node) = node.find_closest_node_to_point(context.point) else {
+    let Some(CallAt { callee, arguments }) = call_at(context)? else {
         return Ok(None);
     };
 
-    // If we landed on a comma before the cursor position, move to the next sibling node.
-    // We need to check the position as, if the cursor is "on" the comma as in
-    //
-    //    foo (x = ,)
-    //
-    // then the current context is associated with 'x = ' and not with what follows
-    // the comma.
-    if node.node_type() == NodeType::Comma && node.start_position().is_before(context.point) {
-        if let Some(sibling) = node.next_sibling() {
-            node = sibling;
-        }
-    }
+    let code = &arguments.callee;
 
-    if node.node_type() == NodeType::Anonymous(String::from(")")) {
-        if let Some(sibling) = node.prev_sibling() {
-            node = sibling;
-        }
-    }
-
-    // Get the current node.
-    let mut parent = match node.parent() {
-        Some(parent) => parent,
-        None => return Ok(None),
+    let Some(formals) = r_callee_formals(code)? else {
+        return Ok(None);
     };
 
-    // Look for a call node. Keep track of other relevant context while we search for it.
-    // We want to figure out which of the current formals is currently "active". This is
-    // a bit tricky for R functions, as one can supply named and unnamed arguments in any
-    // order. For example:
-    //
-    //   foo(a = 1, b, c = 2, d)
-    //
-    // is a legal function call, and so we cannot just count commas to see which
-    // parameter is currently active.
+    // Get the help documentation associated with this function.
+    let help = if callee.is_namespace_operator() {
+        let package = callee.child_by_field_name("lhs").into_result()?;
+        let package = package.node_to_string(context.contents)?;
 
-    // The list of arguments that have been explicitly specified.
-    let mut explicit_parameters = vec![];
+        let name = callee.child_by_field_name("rhs").into_result()?;
+        let name = name.node_to_string(context.contents)?;
 
-    // The number of unnamed arguments that have been supplied.
-    let mut num_unnamed_arguments = 0;
+        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
+    } else {
+        let name = callee.node_to_string(context.contents)?;
+        RHtmlHelp::from_function(name.as_str(), None)
+    };
 
-    // The active argument, if any. Relevant for cases where the cursor is lying after 'x = <...>',
-    // so we know that 'x' must be active.
-    let mut active_argument = None;
+    // The signature label. We generate this as we walk through the
+    // parameters, so we can more easily record offsets.
+    let mut label = String::new();
+    label.push_str(code.as_str());
+    label.push('(');
 
-    // Whether we've found the child node we were looking for.
-    let mut found_child = false;
+    // Get the available parameters.
+    let mut parameters = vec![];
 
-    // The computed argument offset.
-    let mut offset: Option<u32> = None;
+    // Iterate over the documentation for each parameter, and add the relevant information.
+    for argument in formals.iter() {
+        // Get argument components.
+        let argument_name = &argument.name;
+        let argument_value = &argument.value;
+        let argument_label = argument_label(argument_name.clone(), argument_value.sexp);
 
-    let call = loop {
-        // If we found an 'arguments' node, then use that to infer the current offset.
-        if parent.node_type() == NodeType::Arguments {
-            // If the cursor lies upon a named argument, use that as an override.
-            if let Some(name) = node.child_by_field_name("name") {
-                let name = name.node_to_string(context.contents)?;
-                active_argument = Some(name);
-            }
+        // Compute signature offsets.
+        let start = label.len() as u32;
+        let end = start + argument_label.len() as u32;
 
-            let mut cursor = parent.walk();
-            let children = parent.children(&mut cursor);
-            for child in children {
-                if let Some(name) = child.child_by_field_name("name") {
-                    // If this is a named argument, add it to the list.
-                    let name = name.node_to_string(context.contents)?;
-                    explicit_parameters.push(name);
+        // Add the argument label to the overall label.
+        label.push_str(argument_label.as_str());
+        label.push_str(", ");
 
-                    // Subtract 1 from the number of unnamed arguments, as
-                    // the next comma we see won't be associated with an
-                    // unnamed argument.
-                    num_unnamed_arguments -= 1;
-                }
-
-                // If we find a comma, add to the offset.
-                if !found_child && child.node_type() == NodeType::Comma {
-                    num_unnamed_arguments += 1;
-                }
-
-                // If we've now walked up to the current node, we can quit.
-                if child == node {
-                    found_child = true;
-                }
+        // Get documentation, if any.
+        let mut documentation = None;
+        if let Ok(Some(ref help)) = help {
+            let markup = help.parameter(argument_name);
+            if let Ok(Some(markup)) = markup {
+                documentation = Some(Documentation::MarkupContent(markup));
             }
         }
 
-        // If we find the 'call' node, we can quit.
-        if parent.is_call() {
-            break parent;
-        }
-
-        // Update.
-        node = parent;
-        parent = match node.parent() {
-            Some(parent) => parent,
-            None => return Ok(None),
-        };
-    };
-
-    // Totally possible that `node.find_closest_node_to_point(context.point)` finds a
-    // call node that is technically the closest node to the point, but is completely
-    // before the point. We only want to provide signature help when inside `fn(<here>)`!
-    if !is_within_call_parentheses(&context.point, &call) {
-        return Ok(None);
+        // Add the new parameter.
+        parameters.push(ParameterInformation {
+            label: ParameterLabel::LabelOffsets([start, end]),
+            documentation,
+        });
     }
 
-    // Get the left-hand side of the call.
-    let callee = unwrap!(call.child(0), None => {
-        return Ok(None);
-    });
+    // Clean up the closing ', ', and add a closing parenthesis.
+    if label.ends_with(", ") {
+        label.pop();
+        label.pop();
+    }
 
+    // Add a closing parenthesis.
+    label.push(')');
+
+    let formal_names: Vec<String> = formals
+        .iter()
+        .map(|argument| argument.name.clone())
+        .collect();
+
+    // NOTE: It seems like the frontend still tries to highlight the first
+    // parameter when the offset is set to none, so here we just force it to
+    // match no available argument.
+    let offset = active_parameter(&arguments, &formal_names).unwrap_or(formals.len() + 1);
+    let offset = Some(u32::try_from(offset).unwrap_or_default());
+
+    let signature = SignatureInformation {
+        label,
+        documentation: None,
+        parameters: Some(parameters),
+        active_parameter: offset,
+    };
+
+    let help = SignatureHelp {
+        signatures: vec![signature],
+        active_signature: None,
+        active_parameter: offset,
+    };
+
+    info!("{:?}", help);
+    Ok(Some(help))
+}
+
+/// Formals of the function that `callee` evaluates to, or `None` if it can't
+/// be evaluated safely or isn't a function.
+///
+/// Shared by signature help and custom completions so both match the cursor
+/// against the same function's formals. Evaluates in the global environment,
+/// not `console::selected_env()`.
+///
+/// SAFETY: Requires access to the R runtime.
+pub(crate) fn r_callee_formals(callee: &str) -> anyhow::Result<Option<Vec<RArgument>>> {
     // TODO: Should we search the document and / or the workspace index
     // before asking the R session for a definition? Which should take precedence?
 
-    // Try to figure out what R object it's associated with.
-    let code = callee.node_to_string(context.contents)?;
-
-    let object = harp::parse_eval(code.as_str(), RParseEvalOptions {
+    let object = harp::parse_eval(callee, RParseEvalOptions {
         forbid_function_calls: true,
         ..Default::default()
     });
@@ -199,141 +185,7 @@ pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Opti
         return Ok(None);
     }
 
-    // Get the formal parameter names associated with this function.
-    let formals = r_formals(*object)?;
-
-    // Get the help documentation associated with this function.
-    let help = if callee.is_namespace_operator() {
-        let package = callee.child_by_field_name("lhs").into_result()?;
-        let package = package.node_to_string(context.contents)?;
-
-        let name = callee.child_by_field_name("rhs").into_result()?;
-        let name = name.node_to_string(context.contents)?;
-
-        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
-    } else {
-        let name = callee.node_to_string(context.contents)?;
-        RHtmlHelp::from_function(name.as_str(), None)
-    };
-
-    // The signature label. We generate this as we walk through the
-    // parameters, so we can more easily record offsets.
-    let mut label = String::new();
-    label.push_str(code.as_str());
-    label.push('(');
-
-    // Get the available parameters.
-    let mut parameters = vec![];
-
-    // Iterate over the documentation for each parameter, and add the relevant information.
-    for (index, argument) in formals.iter().enumerate() {
-        // Get argument components.
-        let argument_name = &argument.name;
-        let argument_value = &argument.value;
-        let argument_label = argument_label(argument_name.clone(), argument_value.sexp);
-
-        // Compute signature offsets.
-        let start = label.len() as u32;
-        let end = start + argument_label.len() as u32;
-
-        // Add the argument label to the overall label.
-        label.push_str(argument_label.as_str());
-        label.push_str(", ");
-
-        // If we had an explicit name, and this name matches the argument,
-        // then update the offset now.
-        if active_argument.as_ref() == Some(argument_name) {
-            offset = Some(index as u32);
-        }
-
-        // Get documentation, if any.
-        let mut documentation = None;
-        if let Ok(Some(ref help)) = help {
-            let markup = help.parameter(argument_name);
-            if let Ok(Some(markup)) = markup {
-                documentation = Some(Documentation::MarkupContent(markup));
-            }
-        }
-
-        // Add the new parameter.
-        parameters.push(ParameterInformation {
-            label: ParameterLabel::LabelOffsets([start, end]),
-            documentation,
-        });
-    }
-
-    // Clean up the closing ', ', and add a closing parenthesis.
-    if label.ends_with(", ") {
-        label.pop();
-        label.pop();
-    }
-
-    // Add a closing parenthesis.
-    label.push(')');
-
-    // Finally, if we don't have an offset, figure it out now.
-    if offset.is_none() {
-        for (index, argument) in formals.iter().enumerate() {
-            // Was this argument explicitly provided? If so, skip it.
-            if explicit_parameters.contains(&argument.name) {
-                continue;
-            }
-
-            // Otherwise, check and see if we have any remaining commas.
-            if num_unnamed_arguments > 0 {
-                num_unnamed_arguments -= 1;
-                continue;
-            }
-
-            // This is the argument.
-            offset = Some(index as u32);
-            break;
-        }
-    }
-
-    // NOTE: It seems like the frontend still tries to highlight the first
-    // parameter when the offset is set to none, so here we just force it to
-    // match no available argument.
-    if offset.is_none() {
-        offset = Some((formals.len() + 1).try_into().unwrap_or_default());
-    }
-
-    let signature = SignatureInformation {
-        label,
-        documentation: None,
-        parameters: Some(parameters),
-        active_parameter: offset,
-    };
-
-    let help = SignatureHelp {
-        signatures: vec![signature],
-        active_signature: None,
-        active_parameter: offset,
-    };
-
-    info!("{:?}", help);
-    Ok(Some(help))
-}
-
-fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
-    if node.node_type() != NodeType::Call {
-        // This would be very weird
-        log::error!("`is_within_call_parentheses()` called on a non-`call` node.");
-        return false;
-    }
-
-    let Some(arguments) = node.child_by_field_name("arguments") else {
-        return false;
-    };
-
-    let Some(open) = arguments.child_by_field_name("open") else {
-        return false;
-    };
-    let Some(close) = arguments.child_by_field_name("close") else {
-        return false;
-    };
-
-    x.is_after_or_equal(open.end_position()) && x.is_before_or_equal(close.start_position())
+    Ok(Some(r_formals(*object)?))
 }
 
 fn argument_label(name: String, value: SEXP) -> String {

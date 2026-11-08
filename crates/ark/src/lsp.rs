@@ -7,6 +7,7 @@
 
 mod analysis;
 pub mod backend;
+pub(crate) mod call_arguments;
 pub mod capabilities;
 pub mod code_action;
 pub mod comm;

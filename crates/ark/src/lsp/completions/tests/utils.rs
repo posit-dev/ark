@@ -7,23 +7,51 @@
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::CompletionTextEdit;
+use tree_sitter::Point;
 
 use crate::fixtures::point_from_cursor;
-use crate::lsp::completions::provide_completions;
+use crate::lsp::completions::finish;
+use crate::lsp::completions::provide::StaticCompletions;
+use crate::lsp::completions::r_completions;
+use crate::lsp::completions::request::RCompletionRequest;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
+use crate::lsp::completions::static_completions;
 use crate::lsp::document_context::TestDocument;
 use crate::lsp::state::WorldState;
 
+/// Runs both completion passes. Requires the R thread.
 pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
+    let (completions, request) = static_completions_at_cursor(cursor_text)?;
+    let replies = r_completions(request);
+    Ok(finish(completions, replies))
+}
+
+/// Runs only the static pass. Composite sources require the R thread.
+pub(crate) fn static_completions_at_cursor(
+    cursor_text: &str,
+) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
     let (text, point) = point_from_cursor(cursor_text);
-    let doc = TestDocument::new(&text);
+    static_completions_at(&text, point)
+}
+
+pub(crate) fn static_completions_at(
+    text: &str,
+    point: Point,
+) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
+    let doc = TestDocument::new(text);
     let document_context = doc.context(point);
     let state = WorldState::default().snapshot();
 
-    match provide_completions(&document_context, &state) {
+    match static_completions(&document_context, &state) {
         Ok(completions) => Ok(completions),
         Err(err) => Err(anyhow::anyhow!("Failed to get completions: {err}")),
     }
+}
+
+/// Returns the session request built by the static pass.
+pub(crate) fn request_at_cursor(cursor_text: &str) -> RCompletionRequest {
+    let (_, request) = static_completions_at_cursor(cursor_text).unwrap();
+    request
 }
 
 pub(crate) fn find_completion_by_label<'a>(

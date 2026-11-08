@@ -45,8 +45,10 @@ use crate::lsp;
 use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
-use crate::lsp::completions::provide_completions;
+use crate::lsp::completions::finish;
+use crate::lsp::completions::r_completions;
 use crate::lsp::completions::resolve_completion;
+use crate::lsp::completions::static_completions;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
@@ -179,7 +181,11 @@ pub(crate) fn handle_completion(
     // completions are serviced from the main loop, it's only needed for the
     // `r_task()`.
     let state = state.snapshot();
-    let completions = r_task(move || provide_completions(&context, &state))?;
+    let completions = r_task(move || -> anyhow::Result<Vec<CompletionItem>> {
+        let (completions, request) = static_completions(&context, &state)?;
+        let replies = r_completions(request);
+        Ok(finish(completions, replies))
+    })?;
 
     if !completions.is_empty() {
         Ok(Some(CompletionResponse::Array(completions)))

@@ -9,8 +9,9 @@ use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::QuoteStyle;
+use crate::lsp::completions::r_completions::object_names::completions_from_evaluated_object_names;
+use crate::lsp::completions::request::SubsetOperator;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
-use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
@@ -81,7 +82,13 @@ pub(crate) fn completions_from_subset(
 
     let text = child.node_as_str(context.contents)?.to_string();
 
-    completions_from_evaluated_object_names(&text, QuoteStyle::Double, node.node_type())
+    let operator = if node.is_subset() {
+        SubsetOperator::Single
+    } else {
+        SubsetOperator::Double
+    };
+
+    completions_from_evaluated_object_names(&text, QuoteStyle::Double, Some(operator))
 }
 
 #[cfg(test)]

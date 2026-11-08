@@ -1,53 +1,26 @@
 //
 // namespace.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
-use harp::object::RObject;
-use harp::r_symbol;
-use libr::R_UnboundValue;
-use libr::R_lsInternal;
-use libr::Rboolean_TRUE;
-use libr::Rf_findVarInFrame;
-use libr::SEXP;
-use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::completion_item::completion_item_from_lazydata;
-use crate::lsp::completions::completion_item::completion_item_from_namespace;
-use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
-use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::completions::request::UniqueRequest;
+use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) struct NamespaceSource;
-
-impl CompletionSource for NamespaceSource {
-    fn name(&self) -> &'static str {
-        "namespace"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_namespace(completion_context)
-    }
-}
-
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
-fn completions_from_namespace(
+pub(super) fn recognize_namespace(
     completion_context: &CompletionContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Recognized>> {
     let context = completion_context.document_context;
     let node = context.node;
 
@@ -61,11 +34,9 @@ fn completions_from_namespace(
         _ => return Ok(None),
     };
 
-    let mut completions: Vec<CompletionItem> = vec![];
-
     let node = match node {
         NamespaceNodeKind::None => return Ok(None),
-        NamespaceNodeKind::EmptySet => return Ok(Some(completions)),
+        NamespaceNodeKind::EmptySet => return Ok(Some(Recognized::Empty)),
         NamespaceNodeKind::Node(node) => node,
     };
 
@@ -73,56 +44,17 @@ fn completions_from_namespace(
         node.node_type() == NodeType::NamespaceOperator(NamespaceOperatorType::External);
 
     let Some(package) = node.child_by_field_name("lhs") else {
-        return Ok(Some(completions));
+        return Ok(Some(Recognized::Empty));
     };
 
-    let package = package.node_as_str(context.contents)?;
+    let package = package.node_as_str(context.contents)?.to_string();
+    let function_context = completion_context.function_context()?.clone();
 
-    // Get the package namespace
-    let Ok(namespace) = RFunction::new("base", "getNamespace").add(package).call() else {
-        // There is no package of this name or it could not be loaded, but it did look
-        // like the user wanted namespace completions, so disallow anything else from
-        // running
-        return Ok(Some(completions));
-    };
-
-    let symbols = if package == "base" {
-        list_namespace_symbols(*namespace)
-    } else if exports_only {
-        list_namespace_exports(*namespace)
-    } else {
-        list_namespace_symbols(*namespace)
-    };
-
-    let strings = symbols.to::<Vec<String>>()?;
-
-    for string in strings.iter() {
-        let item = unsafe {
-            completion_item_from_namespace(
-                string,
-                *namespace,
-                package,
-                completion_context.function_context()?,
-            )
-        };
-        match item {
-            Ok(item) => completions.push(item),
-            Err(error) => log::error!("{error:?}"),
-        }
-    }
-
-    if exports_only {
-        // `pkg:::object` doesn't return lazy objects, so we don't want
-        // to show lazydata completions if we are inside `:::`
-        let lazydata = completions_from_namespace_lazydata(*namespace, package)?;
-        if let Some(mut lazydata) = lazydata {
-            completions.append(&mut lazydata);
-        }
-    }
-
-    set_sort_text_by_words_first(&mut completions);
-
-    Ok(Some(completions))
+    Ok(Some(Recognized::Session(UniqueRequest::Namespace {
+        package,
+        exports_only,
+        function_context,
+    })))
 }
 
 enum NamespaceNodeKind<'tree> {
@@ -184,162 +116,79 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
     NamespaceNodeKind::Node(parent)
 }
 
-fn completions_from_namespace_lazydata(
-    namespace: SEXP,
-    package: &str,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    unsafe {
-        let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
-        if ns == R_UnboundValue {
-            return Ok(None);
-        }
-
-        let env = Rf_findVarInFrame(ns, r_symbol!("lazydata"));
-        if env == R_UnboundValue {
-            return Ok(None);
-        }
-
-        let names = RObject::to::<Vec<String>>(RObject::from(R_lsInternal(env, Rboolean_TRUE)))?;
-
-        if names.is_empty() {
-            return Ok(None);
-        }
-
-        let mut completions: Vec<CompletionItem> = vec![];
-
-        for name in names.iter() {
-            match completion_item_from_lazydata(name, env, package) {
-                Ok(item) => completions.push(item),
-                Err(error) => log::error!("{:?}", error),
-            }
-        }
-
-        Ok(Some(completions))
-    }
-}
-
-fn list_namespace_symbols(namespace: SEXP) -> RObject {
-    unsafe { RObject::new(R_lsInternal(namespace, 1)) }
-}
-
-fn list_namespace_exports(namespace: SEXP) -> RObject {
-    unsafe {
-        let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
-        if ns == R_UnboundValue {
-            return RObject::null();
-        }
-
-        let exports = Rf_findVarInFrame(ns, r_symbol!("exports"));
-        if exports == R_UnboundValue {
-            return RObject::null();
-        }
-
-        RObject::new(R_lsInternal(exports, 1))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use tower_lsp_server::ls_types::CompletionItem;
-
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
-    use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
-    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::request::UniqueRequest;
+    use crate::lsp::completions::sources::unique::namespace::recognize_namespace;
+    use crate::lsp::completions::sources::unique::Recognized;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
-    use crate::r_task;
 
-    pub(crate) fn get_namespace_completions_at_cursor(
-        cursor_text: &str,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    fn recognize_namespace_at_cursor(cursor_text: &str) -> Option<Recognized> {
         let (text, point) = point_from_cursor(cursor_text);
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
         let state = WorldState::default().snapshot();
         let context = CompletionContext::new(&document_context, &state);
 
-        completions_from_namespace(&context)
+        recognize_namespace(&context).unwrap()
+    }
+
+    fn assert_namespace_slot(cursor_text: &str, expected_package: &str, expected_exports: bool) {
+        let Some(Recognized::Session(UniqueRequest::Namespace {
+            package,
+            exports_only,
+            ..
+        })) = recognize_namespace_at_cursor(cursor_text)
+        else {
+            panic!("Expected a namespace slot at `{cursor_text}`");
+        };
+        assert_eq!(package, expected_package);
+        assert_eq!(exports_only, expected_exports);
     }
 
     #[test]
-    fn test_completions_after_colons() {
-        r_task(|| {
-            // Just colons, no RHS text yet
-            let completions = get_namespace_completions_at_cursor("utils::@")
-                .unwrap()
-                .unwrap();
+    fn test_namespace_slot_after_colons() {
+        assert_namespace_slot("utils::@", "utils", true);
+        assert_namespace_slot("utils:::@", "utils", false);
 
-            let item = find_completion_by_label(&completions, "adist");
-            assert!(item.is_some());
+        // With RHS text, which is ignored when generating completions.
+        // Filtering applied on frontend side.
+        assert_namespace_slot("utils::bl@ah", "utils", true);
 
-            // Should not find internal function
-            let item = find_completion_by_label(&completions, "as.bibentry.bibentry");
-            assert!(item.is_none());
-
-            // Internal functions with `:::`
-            let completions = get_namespace_completions_at_cursor("utils:::@")
-                .unwrap()
-                .unwrap();
-            let item = find_completion_by_label(&completions, "as.bibentry.bibentry");
-            assert!(item.is_some());
-
-            // With RHS text, which is ignored when generating completions.
-            // Filtering applied on frontend side.
-            let completions = get_namespace_completions_at_cursor("utils::bl@ah")
-                .unwrap()
-                .unwrap();
-            let item = find_completion_by_label(&completions, "adist");
-            assert!(item.is_some());
-        });
+        // Recognition does not require an installed package. An unknown package
+        // suppresses later sources (https://github.com/posit-dev/ark/issues/833).
+        assert_namespace_slot("foo::bar@", "foo", true);
     }
 
     #[test]
     fn test_expression_after_colon_colon_doesnt_result_in_completions() {
-        r_task(|| {
-            let completions = get_namespace_completions_at_cursor("base::+@").unwrap();
-            assert!(completions.is_none());
-        });
+        assert_eq!(recognize_namespace_at_cursor("base::+@"), None);
     }
 
     #[test]
     fn test_empty_set_of_completions_when_on_package_name() {
-        r_task(|| {
-            let completions = get_namespace_completions_at_cursor("ba@se::ab")
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-        });
+        assert_eq!(
+            recognize_namespace_at_cursor("ba@se::ab"),
+            Some(Recognized::Empty)
+        );
     }
 
     #[test]
     fn test_empty_set_of_completions_when_not_at_end_of_colons() {
-        r_task(|| {
-            let completions = get_namespace_completions_at_cursor("base:@:ab")
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-
-            let completions = get_namespace_completions_at_cursor("base:@::ab")
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-
-            let completions = get_namespace_completions_at_cursor("base::@:ab")
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-        });
-    }
-
-    #[test]
-    fn test_empty_set_of_completions_when_using_unknown_package() {
-        // https://github.com/posit-dev/ark/issues/833
-        r_task(|| {
-            let completions = get_namespace_completions_at_cursor("foo::bar@")
-                .unwrap()
-                .unwrap();
-            assert!(completions.is_empty());
-        });
+        assert_eq!(
+            recognize_namespace_at_cursor("base:@:ab"),
+            Some(Recognized::Empty)
+        );
+        assert_eq!(
+            recognize_namespace_at_cursor("base:@::ab"),
+            Some(Recognized::Empty)
+        );
+        assert_eq!(
+            recognize_namespace_at_cursor("base::@:ab"),
+            Some(Recognized::Empty)
+        );
     }
 }

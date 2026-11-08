@@ -1,37 +1,20 @@
 //
 // string.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
-use tower_lsp_server::ls_types::CompletionItem;
-
-use super::file_path::completions_from_string_file_path;
-use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
-use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::completions::request::UniqueRequest;
+use crate::lsp::completions::sources::unique::subset::node_find_object_for_string_subset;
+use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_string;
 
-pub(super) struct StringSource;
-
-impl CompletionSource for StringSource {
-    fn name(&self) -> &'static str {
-        "string"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_string(completion_context.document_context)
-    }
-}
-
-fn completions_from_string(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+/// Recognizes a cursor inside a string, suppressing later sources even when
+/// there are no session items.
+pub(super) fn recognize_string(context: &DocumentContext) -> anyhow::Result<Option<Recognized>> {
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.
@@ -45,98 +28,86 @@ fn completions_from_string(
         return Ok(None);
     }
 
-    // Even if we don't find any completions, we know we were inside a string so we
-    // don't want to provide completions for anything else, so we always at
-    // least return an empty `completions` vector from here on.
-    let mut completions: Vec<CompletionItem> = vec![];
-
     // Return empty set if we are here due to a trigger character like `$`.
     // See posit-dev/positron#1884.
     if context.trigger.is_some() {
-        return Ok(Some(completions));
+        return Ok(Some(Recognized::Empty));
     }
 
     // Check if we are doing string subsetting, like `x["<tab>"]`. This is a very unique
     // case that takes priority over file path completions.
-    if let Some(mut candidates) = completions_from_string_subset(&node, context)? {
-        completions.append(&mut candidates);
-        return Ok(Some(completions));
+    if let Some(object) = node_find_object_for_string_subset(&node, context) {
+        let object = object.node_as_str(context.contents)?.to_string();
+        return Ok(Some(Recognized::Session(UniqueRequest::StringSubset {
+            object,
+        })));
     }
 
     // If no special string cases are hit, we show file path completions
-    completions.append(&mut completions_from_string_file_path(&node, context)?);
-
-    Ok(Some(completions))
+    let token = node.node_as_str(context.contents)?.to_string();
+    Ok(Some(Recognized::Session(UniqueRequest::FilePath { token })))
 }
 
 #[cfg(test)]
 mod tests {
-    use stdext::assert_match;
-
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::request::RCompletionRequest;
+    use crate::lsp::completions::request::UniqueRequest;
     use crate::lsp::completions::sources::unique;
-    use crate::lsp::completions::sources::unique::string::completions_from_string;
+    use crate::lsp::completions::sources::unique::string::recognize_string;
+    use crate::lsp::completions::sources::unique::Recognized;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
-    use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_outside_quotes() {
-        r_task(|| {
-            // Before or after the `''`, i.e. `|''` or `''|`.
-            // Still considered part of the string node.
-            let (text, point) = point_from_cursor("@''");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
+        // Before or after the `''`, i.e. `|''` or `''|`.
+        // Still considered part of the string node.
+        let (text, point) = point_from_cursor("@''");
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
 
-            assert!(node_find_string(&context.node).is_some());
-            assert_eq!(completions_from_string(&context).unwrap(), None);
-        })
+        assert!(node_find_string(&context.node).is_some());
+        assert_eq!(recognize_string(&context).unwrap(), None);
     }
 
     #[test]
     fn test_not_string() {
-        r_task(|| {
-            let (text, point) = point_from_cursor("@foo");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
+        let (text, point) = point_from_cursor("@foo");
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
 
-            assert!(context.node.is_identifier());
-            assert_eq!(completions_from_string(&context).unwrap(), None);
-        })
+        assert!(context.node.is_identifier());
+        assert_eq!(recognize_string(&context).unwrap(), None);
     }
 
     #[test]
     fn test_trigger() {
-        r_task(|| {
-            let (text, point) = point_from_cursor("'~/@'");
+        let (text, point) = point_from_cursor("'~/@'");
+        let doc = TestDocument::new(&text);
 
-            // Assume home directory is not empty
-            let doc = TestDocument::new(&text);
+        let context = doc.context(point);
+        assert_eq!(
+            recognize_string(&context).unwrap(),
+            Some(Recognized::Session(UniqueRequest::FilePath {
+                token: String::from("'~/'")
+            }))
+        );
 
-            // `None` trigger -> Return file completions
-            let context = doc.context(point);
-            assert_match!(
-                completions_from_string(&context).unwrap(),
-                Some(items) => {
-                    assert!(!items.is_empty())
-                }
-            );
+        // `Some` trigger -> Should return empty completion set
+        let context = doc.context_with_trigger(point, Some(String::from("$")));
+        assert_eq!(recognize_string(&context).unwrap(), Some(Recognized::Empty));
 
-            // `Some` trigger -> Should return empty completion set
-            let context = doc.context_with_trigger(point, Some(String::from("$")));
-            let res = completions_from_string(&context).unwrap();
-            assert_match!(res, Some(items) => { assert!(items.is_empty()) });
+        // Check for same result when consulting (potentially all) unique sources
+        let state = WorldState::default().snapshot();
+        let completion_context = CompletionContext::new(&context, &state);
+        let mut request = RCompletionRequest::default();
+        let res = unique::get_completions(&completion_context, &mut request).unwrap();
 
-            // Check for same result when consulting (potentially all) unique sources
-            let state = WorldState::default().snapshot();
-            let completion_context = CompletionContext::new(&context, &state);
-            let res = unique::get_completions(&completion_context).unwrap();
-
-            assert_match!(res, Some(items) => { assert!(items.is_empty()) });
-        })
+        assert_eq!(res, Some(vec![]));
+        assert_eq!(request, RCompletionRequest::default());
     }
 }
