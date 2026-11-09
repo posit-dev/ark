@@ -322,6 +322,8 @@ functions::generate! {
 
     pub fn GEinitDisplayList(dd: pGEDevDesc);
 
+    pub fn GEplayDisplayList(dd: pGEDevDesc);
+
     pub fn R_LockEnvironment(env: SEXP, bindings: Rboolean);
 
     pub fn R_EnvironmentIsLocked(env: SEXP) -> Rboolean;

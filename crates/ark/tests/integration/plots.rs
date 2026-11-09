@@ -4,6 +4,7 @@ use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
+use amalthea::wire::jupyter_message::Message;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
@@ -1632,5 +1633,187 @@ fn test_legend_measured_at_pane_size() {
     let code = format!(
         "f <- tempfile(fileext = '.png'); ragg::agg_png(f, width = 792, height = 714, res = {DPI}); plot(1:10); w_ref <- legend('topright', legend = c('Adelie', 'Chinstrap', 'Gentoo'), pch = 1, title = 'Species')$rect$w; invisible(dev.off()); isTRUE(all.equal(w_ark, w_ref))"
     );
+    frontend.execute_request_with_ui_comm(&code, |result| assert_eq!(result, "[1] TRUE"));
+}
+
+// A replayed display list can run R code (`recordGraphics()`). That code must
+// not open a nested prompt while the UI comm handler is running.
+#[test]
+fn test_resize_replay_does_not_enter_browser() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+
+    // Draws nothing the first time, calls `browser()` and `readline()` on replay
+    frontend.execute_request_collect(
+        "first <- TRUE; plot.new(); recordGraphics({ if (!first) { browser(); readline('x? ') }; first <<- FALSE }, list(), environment())",
+    );
+
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    // A nested REPL would still hold the UI comm handler borrow, so this
+    // second message would panic with a `BorrowMutError`
+    frontend.send_plot_render_settings(&ui_comm_id, 950, 450);
+
+    frontend.execute_request_with_ui_comm("1 + 1", |result| assert_eq!(result, "[1] 2"));
+}
+
+/// Comm IDs of the `positron.plot` comms opened in `messages`
+fn plot_comm_opens(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|msg| match msg {
+            Message::CommOpen(data) if data.content.target_name == "positron.plot" => {
+                Some(data.content.comm_id.clone())
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// Number of comm messages sent on `comm_id` in `messages`
+fn comm_msg_count(messages: &[Message], comm_id: &str) -> usize {
+    messages
+        .iter()
+        .filter(|msg| matches!(msg, Message::CommMsg(data) if data.content.comm_id == comm_id))
+        .count()
+}
+
+/// Draw a plot and return the ID of the plot comm it opens
+#[track_caller]
+fn draw_plot(frontend: &DummyArkFrontend, code: &str) -> String {
+    let opens = plot_comm_opens(&frontend.execute_request_collect(code));
+    assert_eq!(opens.len(), 1);
+    opens.into_iter().next().unwrap_or_default()
+}
+
+/// Draws a plot whose replay throws an R error. The first draw succeeds.
+const PLOT_FAILING_ON_REPLAY: &str = "first <- TRUE; plot(1:10); recordGraphics({ if (!first) stop('replay boom'); first <<- FALSE }, list(), environment())";
+
+#[test]
+fn test_resize_with_existing_plot_updates_par_without_plot_events() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    let plot_comm_id = draw_plot(&frontend, "plot(1:10)");
+
+    // Panics if the resize opens or updates a plot comm
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    let code = format!("isTRUE(all.equal(par('din'), c(900, 450) / {DPI}))");
+    frontend.execute_request_with_ui_comm(&code, |result| assert_eq!(result, "[1] TRUE"));
+
+    // Adding to the plot updates the same plot
+    let messages = frontend.execute_request_collect("abline(h = 5)");
+    assert_eq!(plot_comm_opens(&messages).len(), 0);
+    assert_eq!(comm_msg_count(&messages, &plot_comm_id), 1);
+}
+
+#[test]
+fn test_resize_replay_error_is_contained() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    draw_plot(&frontend, PLOT_FAILING_ON_REPLAY);
+
+    // Panics on stream output (error or warning text)
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    // A new plot opens a new comm, so the plot hooks are active again. Panics
+    // on stream output, so no deferred warning is printed either.
+    draw_plot(&frontend, "plot(1:10)");
+}
+
+#[test]
+fn test_resize_replay_keeps_other_device_current() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    draw_plot(&frontend, "plot(1:10)");
+
+    frontend.execute_request_with_ui_comm(
+        "ark_dev <- dev.cur(); f <- tempfile(fileext = '.pdf'); pdf(f, width = 3, height = 2, compress = FALSE); pdf_dev <- dev.cur(); 'ok'",
+        |result| assert_eq!(result, "[1] \"ok\""),
+    );
+
+    // Panics if the resize opens or updates a plot comm
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    frontend.execute_request_with_ui_comm(
+        "identical(dev.cur(), pdf_dev) && isTRUE(all.equal(dev.size('in'), c(3, 2)))",
+        |result| assert_eq!(result, "[1] TRUE"),
+    );
+
+    // The replay drew no page on the pdf device
+    frontend.execute_request_with_ui_comm(
+        "invisible(dev.off()); sum(grepl('/Type /Page /', readLines(f, warn = FALSE), fixed = TRUE, useBytes = TRUE))",
+        |result| assert_eq!(result, "[1] 0"),
+    );
+
+    let code =
+        format!("invisible(dev.set(ark_dev)); isTRUE(all.equal(par('din'), c(900, 450) / {DPI}))");
+    frontend.execute_request_with_ui_comm(&code, |result| assert_eq!(result, "[1] TRUE"));
+}
+
+#[test]
+fn test_resize_during_dev_hold() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+
+    // The hold defers the plot
+    let messages = frontend.execute_request_collect("invisible(dev.hold()); plot(1:10)");
+    assert_eq!(plot_comm_opens(&messages).len(), 0);
+
+    // Panics if the resize opens or updates a plot comm
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    let messages = frontend.execute_request_collect("invisible(dev.flush())");
+    assert_eq!(plot_comm_opens(&messages).len(), 1);
+}
+
+#[test]
+fn test_resize_replay_error_restores_current_device() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    draw_plot(&frontend, PLOT_FAILING_ON_REPLAY);
+
+    frontend.execute_request_with_ui_comm(
+        "f <- tempfile(fileext = '.pdf'); pdf(f, width = 3, height = 2); pdf_dev <- dev.cur(); 'ok'",
+        |result| assert_eq!(result, "[1] \"ok\""),
+    );
+
+    // Panics on stream output
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    frontend.execute_request_with_ui_comm(
+        "identical(dev.cur(), pdf_dev) && isTRUE(all.equal(dev.size('in'), c(3, 2)))",
+        |result| assert_eq!(result, "[1] TRUE"),
+    );
+}
+
+#[test]
+fn test_resize_at_nested_prompt_skips_replay() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    draw_plot(&frontend, "plot(1:10)");
+    frontend.execute_request_with_ui_comm("din_before <- par('din'); 'ok'", |result| {
+        assert_eq!(result, "[1] \"ok\"")
+    });
+
+    // Stop at a browser prompt inside a function
+    frontend.execute_request_collect("f <- function() browser(); f()");
+
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    // No replay at a nested prompt, so base graphics state is unchanged, but
+    // the device bounds follow the pane
+    // (At a browser prompt, results arrive on stdout)
+    let stdout = frontend.execute_request_with_ui_comm_stdout("identical(par('din'), din_before)");
+    assert_eq!(stdout, "[1] TRUE\n");
+    let code = format!("isTRUE(all.equal(dev.size('in'), c(900, 450) / {DPI}))");
+    let stdout = frontend.execute_request_with_ui_comm_stdout(&code);
+    assert_eq!(stdout, "[1] TRUE\n");
+
+    frontend.execute_request_collect("Q");
+
+    // The next plot uses the new size
+    draw_plot(&frontend, "plot(1:10)");
+    let code = format!("isTRUE(all.equal(par('din'), c(900, 450) / {DPI}))");
     frontend.execute_request_with_ui_comm(&code, |result| assert_eq!(result, "[1] TRUE"));
 }

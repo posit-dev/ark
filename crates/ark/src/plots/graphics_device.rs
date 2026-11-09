@@ -40,9 +40,11 @@ use anyhow::anyhow;
 use anyhow::Context;
 use base64::prelude::*;
 use crossbeam::channel::Sender;
+use harp::exec::r_sandbox;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::raii::RLocalInteractive;
 use libr::pDevDesc;
 use libr::pGEcontext;
 use libr::R_NilValue;
@@ -188,6 +190,10 @@ pub(crate) struct DeviceContext {
     /// device keeps the size it was created with.
     pane_size: Cell<Option<PlotSize>>,
 
+    /// Whether we are replaying the display list after a Plots pane resize
+    /// (see [DeviceContext::set_pane_size]).
+    is_replaying: Cell<bool>,
+
     /// The current execution context from the active request. Pushed here when
     /// an execute request starts via `graphics_on_execute_request()`, cleared
     /// when the request completes.
@@ -233,6 +239,7 @@ impl DeviceContext {
             }),
             device: Cell::new(None),
             pane_size: Cell::new(None),
+            is_replaying: Cell::new(false),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
             pending_origin: RefCell::new(None),
@@ -248,10 +255,49 @@ impl DeviceContext {
     ///
     /// Only call this in console sessions: notebook plots are not sized by the
     /// Plots pane. If the device doesn't exist yet, the size is applied when
-    /// it is created.
+    /// it is created. If the bounds change at the top-level prompt, the display
+    /// list is replayed without plot events.
     pub(crate) fn set_pane_size(&self, size: PlotSize) {
         self.pane_size.set(Some(size));
-        self.resize_device(size);
+        if !self.resize_device(size) {
+            return;
+        }
+
+        // Replay only at the top-level prompt. At a nested prompt (`browser()`,
+        // a breakpoint, `readline()`), the code under the prompt may still be
+        // drawing, so the display list can be incomplete. The next
+        // `plot.new()` uses the new bounds.
+        match harp::session::r_n_frame() {
+            Ok(0) => {},
+            Ok(_) => return,
+            Err(err) => {
+                log::warn!("Can't determine if we're at top level, not replaying: {err:?}");
+                return;
+            },
+        }
+
+        // Replay the display list so base graphics recomputes its state (such
+        // as `par("din")`) for the new bounds. The replay runs R code, so it
+        // runs in a sandbox and errors are only logged: the user didn't ask
+        // for it. Not interactive, so `readline()` in replayed code returns at
+        // once (`r_read_console()` handles `browser()`). Created outside of
+        // `r_sandbox()` so that its `Drop` runs in a frame that an R longjump
+        // never crosses.
+        let _interactive = RLocalInteractive::new(false);
+        self.is_replaying.set(true);
+        let result =
+            r_sandbox(|| RFunction::from(".ps.graphics.replay_quietly").call()).and_then(|r| r);
+        self.is_replaying.set(false);
+        if let Err(err) = result {
+            log::warn!("Can't replay the display list after a resize: {err:?}");
+        }
+    }
+
+    /// Whether we are replaying the display list after a Plots pane resize.
+    /// While this is `true`, the plot hooks do nothing (the replay is not a
+    /// plot change) and the console returns EOF at nested prompts.
+    pub(crate) fn is_replaying(&self) -> bool {
+        self.is_replaying.get()
     }
 
     /// Set the Ark device's bounds to `size` (in CSS pixels). Returns `true`
@@ -348,11 +394,20 @@ impl DeviceContext {
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_deactivate(self: &Rc<Self>, console: &Console) {
+        // `GEplayDisplayList()` selects the Ark device and then the previous
+        // device, so this runs on every replay
+        if self.is_replaying() {
+            return;
+        }
         self.process_changes(console);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
     fn hook_holdflush(self: &Rc<Self>, level: i32, console: &Console) {
+        if self.is_replaying() {
+            return;
+        }
+
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         let is_released = level <= 0;
@@ -366,6 +421,11 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
     fn hook_mode(&self, mode: i32) {
+        // A replay draws the existing plot again, it doesn't change it
+        if self.is_replaying() {
+            return;
+        }
+
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -387,6 +447,10 @@ impl DeviceContext {
     /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
+        // A replay starts the existing page again, it isn't a new plot
+        if self.is_replaying() {
+            return;
+        }
         self.new_positron_page()
     }
 
@@ -1549,6 +1613,19 @@ fn ps_graphics_push_source_context(console: &Console, uri: SEXP) -> anyhow::Resu
 fn ps_graphics_pop_source_context(console: &Console) -> anyhow::Result<SEXP> {
     console.device_context().pop_source_context();
     Ok(harp::r_null())
+}
+
+/// Replay the Ark device's display list. Called only from
+/// `.ps.graphics.replay_quietly()`, see [DeviceContext::set_pane_size].
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_play_display_list() -> anyhow::Result<SEXP> {
+    let Some(ge_device) = Console::get().device_context().device.get() else {
+        return Ok(R_NilValue);
+    };
+    // The replay evaluates R code, so catch R errors here rather than
+    // longjumping over this Rust frame
+    harp::try_catch(|| libr::GEplayDisplayList(ge_device))?;
+    Ok(R_NilValue)
 }
 
 /// Returns the default DPI for the current OS.

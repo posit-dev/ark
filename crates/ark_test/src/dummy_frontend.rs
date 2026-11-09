@@ -1341,6 +1341,37 @@ impl DummyArkFrontend {
         result_check(result);
     }
 
+    /// Execute `code` with a UI comm open and return its stdout.
+    ///
+    /// Use this at a browser prompt, where R prints results to stdout instead
+    /// of sending an execute result. Skips UI comm events and panics on any
+    /// other message.
+    #[track_caller]
+    pub fn execute_request_with_ui_comm_stdout(&self, code: &str) -> String {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let messages = self.recv_iopub_until_idle_impl();
+        for msg in messages {
+            match msg {
+                Message::CommMsg(ref data) if self.is_ui_comm(&data.content.comm_id) => {},
+                other => panic!("Unexpected message while executing `{code}`: {other:?}"),
+            }
+        }
+
+        let stdout = self.stream_stdout.borrow().clone();
+        self.streams_handled.set(true);
+        self.flush_streams_at_boundary();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        stdout
+    }
+
     /// Execute `code` and return every non-stream IOPub message between the
     /// execute input and idle. Use this to inspect plot comm messages.
     ///
@@ -1367,6 +1398,14 @@ impl DummyArkFrontend {
     /// Panics if any stream output was received in that window.
     #[track_caller]
     fn recv_iopub_until_idle(&self) -> Vec<Message> {
+        let messages = self.recv_iopub_until_idle_impl();
+        self.flush_streams_at_boundary();
+        messages
+    }
+
+    /// Like [Self::recv_iopub_until_idle], but leaves the stream buffers for
+    /// the caller to check and flush.
+    fn recv_iopub_until_idle_impl(&self) -> Vec<Message> {
         let mut messages = Vec::new();
         loop {
             let msg = self.recv_iopub_next();
@@ -1377,7 +1416,6 @@ impl DummyArkFrontend {
             }
             messages.push(msg);
         }
-        self.flush_streams_at_boundary();
         messages
     }
 

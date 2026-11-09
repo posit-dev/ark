@@ -2777,6 +2777,22 @@ pub extern "C-unwind" fn r_read_console(
         return 0;
     }
 
+    // Replaying the display list after a Plots pane resize runs R code at an
+    // idle prompt (`recordGraphics()`, grid `makeContent()` methods). If that
+    // code opens a nested prompt, for example with `browser()` or a breakpoint,
+    // return EOF so the nested REPL exits without waiting for input that the
+    // user never asked to give. `R_Interactive` is off during the replay, but
+    // that doesn't stop `browser()`.
+    //
+    // We return EOF rather than a `c` command because the nested REPL runs
+    // while the top-level REPL is waiting in `ReadConsole()`. R's REPLs share
+    // the `R_ConsoleIob` parse buffer, and a browser command stays in it, so
+    // the top-level REPL would then evaluate `c` before the user's next input.
+    // On EOF, R's REPL returns before it writes to that buffer.
+    if console.device_context().is_replaying() {
+        return 0;
+    }
+
     // Close admission before preparing this prompt, including the environment
     // capture round trip below. For a nested call, the enclosing event loop
     // cannot serve try tasks until R returns to its handler and that handler
