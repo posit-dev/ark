@@ -52,7 +52,7 @@ pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
     } = request;
 
     let custom = match custom {
-        Some(custom) => decline_on_err("custom", r_custom_completions(&custom)),
+        Some(custom) => run_slot("custom", || r_custom_completions(&custom)),
         None => SlotReply::Decline,
     };
 
@@ -83,21 +83,20 @@ pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
 fn r_unique_completions(request: UniqueRequest) -> SlotReply {
     match request {
         UniqueRequest::StringSubset { object } => {
-            fill_or_decline("string_subset", r_string_subset_completions(&object))
+            run_fill_slot("string_subset", || r_string_subset_completions(&object))
         },
         UniqueRequest::FilePath { token } => {
-            fill_or_decline("file_path", r_file_path_completions(&token))
+            run_fill_slot("file_path", || r_file_path_completions(&token))
         },
         UniqueRequest::Namespace {
             package,
             exports_only,
             function_context,
-        } => fill_or_decline(
-            "namespace",
-            r_namespace_completions(&package, exports_only, &function_context),
-        ),
+        } => run_fill_slot("namespace", || {
+            r_namespace_completions(&package, exports_only, &function_context)
+        }),
         UniqueRequest::Extractor { object, operator } => {
-            fill_or_decline("extractor", r_extractor_completions(&object, operator))
+            run_fill_slot("extractor", || r_extractor_completions(&object, operator))
         },
     }
 }
@@ -118,23 +117,23 @@ fn r_composite_completions(request: CompositeRequest) -> CompositeReplies {
     let pipe_root_object = pipe_root.as_ref().and_then(|(_, object)| object.as_ref());
 
     let call = match call {
-        Some(call) => decline_on_err("call", r_call_completions(&call, pipe_root_object)),
+        Some(call) => run_slot("call", || r_call_completions(&call, pipe_root_object)),
         None => SlotReply::Decline,
     };
 
     let pipe = match &pipe_root {
-        Some((name, Some(object))) => fill_or_decline("pipe", r_pipe_completions(name, object)),
+        Some((name, Some(object))) => run_fill_slot("pipe", || r_pipe_completions(name, object)),
         _ => SlotReply::Decline,
     };
 
     let subset = match subset {
-        Some(subset) => fill_or_decline("subset", r_subset_completions(&subset)),
+        Some(subset) => run_fill_slot("subset", || r_subset_completions(&subset)),
         None => SlotReply::Decline,
     };
 
     let search_path = match search_path {
         Some(search_path) => {
-            fill_or_decline("search_path", r_search_path_completions(&search_path))
+            run_fill_slot("search_path", || r_search_path_completions(&search_path))
         },
         None => SlotReply::Decline,
     };
@@ -147,8 +146,28 @@ fn r_composite_completions(request: CompositeRequest) -> CompositeReplies {
     }
 }
 
-fn fill_or_decline(source: &str, items: anyhow::Result<Vec<CompletionItem>>) -> SlotReply {
-    decline_on_err(source, items.map(SlotReply::Fill))
+/// Runs a session source with the info logs that `collect_completions()`
+/// writes for static sources, so the kernel log traces every source the
+/// request tried and how many items each produced.
+fn run_slot(source: &str, reply: impl FnOnce() -> anyhow::Result<SlotReply>) -> SlotReply {
+    log::info!("Trying completions from source: {source}");
+
+    let reply = decline_on_err(source, reply());
+    if let SlotReply::Fill(items) = &reply {
+        log::info!(
+            "Found {n} completions from source: {source}",
+            n = items.len()
+        );
+    }
+
+    reply
+}
+
+fn run_fill_slot(
+    source: &str,
+    items: impl FnOnce() -> anyhow::Result<Vec<CompletionItem>>,
+) -> SlotReply {
+    run_slot(source, || items().map(SlotReply::Fill))
 }
 
 fn decline_on_err(source: &str, reply: anyhow::Result<SlotReply>) -> SlotReply {

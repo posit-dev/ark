@@ -110,6 +110,10 @@ pub(crate) fn get_completions(
             &call.callee,
             call.position,
         )?;
+        log::info!(
+            "Found {n} static completions from source: call",
+            n = completions.call.len()
+        );
     }
 
     // subset completions (`[` or `[[`)

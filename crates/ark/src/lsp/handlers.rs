@@ -190,7 +190,9 @@ pub(crate) fn handle_completion(
     // Keep database handles out of the closure. An escaping R error skips
     // destructors, and a leaked Salsa handle would block later writes.
     let Some(replies) = try_r_task(|| r_completions(request)) else {
-        log::trace!("Skipping session completions: R is busy");
+        // Info level, like the per-source logs, so a kernel log shows why no
+        // session source ran
+        log::info!("Skipping session completions: R is busy");
 
         // Every session slot keeps its static fallback. Marked incomplete so
         // the editor requests again on the next keystroke instead of filtering
