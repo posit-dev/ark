@@ -78,7 +78,7 @@ pub(super) fn r_custom_completions(request: &CustomRequest) -> anyhow::Result<Sl
         if r_typeof(*r_completions) != VECSXP {
             // Weird internal issue, but we expected completions here so return
             // an empty set to signal that we are done
-            return Ok(SlotReply::Override(completions));
+            return Ok(SlotReply::Fill(completions));
         }
 
         // TODO: Use safe access APIs here.
@@ -132,7 +132,7 @@ pub(super) fn r_custom_completions(request: &CustomRequest) -> anyhow::Result<Sl
     // In particular, push env vars that start with `_` to the end
     set_sort_text_by_words_first(&mut completions);
 
-    Ok(SlotReply::Override(completions))
+    Ok(SlotReply::Fill(completions))
 }
 
 #[cfg(test)]
@@ -153,7 +153,7 @@ mod tests {
 
     fn custom_completions_at_cursor(code_with_cursor: &str) -> Vec<CompletionItem> {
         match custom_reply_at_cursor(code_with_cursor) {
-            SlotReply::Override(items) => items,
+            SlotReply::Fill(items) => items,
             reply => panic!("Expected custom completions at `{code_with_cursor}`, got {reply:?}"),
         }
     }

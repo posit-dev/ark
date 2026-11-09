@@ -18,7 +18,7 @@ use crate::lsp::completions::function_context::FunctionContext;
 /// sent to the R thread. Each `Option` is a source's slot, `None` when that
 /// source doesn't apply, and `composite` holds the composite sources' slots
 /// the same way. Custom callbacks take priority
-/// over the unique and composite sources when they return an override.
+/// over the unique and composite sources when they fill their slot.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct RCompletionRequest {
     /// Input for custom callbacks, as in `Sys.getenv(|)`, with `|` marking the
@@ -175,6 +175,9 @@ pub(crate) struct SearchPathRequest {
 /// The session pass's answer for each slot of an [RCompletionRequest].
 #[derive(Debug, Default)]
 pub(crate) struct RCompletionReplies {
+    /// A [SlotReply::Fill] here replaces the entire completion list, even
+    /// when it has no items, because a custom callback answers the whole
+    /// context.
     pub(crate) custom: SlotReply,
     pub(crate) unique: SlotReply,
     pub(crate) composite: CompositeReplies,
@@ -195,25 +198,17 @@ pub(crate) enum SlotReply {
     #[default]
     Decline,
 
-    /// Replaces the slot's static items with the session's items.
+    /// Replaces the slot's static items with the session's items. For the
+    /// custom slot, replaces the entire list (see [RCompletionReplies]).
     Fill(Vec<CompletionItem>),
-
-    /// Replaces the entire completion list, even when the reply is empty.
-    /// Only the custom source returns this reply.
-    Override(Vec<CompletionItem>),
 }
 
 impl SlotReply {
     /// Returns `fallback` for [SlotReply::Decline], otherwise the reply's items.
-    /// Does not apply the whole-list semantics of [SlotReply::Override].
     pub(crate) fn items_or(self, fallback: Vec<CompletionItem>) -> Vec<CompletionItem> {
-        debug_assert!(
-            !matches!(self, SlotReply::Override(_)),
-            "Only the custom slot can override"
-        );
         match self {
             SlotReply::Decline => fallback,
-            SlotReply::Fill(items) | SlotReply::Override(items) => items,
+            SlotReply::Fill(items) => items,
         }
     }
 }

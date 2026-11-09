@@ -56,10 +56,10 @@ pub(crate) fn r_completions(request: RCompletionRequest) -> RCompletionReplies {
         None => SlotReply::Decline,
     };
 
-    // A custom override discards every other slot's items. Skip their R
+    // A custom fill discards every other slot's items. Skip their R
     // evaluation to avoid reporting errors from unused completions, such as
     // a failing `names()` method on a pipe root.
-    if matches!(custom, SlotReply::Override(_)) {
+    if matches!(custom, SlotReply::Fill(_)) {
         return RCompletionReplies {
             custom,
             ..Default::default()
@@ -381,7 +381,7 @@ mod tests {
             assert!(request.composite.search_path.is_some());
 
             let replies = r_completions(request);
-            assert!(matches!(replies.custom, SlotReply::Override(_)));
+            assert!(matches!(replies.custom, SlotReply::Fill(_)));
             assert_eq!(replies.composite.call, SlotReply::Decline);
             assert_eq!(replies.composite.pipe, SlotReply::Decline);
             assert_eq!(replies.composite.search_path, SlotReply::Decline);

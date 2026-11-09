@@ -84,13 +84,9 @@ pub(crate) fn finish(
 
     // Custom callbacks take priority over `$`, `@`, and composite sources,
     // including when the callback returns no items.
-    if let SlotReply::Override(items) = custom {
+    if let SlotReply::Fill(items) = custom {
         return items;
     }
-    debug_assert!(
-        matches!(custom, SlotReply::Decline),
-        "The custom slot only declines or overrides"
-    );
 
     match completions.answer {
         StaticAnswer::Unique(items) => unique.items_or(items),
