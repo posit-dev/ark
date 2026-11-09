@@ -3,6 +3,7 @@ pub(crate) mod events;
 mod namespace_writer;
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use aether_path::FilePath;
@@ -31,6 +32,28 @@ use crate::lsp::sources::SourceHandler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
+
+/// Find R on the `PATH`
+///
+/// On Windows, `which` (from Git) returns POSIX paths that `Command::new()` can't resolve.
+/// Use `where` which returns native paths.
+pub(super) fn find_r() -> PathBuf {
+    let output = std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+        .arg("R")
+        .output()
+        .unwrap_or_else(|err| panic!("Failed to find R: {err}"));
+    assert!(output.status.success());
+
+    // `where` on Windows can return multiple matches, take the first
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("Non-UTF8 R path")
+            .trim()
+            .lines()
+            .next()
+            .expect("R should exist"),
+    )
+}
 
 pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     std::fs::create_dir_all(dir).unwrap();

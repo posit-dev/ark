@@ -28,6 +28,7 @@ use super::utils::did_change_configuration;
 use super::utils::did_change_watched_file;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::find_r;
 use super::utils::fixed_environments;
 use super::utils::initialize;
 use super::utils::initialize_with_options;
@@ -67,28 +68,6 @@ fn dispatched_names(calls: &Mutex<Vec<SourceRequest>>) -> Vec<String> {
         .iter()
         .map(|request| request.name().to_string())
         .collect()
-}
-
-/// Find R on the `PATH`
-///
-/// On Windows, `which` (from Git) returns POSIX paths that `Command::new()` can't resolve.
-/// Use `where` which returns native paths.
-fn find_r() -> PathBuf {
-    let output = std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
-        .arg("R")
-        .output()
-        .unwrap_or_else(|err| panic!("Failed to find R: {err}"));
-    assert!(output.status.success());
-
-    // `where` on Windows can return multiple matches, take the first
-    PathBuf::from(
-        String::from_utf8(output.stdout)
-            .expect("Non-UTF8 R path")
-            .trim()
-            .lines()
-            .next()
-            .expect("R should exist"),
-    )
 }
 
 /// The happy path end to end: a workspace uses an installed library package via

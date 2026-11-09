@@ -12,6 +12,7 @@ use aether_path::FilePath;
 use oak_db::DbInputs;
 use oak_db::Environment;
 use oak_db::EnvironmentStatus;
+use oak_db::SourceDb;
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -41,9 +42,11 @@ use super::source_handler::gate;
 use super::source_handler::wait_for_entries;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::find_r;
 use super::utils::initialize;
 use super::utils::initialized;
 use super::utils::test_client;
+use super::utils::DescriptionWriter;
 use super::utils::TestClient;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -55,6 +58,7 @@ use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::environments::RProcessResolver;
 use crate::lsp::environments::NO_R_EXECUTABLE;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
@@ -832,6 +836,201 @@ async fn test_published_diagnostics_follow_environment_resolution() {
         syntax.message.as_str(),
         "No symbol named 'foo' in scope."
     ]);
+}
+
+/// The production resolver starts R in the workspace, whose `.Rprofile` prints
+/// to both streams and prepends a fixture library. The noise doesn't reach the
+/// result file, and the default environment doesn't run the workspace profile.
+#[tokio::test]
+async fn test_r_process_resolver_follows_workspace_rprofile() {
+    let home = tempfile::tempdir().unwrap();
+    isolate_r_startup(home.path());
+    let _aux = init_aux_for_test();
+
+    let library = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("envfixture")
+        .version("1.0.0")
+        .write_installed(&library.path().join("envfixture"));
+
+    let workspace = tempfile::tempdir().unwrap();
+    let library_literal = r_string_path(library.path());
+    fs::write(
+        workspace.path().join(".Rprofile"),
+        format!(
+            "cat('stdout noise\\n')\n\
+             message('stderr noise')\n\
+             .libPaths(c('{library_literal}', .libPaths()))\n"
+        ),
+    )
+    .unwrap();
+
+    let mut state = r_process_global_state();
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+
+    let db = state.world().db();
+    let environment = workspace_environment(&state, workspace.path());
+    let EnvironmentStatus::Resolved(roots) = environment.status(db) else {
+        panic!("Expected the workspace environment to resolve");
+    };
+    let fixture_root = roots[0];
+    assert_eq!(
+        canonical(fixture_root.path(db).as_path().unwrap().as_std_path()),
+        canonical(library.path())
+    );
+
+    let package = db.package_by_name("envfixture").unwrap();
+    assert_eq!(db.root_by_package(package), Some(fixture_root));
+
+    // Both processes inherit the same isolated startup environment, so the
+    // workspace profile's prepended library is the only difference.
+    let default = db.default_environment();
+    let default_paths = resolved_paths(&state, default).unwrap();
+    assert!(!default_paths.is_empty());
+    let workspace_paths = resolved_paths(&state, environment).unwrap();
+    assert_eq!(workspace_paths[1..], default_paths[..]);
+}
+
+/// The production resolver reports a failing `.Rprofile` with R's error from
+/// `stderr`, and the open file gets syntax diagnostics only.
+#[tokio::test]
+async fn test_r_process_resolver_reports_failing_rprofile() {
+    let home = tempfile::tempdir().unwrap();
+    isolate_r_startup(home.path());
+    let _aux = init_aux_for_test();
+
+    let workspace = tempfile::tempdir().unwrap();
+    let rprofile = workspace.path().join(".Rprofile");
+    fs::write(&rprofile, "stop('boom')\n").unwrap();
+
+    // Unresolved symbols are reported by semantic diagnostics, which the gate
+    // skips.
+    let script = workspace.path().join("a.R");
+    let code = "foo\n";
+    fs::write(&script, code).unwrap();
+
+    let mut state = r_process_global_state();
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+    state
+        .handle_event_to_quiescence(did_open(&script, code))
+        .await;
+
+    let diagnostics = open_file_diagnostics(&state, &script);
+    let [failure] = diagnostics.as_slice() else {
+        panic!("Expected one diagnostic, got {diagnostics:?}");
+    };
+    assert_eq!(failure.severity, Some(DiagnosticSeverity::INFORMATION));
+    assert_eq!(
+        failure.message,
+        format!(
+            "R startup failed in {dir}, so only syntax is checked. See {rprofile}.\n\
+             \n\
+             R exited with status 1:\n\
+             Error: boom\n\
+             Execution halted\n\
+             \n\
+             {WORKSPACE_ENVIRONMENT_FIXES}",
+            dir = workspace.path().display(),
+            rprofile = rprofile.display(),
+        )
+    );
+}
+
+/// A `.Rprofile` that quits R exits with status 0 before the script runs. The
+/// missing result file makes it a failure, not an environment with no
+/// libraries.
+#[tokio::test]
+async fn test_r_process_resolver_reports_rprofile_that_quits() {
+    let home = tempfile::tempdir().unwrap();
+    isolate_r_startup(home.path());
+    let _aux = init_aux_for_test();
+
+    let workspace = tempfile::tempdir().unwrap();
+    fs::write(workspace.path().join(".Rprofile"), "q('no')\n").unwrap();
+
+    let mut state = r_process_global_state();
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+
+    let environment = workspace_environment(&state, workspace.path());
+    assert_eq!(resolved_paths(&state, environment), None);
+    assert_eq!(
+        last_error(&state, environment),
+        Some(String::from(
+            "R exited before reporting its library paths, a startup file may have quit R"
+        ))
+    );
+}
+
+/// A workspace folder deleted on disk while open fails with its directory
+/// named, not as a missing R executable. Needs no R, since the check comes
+/// before spawning.
+#[test]
+fn test_r_process_resolver_reports_missing_directory() {
+    let parent = tempfile::tempdir().unwrap();
+    let missing = parent.path().join("deleted");
+    let resolver = RProcessResolver::new(PathBuf::from("R"));
+
+    let Err(err) = resolver.resolve(&directory(&missing)) else {
+        panic!("Expected a failure for a missing directory");
+    };
+    assert_eq!(
+        format!("{err:#}"),
+        format!("the directory {} doesn't exist", missing.display())
+    );
+}
+
+/// Make the R subprocesses started by [`RProcessResolver`] read only the
+/// fixture's user startup files, whatever the machine or CI configures.
+///
+/// When `R_PROFILE_USER` or `R_ENVIRON_USER` is set, R reads that file instead
+/// of `.Rprofile` or `.Renviron` in the working directory, so both are removed.
+/// R then falls back to `~/.Rprofile` and `~/.Renviron` in directories without
+/// their own, including the default environment's empty working directory, so
+/// `HOME` and `R_USER` (the home directory of R on Windows) point at the empty
+/// `home`. `LANGUAGE` keeps R's messages untranslated, since tests compare the
+/// `stderr` R reports for a failing startup.
+///
+/// The resolver passes no environment of its own, so its R processes inherit
+/// these settings. Call this before the test starts any thread, since
+/// `set_var()` races with concurrent environment reads. nextest runs each test
+/// in its own process, so the changes don't reach other tests.
+fn isolate_r_startup(home: &Path) {
+    unsafe {
+        std::env::remove_var("R_PROFILE_USER");
+        std::env::remove_var("R_ENVIRON_USER");
+        std::env::set_var("HOME", home);
+        std::env::set_var("R_USER", home);
+        std::env::set_var("LANGUAGE", "en");
+    }
+}
+
+fn r_process_global_state() -> GlobalState {
+    let resolver: Arc<dyn EnvironmentResolver> = Arc::new(RProcessResolver::new(find_r()));
+    GlobalState::from_parts(
+        test_client(),
+        WorldState::new(unresolved_database()),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
+    )
+}
+
+/// Escape the path for the inside of a single-quoted R string literal. Windows
+/// paths contain backslashes, and a temporary directory can contain an
+/// apostrophe (`O'Brien`), either of which would otherwise break the literal.
+fn r_string_path(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+}
+
+/// R normalizes the paths given to `.libPaths()`, which resolves symlinks such
+/// as macOS's `/tmp` and `/var`. Compare canonical paths on both sides.
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap()
 }
 
 /// Generate diagnostics for the open buffer directly, without waiting for
