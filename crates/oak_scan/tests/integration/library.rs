@@ -287,10 +287,9 @@ fn test_rescan_preserves_package_identity_by_description_name() {
 }
 
 #[test]
-fn test_set_library_paths_unchanged_path_does_not_relist_library() {
-    // An unchanged library path is not rescanned by `set_library_paths()`, so
-    // the package keeps its original entity and `DESCRIPTION` path after a
-    // directory rename. Watcher-driven rescans reconcile such changes.
+fn test_set_library_paths_unchanged_path_relists_library() {
+    // Relisting preserves the `Root`, but renaming the package directory
+    // changes its `DESCRIPTION` path, so it gets a new `Package` identity.
     use salsa::plumbing::AsId;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -298,17 +297,19 @@ fn test_set_library_paths_unchanged_path_does_not_relist_library() {
     let mut db = OakDatabase::new();
 
     db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let pkg_id_1 = db.library_roots().roots(&db)[0].packages(&db)[0].as_id();
+    let root = db.library_roots().roots(&db)[0];
+    let pkg_id_1 = root.packages(&db)[0].as_id();
 
     fs::rename(tmp.path().join("v1"), tmp.path().join("v2")).unwrap();
 
     db.set_library_paths(&[tmp.path().to_path_buf()]);
-    let pkg = db.library_roots().roots(&db)[0].packages(&db)[0];
+    assert_eq!(db.library_roots().roots(&db).clone(), vec![root]);
+    let pkg = root.packages(&db)[0];
 
-    assert_eq!(pkg.as_id(), pkg_id_1);
-    let v1_description =
-        FilePath::from_path_buf(tmp.path().join("v1").join("DESCRIPTION")).unwrap();
-    assert_eq!(pkg.description_path(&db), &v1_description);
+    assert_ne!(pkg.as_id(), pkg_id_1);
+    let v2_description =
+        FilePath::from_path_buf(tmp.path().join("v2").join("DESCRIPTION")).unwrap();
+    assert_eq!(pkg.description_path(&db), &v2_description);
 }
 
 #[test]

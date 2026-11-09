@@ -2,6 +2,7 @@ mod contrib;
 mod cycle_results;
 mod db;
 mod diagnostic_render;
+mod environment;
 mod file;
 mod file_bindings;
 mod file_cursor_scope;

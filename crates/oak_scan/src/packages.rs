@@ -312,7 +312,7 @@ const ENVIRONMENT_SENTINELS: [&str; 2] = [".Rprofile", ".Renviron"];
 /// [`is_environment_dir()`] finds `.rprofile` through its `.Rprofile` probe, so
 /// an event for `.rprofile` must count as a sentinel event too. On a
 /// case-sensitive volume this only costs an unneeded rescan.
-pub(crate) fn is_environment_sentinel(file_name: &str) -> bool {
+pub fn is_environment_sentinel(file_name: &str) -> bool {
     ENVIRONMENT_SENTINELS
         .iter()
         .any(|sentinel| sentinel.eq_ignore_ascii_case(file_name))

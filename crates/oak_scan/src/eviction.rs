@@ -1,4 +1,5 @@
-//! Eviction logic shared by the library and workspace `set_*_paths` helpers.
+//! Root eviction shared by environment writers and
+//! [`crate::ScanScheduler::set_workspace_paths()`].
 //!
 //! Eviction changes membership, not identity. Salsa retains the input
 //! entities, and [`oak_db::IdentityMap`] retains their path-to-entity mappings

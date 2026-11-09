@@ -9,6 +9,8 @@ use crate::db::notebook_by_cell;
 use crate::db::root_by_file;
 use crate::diagnostic::lower_semantic_diagnostic;
 use crate::diagnostic::Diagnostic;
+use crate::environment::file_environment;
+use crate::environment::workspace_anchor;
 use crate::file_diagnostics::inherited_shadow_diagnostics;
 use crate::file_imports::CollationView;
 use crate::file_revision::report_untracked_if_zero;
@@ -17,11 +19,11 @@ use crate::parse::OakParse;
 use crate::recovery::record;
 use crate::recovery::Recovery;
 use crate::Db;
+use crate::Environment;
 use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::Root;
-use crate::RootKind;
 use crate::SourceDb;
 
 /// A source file tracked by Salsa.
@@ -368,32 +370,40 @@ impl File {
     /// nested calls instead use the session's working directory and can
     /// resolve different files.
     ///
+    /// [`File::environment()`] uses the same workspace anchor to select a live
+    /// environment. If none exists there, environment lookup falls back without
+    /// changing this anchor.
+    ///
     /// Reads only source inputs and [`File::root()`]. Neither depends on
     /// [`File::semantic_index()`], so resolving an anchor while building that
     /// index does not re-enter the semantic-index query.
     pub fn anchor_dir(self, db: &dyn SourceDb) -> Option<Utf8PathBuf> {
-        let file_path = self.path(db).as_path()?;
-
-        let Some(root) = self
-            .root(db)
-            .filter(|root| root.kind(db) == RootKind::Workspace)
-        else {
-            return Some(file_path.parent()?.to_path_buf());
+        let Some(anchor) = workspace_anchor(db, self) else {
+            return Some(self.path(db).as_path()?.parent()?.to_path_buf());
         };
 
-        // `environment_dirs()` is sorted by path. Reverse lookup finds the
-        // nearest enclosing directory first.
-        let environment_dir = root
-            .environment_dirs(db)
-            .iter()
-            .filter_map(FilePath::as_path)
-            .rfind(|dir| file_path.starts_with(dir));
-        if let Some(dir) = environment_dir {
-            return Some(dir.to_path_buf());
-        }
-
         // Workspace roots are file URLs by construction.
-        root.path(db).as_path().map(Utf8Path::to_path_buf)
+        anchor.dir(db).as_path().map(Utf8Path::to_path_buf)
+    }
+
+    /// The environment selected for this file's library lookup.
+    ///
+    /// A workspace file uses its nearest enclosing environment directory in
+    /// [`Root::environment_dirs()`], or its root if no directory encloses it.
+    /// If that directory has no live environment, lookup falls back to the
+    /// root's environment, then to
+    /// [`DbInputs::default_environment()`](crate::DbInputs::default_environment).
+    /// Notebook cells select the workspace directory from their notebook's
+    /// path. Library files, files outside every workspace root and other
+    /// virtual documents use the default.
+    ///
+    /// Relative `source()` paths use the same workspace directory, even when
+    /// environment lookup falls back. Notebook cells have no `source()` anchor
+    /// because their own URIs are virtual. This query reads no semantic queries,
+    /// so semantic queries can call it without introducing a cycle through it.
+    #[salsa::tracked(returns(copy))]
+    pub fn environment(self, db: &dyn SourceDb) -> Environment {
+        file_environment(db, self)
     }
 
     /// The cells before this one in its open notebook, in document order.
@@ -414,10 +424,10 @@ impl File {
 
 /// Find the workspace `Root` whose path is the longest-prefix ancestor
 /// of `path`. Returns `None` for virtual documents and for paths outside
-/// every workspace folder. Private helper: the only caller is
-/// [`File::root`], as the fallback for an orphan file no scan has reached
-/// yet (path prefix is all we have until a scan lands).
-fn root_by_path(db: &dyn SourceDb, path: &FilePath) -> Option<Root> {
+/// every workspace folder. [`File::root()`] uses this lookup when no scan has
+/// reached the file. Environment lookup also uses it for a cell's notebook,
+/// which is not represented by a [`File`].
+pub(crate) fn root_by_path(db: &dyn SourceDb, path: &FilePath) -> Option<Root> {
     // Virtual documents (e.g. untitled scheme) don't have roots
     let path = path.as_path()?;
     db.workspace_roots()

@@ -97,12 +97,13 @@ impl WorkspaceRoots {
     }
 }
 
-/// The set of R libraries (`.libPaths()` entries).
+/// The merged library roots of all live environments.
 ///
-/// Populated by the library watcher (outside the LSP since libraries live
-/// outside the user's project). Each entry is a [`Root`] of kind
-/// [`RootKind::Library`](crate::RootKind::Library). Order matches R's
-/// `.libPaths()` lookup order.
+/// `oak_scan`'s environment writers maintain this list. Each entry is a
+/// [`Root`] of kind [`RootKind::Library`]. Roots appear once, in order of first
+/// occurrence across [`WorkspaceEnvironments`], followed by the default
+/// environment. Each environment's roots follow its R session's `.libPaths()`
+/// lookup order. Library watchers rescan these roots without changing the list.
 #[salsa::input]
 pub struct LibraryRoots {
     #[returns(ref)]
@@ -111,6 +112,92 @@ pub struct LibraryRoots {
 
 impl LibraryRoots {
     /// Construct an empty `LibraryRoots` with no library directories.
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![])
+    }
+}
+
+/// Library resolution state for files that share an R startup directory.
+///
+/// Workspace environments represent roots and their environment directories
+/// ([`Root::environment_dirs()`]). [`WorkspaceEnvironments`] lists the live
+/// ones. The always-live default has no workspace directory.
+/// [`File::environment()`](crate::File::environment) selects an environment
+/// for each file.
+///
+/// **Write invariant.** [`LibraryRoots`] contains each live environment's
+/// library roots once, in order of first occurrence across
+/// [`WorkspaceEnvironments`], then the default. Update `status` only through
+/// `oak_scan`'s environment writers, which maintain this list and evict roots
+/// that no live environment lists.
+#[salsa::input(debug)]
+pub struct Environment {
+    /// R startup directory for a workspace environment. `None` for the
+    /// default, which is not tied to a workspace directory.
+    #[returns(ref)]
+    pub dir: Option<FilePath>,
+    #[returns(ref)]
+    pub status: EnvironmentStatus,
+    /// Error from the last failed run, cleared on success or when the default
+    /// is marked unresolved. A failed run preserves `status`, so a failed
+    /// rerun can retain libraries from the last success.
+    #[returns(ref)]
+    pub last_error: Option<String>,
+}
+
+impl Environment {
+    pub(crate) fn new_default(db: &dyn Db) -> Self {
+        Self::new(db, None, EnvironmentStatus::Resolved(Vec::new()), None)
+    }
+
+    /// Whether this is the default environment or a member of
+    /// [`WorkspaceEnvironments`]. Removed environments remain allocated
+    /// because Salsa does not garbage-collect inputs, so a resolution started
+    /// before a removal can complete for an environment that is no longer live.
+    pub fn is_live(self, db: &dyn Db) -> bool {
+        self == db.default_environment() ||
+            db.workspace_environments().environments(db).contains(&self)
+    }
+}
+
+/// Whether library roots are available for an [`Environment`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EnvironmentStatus {
+    /// No library roots are available. Workspace environments start here.
+    /// Marking the default unresolved or removing a workspace environment
+    /// also resets it to this state, even after a successful run.
+    /// See [`Environment::last_error()`] for a failed run.
+    Unresolved,
+    /// Library roots from the last successful resolution, in `.libPaths()`
+    /// lookup order. Environments that report the same path share one [`Root`].
+    /// The default starts in this state with an empty list, before any run.
+    Resolved(Vec<Root>),
+}
+
+impl EnvironmentStatus {
+    /// The resolved library roots, empty when unresolved.
+    pub fn library_roots(&self) -> &[Root] {
+        match self {
+            EnvironmentStatus::Unresolved => &[],
+            EnvironmentStatus::Resolved(roots) => roots,
+        }
+    }
+}
+
+/// The live environments of workspace roots and their environment
+/// directories, one per directory. Excludes the default environment.
+///
+/// List order determines library precedence in [`LibraryRoots`].
+/// `oak_scan`'s `DbScan::reconcile_environments()` orders workspace roots as listed in
+/// [`WorkspaceRoots`], each followed by its environment directories sorted by
+/// path. Directories shared by roots appear only at their first occurrence.
+#[salsa::input]
+pub struct WorkspaceEnvironments {
+    #[returns(ref)]
+    pub environments: Vec<Environment>,
+}
+
+impl WorkspaceEnvironments {
     pub fn empty(db: &dyn Db) -> Self {
         Self::new(db, vec![])
     }

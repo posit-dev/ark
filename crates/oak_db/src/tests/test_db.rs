@@ -20,6 +20,7 @@ use crate::test_path::file_path;
 use crate::Db;
 use crate::DbInputs;
 use crate::EditorBuffers;
+use crate::Environment;
 use crate::File;
 use crate::FileRevision;
 use crate::IdentityMap;
@@ -31,6 +32,7 @@ use crate::PackageFiles;
 use crate::Root;
 use crate::RootKind;
 use crate::SourceDb;
+use crate::WorkspaceEnvironments;
 use crate::WorkspaceRoots;
 
 type Events = Arc<Mutex<Vec<salsa::Event>>>;
@@ -44,6 +46,8 @@ pub(super) struct TestDb {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
+    workspace_environments: Arc<OnceLock<WorkspaceEnvironments>>,
+    default_environment: Arc<OnceLock<Environment>>,
     identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
     editor_buffers: EditorBuffers,
@@ -65,6 +69,8 @@ impl TestDb {
             workspace_roots: Arc::new(OnceLock::new()),
             library_roots: Arc::new(OnceLock::new()),
             orphan_root: Arc::new(OnceLock::new()),
+            workspace_environments: Arc::new(OnceLock::new()),
+            default_environment: Arc::new(OnceLock::new()),
             identity_map: Arc::default(),
             open_notebooks: Arc::new(OnceLock::new()),
             editor_buffers: EditorBuffers::default(),
@@ -136,6 +142,18 @@ impl DbInputs for TestDb {
 
     fn orphan_root(&self) -> OrphanRoot {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
+    }
+
+    fn workspace_environments(&self) -> WorkspaceEnvironments {
+        *self
+            .workspace_environments
+            .get_or_init(|| WorkspaceEnvironments::empty(self))
+    }
+
+    fn default_environment(&self) -> Environment {
+        *self
+            .default_environment
+            .get_or_init(|| Environment::new_default(self))
     }
 
     fn identity_map(&self) -> &IdentityMap {

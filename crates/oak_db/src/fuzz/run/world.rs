@@ -28,6 +28,7 @@ use crate::test_path::path_name;
 use crate::DbInputs;
 #[cfg(test)]
 use crate::DiagnosticKind;
+use crate::EnvironmentStatus;
 use crate::File;
 use crate::FileRevision;
 use crate::Name;
@@ -131,6 +132,11 @@ impl World {
             vec![],
         );
         db.library_roots().set_roots(&mut db).to(vec![library]);
+        // Keep `LibraryRoots` the union of the live environments' libraries,
+        // as `oak_scan`'s environment writers would leave it.
+        db.default_environment()
+            .set_status(&mut db)
+            .to(EnvironmentStatus::Resolved(vec![library]));
 
         let files: Vec<File> = spec
             .ids()

@@ -9,11 +9,13 @@ use crate::file_reader::FileReader;
 use crate::Db;
 use crate::DbInputs;
 use crate::EditorBuffers;
+use crate::Environment;
 use crate::IdentityMap;
 use crate::LibraryRoots;
 use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::SourceDb;
+use crate::WorkspaceEnvironments;
 use crate::WorkspaceRoots;
 
 /// Concrete Salsa database.
@@ -27,6 +29,8 @@ pub struct OakDatabase {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
+    workspace_environments: Arc<OnceLock<WorkspaceEnvironments>>,
+    default_environment: Arc<OnceLock<Environment>>,
     identity_map: Arc<IdentityMap>,
     open_notebooks: Arc<OnceLock<OpenNotebooks>>,
     editor_buffers: EditorBuffers,
@@ -47,6 +51,8 @@ impl OakDatabase {
             workspace_roots: Arc::default(),
             library_roots: Arc::default(),
             orphan_root: Arc::default(),
+            workspace_environments: Arc::default(),
+            default_environment: Arc::default(),
             identity_map: Arc::default(),
             open_notebooks: Arc::default(),
             editor_buffers: EditorBuffers::default(),
@@ -70,6 +76,8 @@ impl OakDatabase {
             workspace_roots: Arc::clone(&self.workspace_roots),
             library_roots: Arc::clone(&self.library_roots),
             orphan_root: Arc::clone(&self.orphan_root),
+            workspace_environments: Arc::clone(&self.workspace_environments),
+            default_environment: Arc::clone(&self.default_environment),
             identity_map: Arc::clone(&self.identity_map),
             open_notebooks: Arc::clone(&self.open_notebooks),
             // Snapshots never write, so they don't need the open set.
@@ -119,6 +127,18 @@ impl DbInputs for OakDatabase {
 
     fn orphan_root(&self) -> OrphanRoot {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
+    }
+
+    fn workspace_environments(&self) -> WorkspaceEnvironments {
+        *self
+            .workspace_environments
+            .get_or_init(|| WorkspaceEnvironments::empty(self))
+    }
+
+    fn default_environment(&self) -> Environment {
+        *self
+            .default_environment
+            .get_or_init(|| Environment::new_default(self))
     }
 
     fn identity_map(&self) -> &IdentityMap {

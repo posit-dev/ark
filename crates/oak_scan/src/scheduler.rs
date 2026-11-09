@@ -16,7 +16,9 @@
 //! [`ScanScheduler::apply_scan_completed`]. Tests do the same on the
 //! current thread via `drain_scheduler`.
 //!
-//! [`crate::DbScan::set_library_paths()`] scans new library roots synchronously.
+//! Environment writers create library roots. [`crate::DbScan::resolve_environment()`]
+//! applies precomputed listings, while [`crate::DbScan::set_library_paths()`]
+//! lists libraries synchronously.
 //! Later, events for direct library entries request rescans through the same
 //! request/completion cycle and coalescing state as workspace scans. An event
 //! during a rescan queues a follow-up listing to pick up changes missed by the

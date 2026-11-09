@@ -1,19 +1,16 @@
-//! Library scanner. Drives `LibraryRoots` from `.libPaths()` entries.
+//! Library listing and reconciliation of a library root's packages.
 //!
-//! [`set_library_paths()`] reconciles live library roots to the supplied
-//! paths. Unchanged paths require no filesystem walk or Salsa writes.
-//! Removed roots are evicted, but [`oak_db::IdentityMap`] retains their
-//! `File` and `Package` identities for reuse if their paths are added again.
+//! [`crate::DbScan::resolve_environment()`] applies each library's package
+//! listing through [`set_installed_packages()`]. When no live environment
+//! lists a library path, its root is evicted. [`oak_db::IdentityMap`] retains
+//! its `File` and `Package` identities for reuse if the path returns.
 //!
 //! The LSP watches direct library entries, and [`crate::ScanScheduler`] rescans
 //! the affected library. Changes inside an existing package directory are not
-//! watched. Initial scans and rescans share [`list_library()`] and
+//! watched. Environment listings and rescans share [`list_library()`] and
 //! [`set_installed_packages()`] to keep listing and reconciliation consistent.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
-use std::path::PathBuf;
 
 use aether_path::FilePath;
 use oak_db::Db;
@@ -21,80 +18,24 @@ use oak_db::DbInputs;
 use oak_db::FileRevision;
 use oak_db::Package;
 use oak_db::Root;
-use oak_db::RootKind;
 use salsa::Setter;
 use walkdir::WalkDir;
 
 use crate::eviction::clear_package_contents;
 use crate::inputs::replace_package_membership;
 use crate::inputs::upsert_package_metadata;
-use crate::inputs::RootExt;
 use crate::packages::file_revision;
 use crate::packages::is_installed_package;
 
 /// Metadata from [`list_library()`] that lets [`set_installed_packages()`]
 /// register or refresh a [`Package`] without further filesystem access.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct InstalledPackageEntry {
+pub struct InstalledPackageEntry {
     pub name: String,
     pub description_path: FilePath,
     pub description_revision: FileRevision,
     pub namespace_revision: FileRevision,
     pub index_revision: FileRevision,
-}
-
-/// Reconcile `LibraryRoots` to exactly `paths`. Called through
-/// [`crate::DbScan::set_library_paths`]. Order in `LibraryRoots.roots`
-/// follows `paths`, matching R's `.libPaths()` precedence.
-pub(crate) fn set_library_paths<DB: Db + DbInputs>(db: &mut DB, paths: &[PathBuf]) {
-    let new: Vec<(PathBuf, FilePath)> = paths
-        .iter()
-        .filter_map(|p| {
-            let path = FilePath::from_path_buf(p.clone())?;
-            Some((p.clone(), path))
-        })
-        .collect();
-    let new_paths: HashSet<FilePath> = new.iter().map(|(_, path)| path.clone()).collect();
-
-    let old: HashMap<FilePath, Root> = db
-        .library_roots()
-        .roots(db)
-        .iter()
-        .map(|r| (r.path(db).clone(), *r))
-        .collect();
-
-    for (old_path, &old_root) in &old {
-        if !new_paths.contains(old_path) {
-            old_root.evict(db);
-        }
-    }
-
-    // Build the new roots list in order: reuse the existing `Root` for
-    // unchanged paths (no rescan, that's handled by the watcher), scan the rest.
-    let mut new_roots = Vec::with_capacity(new.len());
-    for (scan_path, path) in new {
-        let root = match old.get(&path) {
-            Some(&r) => r,
-            None => scan_new_library_path(db, &scan_path, path),
-        };
-        new_roots.push(root);
-    }
-    if db.library_roots().roots(db) != &new_roots {
-        db.library_roots().set_roots(db).to(new_roots);
-    }
-}
-
-fn scan_new_library_path<DB: Db + DbInputs>(db: &mut DB, scan_path: &Path, path: FilePath) -> Root {
-    let root = Root::new(
-        db,
-        path,
-        RootKind::Library,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    );
-    set_installed_packages(db, root, list_library(scan_path));
-    root
 }
 
 /// List installed packages without database access so rescans can run off the

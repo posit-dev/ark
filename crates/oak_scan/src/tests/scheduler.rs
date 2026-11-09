@@ -1642,6 +1642,42 @@ fn test_installed_package_replaced_by_source_keeps_workspace_files() {
 }
 
 #[test]
+fn test_evicted_library_keeps_workspace_adopted_package_files() {
+    // As above, but an environment result drops the whole library before its
+    // rescan runs, so eviction removes the package from it.
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let lib = workspace_dir.path().join("lib");
+    let pkg_dir = lib.join("pkg");
+    write_installed_package(&lib, "pkg");
+    let mut db = OakDatabase::new();
+    db.set_library_paths(slice::from_ref(&lib));
+    let library = db.library_roots().roots(&db)[0];
+    let mut scheduler = ScanScheduler::new();
+    let roots = scan_workspace(&mut db, &mut scheduler, &[workspace_dir
+        .path()
+        .to_path_buf()]);
+    let workspace = roots[0];
+
+    fs::remove_dir_all(pkg_dir.join("Meta")).unwrap();
+    write_package(&pkg_dir, "pkg", &[("a.R", "a <- 1\n")]);
+    let rprofile = workspace_dir.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let requests = scheduler.apply_watcher_events(&mut db, vec![watched_path(&rprofile)]);
+    drain_scheduler(&mut db, &mut scheduler, requests);
+    let pkg = workspace.packages(&db)[0];
+    assert_eq!(library.packages(&db), &vec![pkg]);
+    let files = pkg.files(&db).to_vec();
+    assert_eq!(files.len(), 1);
+
+    db.set_library_paths(&[]);
+
+    assert!(db.library_roots().roots(&db).is_empty());
+    assert!(library.packages(&db).is_empty());
+    assert_eq!(pkg.files(&db), files.as_slice());
+    assert_eq!(files[0].package(&db), Some(pkg));
+}
+
+#[test]
 fn test_workspace_adoption_resets_sources_revision() {
     // A reinstall with the same `DESCRIPTION` revision would otherwise keep
     // the workspace files as fetched sources.

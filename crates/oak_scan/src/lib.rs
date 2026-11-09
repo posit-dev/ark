@@ -19,6 +19,7 @@
 //! crate are the only intended callers of the placement-affecting
 //! setters on `oak_db`'s input structs.
 
+mod environments;
 mod eviction;
 mod inputs;
 mod library;
@@ -29,8 +30,12 @@ mod watch;
 #[cfg(test)]
 mod tests;
 
+pub use environments::list_libraries;
+pub use environments::LibraryListing;
 pub use inputs::DbScan;
 pub use inputs::FileEntry;
+pub use library::InstalledPackageEntry;
+pub use packages::is_environment_sentinel;
 pub use scheduler::ScanCompleted;
 pub use scheduler::ScanRequest;
 pub use scheduler::ScanScheduler;

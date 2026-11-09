@@ -24,6 +24,7 @@ use std::thread;
 use aether_path::FilePath;
 use oak_db::Db;
 use oak_db::DbInputs;
+use oak_db::Environment;
 use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::Notebook;
@@ -31,6 +32,7 @@ use oak_db::Package;
 use oak_db::Root;
 use salsa::Setter;
 
+use crate::environments::LibraryListing;
 use crate::packages::read_package_sources;
 
 /// Description of one R file the scanner wants to register.
@@ -56,28 +58,64 @@ pub struct FileEntry {
 /// coalescing) lives on [`crate::ScanScheduler`] instead, since it
 /// needs scheduler state that can't be kept in salsa inputs.
 pub trait DbScan: Db + DbInputs {
-    /// Reconcile `LibraryRoots` to exactly `paths`.
+    /// Resolve the default environment to `paths`, listing every library
+    /// synchronously before applying [`Self::resolve_environment()`].
     ///
-    /// - Paths already present as a `Root`: untouched. No fs walk, no
-    ///   salsa churn. Watcher-driven rescans are handled separately by
-    ///   [`crate::ScanScheduler::apply_watcher_events()`].
+    /// With no workspace environments, the merged `LibraryRoots` follows
+    /// `paths` in R's `.libPaths()` lookup order, ignoring duplicate paths and
+    /// paths that cannot be represented as file URLs.
     ///
-    /// - New paths are scanned synchronously and added.
+    /// Paths already present as a `Root` keep it, and their listing is applied
+    /// as a rescan would, writing nothing when unchanged. Paths no environment
+    /// lists any more have their roots evicted. Open buffers no longer listed
+    /// by a live root stay visible through [`OrphanRoot`](oak_db::OrphanRoot).
+    /// Re-adding a path reuses its `File` and `Package` entities through
+    /// [`oak_db::IdentityMap`].
     ///
-    /// - Removed paths have their roots evicted.
-    ///   Open buffers no longer listed by a live root stay visible through
-    ///   [`OrphanRoot`](oak_db::OrphanRoot).
-    ///   Re-adding a path reuses its `File` and `Package` entities through
-    ///   [`oak_db::IdentityMap`].
-    ///
-    /// Order in `LibraryRoots.roots` follows `paths`, matching R's
-    /// `.libPaths()` precedence.
-    ///
-    /// Synchronous scans make installed packages available to the first LSP
-    /// diagnostics at startup. If this call removes a root with a rescan in
-    /// flight, [`crate::ScanScheduler::apply_scan_completed()`] drops its result
-    /// because the root is no longer in `library_roots`.
+    /// If this call removes a root with a rescan in flight,
+    /// [`crate::ScanScheduler::apply_scan_completed()`] drops its result
+    /// because the root is no longer in `LibraryRoots`.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
+
+    /// Reconcile the live workspace environments to the workspace roots and
+    /// their `environment_dirs`. Order follows workspace root order, each root
+    /// followed by its environment directories, and a directory listed more
+    /// than once counts once.
+    ///
+    /// Existing directories retain their environment identity and state.
+    /// New directories get unresolved environments, returned in live list
+    /// order for the caller to resolve. Removed environments leave the live
+    /// list and have their status reset to unresolved. Libraries no live
+    /// environment lists are evicted from `LibraryRoots`.
+    fn reconcile_environments(&mut self) -> Vec<Environment>;
+
+    /// Clear the default environment's resolved libraries and last error,
+    /// setting its status to [`Unresolved`](oak_db::EnvironmentStatus::Unresolved).
+    /// Call before requesting its initial resolution, since the default
+    /// starts resolved to no libraries.
+    fn mark_default_environment_unresolved(&mut self);
+
+    /// Resolve `environment` to the libraries its R session reported, in
+    /// `.libPaths()` order, and clear its last error.
+    ///
+    /// Reuse the live library root at each path, or create a new root, and
+    /// apply its package listing without filesystem access. Duplicate paths
+    /// and paths that cannot be represented as file URLs are skipped.
+    /// Recompute the merged `LibraryRoots` and evict roots no environment lists.
+    /// If all input values are unchanged, including the last error, no Salsa
+    /// revision is created.
+    ///
+    /// An environment that is no longer live ([`Environment::is_live()`]) is
+    /// ignored, so a late completion can be handed over without checking.
+    fn resolve_environment(&mut self, environment: Environment, libraries: Vec<LibraryListing>);
+
+    /// Record a failed run without changing `environment`'s status or
+    /// libraries. An unresolved environment stays unresolved, and a resolved
+    /// one keeps its library roots. `LibraryRoots` is unchanged.
+    ///
+    /// Repeating the same error writes nothing. An environment that is no
+    /// longer live is ignored.
+    fn record_environment_failure(&mut self, environment: Environment, error: String);
 
     /// Upsert the editor's view of a file. Used by the LSP layer to apply
     /// `didOpen` / `didChange` content for any URL the editor touches.
@@ -158,8 +196,23 @@ pub trait DbScan: Db + DbInputs {
 
 impl<DB: Db + DbInputs> DbScan for DB {
     fn set_library_paths(&mut self, paths: &[PathBuf]) {
-        crate::library::set_library_paths(self, paths);
-        keep_open_files_visible(self);
+        crate::environments::set_library_paths(self, paths);
+    }
+
+    fn reconcile_environments(&mut self) -> Vec<Environment> {
+        crate::environments::reconcile_environments(self)
+    }
+
+    fn mark_default_environment_unresolved(&mut self) {
+        crate::environments::mark_default_environment_unresolved(self);
+    }
+
+    fn resolve_environment(&mut self, environment: Environment, libraries: Vec<LibraryListing>) {
+        crate::environments::resolve_environment(self, environment, libraries);
+    }
+
+    fn record_environment_failure(&mut self, environment: Environment, error: String) {
+        crate::environments::record_environment_failure(self, environment, error);
     }
 
     fn upsert_editor(&mut self, path: FilePath, contents: String) -> File {

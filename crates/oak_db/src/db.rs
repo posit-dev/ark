@@ -11,6 +11,7 @@ use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use salsa::Setter;
 
+use crate::Environment;
 use crate::File;
 use crate::FileRevision;
 use crate::LibraryRoots;
@@ -21,6 +22,7 @@ use crate::OrphanRoot;
 use crate::Package;
 use crate::PackageFiles;
 use crate::Root;
+use crate::WorkspaceEnvironments;
 use crate::WorkspaceRoots;
 
 /// Concrete-input surface of the salsa database. Each impl
@@ -39,6 +41,17 @@ pub trait DbInputs: salsa::Database {
 
     /// Files not yet anchored to any workspace or library root.
     fn orphan_root(&self) -> OrphanRoot;
+
+    /// Live environments of workspace roots and their environment
+    /// directories. See [`WorkspaceEnvironments`].
+    fn workspace_environments(&self) -> WorkspaceEnvironments;
+
+    /// The always-live fallback for library files, virtual documents and
+    /// files with no live workspace environment. See [`File::environment()`].
+    ///
+    /// Starts resolved to no libraries, so databases that do not manage
+    /// environments have a resolved environment for every file.
+    fn default_environment(&self) -> Environment;
 
     /// The [`IdentityMap`] shared by all handles to this database.
     fn identity_map(&self) -> &IdentityMap;
