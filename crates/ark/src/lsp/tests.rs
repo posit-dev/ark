@@ -3,6 +3,7 @@ mod db;
 mod diagnostics;
 mod find_references;
 mod goto_definition;
+mod lazy_data;
 mod main_loop;
 mod namespace_completions;
 mod notebook;

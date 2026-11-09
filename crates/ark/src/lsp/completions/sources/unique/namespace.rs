@@ -260,6 +260,28 @@ mod tests {
     }
 
     #[test]
+    fn test_lazy_data_object_resolves_to_topic() {
+        let library = tempfile::TempDir::new().unwrap();
+        let mut state = write_library_package(library.path(), "pkg", "", None);
+        let package = state.db().package_by_name("pkg").unwrap();
+        package.set_lazy_data(state.db_mut(), vec![String::from("mtcars")]);
+
+        let items = static_items("pkg::@", &state, "pkg");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "mtcars");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::STRUCT));
+        assert_eq!(
+            resolve_target(&items[0]).unwrap(),
+            Some(ResolveTarget::Topic {
+                name: String::from("mtcars"),
+                package: String::from("pkg"),
+            })
+        );
+
+        assert!(static_items("pkg:::@", &state, "pkg").is_empty());
+    }
+
+    #[test]
     fn test_unknown_package_ends_search_without_items() {
         // https://github.com/posit-dev/ark/issues/833
         let state = state_with_r_library();

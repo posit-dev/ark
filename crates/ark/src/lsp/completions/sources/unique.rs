@@ -44,8 +44,10 @@ pub(super) enum Recognized {
 #[derive(Debug, PartialEq)]
 pub(crate) struct UniqueCompletions {
     pub(crate) items: Vec<CompletionItem>,
-    /// The library package whose fetched sources can change item kinds or add
-    /// namespace names. The answer is incomplete until this package settles.
+    /// The library package whose pending sources or sidecar facts can change
+    /// the completion list. Sources can add namespace names or change item
+    /// kinds, and the sidecar can add lazy data names. The answer is
+    /// incomplete until this package settles.
     pub(crate) incomplete_until_package_settles: Option<Package>,
 }
 

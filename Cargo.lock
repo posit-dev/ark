@@ -2848,6 +2848,7 @@ dependencies = [
  "oak_cache",
  "oak_r_process",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

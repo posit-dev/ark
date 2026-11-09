@@ -38,6 +38,7 @@ package.rs: struct Package [debug]
   namespace_override: Option<Namespace> [returns(ref)]
   membership: PackageFiles [returns(ref)]
   scripts: Vec<File> [returns(ref)]
+  lazy_data_names: Vec<String> [default, returns(ref)]
 
 == interned ==
 name.rs: struct Name<'db> [debug]

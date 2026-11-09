@@ -324,6 +324,52 @@ fn test_lsp_completions_busy_namespace_is_complete() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Lazy data names must remain available while the kernel's R session is busy.
+// Source fetching is disabled, so an incomplete answer means the startup
+// sidecar job is still pending. Wait for it before making R busy.
+#[test]
+fn test_lsp_completions_busy_namespace_lists_lazy_data() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp_with_settings(&[("oak.sourceFetching.enabled", json!(false))]);
+
+    let uri = lsp.open_document("completions_busy_lazy_data.R", "datasets::\n");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 10));
+        let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+        if responses[0].is_array() {
+            break;
+        }
+        assert_eq!(responses[0]["isIncomplete"], true);
+        if std::time::Instant::now() > deadline {
+            panic!("`datasets::` is still incomplete: {}", responses[0]);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 10));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let Some(items) = responses[0].as_array() else {
+        panic!("Expected a complete answer, got: {}", responses[0]);
+    };
+    let labels: Vec<&str> = items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default())
+        .collect();
+    assert!(labels.contains(&"mtcars"));
+    assert!(labels.contains(&"BJsales.lead"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
 // A document-symbol request queued behind a completion must not wait for R.
 #[test]
 fn test_lsp_completions_busy_does_not_stall_main_loop() -> anyhow::Result<()> {

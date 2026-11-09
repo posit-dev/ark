@@ -154,3 +154,21 @@ fn test_package_membership_keeps_sources_before_generated_files() {
     pkg.set_generated_files(&mut db, vec![stub]);
     assert_eq!(pkg.files(&db), [stub]);
 }
+
+#[test]
+fn test_package_lazy_data_skips_unchanged_writes() {
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
+    let (_root, pkg) = make_installed_package(&mut db, "datasets");
+    assert!(pkg.lazy_data(&db).is_empty());
+
+    pkg.set_lazy_data(&mut db, vec![String::from("b"), String::from("a")]);
+    assert_eq!(pkg.lazy_data(&db), ["a", "b"]);
+
+    let before = salsa::plumbing::current_revision(&db);
+    pkg.set_lazy_data(&mut db, vec![
+        String::from("a"),
+        String::from("b"),
+        String::from("a"),
+    ]);
+    assert_eq!(salsa::plumbing::current_revision(&db), before);
+}

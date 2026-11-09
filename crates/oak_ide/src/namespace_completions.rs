@@ -10,11 +10,12 @@ use oak_db::RootKind;
 /// The names that complete after `package::` or `package:::`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceCompletions {
-    /// The completed package when it is a library package, whose fetched
-    /// sources can change item kinds and add names from internal bindings or
-    /// `exportPattern()`. Hosts mark the answer incomplete until no such
-    /// fact can still arrive for it. `None` for a workspace package, whose
-    /// files are always present.
+    /// The library package whose pending sources or host-supplied lazy data
+    /// names can change this answer. Sources can change item kinds and add
+    /// internal bindings or names matching `exportPattern()`. Hosts mark the
+    /// answer incomplete until no such fact can still arrive for it.
+    /// `None` for workspace packages, whose files are already available and
+    /// for which hosts do not currently supply lazy data names.
     pub incomplete_until_package_settles: Option<Package>,
     /// Sorted by name, without duplicates.
     pub items: Vec<NamespaceItem>,
@@ -29,16 +30,19 @@ pub struct NamespaceItem {
 /// List the names of `package` visible through `::` (`Exported`) or `:::`
 /// (`Internal`). `None` when no package of that name is known.
 ///
-/// - `::` lists explicit `NAMESPACE` exports and the package's own bindings
-///   matching `exportPattern()`. Patterns do not apply to imports.
-/// - `:::` also lists internal bindings. Explicit exports remain available
-///   without fetched sources, except for `importFrom()` re-exports, which
-///   `pkg:::name` cannot reach through the imports environment.
+/// - `::` lists explicit `NAMESPACE` exports, the package's own bindings
+///   matching `exportPattern()`, and its lazy data objects
+///   ([`Package::lazy_data()`]). Patterns do not apply to imports.
+/// - `:::` lists internal bindings and explicit exports, but does not search
+///   lazy data or the imports environment. Explicit exports remain available
+///   without fetched sources, except for `importFrom()` re-exports.
 /// - `base` has no `NAMESPACE`, so every indexed binding is exported.
 ///
 /// Kinds come from [`Package::bindings()`]. For an export with no local
 /// binding, try resolving an `importFrom()` re-export in its source package.
 /// If no definitions with known kinds are available, the kind is unknown.
+/// Lazy data names have unknown kind unless an export of the same name is
+/// already listed. The export takes precedence, matching `pkg::name` lookup.
 pub fn namespace_completions(
     db: &dyn Db,
     package: &str,
@@ -72,6 +76,12 @@ pub fn namespace_completions(
                 None => reexport_kind(db, package, name),
             };
             items.insert(name, kind);
+        }
+    }
+
+    if visibility == NamespaceVisibility::Exported {
+        for name in package.lazy_data(db) {
+            items.entry(name).or_insert(BindingKind::Unknown);
         }
     }
 

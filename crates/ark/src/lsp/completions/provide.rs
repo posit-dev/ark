@@ -29,9 +29,11 @@ pub(crate) struct StaticCompletions {
 }
 
 impl StaticCompletions {
-    /// The library package whose fetched sources can change item kinds or add
-    /// namespace names. The handler marks the answer incomplete until this
-    /// package settles, even when the item list is empty.
+    /// The library package whose pending sources or sidecar facts can change
+    /// the completion list. Sources can add namespace names or change item
+    /// kinds, and the sidecar can add lazy data names. The handler marks the
+    /// answer incomplete until this package settles, even when the item list
+    /// is empty.
     pub(crate) fn incomplete_until_package_settles(&self) -> Option<Package> {
         self.incomplete_until_package_settles
     }

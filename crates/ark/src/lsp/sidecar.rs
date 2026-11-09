@@ -4,14 +4,15 @@
 //! in [`crate::lsp::sources`]. It needs no network and is not gated by
 //! `oak.sourceFetching.enabled` or the outcome of a source fetch.
 //! For installed `base`, it supplies primitive stubs as generated files in
-//! [`Package::files()`].
+//! [`Package::files()`]. For installed packages with lazy data, it supplies
+//! the object names that `pkg::` lists through [`Package::lazy_data()`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use oak_db::Db;
 use oak_db::Package;
-use oak_db::RootKind;
+use oak_sidecar::lazy_data;
 use oak_sidecar::primitives::PrimitivesCache;
 use stdext::result::ResultExt;
 
@@ -26,28 +27,44 @@ pub(crate) trait SidecarHandler: Send + Sync {
     fn handle(&self, request: &SidecarRequest) -> SidecarResponse;
 }
 
-/// Generates primitive stubs with the local R and caches them on disk so
-/// [`Package::files()`] can refer to them as files.
+/// Uses the local R to compute package facts. Primitive stubs are cached on
+/// disk for [`Package::files()`]. Lazy data indexes for all packages in the
+/// request are read in a single R process.
 pub(crate) struct OakSidecarHandler {
+    r: PathBuf,
     primitives: PrimitivesCache,
 }
 
 impl OakSidecarHandler {
     pub(crate) fn new(r: PathBuf) -> anyhow::Result<Self> {
-        Ok(Self {
-            primitives: PrimitivesCache::open(r)?,
-        })
+        let primitives = PrimitivesCache::open(r.clone())?;
+        Ok(Self { r, primitives })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_primitives(r: PathBuf, primitives: PrimitivesCache) -> Self {
+        Self { r, primitives }
     }
 }
 
 impl SidecarHandler for OakSidecarHandler {
     fn handle(&self, request: &SidecarRequest) -> SidecarResponse {
+        // Results follow request order but omit packages without `Rdata.rds`.
+        let mut lazy_data = self.lazy_data(request).into_iter();
+
         let packages = request
             .packages
             .iter()
-            .map(|package| PackageFacts {
-                package: package.package,
-                primitive_stubs: self.primitive_stubs(package),
+            .map(|package| {
+                let lazy_data = match package.lazy_data {
+                    Some(_) => lazy_data.next().flatten(),
+                    None => None,
+                };
+                PackageFacts {
+                    package: package.package,
+                    primitive_stubs: self.primitive_stubs(package),
+                    lazy_data,
+                }
             })
             .collect();
 
@@ -59,13 +76,30 @@ impl OakSidecarHandler {
     /// Find cached primitive stubs for `base`'s version and `Built:`,
     /// generating them with the local R if needed. `None` for other packages.
     fn primitive_stubs(&self, package: &SidecarPackage) -> Option<PathBuf> {
-        if package.name != "base" {
-            return None;
-        }
-        if let Some(directory) = self.primitives.get(&package.version, &package.built) {
+        let base = package.base.as_ref()?;
+        if let Some(directory) = self.primitives.get(&base.version, &base.built) {
             return Some(directory);
         }
-        self.primitives.insert(&package.version, &package.built)
+        self.primitives.insert(&base.version, &base.built)
+    }
+
+    /// Returns one entry per requested `Rdata.rds`, in request order.
+    /// If [`lazy_data::read_object_names()`] returns an error, every entry is
+    /// `None`. An unreadable individual index gives `Some` with no names.
+    fn lazy_data(&self, request: &SidecarRequest) -> Vec<Option<Vec<String>>> {
+        let files: Vec<PathBuf> = request
+            .packages
+            .iter()
+            .filter_map(|package| package.lazy_data.clone())
+            .collect();
+
+        match lazy_data::read_object_names(&self.r, &files) {
+            Ok(names) => names.into_iter().map(Some).collect(),
+            Err(err) => {
+                log::error!("Failed to read lazy data names: {err:?}");
+                vec![None; files.len()]
+            },
+        }
     }
 }
 
@@ -74,11 +108,23 @@ pub(crate) struct SidecarRequest {
     packages: Vec<SidecarPackage>,
 }
 
-/// An installed package, with the `DESCRIPTION` fields that key its cached facts.
+/// An installed package with at least one fact to compute.
 #[derive(Debug, Clone)]
 pub(crate) struct SidecarPackage {
     package: Package,
-    name: String,
+
+    /// The build fields that key the primitive-stub cache. `Some` only for
+    /// `base`.
+    base: Option<BaseBuild>,
+
+    /// The package's `data/Rdata.rds`, which lists its lazy data objects.
+    /// `Some` only when the file exists.
+    lazy_data: Option<PathBuf>,
+}
+
+/// `base`'s `DESCRIPTION` fields, which key its cached primitive stubs.
+#[derive(Debug, Clone)]
+struct BaseBuild {
     version: String,
     built: String,
 }
@@ -95,6 +141,10 @@ pub(crate) struct PackageFacts {
     /// Cached directory of primitive stubs. `None` for packages other than
     /// `base`, or when no stubs could be obtained.
     pub(crate) primitive_stubs: Option<PathBuf>,
+
+    /// Lazy data object names, in any order. `None` if no index was requested
+    /// or the batch read failed. An unreadable index gives `Some` with no names.
+    pub(crate) lazy_data: Option<Vec<String>>,
 }
 
 enum SidecarState {
@@ -185,18 +235,21 @@ impl SidecarScheduler {
 }
 
 impl SidecarRequest {
-    /// Select installed `base`, the only package this job supplies facts for.
-    /// A missing version or `Built:` field is logged and excludes the package,
-    /// because both fields are required for the primitive-stub cache key.
-    fn from_db(db: &dyn Db) -> Self {
-        let packages = ["base"]
-            .into_iter()
-            .filter_map(|name| db.package_by_name(name))
-            .filter(|package| {
-                db.root_by_package(*package)
-                    .is_some_and(|root| root.kind(db) == RootKind::Library)
-            })
-            .filter_map(|package| SidecarPackage::from_package(db, package).log_err())
+    /// Selects `base` for primitive stubs and packages with `data/Rdata.rds`
+    /// for lazy data names, across all library roots. This includes packages
+    /// shadowed by an earlier library in the library search order.
+    ///
+    /// Checking for `Rdata.rds` before scheduling keeps packages with neither
+    /// a lazy data index nor primitive stubs out of
+    /// [`SidecarScheduler::may_change()`]. Only existing index files are passed
+    /// to R for lazy data names.
+    pub(crate) fn from_db(db: &dyn Db) -> Self {
+        let packages = db
+            .library_roots()
+            .roots(db)
+            .iter()
+            .flat_map(|root| root.packages(db).iter())
+            .filter_map(|package| SidecarPackage::from_package(db, *package))
             .collect();
 
         Self { packages }
@@ -209,26 +262,28 @@ impl SidecarRequest {
 }
 
 impl SidecarPackage {
-    fn from_package(db: &dyn Db, package: Package) -> anyhow::Result<Self> {
-        let name = package.name(db).clone();
-
-        let Some(version) = package.version(db).to_owned() else {
-            return Err(anyhow::anyhow!(
-                "Package {name} is missing a version to compute sidecar facts for."
-            ));
+    fn from_package(db: &dyn Db, package: Package) -> Option<Self> {
+        let base = if package.name(db) == "base" {
+            BaseBuild::from_package(db, package).log_err()
+        } else {
+            None
         };
 
-        let Some(built) = package.built(db) else {
-            return Err(anyhow::anyhow!(
-                "Package {name} is missing a `Built` field to compute sidecar facts for."
-            ));
-        };
+        let lazy_data = package
+            .description_path(db)
+            .as_path()
+            .and_then(|path| path.parent())
+            .map(|directory| lazy_data::rdata_file(directory.as_std_path()))
+            .filter(|file| file.is_file());
 
-        Ok(Self {
+        if base.is_none() && lazy_data.is_none() {
+            return None;
+        }
+
+        Some(Self {
             package,
-            name,
-            version,
-            built,
+            base,
+            lazy_data,
         })
     }
 
@@ -238,7 +293,34 @@ impl SidecarPackage {
     }
 
     #[cfg(test)]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
+    pub(crate) fn has_primitives(&self) -> bool {
+        self.base.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_lazy_data(&self) -> bool {
+        self.lazy_data.is_some()
+    }
+}
+
+impl BaseBuild {
+    /// A missing version or `Built:` field is an error, because both fields
+    /// are required for the primitive-stub cache key.
+    fn from_package(db: &dyn Db, package: Package) -> anyhow::Result<Self> {
+        let name = package.name(db);
+
+        let Some(version) = package.version(db).to_owned() else {
+            return Err(anyhow::anyhow!(
+                "Package {name} is missing a version to compute primitive stubs for."
+            ));
+        };
+
+        let Some(built) = package.built(db) else {
+            return Err(anyhow::anyhow!(
+                "Package {name} is missing a `Built` field to compute primitive stubs for."
+            ));
+        };
+
+        Ok(Self { version, built })
     }
 }

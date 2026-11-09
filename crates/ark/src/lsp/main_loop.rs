@@ -899,16 +899,24 @@ impl GlobalState {
             Event::SidecarCompleted(response) => {
                 self.lsp_state.sidecar_scheduler.finish();
 
+                let mut lazy_data_packages = 0;
+
                 for facts in response.packages {
-                    let Some(directory) = facts.primitive_stubs else {
-                        continue;
-                    };
-                    let name = facts.package.name(self.world.db());
-                    lsp::log_info!("Ingesting primitive stubs for package {name}");
-                    self.world
-                        .db_mut()
-                        .set_package_generated_files(facts.package, &directory);
+                    if let Some(directory) = facts.primitive_stubs {
+                        let name = facts.package.name(self.world.db());
+                        lsp::log_info!("Ingesting primitive stubs for package {name}");
+                        self.world
+                            .db_mut()
+                            .set_package_generated_files(facts.package, &directory);
+                    }
+
+                    if let Some(names) = facts.lazy_data {
+                        lazy_data_packages += 1;
+                        facts.package.set_lazy_data(self.world.db_mut(), names);
+                    }
                 }
+
+                lsp::log_info!("Ingested lazy data names for {lazy_data_packages} packages");
             },
 
             Event::DiagnosticsReady(DiagnosticsReady { generation, publication }) => {
@@ -1108,7 +1116,7 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
 }
 
 /// Unlike [`source_handler()`], this also enables the sidecar job in CI,
-/// because generating primitive stubs needs no network.
+/// because generating primitive stubs and reading lazy data names need no network.
 fn sidecar_handler(r_home: &Path) -> Option<Arc<dyn SidecarHandler>> {
     let Some(r) = harp::command::r_executable(r_home) else {
         log::warn!(

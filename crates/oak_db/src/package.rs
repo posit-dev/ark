@@ -77,6 +77,33 @@ pub struct Package {
     /// stays `Some(self)`, file lives in one of the two containers.
     #[returns(ref)]
     pub scripts: Vec<File>,
+    /// Private so writes go through [`Package::set_lazy_data()`], which skips
+    /// unchanged values. See [`Package::lazy_data()`].
+    #[default]
+    #[returns(ref)]
+    lazy_data_names: Vec<String>,
+}
+
+impl Package {
+    /// Lazy data object names available through `pkg::name`, sorted and
+    /// without duplicates. Names default to empty until the host reads the
+    /// installed package's `data/Rdata.rds` with R and supplies them through
+    /// [`Package::set_lazy_data()`]. Hosts do not currently supply names for
+    /// workspace packages.
+    pub fn lazy_data<Db: ?Sized + salsa::Database>(self, db: &Db) -> &[String] {
+        self.lazy_data_names(db)
+    }
+
+    /// Replaces the lazy data object names, sorting and deduplicating the
+    /// input. Skips the write when the normalized names are unchanged,
+    /// because even an equal input write advances Salsa's revision.
+    pub fn set_lazy_data<Db: ?Sized + salsa::Database>(self, db: &mut Db, mut names: Vec<String>) {
+        names.sort();
+        names.dedup();
+        if self.lazy_data_names(db) != names.as_slice() {
+            self.set_lazy_data_names(db).to(names);
+        }
+    }
 }
 
 /// File membership operations skip unchanged values because Salsa advances

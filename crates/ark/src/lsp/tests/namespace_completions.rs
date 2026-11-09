@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use serde_json::json;
 use tower_lsp_server::ls_types::CompletionItemKind;
@@ -301,13 +302,19 @@ async fn test_namespace_answer_is_complete_without_handler() {
 /// sender is dropped, isolating its effect on completion-list completeness.
 fn state_with_held_sidecar(
     db: OakDatabase,
+    lazy_data: &[(&str, &[&str])],
 ) -> (GlobalState, std::sync::mpsc::Sender<()>, Receiver<()>) {
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (gate, release) = gate(entered_tx);
-    let sidecar = Arc::new(TestSidecarHandler::gated(gate, vec![(
+    let mut sidecar = TestSidecarHandler::gated(gate, vec![(
         "primitives.R",
         "sum <- function(..., na.rm = FALSE) NULL\n",
-    )]));
+    )]);
+    for (name, names) in lazy_data {
+        let package = db.package_by_name(name).unwrap();
+        sidecar = sidecar.with_lazy_data(package, names);
+    }
+    let sidecar = Arc::new(sidecar);
 
     let mut scheduler = SourceScheduler::new(None);
     scheduler.config_arrived();
@@ -327,7 +334,7 @@ async fn test_base_answer_is_incomplete_while_sidecar_runs() {
     let _aux = init_aux_for_test();
 
     let (_lib, db) = library_with_base_and_donor();
-    let (mut state, release, entered_rx) = state_with_held_sidecar(db);
+    let (mut state, release, entered_rx) = state_with_held_sidecar(db, &[]);
 
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("scratch.R");
@@ -347,14 +354,14 @@ async fn test_base_answer_is_incomplete_while_sidecar_runs() {
     )]);
 }
 
-/// The sidecar job can change only `base`, so it leaves other packages' answers
-/// complete while it runs.
+/// The running sidecar can change answers only for packages in its request.
+/// Other packages remain complete when source fetching is disabled.
 #[tokio::test]
 async fn test_sidecar_job_leaves_other_packages_complete() {
     let _aux = init_aux_for_test();
 
-    let (_lib, db) = library_with_base_and_donor();
-    let (mut state, release, entered_rx) = state_with_held_sidecar(db);
+    let (_lib, db) = library_with_base_donor_and_datasets();
+    let (mut state, release, entered_rx) = state_with_held_sidecar(db, &[]);
 
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("scratch.R");
@@ -366,4 +373,63 @@ async fn test_sidecar_job_leaves_other_packages_complete() {
 
     drop(release);
     state.pump_sidecar_to_quiescence().await;
+}
+
+#[tokio::test]
+async fn test_lazy_data_answer_is_incomplete_while_sidecar_runs() {
+    let _aux = init_aux_for_test();
+
+    let (_lib, db) = library_with_base_donor_and_datasets();
+    let (mut state, release, entered_rx) =
+        state_with_held_sidecar(db, &[("datasets", &["mtcars", "BJsales.lead"])]);
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("scratch.R");
+    state
+        .handle_event_once(did_open(&path, "datasets::\ndatasets:::\n"))
+        .await;
+    wait_entered(&entered_rx);
+
+    let response = complete(&mut state, &path, Position::new(0, 10)).await;
+    assert_eq!(incomplete_items(response), vec![]);
+
+    drop(release);
+    state.pump_sidecar_to_quiescence().await;
+
+    let response = complete(&mut state, &path, Position::new(0, 10)).await;
+    assert_eq!(complete_items(response), vec![
+        (
+            String::from("BJsales.lead"),
+            Some(CompletionItemKind::STRUCT)
+        ),
+        (String::from("mtcars"), Some(CompletionItemKind::STRUCT)),
+    ]);
+
+    // The protocol represents a complete empty answer as `null`.
+    let (event, mut response_rx) = completion(&path, Position::new(1, 11));
+    state.handle_event_once(event).await;
+    assert!(matches!(
+        response_rx.try_recv(),
+        Ok(RequestResponse::Result(Ok(LspResponse::Completion(None))))
+    ));
+}
+
+/// The empty `Rdata.rds` makes `datasets` eligible for the sidecar request.
+/// [`TestSidecarHandler`] supplies the names without reading the file.
+fn library_with_base_donor_and_datasets() -> (tempfile::TempDir, OakDatabase) {
+    let (lib, _db) = library_with_base_and_donor();
+
+    let datasets = lib.path().join("datasets");
+    DescriptionWriter::new()
+        .package("datasets")
+        .version("4.5.2")
+        .built("dummy")
+        .write(&datasets);
+    std::fs::create_dir_all(datasets.join("data")).unwrap();
+    std::fs::write(datasets.join("data").join("Rdata.rds"), "").unwrap();
+
+    // Setting the same library path again does not rescan newly added packages.
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    (lib, db)
 }

@@ -209,6 +209,30 @@ fn test_export_classes_are_not_listed() {
 }
 
 #[test]
+fn test_lazy_data_under_exports_only() {
+    let mut db = OakDatabase::new();
+    let file = install_library_package(&mut db, "pkg", &["exported"], "a.R", SOURCE);
+    let package = file.package(&db).unwrap();
+    package.set_lazy_data(&mut db, vec![
+        String::from("BJsales.lead"),
+        String::from("BJsales"),
+        String::from("exported"),
+    ]);
+
+    assert_eq!(items(&db, "pkg", NamespaceVisibility::Exported), vec![
+        item("BJsales", BindingKind::Unknown),
+        item("BJsales.lead", BindingKind::Unknown),
+        item("exported", BindingKind::Function),
+    ]);
+    assert_eq!(items(&db, "pkg", NamespaceVisibility::Internal), vec![
+        item(".hidden", BindingKind::Function),
+        item("exported", BindingKind::Function),
+        item("internal", BindingKind::Function),
+        item("value", BindingKind::Unknown),
+    ]);
+}
+
+#[test]
 fn test_unknown_package() {
     let db = OakDatabase::new();
     assert_eq!(
