@@ -76,6 +76,7 @@ pub(crate) fn init_graphics_device() {
 #[allow(non_snake_case)]
 struct WrappedDeviceCallbacks {
     activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    close: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
     mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
@@ -177,6 +178,16 @@ pub(crate) struct DeviceContext {
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
 
+    /// The Ark graphics device. Set when the device is created, cleared when
+    /// it is closed.
+    device: Cell<Option<libr::pGEDevDesc>>,
+
+    /// The last Plots pane size the frontend sent in a console session, in CSS
+    /// pixels. The Ark device's bounds follow it. `None` until the frontend
+    /// sends a size (always `None` in notebook sessions), in which case the
+    /// device keeps the size it was created with.
+    pane_size: Cell<Option<PlotSize>>,
+
     /// The current execution context from the active request. Pushed here when
     /// an execute request starts via `graphics_on_execute_request()`, cleared
     /// when the request completes.
@@ -220,6 +231,8 @@ impl DeviceContext {
                 pixel_ratio: 1.,
                 format: PlotRenderFormat::Png,
             }),
+            device: Cell::new(None),
+            pane_size: Cell::new(None),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
             pending_origin: RefCell::new(None),
@@ -228,6 +241,29 @@ impl DeviceContext {
 
     pub fn set_prerender_settings(&self, settings: PlotRenderSettings) {
         self.prerender_settings.replace(settings);
+    }
+
+    /// Make the Ark device follow the Plots pane size, so `dev.size()`,
+    /// `par("din")`, and grid report the size the plot is shown at.
+    ///
+    /// Only call this in console sessions: notebook plots are not sized by the
+    /// Plots pane. If the device doesn't exist yet, the size is applied when
+    /// it is created.
+    pub(crate) fn set_pane_size(&self, size: PlotSize) {
+        self.pane_size.set(Some(size));
+        self.resize_device(size);
+    }
+
+    /// Set the Ark device's bounds to `size` (in CSS pixels). Returns `true`
+    /// if the bounds changed. Does nothing and returns `false` if there is no
+    /// Ark device. Never calls into R.
+    fn resize_device(&self, size: PlotSize) -> bool {
+        let Some(ge_device) = self.device.get() else {
+            return false;
+        };
+        // Safety: `device` is cleared in `callback_close()`, so it points to a
+        // live device.
+        unsafe { set_device_bounds(ge_device, size) }
     }
 
     /// Set the current execution context (called when an execute request starts)
@@ -966,6 +1002,78 @@ macro_rules! with_device {
     }};
 }
 
+/// Like [with_device!], but for a `pDevDesc` instead of a `pGEDevDesc`.
+macro_rules! with_dev_desc {
+    ($value:expr, | $name:ident | $block:block) => {{
+        let version = libr::R_GE_getVersion();
+        if version == 13 {
+            let $name = $value as *mut libr::DevDescVersion13;
+            $block;
+        } else if version == 14 {
+            let $name = $value as *mut libr::DevDescVersion14;
+            $block;
+        } else if version == 15 {
+            let $name = $value as *mut libr::DevDescVersion15;
+            $block;
+        } else if version == 16 {
+            let $name = $value as *mut libr::DevDescVersion16;
+            $block;
+        } else if version == 17 {
+            let $name = $value as *mut libr::DevDescVersion17;
+            $block;
+        } else {
+            panic!(
+                "R graphics engine version {} is not supported by this version of Positron.",
+                version
+            )
+        };
+    }};
+}
+
+/// Set the bounds of `ge_device` to `size` (in CSS pixels). Returns `true` if
+/// the bounds changed.
+///
+/// Converts through inches with the device's own `ipr`, so this is correct for
+/// any device units. A pane of `w` CSS pixels is `w / DEFAULT_DPI` inches,
+/// the same size the plot is rendered at (see `finalize_device_arguments()`).
+/// Keeps the device's y direction (`bottom > top` for devices whose y axis
+/// points down).
+///
+/// Only the bounds change. The wrapped device keeps its internal canvas, which
+/// is fine because nothing reads the shadow device's pixels: we render plots on
+/// a separate device.
+unsafe fn set_device_bounds(ge_device: libr::pGEDevDesc, size: PlotSize) -> bool {
+    let width = size.width as f64 / DEFAULT_DPI;
+    let height = size.height as f64 / DEFAULT_DPI;
+
+    let changed;
+    with_device!(ge_device, |_ge_device, device| {
+        let right = (*device).left + width / (*device).ipr[0];
+        let delta_y = height / (*device).ipr[1];
+        let (bottom, top) = if (*device).bottom >= (*device).top {
+            ((*device).top + delta_y, (*device).top)
+        } else {
+            ((*device).bottom, (*device).bottom + delta_y)
+        };
+
+        changed = right != (*device).right || bottom != (*device).bottom || top != (*device).top;
+
+        (*device).right = right;
+        (*device).bottom = bottom;
+        (*device).top = top;
+    });
+    changed
+}
+
+/// Whether `ge_device` wraps the device `dev`
+unsafe fn is_device(ge_device: libr::pGEDevDesc, dev: pDevDesc) -> bool {
+    let is_device;
+    with_device!(ge_device, |_ge_device, device| {
+        is_device = device as pDevDesc == dev;
+    });
+    is_device
+}
+
 impl Display for PlotId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -1228,6 +1336,47 @@ unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
     dc.hook_new_page();
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn callback_close(dev: pDevDesc) {
+    log::trace!("Entering callback_close");
+
+    let dc = Console::get().device_context();
+
+    // R's `removeDevice()` calls `close` before `GEdestroyDevDesc()`, so the
+    // stored device is still valid here
+    if let Some(ge_device) = dc.device.get() {
+        if is_device(ge_device, dev) {
+            dc.device.set(None);
+        }
+    }
+
+    if let Some(callback) = dc.wrapped_callbacks.close.get() {
+        callback(dev);
+    }
+}
+
+/// Size callback
+///
+/// Reports the bounds of `dev`, which follow the Plots pane (see
+/// [DeviceContext::set_pane_size]). `dev.size()` and grid read the device size
+/// through this callback. We never call the wrapped device's `size`, because it
+/// reports the fixed size the device was created with.
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn callback_size(
+    left: *mut f64,
+    right: *mut f64,
+    bottom: *mut f64,
+    top: *mut f64,
+    dev: pDevDesc,
+) {
+    with_dev_desc!(dev, |dev| {
+        *left = (*dev).left;
+        *right = (*dev).right;
+        *bottom = (*dev).bottom;
+        *top = (*dev).top;
+    });
+}
+
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
 
@@ -1266,7 +1415,22 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
         wrapped_callbacks.newPage.replace((*device).newPage);
         (*device).newPage = Some(callback_new_page);
+
+        wrapped_callbacks.close.replace((*device).close);
+        (*device).close = Some(callback_close);
+
+        // Not wrapped: we report our own bounds, see `callback_size()`
+        (*device).size = Some(callback_size);
     });
+
+    let dc = Console::get().device_context();
+    dc.device.set(Some(ge_device));
+
+    // Apply a pane size that arrived before the device was created. Without
+    // one, keep the device's own size.
+    if let Some(size) = dc.pane_size.get() {
+        dc.resize_device(size);
+    }
 
     Ok(R_NilValue)
 }
