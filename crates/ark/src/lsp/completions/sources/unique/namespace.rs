@@ -180,20 +180,28 @@ mod tests {
     use crate::lsp::completions::tests::utils::state_with_workspace_package;
     use crate::lsp::completions::tests::utils::static_completions_with_state;
     use crate::lsp::completions::tests::utils::write_library_package;
-    use crate::lsp::document_context::TestDocument;
+    use crate::lsp::document_context::open_test_document;
+    use crate::lsp::document_context::test_document_context;
     use crate::lsp::state::WorldState;
 
-    fn recognize_namespace_at_cursor(cursor_text: &str, state: &WorldState) -> Option<Recognized> {
+    fn recognize_namespace_at_cursor(
+        cursor_text: &str,
+        state: &mut WorldState,
+    ) -> Option<Recognized> {
         let (text, point) = point_from_cursor(cursor_text);
-        let doc = TestDocument::new(&text);
-        let document_context = doc.context(point);
-        let context = CompletionContext::new(&document_context, state);
+        let file = open_test_document(state, &text);
+        let document_context = test_document_context(state, file, point, None);
+        let context = CompletionContext::new(&document_context, file, state);
 
         recognize_namespace(&context).unwrap()
     }
 
     /// Require a static answer that depends on library package `package`.
-    fn static_items(cursor_text: &str, state: &WorldState, package: &str) -> Vec<CompletionItem> {
+    fn static_items(
+        cursor_text: &str,
+        state: &mut WorldState,
+        package: &str,
+    ) -> Vec<CompletionItem> {
         let Some(Recognized::Static(completions)) =
             recognize_namespace_at_cursor(cursor_text, state)
         else {
@@ -209,29 +217,29 @@ mod tests {
 
     #[test]
     fn test_namespace_completions_after_colons() {
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
 
-        let items = static_items("utils::@", &state, "utils");
+        let items = static_items("utils::@", &mut state, "utils");
         assert!(find_completion_by_label(&items, "adist").is_some());
 
         // An S3 method that `utils` registers but doesn't export.
         assert!(find_completion_by_label(&items, "as.bibentry.bibentry").is_none());
 
         // Without fetched sources, `:::` lists the exports.
-        let items = static_items("utils:::@", &state, "utils");
+        let items = static_items("utils:::@", &mut state, "utils");
         assert!(find_completion_by_label(&items, "adist").is_some());
 
         // With RHS text, which is ignored when generating completions.
         // Filtering applied on frontend side.
-        let items = static_items("utils::bl@ah", &state, "utils");
+        let items = static_items("utils::bl@ah", &mut state, "utils");
         assert!(find_completion_by_label(&items, "adist").is_some());
     }
 
     #[test]
     fn test_namespace_completions_need_no_session() {
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
 
-        let (completions, request) = static_completions_with_state("utils::@", &state);
+        let (completions, request) = static_completions_with_state("utils::@", &mut state);
         assert!(!request.has_session_slots());
         assert_eq!(
             completions.incomplete_until_package_settles(),
@@ -244,10 +252,10 @@ mod tests {
 
     #[test]
     fn test_namespace_object_resolves_to_topic() {
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
 
         // Without sources, every export is an object documented by its topic.
-        let items = static_items("utils::@", &state, "utils");
+        let items = static_items("utils::@", &mut state, "utils");
         let item = find_completion_by_label(&items, "osVersion").unwrap();
         assert_eq!(item.kind, Some(CompletionItemKind::STRUCT));
         assert_eq!(
@@ -266,7 +274,7 @@ mod tests {
         let package = state.db().package_by_name("pkg").unwrap();
         package.set_lazy_data(state.db_mut(), vec![String::from("mtcars")]);
 
-        let items = static_items("pkg::@", &state, "pkg");
+        let items = static_items("pkg::@", &mut state, "pkg");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "mtcars");
         assert_eq!(items[0].kind, Some(CompletionItemKind::STRUCT));
@@ -278,19 +286,19 @@ mod tests {
             })
         );
 
-        assert!(static_items("pkg:::@", &state, "pkg").is_empty());
+        assert!(static_items("pkg:::@", &mut state, "pkg").is_empty());
     }
 
     #[test]
     fn test_unknown_package_ends_search_without_items() {
         // https://github.com/posit-dev/ark/issues/833
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
         assert_eq!(
-            recognize_namespace_at_cursor("foo::bar@", &state),
+            recognize_namespace_at_cursor("foo::bar@", &mut state),
             Some(Recognized::Empty)
         );
 
-        let (completions, _) = static_completions_with_state("foo::bar@", &state);
+        let (completions, _) = static_completions_with_state("foo::bar@", &mut state);
         assert_eq!(completions.incomplete_until_package_settles(), None);
         assert_eq!(finish(completions, RCompletionReplies::default()), vec![]);
     }
@@ -298,13 +306,14 @@ mod tests {
     #[test]
     fn test_workspace_package_doesnt_depend_on_sources() {
         let workspace = tempfile::TempDir::new().unwrap();
-        let state = state_with_workspace_package(workspace.path(), "mypkg", "export(f)\n", &[(
-            "f.R",
-            "f <- function() NULL\n",
-        )]);
+        let mut state =
+            state_with_workspace_package(workspace.path(), "mypkg", "export(f)\n", &[(
+                "f.R",
+                "f <- function() NULL\n",
+            )]);
 
         let Some(Recognized::Static(completions)) =
-            recognize_namespace_at_cursor("mypkg::@", &state)
+            recognize_namespace_at_cursor("mypkg::@", &mut state)
         else {
             panic!("Expected a static namespace answer");
         };
@@ -318,7 +327,7 @@ mod tests {
     #[test]
     fn test_library_package_items_take_kinds_from_sources() {
         let library = tempfile::TempDir::new().unwrap();
-        let state = write_library_package(
+        let mut state = write_library_package(
             library.path(),
             "pkg",
             "export(f, x, `%op%`)\n",
@@ -328,7 +337,7 @@ mod tests {
             )]),
         );
 
-        let items = static_items("pkg::@", &state, "pkg");
+        let items = static_items("pkg::@", &mut state, "pkg");
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert_eq!(labels, vec!["%op%", "f", "x"]);
 
@@ -351,32 +360,32 @@ mod tests {
 
     #[test]
     fn test_expression_after_colon_colon_doesnt_result_in_completions() {
-        let state = WorldState::default();
-        assert_eq!(recognize_namespace_at_cursor("base::+@", &state), None);
+        let mut state = WorldState::default();
+        assert_eq!(recognize_namespace_at_cursor("base::+@", &mut state), None);
     }
 
     #[test]
     fn test_empty_set_of_completions_when_on_package_name() {
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
         assert_eq!(
-            recognize_namespace_at_cursor("ba@se::ab", &state),
+            recognize_namespace_at_cursor("ba@se::ab", &mut state),
             Some(Recognized::Empty)
         );
     }
 
     #[test]
     fn test_empty_set_of_completions_when_not_at_end_of_colons() {
-        let state = state_with_r_library();
+        let mut state = state_with_r_library();
         assert_eq!(
-            recognize_namespace_at_cursor("base:@:ab", &state),
+            recognize_namespace_at_cursor("base:@:ab", &mut state),
             Some(Recognized::Empty)
         );
         assert_eq!(
-            recognize_namespace_at_cursor("base:@::ab", &state),
+            recognize_namespace_at_cursor("base:@::ab", &mut state),
             Some(Recognized::Empty)
         );
         assert_eq!(
-            recognize_namespace_at_cursor("base::@:ab", &state),
+            recognize_namespace_at_cursor("base::@:ab", &mut state),
             Some(Recognized::Empty)
         );
     }

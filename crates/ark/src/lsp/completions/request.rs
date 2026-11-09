@@ -128,8 +128,8 @@ pub(crate) struct CompositeRequest {
 }
 
 /// Argument names of `callee` when the cursor is in an argument name
-/// position. Session formals replace the workspace formals in the static
-/// call slot. If the callee cannot be evaluated, the workspace formals remain.
+/// position. Evaluated formals replace the call slot's static formals.
+/// If the callee cannot be evaluated, the static formals remain.
 #[derive(Debug, PartialEq)]
 pub(crate) struct CallRequest {
     pub(crate) callee: String,

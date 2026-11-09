@@ -161,6 +161,17 @@ pub fn install_workspace_package(
     files[0]
 }
 
+/// Install a workspace package with `files` under `R/`. Returns files in input
+/// order.
+pub fn install_workspace_package_files(
+    db: &mut OakDatabase,
+    name: &str,
+    exports: &[&str],
+    files: &[(&str, &str)],
+) -> Vec<File> {
+    install_pkg(db, RootKind::Workspace, name, exports, files)
+}
+
 fn install_pkg(
     db: &mut OakDatabase,
     kind: RootKind,

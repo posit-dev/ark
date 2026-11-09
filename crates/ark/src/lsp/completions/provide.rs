@@ -5,6 +5,7 @@
 //
 //
 
+use oak_db::File;
 use oak_db::Package;
 use tower_lsp_server::ls_types::CompletionItem;
 
@@ -55,6 +56,7 @@ enum StaticAnswer {
 /// Doesn't call R, so it can run while R is busy.
 pub(crate) fn static_completions(
     document_context: &DocumentContext,
+    file: File,
     state: &WorldState,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
     log::info!(
@@ -66,7 +68,7 @@ pub(crate) fn static_completions(
         node_type = document_context.node.node_type()
     );
 
-    let completion_context = CompletionContext::new(document_context, state);
+    let completion_context = CompletionContext::new(document_context, file, state);
     let mut request = RCompletionRequest::default();
 
     // Try unique sources first

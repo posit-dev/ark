@@ -80,7 +80,7 @@ struct CompletionItemWithSource {
 /// have no static items.
 #[derive(Debug, Default)]
 pub(crate) struct CompositeCompletions {
-    /// Formals of a workspace function named like the callee.
+    /// Formals from the callee's static description.
     call: Vec<CompletionItem>,
     keyword: Vec<CompletionItem>,
     document: Vec<CompletionItem>,
@@ -105,11 +105,7 @@ pub(crate) fn get_completions(
 
     let call = call::recognize_call(completion_context, pipe_root.is_some())?;
     if let Some(call) = &call {
-        completions.call = call::completions_from_workspace_arguments(
-            completion_context.state.db(),
-            &call.callee,
-            call.position,
-        )?;
+        completions.call = call::completions_from_callee_description(completion_context, call)?;
         log::info!(
             "Found {n} static completions from source: call",
             n = completions.call.len()
@@ -320,7 +316,6 @@ mod tests {
     use crate::lsp::completions::sources::composite::CompositeCompletions;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document_context::TestDocument;
-    use crate::lsp::state::WorldState;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -349,7 +344,7 @@ mod tests {
         let document_context = doc.context(point);
 
         assert!(document_context.node.is_program());
-        assert!(!static_composite_completions(&document_context).is_empty());
+        assert!(!static_composite_completions(&doc, &document_context).is_empty());
     }
 
     #[test]
@@ -360,7 +355,7 @@ mod tests {
         let document_context = doc.context(point);
 
         assert!(document_context.node.is_program());
-        assert!(!static_composite_completions(&document_context).is_empty());
+        assert!(!static_composite_completions(&doc, &document_context).is_empty());
     }
 
     #[test]
@@ -475,9 +470,11 @@ mod tests {
         assert_eq!(items[0].detail, Some("search path".to_string()));
     }
 
-    fn static_composite_completions(document_context: &DocumentContext) -> Vec<CompletionItem> {
-        let state = WorldState::default();
-        let context = CompletionContext::new(document_context, &state);
+    fn static_composite_completions(
+        doc: &TestDocument,
+        document_context: &DocumentContext,
+    ) -> Vec<CompletionItem> {
+        let context = CompletionContext::new(document_context, doc.file(), doc.state());
         let (completions, _) = get_completions(&context).unwrap();
 
         completions.merge(CompositeReplies::default())

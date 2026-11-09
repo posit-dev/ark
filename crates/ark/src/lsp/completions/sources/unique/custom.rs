@@ -75,14 +75,12 @@ mod tests {
     use crate::lsp::completions::request::CustomRequest;
     use crate::lsp::completions::sources::unique::custom::custom_request;
     use crate::lsp::document_context::TestDocument;
-    use crate::lsp::state::WorldState;
 
     fn custom_request_at_cursor(code: &str) -> Option<CustomRequest> {
         let (text, point) = point_from_cursor(code);
-        let state = WorldState::default();
         let doc = TestDocument::new(&text);
         let document_context = doc.context(point);
-        let context = CompletionContext::new(&document_context, &state);
+        let context = CompletionContext::new(&document_context, doc.file(), doc.state());
 
         custom_request(&context).unwrap()
     }

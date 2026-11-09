@@ -257,7 +257,6 @@ mod tests {
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
     use crate::lsp::completions::tests::utils::request_at_cursor;
     use crate::lsp::completions::tests::utils::static_completions_at_cursor;
-    use crate::lsp::completions::tests::utils::static_completions_with_workspace;
     use crate::r_task;
 
     /// See `test_dollar_answers_when_custom_declines()` for the answer
@@ -464,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn test_call_error_keeps_workspace_formals() {
+    fn test_call_error_keeps_static_formals() {
         r_task(|| {
             // S3 dispatch on `ark_obj` looks up `ark_gen.ark_class`, whose
             // active binding makes `.ps.completions.formalNames()` raise
@@ -475,26 +474,26 @@ mod tests {
             )
             .unwrap();
 
-            let (completions, request) = static_completions_with_workspace(
-                "ark_gen(ark_obj, @)",
-                "ark_gen <- function(ws_arg) NULL",
-            );
+            let (completions, request) = static_completions_at_cursor(
+                "ark_gen <- function(static_arg) NULL\nark_gen(ark_obj, @)",
+            )
+            .unwrap();
             let (replies, n_errors) = expect_session_errors(|| r_completions(request));
             assert_eq!(n_errors, 1);
             assert_eq!(replies.composite.call, SlotReply::Decline);
 
             let completions = finish(completions, replies);
-            assert!(find_completion_by_label(&completions, "ws_arg = ").is_some());
+            assert!(find_completion_by_label(&completions, "static_arg = ").is_some());
         })
     }
 
     #[test]
-    fn test_session_formals_replace_workspace_formals() {
+    fn test_session_formals_replace_static_formals() {
         r_task(|| {
             harp::parse_eval_global("my_fun <- function(y, x) NULL").unwrap();
 
             let (completions, request) =
-                static_completions_with_workspace("my_fun(@)", "my_fun <- function(a, y) NULL");
+                static_completions_at_cursor("my_fun <- function(a, y) NULL\nmy_fun(@)").unwrap();
             let completions = finish(completions, r_completions(request));
 
             assert_eq!(labels(&completions), vec!["y = ", "x = "]);
@@ -502,15 +501,17 @@ mod tests {
     }
 
     #[test]
-    fn test_non_function_callee_has_no_formals() {
+    fn test_non_function_session_binding_keeps_static_formals() {
         r_task(|| {
+            // R skips `my_fun <- 1` when it looks up the function of a call,
+            // so the session has no function to describe
             harp::parse_eval_global("my_fun <- 1").unwrap();
 
             let (completions, request) =
-                static_completions_with_workspace("my_fun(@)", "my_fun <- function(a, y) NULL");
+                static_completions_at_cursor("my_fun <- function(a, y) NULL\nmy_fun(@)").unwrap();
             let completions = finish(completions, r_completions(request));
 
-            assert_eq!(completions, vec![]);
+            assert_eq!(labels(&completions), vec!["a = ", "y = "]);
         })
     }
 

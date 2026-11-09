@@ -58,7 +58,6 @@ mod tests {
     use crate::lsp::completions::sources::unique::string::recognize_string;
     use crate::lsp::completions::sources::unique::Recognized;
     use crate::lsp::document_context::TestDocument;
-    use crate::lsp::state::WorldState;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
 
@@ -102,8 +101,7 @@ mod tests {
         assert_eq!(recognize_string(&context).unwrap(), Some(Recognized::Empty));
 
         // Check for same result when consulting (potentially all) unique sources
-        let state = WorldState::default();
-        let completion_context = CompletionContext::new(&context, &state);
+        let completion_context = CompletionContext::new(&context, doc.file(), doc.state());
         let mut request = RCompletionRequest::default();
         let res = unique::get_completions(&completion_context, &mut request).unwrap();
 

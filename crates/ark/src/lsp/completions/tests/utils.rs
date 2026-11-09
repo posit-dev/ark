@@ -26,7 +26,8 @@ use crate::lsp::completions::request::RCompletionReplies;
 use crate::lsp::completions::request::RCompletionRequest;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::completions::static_completions;
-use crate::lsp::document_context::TestDocument;
+use crate::lsp::document_context::open_test_document;
+use crate::lsp::document_context::test_document_context;
 use crate::lsp::state::WorldState;
 
 /// Runs both completion passes. Requires the R thread.
@@ -48,13 +49,14 @@ pub(crate) fn static_completions_at(
     text: &str,
     point: Point,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
-    static_completions_in(&WorldState::default(), text, point)
+    static_completions_in(&mut WorldState::default(), text, point)
 }
 
-/// Runs only the static pass against `state`.
+/// Runs only the static pass against `state`, with the document opened in
+/// `state`'s database.
 pub(crate) fn static_completions_with_state(
     cursor_text: &str,
-    state: &WorldState,
+    state: &mut WorldState,
 ) -> (StaticCompletions, RCompletionRequest) {
     let (text, point) = point_from_cursor(cursor_text);
     static_completions_in(state, &text, point).unwrap()
@@ -63,7 +65,7 @@ pub(crate) fn static_completions_with_state(
 /// Return static items with no session contributions, as when R is busy.
 pub(crate) fn static_items_with_state(
     cursor_text: &str,
-    state: &WorldState,
+    state: &mut WorldState,
 ) -> Vec<CompletionItem> {
     let (completions, _) = static_completions_with_state(cursor_text, state);
     finish(completions, RCompletionReplies::default())
@@ -73,7 +75,7 @@ pub(crate) fn static_items_with_state(
 /// fetched sources defining the exported functions `adist()` and `aspell()`.
 pub(crate) fn static_items_with_test_package(cursor_text: &str) -> Vec<CompletionItem> {
     let library = tempfile::TempDir::new().unwrap();
-    let state = write_library_package(
+    let mut state = write_library_package(
         library.path(),
         "pkg",
         "export(adist, aspell)\n",
@@ -82,7 +84,7 @@ pub(crate) fn static_items_with_test_package(cursor_text: &str) -> Vec<Completio
             "adist <- function(x, y = NULL) NULL\naspell <- function(files) NULL\n",
         )]),
     );
-    static_items_with_state(cursor_text, &state)
+    static_items_with_state(cursor_text, &mut state)
 }
 
 /// A state whose database has scanned R's own library, so the base and
@@ -172,18 +174,18 @@ pub(crate) fn static_completions_with_workspace(
     db.upsert_editor(path, workspace_text.to_string());
 
     let (text, point) = point_from_cursor(cursor_text);
-    static_completions_in(&WorldState::with_db(db), &text, point).unwrap()
+    static_completions_in(&mut WorldState::with_db(db), &text, point).unwrap()
 }
 
 fn static_completions_in(
-    state: &WorldState,
+    state: &mut WorldState,
     text: &str,
     point: Point,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
-    let doc = TestDocument::new(text);
-    let document_context = doc.context(point);
+    let file = open_test_document(state, text);
+    let document_context = test_document_context(state, file, point, None);
 
-    match static_completions(&document_context, state) {
+    match static_completions(&document_context, file, state) {
         Ok(completions) => Ok(completions),
         Err(err) => Err(anyhow::anyhow!("Failed to get completions: {err}")),
     }

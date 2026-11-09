@@ -5,10 +5,11 @@
 //
 //
 
-// Hover and signature help need R. When R is busy, they should answer `null`
-// promptly instead of blocking the LSP main loop until R is back at a prompt.
-// Completions answer with their static items, and completion resolve returns
-// the item unchanged.
+// Hover needs R. When R is busy, it should answer `null` promptly instead of
+// blocking the LSP main loop until R is back at a prompt. Signature help
+// answers from the callee's static description without parameter
+// documentation, completions answer with their static items, and completion
+// resolve returns the item unchanged.
 
 use std::time::Duration;
 
@@ -41,6 +42,50 @@ fn test_lsp_signature_help_idle() {
     assert_eq!(result["signatures"][0]["label"], "toupper(x)");
 }
 
+// Oak can't describe a function defined only in the console, so the session
+// supplies the signature.
+#[test]
+fn test_lsp_signature_help_idle_console_function() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    frontend.execute_request_invisibly("ark_console_fn <- function(alpha, beta = 2) NULL");
+
+    let uri = lsp.open_document("signature_help_console.R", "ark_console_fn(1, )\n");
+    let result = lsp.send_request("textDocument/signatureHelp", position_params(&uri, 0, 18));
+
+    assert_eq!(
+        result["signatures"][0]["label"],
+        "ark_console_fn(alpha, beta = 2)"
+    );
+    assert_eq!(result["activeParameter"], 1);
+
+    frontend.execute_request_invisibly("rm(ark_console_fn)");
+}
+
+// With R idle, the console definition wins over the document's, as it does
+// for call argument completions.
+#[test]
+fn test_lsp_signature_help_idle_redefined_in_console() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    frontend.execute_request_invisibly("ark_redef_fn <- function(x, y = 'session') NULL");
+
+    let uri = lsp.open_document(
+        "signature_help_redefined.R",
+        "ark_redef_fn <- function(a) NULL\nark_redef_fn(\n",
+    );
+    let result = lsp.send_request("textDocument/signatureHelp", position_params(&uri, 1, 13));
+
+    assert_eq!(
+        result["signatures"][0]["label"],
+        "ark_redef_fn(x, y = \"session\")"
+    );
+
+    frontend.execute_request_invisibly("rm(ark_redef_fn)");
+}
+
 #[test]
 fn test_lsp_hover_idle() {
     let frontend = DummyArkFrontend::lock();
@@ -53,18 +98,48 @@ fn test_lsp_hover_idle() {
     assert!(value.contains("toupper"));
 }
 
+// While R is busy, the label and active parameter come from the callee's
+// static description, without parameter documentation.
 #[test]
 fn test_lsp_signature_help_busy() -> anyhow::Result<()> {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
-    let uri = lsp.open_document("signature_help_busy.R", "toupper(\n");
+    let uri = lsp.open_document(
+        "signature_help_busy.R",
+        "ark_busy_fn <- function(alpha, beta = 'b') NULL\nark_busy_fn(1, )\n",
+    );
 
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    let id = lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 0, 8));
+    let id = lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 1, 15));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let signature = &responses[0]["signatures"][0];
+    assert_eq!(signature["label"], "ark_busy_fn(alpha, beta = 'b')");
+    assert_eq!(responses[0]["activeParameter"], 1);
+    assert_eq!(signature["parameters"][1]["documentation"], Value::Null);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
+// Without a static description or an idle R session, no signature is available.
+#[test]
+fn test_lsp_signature_help_busy_undescribed() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+
+    let uri = lsp.open_document("signature_help_busy_undescribed.R", "ark_unknown_fn(\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 0, 15));
     let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
     assert_eq!(responses, vec![Value::Null]);
 
@@ -101,20 +176,23 @@ fn test_lsp_signature_help_busy_does_not_stall_main_loop() -> anyhow::Result<()>
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
-    let uri = lsp.open_document("signature_help_main_loop.R", "foo <- 1\ntoupper(\n");
+    let uri = lsp.open_document(
+        "signature_help_main_loop.R",
+        "foo <- function(x) NULL\nfoo(\n",
+    );
 
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
     let signature_help_id =
-        lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 1, 8));
+        lsp.send_request_raw("textDocument/signatureHelp", position_params(&uri, 1, 4));
     let symbols_id = lsp.send_request_raw(
         "textDocument/documentSymbol",
         json!({ "textDocument": { "uri": uri } }),
     );
     let responses = lsp.recv_responses(&[signature_help_id, symbols_id], BUSY_TIMEOUT)?;
-    assert_eq!(responses[0], Value::Null);
+    assert_eq!(responses[0]["signatures"][0]["label"], "foo(x)");
     assert_eq!(responses[1][0]["name"], "foo");
 
     frontend.recv_iopub_idle();
@@ -243,7 +321,8 @@ fn test_lsp_completions_busy_identifier() -> anyhow::Result<()> {
 }
 
 // When R is busy, an unavailable custom callback must not suppress the
-// fallback list, which starts with argument names from the workspace function.
+// fallback list, which starts with argument names from the callee's static
+// description.
 #[test]
 fn test_lsp_completions_busy_call_arguments() -> anyhow::Result<()> {
     let frontend = DummyArkFrontend::lock();

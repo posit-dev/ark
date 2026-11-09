@@ -5,6 +5,12 @@
 //
 //
 
+use biome_rowan::TextRange;
+use biome_rowan::TextSize;
+use oak_db::Db;
+use oak_db::File;
+use oak_ide::callee_description;
+use oak_ide::CalleeDescription;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
@@ -163,6 +169,19 @@ pub(crate) fn call_at<'tree>(
     };
 
     Ok(Some(CallAt { callee, arguments }))
+}
+
+/// Adapts a tree-sitter callee to Oak's static lookup. `callee` must come
+/// from `file`'s current source text so its byte range also identifies the
+/// expression in Oak's syntax tree.
+pub(crate) fn describe_callee(
+    db: &dyn Db,
+    file: File,
+    callee: &Node,
+) -> anyhow::Result<Option<CalleeDescription>> {
+    let start = TextSize::from(u32::try_from(callee.start_byte())?);
+    let end = TextSize::from(u32::try_from(callee.end_byte())?);
+    Ok(callee_description(db, file, TextRange::new(start, end)))
 }
 
 /// Approximates the index of the active formal parameter.

@@ -10,7 +10,6 @@ use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::utils::r_is_function;
 
 use crate::console;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
@@ -18,11 +17,11 @@ use crate::lsp::completions::request::CallDispatch;
 use crate::lsp::completions::request::CallRequest;
 use crate::lsp::completions::request::SlotReply;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
+use crate::lsp::signature_help::r_callee_function;
 
-/// Formal names of the evaluated callee, with S3 dispatch on the pipe root or
-/// the first argument. Declines when the callee cannot be evaluated, preserving
-/// workspace formals. A non-function callee fills the slot with no items,
-/// suppressing workspace formals.
+/// Formal names of the function the callee would call, with S3 dispatch on
+/// the pipe root or the first argument. Declines when the session has no such
+/// function, preserving static formals.
 ///
 /// `pipe_root` is the evaluated pipe root, `None` if there is none or it
 /// failed to evaluate.
@@ -47,29 +46,11 @@ pub(super) fn r_call_completions(
     };
     let object = object.unwrap_or_else(RObject::null);
 
-    let r_callable = harp::parse_eval(callee, RParseEvalOptions {
-        forbid_function_calls: true,
-        env: console::selected_env(),
-    });
-
-    let r_callable = match r_callable {
-        Ok(r_callable) => r_callable,
-        Err(err) => match err {
-            // The function-call guard rejects callee text containing `(`.
-            Error::UnsafeEvaluationError(_) => return Ok(SlotReply::Decline),
-            // Unfinished code or an unloaded package can leave the callee
-            // undefined. Keep workspace formals rather than report an error.
-            _ => return Ok(SlotReply::Decline),
-        },
+    let Some(r_callable) = r_callee_function(callee) else {
+        return Ok(SlotReply::Decline);
     };
 
     let mut completions = vec![];
-
-    if !r_is_function(r_callable.sexp) {
-        // A session non-function shadows the workspace function, so its
-        // workspace formals must not be offered.
-        return Ok(SlotReply::Fill(completions));
-    }
 
     let strings = RFunction::from(".ps.completions.formalNames")
         .add(r_callable)
@@ -190,12 +171,32 @@ mod tests {
                 ..Default::default()
             };
 
+            // No function of that name is visible, so the static formals stand
             harp::parse_eval("my_fun <- 1", options.clone()).unwrap();
 
             let reply = call_reply_at_cursor("my_fun(@)");
-            assert_eq!(reply, SlotReply::Fill(vec![]));
+            assert_eq!(reply, SlotReply::Decline);
 
             harp::parse_eval("remove(my_fun)", options.clone()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_session_arguments_skip_non_function_bindings() {
+        r_task(|| {
+            // R calls `base::match()` here, as it skips non-function bindings
+            // when it looks up the function of a call
+            harp::parse_eval_global("match <- 1").unwrap();
+
+            let completions = call_completions_at_cursor("match(@)");
+            assert_eq!(labels(&completions), vec![
+                "x = ",
+                "table = ",
+                "nomatch = ",
+                "incomparables = "
+            ]);
+
+            harp::parse_eval_global("rm(match)").unwrap();
         })
     }
 

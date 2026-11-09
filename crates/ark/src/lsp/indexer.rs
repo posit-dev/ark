@@ -118,21 +118,6 @@ pub(crate) struct FileIndex {
     pub(crate) symbols: rustc_hash::FxHashMap<String, IndexEntry>,
 }
 
-/// Find the first workspace symbol matching `symbol`, scanning files in
-/// `workspace_files` order. `ark://` virtual docs are skipped: they show
-/// foreign code the user can't edit.
-pub(crate) fn find(db: &dyn ArkDb, symbol: &str) -> Option<IndexEntry> {
-    for &file in oak_db::workspace_files(db) {
-        if !is_indexable(db, file) {
-            continue;
-        }
-        if let Some(entry) = file_index(db, file).symbols.get(symbol) {
-            return Some(entry.clone());
-        }
-    }
-    None
-}
-
 /// Extract a file's workspace symbols.
 #[salsa::tracked(returns(ref))]
 fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
@@ -201,6 +186,8 @@ pub(crate) fn warm(db: &dyn ArkDb) {
     }
 }
 
+// Exclude `ark://` virtual documents because they show foreign code the user
+// cannot edit.
 fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
     !file.path(db).is_ark_virtual_doc()
 }
@@ -598,7 +585,7 @@ class <- R6::R6Class(
         let mut db = oak_db::OakDatabase::new();
         let url = Url::parse("ark://namespace/test.R").unwrap();
         db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
-        assert!(find(&db, "foo").is_none());
+        assert!(!workspace_symbol_names(&db).contains("foo"));
     }
 
     #[test]
@@ -607,7 +594,7 @@ class <- R6::R6Class(
         let mut db = oak_db::OakDatabase::new();
         let url = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
         db.upsert_editor(FilePath::from_url(&url), "foo <- 1".to_string());
-        assert!(find(&db, "foo").is_some());
+        assert!(workspace_symbol_names(&db).contains("foo"));
     }
 
     #[test]

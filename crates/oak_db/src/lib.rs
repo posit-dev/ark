@@ -44,6 +44,7 @@ pub use db::Db;
 pub use db::DbInputs;
 pub use db::SourceDb;
 pub use definition::Definition;
+pub use definition::Formal;
 pub use diagnostic::Annotation;
 pub use diagnostic::Diagnostic;
 pub use diagnostic::DiagnosticKind;

@@ -6,14 +6,21 @@
 //
 
 use aether_lsp_utils::proto::PositionEncoding;
+#[cfg(test)]
+use aether_path::FilePath;
+#[cfg(test)]
+use oak_db::File;
+#[cfg(test)]
+use oak_scan::DbScan;
 use tree_sitter::Node;
 use tree_sitter::Point;
+#[cfg(test)]
+use url::Url;
 
 #[cfg(test)]
+use crate::lsp::db::FileArkExt;
 #[cfg(test)]
-use crate::lsp::open_file::test_open_file;
-#[cfg(test)]
-use crate::lsp::open_file::OpenFile;
+use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -109,21 +116,32 @@ impl<'a> DocumentContext<'a> {
     }
 }
 
-/// Owns a `db` + `OpenFile` so unit tests can build a `DocumentContext` the same
-/// way handlers do, borrowing the cached tree and line index from the database.
+/// A test document whose context and static name resolution share one
+/// [`WorldState`]. The context borrows the database's cached tree and line
+/// index, as request handlers do.
+///
+/// To use a state that already contains packages or other files, use
+/// [open_test_document()] and [test_document_context()] instead.
 #[cfg(test)]
 pub(crate) struct TestDocument {
-    db: oak_db::OakDatabase,
-    file: OpenFile,
-    encoding: PositionEncoding,
+    state: WorldState,
+    file: File,
 }
 
 #[cfg(test)]
 impl TestDocument {
     pub(crate) fn new(contents: &str) -> Self {
-        let (db, file) = test_open_file(contents);
-        let encoding = PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
-        Self { db, file, encoding }
+        let mut state = WorldState::default();
+        let file = open_test_document(&mut state, contents);
+        Self { state, file }
+    }
+
+    pub(crate) fn state(&self) -> &WorldState {
+        &self.state
+    }
+
+    pub(crate) fn file(&self) -> File {
+        self.file
     }
 
     pub(crate) fn context(&self, point: Point) -> DocumentContext<'_> {
@@ -135,15 +153,37 @@ impl TestDocument {
         point: Point,
         trigger: Option<String>,
     ) -> DocumentContext<'_> {
-        DocumentContext::new(
-            self.file.tree_sitter(&self.db),
-            self.file.source_text(&self.db).as_str(),
-            self.file.line_index(&self.db),
-            self.encoding,
-            point,
-            trigger,
-        )
+        test_document_context(&self.state, self.file, point, trigger)
     }
+}
+
+/// Opens `contents` at `file:///test.R` in `state`'s database. Repeated calls
+/// replace the same buffer while retaining the state's packages and other
+/// files.
+#[cfg(test)]
+pub(crate) fn open_test_document(state: &mut WorldState, contents: &str) -> File {
+    let path = FilePath::from_url(&Url::parse("file:///test.R").unwrap());
+    state.db_mut().upsert_editor(path, contents.to_string())
+}
+
+/// Builds a context from the database's cached tree and line index, using
+/// UTF-16 position encoding.
+#[cfg(test)]
+pub(crate) fn test_document_context(
+    state: &WorldState,
+    file: File,
+    point: Point,
+    trigger: Option<String>,
+) -> DocumentContext<'_> {
+    let db = state.db();
+    DocumentContext::new(
+        file.tree_sitter(db),
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
+        point,
+        trigger,
+    )
 }
 
 #[cfg(test)]

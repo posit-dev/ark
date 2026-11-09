@@ -1,12 +1,14 @@
 //
-// signature.rs
+// signature_help.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
 use harp::call::RArgument;
 use harp::eval::RParseEvalOptions;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::object::*;
 use harp::r_null;
 use harp::syntax::sym_quote_invalid;
@@ -18,174 +20,318 @@ use harp::utils::r_typeof;
 use harp::RSymbol;
 use libr::*;
 use log::info;
-use stdext::unwrap::IntoResult;
+use oak_db::Db;
+use oak_db::File;
+use oak_db::Formal;
 use tower_lsp_server::ls_types::Documentation;
 use tower_lsp_server::ls_types::ParameterInformation;
 use tower_lsp_server::ls_types::ParameterLabel;
 use tower_lsp_server::ls_types::SignatureHelp;
 use tower_lsp_server::ls_types::SignatureInformation;
+use tree_sitter::Node;
 
+use crate::console;
 use crate::lsp::call_arguments::active_parameter;
 use crate::lsp::call_arguments::call_at;
+use crate::lsp::call_arguments::describe_callee;
+use crate::lsp::call_arguments::CallArguments;
 use crate::lsp::call_arguments::CallAt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
-// TODO: We should probably take a pass through `signature_help()` and rewrite it from
-// the ground up using our more advanced rust / tree-sitter knowledge. It feels like it
-// is the accumulation of a number of smaller changes that have resulted in something
-// that is a bit hard to follow.
+/// Signature help from the static pass, which runs on the main loop without R.
+pub(crate) struct StaticSignatureHelp {
+    /// Built from the callee's static description, without parameter
+    /// documentation. `None` when oak can't describe the callee.
+    pub(crate) help: Option<SignatureHelp>,
+    pub(crate) request: SignatureHelpRequest,
+}
 
-/// SAFETY: Requires access to the R runtime.
-pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
+/// Input for [r_signature_help()]. Owned plain data with no database handle,
+/// so an R error escaping the session pass can't leak one.
+#[derive(Debug)]
+pub(crate) struct SignatureHelpRequest {
+    arguments: CallArguments,
+    /// Help page for the parameter documentation. `None` when the callee
+    /// text names no topic.
+    topic: Option<HelpTopic>,
+}
+
+#[derive(Debug, Clone)]
+struct HelpTopic {
+    /// Function name, `f` in `pkg::f`.
+    name: String,
+    /// Package of `pkg::f`, `None` for a bare name.
+    package: Option<String>,
+}
+
+/// A session reply replaces static help when the callee evaluates to a
+/// function. Otherwise the static help stands.
+#[derive(Debug)]
+pub(crate) enum SignatureHelpReply {
+    /// The callee can't be evaluated or isn't a function in the session, so
+    /// the static help stands.
+    Decline,
+    /// Replaces static help with evaluated formals and parameter docs.
+    Fill(SignatureHelp),
+}
+
+impl SignatureHelpReply {
+    /// Returns `fallback` for [SignatureHelpReply::Decline], otherwise the
+    /// reply's help.
+    pub(crate) fn help_or(self, fallback: Option<SignatureHelp>) -> Option<SignatureHelp> {
+        match self {
+            SignatureHelpReply::Decline => fallback,
+            SignatureHelpReply::Fill(help) => Some(help),
+        }
+    }
+}
+
+/// Recognizes the call around the cursor, answers from the callee's static
+/// description, and builds the request for [r_signature_help()]. `None`
+/// outside a call's parentheses.
+///
+/// Doesn't call R, so it can run while R is busy.
+pub(crate) fn static_signature_help(
+    context: &DocumentContext,
+    db: &dyn Db,
+    file: File,
+) -> anyhow::Result<Option<StaticSignatureHelp>> {
     let Some(CallAt { callee, arguments }) = call_at(context)? else {
         return Ok(None);
     };
 
-    let code = &arguments.callee;
+    let help = describe_callee(db, file, &callee)?.map(|description| {
+        let parameters = description
+            .formals
+            .iter()
+            .map(|formal| SignatureParameter {
+                name: formal.name.clone(),
+                label: static_argument_label(formal),
+                documentation: None,
+            })
+            .collect();
+        signature_help(&arguments, parameters)
+    });
 
-    let Some(formals) = r_callee_formals(code)? else {
-        return Ok(None);
-    };
+    let topic = help_topic(&callee, context.contents);
+    let request = SignatureHelpRequest { arguments, topic };
 
-    // Get the help documentation associated with this function.
-    let help = if callee.is_namespace_operator() {
-        let package = callee.child_by_field_name("lhs").into_result()?;
-        let package = package.node_to_string(context.contents)?;
+    Ok(Some(StaticSignatureHelp { help, request }))
+}
 
-        let name = callee.child_by_field_name("rhs").into_result()?;
-        let name = name.node_to_string(context.contents)?;
-
-        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
-    } else {
-        let name = callee.node_to_string(context.contents)?;
-        RHtmlHelp::from_function(name.as_str(), None)
-    };
-
-    // The signature label. We generate this as we walk through the
-    // parameters, so we can more easily record offsets.
-    let mut label = String::new();
-    label.push_str(code.as_str());
-    label.push('(');
-
-    // Get the available parameters.
-    let mut parameters = vec![];
-
-    // Iterate over the documentation for each parameter, and add the relevant information.
-    for argument in formals.iter() {
-        // Get argument components.
-        let argument_name = &argument.name;
-        let argument_value = &argument.value;
-        let argument_label = argument_label(argument_name.clone(), argument_value.sexp);
-
-        // Compute signature offsets.
-        let start = label.len() as u32;
-        let end = start + argument_label.len() as u32;
-
-        // Add the argument label to the overall label.
-        label.push_str(argument_label.as_str());
-        label.push_str(", ");
-
-        // Get documentation, if any.
-        let mut documentation = None;
-        if let Ok(Some(ref help)) = help {
-            let markup = help.parameter(argument_name);
-            if let Ok(Some(markup)) = markup {
-                documentation = Some(Documentation::MarkupContent(markup));
-            }
-        }
-
-        // Add the new parameter.
-        parameters.push(ParameterInformation {
-            label: ParameterLabel::LabelOffsets([start, end]),
-            documentation,
+/// `None` when the callee text doesn't name a topic, such as an incomplete
+/// `utils::`. The session pass then answers without parameter documentation
+/// rather than discarding the static help.
+fn help_topic(callee: &Node, contents: &str) -> Option<HelpTopic> {
+    if !callee.is_namespace_operator() {
+        let name = callee.node_to_string(contents).ok()?;
+        return Some(HelpTopic {
+            name,
+            package: None,
         });
     }
 
-    // Clean up the closing ', ', and add a closing parenthesis.
-    if label.ends_with(", ") {
-        label.pop();
-        label.pop();
+    let package = callee.child_by_field_name("lhs")?;
+    let package = package.node_to_string(contents).ok()?;
+
+    let name = callee.child_by_field_name("rhs")?;
+    let name = name.node_to_string(contents).ok()?;
+
+    Some(HelpTopic {
+        name,
+        package: Some(package),
+    })
+}
+
+// Flatten multiline defaults for display without evaluating or deparsing them.
+// This is a source-text approximation, not an R-normalized expression.
+fn static_argument_label(formal: &Formal) -> String {
+    let Some(default) = &formal.default else {
+        return argument_label_truncate(formal.name.clone());
+    };
+
+    let default: Vec<&str> = default
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    argument_label_truncate(format!("{} = {}", formal.name, default.join(" ")))
+}
+
+/// Signature help from the function that the request's callee would call,
+/// with parameter documentation from its help page. Declines when the session
+/// has no such function, so the static help stands.
+///
+/// SAFETY: Requires access to the R runtime.
+pub(crate) fn r_signature_help(
+    request: &SignatureHelpRequest,
+) -> anyhow::Result<SignatureHelpReply> {
+    let SignatureHelpRequest { arguments, topic } = request;
+
+    let Some(object) = r_callee_function(&arguments.callee) else {
+        return Ok(SignatureHelpReply::Decline);
+    };
+    let formals = r_formals(*object)?;
+
+    let help = match topic {
+        Some(topic) => RHtmlHelp::from_function(topic.name.as_str(), topic.package.as_deref()),
+        None => Ok(None),
+    };
+
+    let parameters = formals
+        .iter()
+        .map(|argument| {
+            let mut documentation = None;
+            if let Ok(Some(ref help)) = help {
+                let markup = help.parameter(&argument.name);
+                if let Ok(Some(markup)) = markup {
+                    documentation = Some(Documentation::MarkupContent(markup));
+                }
+            }
+
+            SignatureParameter {
+                name: argument.name.clone(),
+                label: argument_label(argument.name.clone(), argument.value.sexp),
+                documentation,
+            }
+        })
+        .collect();
+
+    let help = signature_help(arguments, parameters);
+
+    info!("{:?}", help);
+    Ok(SignatureHelpReply::Fill(help))
+}
+
+struct SignatureParameter {
+    name: String,
+    label: String,
+    documentation: Option<Documentation>,
+}
+
+// Both passes use the same label offsets and argument-matching rules.
+fn signature_help(arguments: &CallArguments, parameters: Vec<SignatureParameter>) -> SignatureHelp {
+    // The signature label. We generate this as we walk through the
+    // parameters, so we can more easily record offsets.
+    let mut label = String::new();
+    label.push_str(arguments.callee.as_str());
+    label.push('(');
+
+    let mut names = Vec::with_capacity(parameters.len());
+    let mut information = Vec::with_capacity(parameters.len());
+
+    for (index, parameter) in parameters.into_iter().enumerate() {
+        if index > 0 {
+            label.push_str(", ");
+        }
+
+        // Compute signature offsets.
+        let start = label.len() as u32;
+        let end = start + parameter.label.len() as u32;
+
+        // Add the argument label to the overall label.
+        label.push_str(parameter.label.as_str());
+
+        names.push(parameter.name);
+        information.push(ParameterInformation {
+            label: ParameterLabel::LabelOffsets([start, end]),
+            documentation: parameter.documentation,
+        });
     }
 
     // Add a closing parenthesis.
     label.push(')');
 
-    let formal_names: Vec<String> = formals
-        .iter()
-        .map(|argument| argument.name.clone())
-        .collect();
-
     // NOTE: It seems like the frontend still tries to highlight the first
     // parameter when the offset is set to none, so here we just force it to
     // match no available argument.
-    let offset = active_parameter(&arguments, &formal_names).unwrap_or(formals.len() + 1);
+    let offset = active_parameter(arguments, &names).unwrap_or(names.len() + 1);
     let offset = Some(u32::try_from(offset).unwrap_or_default());
 
     let signature = SignatureInformation {
         label,
         documentation: None,
-        parameters: Some(parameters),
+        parameters: Some(information),
         active_parameter: offset,
     };
 
-    let help = SignatureHelp {
+    SignatureHelp {
         signatures: vec![signature],
         active_signature: None,
         active_parameter: offset,
-    };
-
-    info!("{:?}", help);
-    Ok(Some(help))
+    }
 }
 
-/// Formals of the function that `callee` evaluates to, or `None` if it can't
-/// be evaluated safely or isn't a function.
-///
-/// Shared by signature help and custom completions so both match the cursor
-/// against the same function's formals. Evaluates in the global environment,
-/// not `console::selected_env()`.
+/// Formals of the function that a call to `callee` would invoke, or `None` if
+/// the session has no such function.
 ///
 /// SAFETY: Requires access to the R runtime.
 pub(crate) fn r_callee_formals(callee: &str) -> anyhow::Result<Option<Vec<RArgument>>> {
-    // TODO: Should we search the document and / or the workspace index
-    // before asking the R session for a definition? Which should take precedence?
-
-    let object = harp::parse_eval(callee, RParseEvalOptions {
-        forbid_function_calls: true,
-        ..Default::default()
-    });
-
-    let object = match object {
-        Ok(object) => object,
-        Err(err) => match err {
-            // LHS of the call was too complex to evaluate.
-            harp::error::Error::UnsafeEvaluationError(_) => return Ok(None),
-            // LHS of the call evaluated to an error. Totally possible if the
-            // user is writing pseudocode. Don't want to propagate an error here.
-            _ => return Ok(None),
-        },
+    let Some(object) = r_callee_function(callee) else {
+        return Ok(None);
     };
 
+    Ok(Some(r_formals(*object)?))
+}
+
+/// The function that a call to `callee` would invoke in
+/// `console::selected_env()`. `None` if the text contains `(`, fails to parse
+/// or evaluate, or doesn't give a function.
+///
+/// A bare name is looked up the way R looks up the function of a call, which
+/// skips non-function bindings: after `t <- 5`, `t(m)` still calls
+/// `base::t()`. Other callees, such as `pkg::f` or `obj$f`, are evaluated as
+/// values. The call slot, custom completions and signature help all go
+/// through here so they agree on which function a call names.
+///
+/// SAFETY: Requires access to the R runtime.
+pub(crate) fn r_callee_function(callee: &str) -> Option<RObject> {
+    let env = console::selected_env();
+
+    let object = match callee_name(callee) {
+        Some(name) => RFunction::new("base", "get0")
+            .add(name)
+            .param("envir", env)
+            .param("mode", "function")
+            .call(),
+        None => harp::parse_eval(callee, RParseEvalOptions {
+            forbid_function_calls: true,
+            env,
+        }),
+    };
+
+    // The guard rejects callee text containing `(`, and unfinished code can
+    // name an undefined callee. The static answer stands in both cases, so
+    // the error isn't reported.
+    let object = object.ok()?;
+
+    // Not uncommon for tree-sitter to detect partially written code as a
+    // call, like:
+    // ---
+    // mtcars$
+    // plot(1:5)
+    // ---
+    // Where it detects `mtcars$plot` as the LHS of the call.
+    // That is actually how R would parse this, but the user might be writing
+    // `mtcars$` and requesting completions for the `$` when this occurs.
+    // A non-function has no formals to match against.
     if !r_is_function(*object) {
-        // Not uncommon for tree-sitter to detect partially written code as a
-        // call, like:
-        // ---
-        // mtcars$
-        // plot(1:5)
-        // ---
-        // Where it detects `mtcars$plot` as the LHS of the call.
-        // That is actually how R would parse this, but the user might be writing
-        // `mtcars$` and requesting completions for the `$` when this occurs.
-        // In these cases the `r_parse_eval()` above either errors or returns
-        // something that isn't a function, so we ensure we have a function
-        // before proceeding here.
-        return Ok(None);
+        return None;
     }
 
-    Ok(Some(r_formals(*object)?))
+    Some(object)
+}
+
+/// The name of a callee that is a bare symbol, like `t` or `` `my fun` ``.
+fn callee_name(callee: &str) -> Option<String> {
+    let expr = harp::parse_expr(callee).ok()?;
+    if r_typeof(*expr) != SYMSXP {
+        return None;
+    }
+    Some(String::from(RSymbol::new(*expr).ok()?))
 }
 
 fn argument_label(name: String, value: SEXP) -> String {
@@ -359,21 +505,38 @@ mod tests {
     use harp::RObject;
     use libr::R_xlen_t;
     use tower_lsp_server::ls_types::ParameterLabel;
+    use tower_lsp_server::ls_types::SignatureHelp;
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
+    use crate::lsp::signature_help::static_signature_help;
+    use crate::lsp::signature_help::SignatureHelpReply;
+    use crate::lsp::signature_help::StaticSignatureHelp;
+
+    /// Runs only the static pass, as when R is busy.
+    fn static_signature_help_at_cursor(code: &str) -> Option<StaticSignatureHelp> {
+        let (text, point) = point_from_cursor(code);
+        let doc = TestDocument::new(&text);
+        let context = doc.context(point);
+        static_signature_help(&context, doc.state().db(), doc.file()).unwrap()
+    }
+
+    /// Runs both passes, as when R is idle. Requires the R thread.
+    fn signature_help_at_cursor(code: &str) -> Option<SignatureHelp> {
+        let StaticSignatureHelp { help, request } = static_signature_help_at_cursor(code)?;
+        r_signature_help(&request).unwrap().help_or(help)
+    }
+
+    fn label(help: &SignatureHelp) -> &str {
+        help.signatures[0].label.as_str()
+    }
 
     #[test]
     fn test_basic_signature_help() {
         crate::r_task(|| {
-            let (text, point) = point_from_cursor("library(@)");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-
-            let help = r_signature_help(&context);
-            let help = help.unwrap().unwrap();
+            let help = signature_help_at_cursor("library(@)").unwrap();
             assert_eq!(help.signatures.len(), 1);
 
             // Looking for the label offset into `library(package, ...etc)` for `package`
@@ -391,21 +554,8 @@ mod tests {
 
     #[test]
     fn test_no_signature_help_outside_parentheses() {
-        crate::r_task(|| {
-            let (text, point) = point_from_cursor("library@()");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let help = r_signature_help(&context);
-            let help = help.unwrap();
-            assert!(help.is_none());
-
-            let (text, point) = point_from_cursor("library()@");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let help = r_signature_help(&context);
-            let help = help.unwrap();
-            assert!(help.is_none());
-        })
+        assert!(static_signature_help_at_cursor("library@()").is_none());
+        assert!(static_signature_help_at_cursor("library()@").is_none());
     }
 
     #[test]
@@ -427,19 +577,12 @@ fn <- function(
 "#;
             harp::parse_eval_global(fun).unwrap();
 
-            let (text, point) = point_from_cursor("fn(@)");
-            let doc = TestDocument::new(&text);
-            let context = doc.context(point);
-            let help = r_signature_help(&context);
-            let help = help.unwrap().unwrap();
+            let help = signature_help_at_cursor("fn(@)").unwrap();
 
             // Check expected signature label
-            let signature = help.signatures.first().unwrap();
             assert_eq!(
-                signature.label,
-                String::from(
-                    r#"fn(x, ..., by = NULL, value = 2.5, string = "foo", keep = c("yes", "no", "maybe"), length = c(2L, 3L), call = identity(x), lst = list(1, 2))"#
-                )
+                label(&help),
+                r#"fn(x, ..., by = NULL, value = 2.5, string = "foo", keep = c("yes", "no", "maybe"), length = c(2L, 3L), call = identity(x), lst = list(1, 2))"#
             );
 
             // Clean up
@@ -448,25 +591,52 @@ fn <- function(
     }
 
     #[test]
+    fn test_static_signature_help_argument_defaults() {
+        let code = r#"
+fn <- function(
+  x,
+  ...,
+  by = NULL,
+  value = 2.5,
+  string = "foo",
+  keep = c("yes", "no", "maybe"),
+  length = c(2L, 3L),
+  call = identity(x),
+  lst = list(1, 2)
+) { }
+fn(@)
+"#;
+        let help = static_signature_help_at_cursor(code).unwrap().help.unwrap();
+        assert_eq!(
+            label(&help),
+            r#"fn(x, ..., by = NULL, value = 2.5, string = "foo", keep = c("yes", "no", "maybe"), length = c(2L, 3L), call = identity(x), lst = list(1, 2))"#
+        );
+    }
+
+    #[test]
+    fn test_static_signature_help_defaults_are_source_text() {
+        // Session labels normalize quotes and numbers. Static labels retain
+        // their source spelling.
+        let code = "fn <- function(chr = 'a', num = 1e3, f = function(x) {\n  x\n}) NULL\nfn(@)";
+        let help = static_signature_help_at_cursor(code).unwrap().help.unwrap();
+        assert_eq!(
+            label(&help),
+            "fn(chr = 'a', num = 1e3, f = function(x) { x })"
+        );
+
+        let parameters = help.signatures[0].parameters.as_ref().unwrap();
+        assert!(parameters
+            .iter()
+            .all(|parameter| parameter.documentation.is_none()));
+    }
+
+    #[test]
     fn test_signature_help_active_parameter() {
         crate::r_task(|| {
             harp::parse_eval_global("ark_sig <- function(a, b, c, d) NULL").unwrap();
 
-            // 5 is the no-match sentinel, `formals.len() + 1`
-            let cases = [
-                ("ark_sig(@)", 0),
-                ("ark_sig(1, @)", 1),
-                ("ark_sig(c = 1, @)", 0),
-                ("ark_sig(b = 1, 2, @)", 2),
-                ("ark_sig(1, c = @)", 2),
-                ("ark_sig(1, 2, 3, 4, @)", 5),
-            ];
-
-            for (code, expected) in cases {
-                let (text, point) = point_from_cursor(code);
-                let doc = TestDocument::new(&text);
-                let context = doc.context(point);
-                let help = r_signature_help(&context).unwrap().unwrap();
+            for (code, expected) in ACTIVE_PARAMETER_CASES {
+                let help = signature_help_at_cursor(code).unwrap();
 
                 assert_eq!((code, help.active_parameter), (code, Some(expected)));
                 assert_eq!(
@@ -476,6 +646,81 @@ fn <- function(
             }
 
             harp::parse_eval_global("rm(ark_sig)").unwrap();
+        })
+    }
+
+    #[test]
+    fn test_static_signature_help_active_parameter() {
+        for (code, expected) in ACTIVE_PARAMETER_CASES {
+            let code = format!("ark_sig <- function(a, b, c, d) NULL\n{code}");
+            let help = static_signature_help_at_cursor(&code)
+                .unwrap()
+                .help
+                .unwrap();
+
+            assert_eq!(label(&help), "ark_sig(a, b, c, d)");
+            assert_eq!(
+                (code.as_str(), help.active_parameter),
+                (code.as_str(), Some(expected))
+            );
+            assert_eq!(
+                (code.as_str(), help.signatures[0].active_parameter),
+                (code.as_str(), Some(expected))
+            );
+        }
+    }
+
+    // With four formals, 5 is the out-of-range index used to prevent the
+    // frontend from highlighting a parameter when none matches.
+    const ACTIVE_PARAMETER_CASES: [(&str, u32); 6] = [
+        ("ark_sig(@)", 0),
+        ("ark_sig(1, @)", 1),
+        ("ark_sig(c = 1, @)", 0),
+        ("ark_sig(b = 1, 2, @)", 2),
+        ("ark_sig(1, c = @)", 2),
+        ("ark_sig(1, 2, 3, 4, @)", 5),
+    ];
+
+    #[test]
+    fn test_session_signature_help_replaces_static_help() {
+        crate::r_task(|| {
+            let code = "ark_redef <- function(a) NULL\nark_redef(@)";
+
+            // Failed session lookup leaves the static signature intact.
+            let help = signature_help_at_cursor(code).unwrap();
+            assert_eq!(label(&help), "ark_redef(a)");
+
+            // Evaluated formals take precedence over the document's formals.
+            harp::parse_eval_global("ark_redef <- function(x, y) NULL").unwrap();
+            let help = signature_help_at_cursor(code).unwrap();
+            assert_eq!(label(&help), "ark_redef(x, y)");
+
+            // A session non-function says nothing about the callee, since R
+            // skips non-function bindings when it looks up a function to call
+            harp::parse_eval_global("ark_redef <- 1").unwrap();
+            let help = signature_help_at_cursor(code).unwrap();
+            assert_eq!(label(&help), "ark_redef(a)");
+
+            harp::parse_eval_global("rm(ark_redef)").unwrap();
+        })
+    }
+
+    #[test]
+    fn test_session_signature_help_skips_non_function_bindings() {
+        crate::r_task(|| {
+            // R calls `base::match()` here, so the session describes it
+            harp::parse_eval_global("match <- 1").unwrap();
+            let StaticSignatureHelp { request, .. } =
+                static_signature_help_at_cursor("match(@)").unwrap();
+            let SignatureHelpReply::Fill(help) = r_signature_help(&request).unwrap() else {
+                panic!("Expected session signature help");
+            };
+            assert_eq!(
+                label(&help),
+                "match(x, table, nomatch = NA, incomparables = NULL)"
+            );
+
+            harp::parse_eval_global("rm(match)").unwrap();
         })
     }
 

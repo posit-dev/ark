@@ -72,6 +72,8 @@ use crate::lsp::rename;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
 use crate::lsp::signature_help::r_signature_help;
+use crate::lsp::signature_help::static_signature_help;
+use crate::lsp::signature_help::StaticSignatureHelp;
 use crate::lsp::state::WorldState;
 use crate::lsp::statement_range::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
@@ -176,7 +178,7 @@ pub(crate) fn handle_completion(
     );
     lsp::log_info!("Completion context: {:#?}", context);
 
-    let (completions, request) = static_completions(&context, state)?;
+    let (completions, request) = static_completions(&context, file, state)?;
 
     // While the package's sources or sidecar facts may arrive, the editor must
     // request completions on the next keystroke rather than filter a list with
@@ -327,26 +329,30 @@ pub(crate) fn handle_signature_help(
         None,
     );
 
-    // Skip rather than block the LSP main loop while R is busy
-    // TODO: Once formals and argument matching are computed statically (#1095),
-    // show the signature while R is busy and only skip the parameter docs.
-    let Some(result) = try_r_task(|| r_signature_help(&context)) else {
-        log::trace!("Skipping signature help: R is busy");
-        return Ok(None);
-    };
-
-    // unwrap errors
+    let result = static_signature_help(&context, db, file);
     let result = unwrap!(result, Err(err) => {
         lsp::log_error!("{err:?}");
         return Ok(None);
     });
-
-    // unwrap empty options
-    let result = unwrap!(result, None => {
+    let Some(StaticSignatureHelp { help, request }) = result else {
         return Ok(None);
-    });
+    };
 
-    Ok(Some(result))
+    // While R is busy, return static help without parameter documentation
+    // rather than wait for the session. The closure borrows only the request's
+    // plain data, so an escaping R error cannot leak a database handle.
+    let Some(reply) = try_r_task(|| r_signature_help(&request)) else {
+        log::trace!("Skipping session signature help: R is busy");
+        return Ok(help);
+    };
+
+    match reply {
+        Ok(reply) => Ok(reply.help_or(help)),
+        Err(err) => {
+            lsp::log_error!("{err:?}");
+            Ok(help)
+        },
+    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]

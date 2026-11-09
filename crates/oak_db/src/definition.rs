@@ -1,9 +1,13 @@
 use aether_syntax::AnyRExpression;
+use aether_syntax::AnyRParameterName;
 use aether_syntax::RBinaryExpression;
+use aether_syntax::RParameter;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::AstNode;
+use biome_rowan::AstSeparatedList;
 use biome_rowan::TextRange;
+use oak_core::syntax_ext::RIdentifierExt;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
@@ -59,6 +63,56 @@ impl<'db> Definition<'db> {
         let root = parse.tree().syntax().clone();
         Some(name_node(self.kind(db), &root)?.text_trimmed_range())
     }
+
+    /// Returns the formal parameters as written in the bound function's source.
+    /// The value must be a function definition, either `function(...)` or
+    /// `\(...)`. Other values, including `.Primitive()` calls, and bindings
+    /// for parameters, loop variables or `source()` imports return `None`.
+    ///
+    /// Callers read one callee at a time, so this uses the memoized
+    /// [`File::parse()`] tree without a separate tracked query.
+    pub fn formals(self, db: &'db dyn crate::Db) -> Option<Vec<Formal>> {
+        let root = self.file(db).parse(db).syntax();
+        let AnyRExpression::RFunctionDefinition(function) = value_node(self.kind(db), &root)?
+        else {
+            return None;
+        };
+        let parameters = function.parameters().ok()?;
+
+        let formals = parameters
+            .items()
+            .iter()
+            .filter_map(|parameter| formal(&parameter.ok()?))
+            .collect();
+        Some(formals)
+    }
+}
+
+/// A function parameter as written in its definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Formal {
+    /// The parameter name without backticks, `...` for dots.
+    pub name: String,
+    /// Source text of the default expression, `None` without a default.
+    pub default: Option<String>,
+}
+
+fn formal(parameter: &RParameter) -> Option<Formal> {
+    let name = match parameter.name().ok()? {
+        AnyRParameterName::RIdentifier(identifier) => identifier.name_text(),
+        AnyRParameterName::RDots(dots) => dots.syntax().text_trimmed().to_string(),
+        AnyRParameterName::RDotDotI(dot_dot_i) => dot_dot_i.syntax().text_trimmed().to_string(),
+        AnyRParameterName::RBogusParameterName(_) => return None,
+    };
+
+    // While the user is typing `function(x = )`, keep the parameter even
+    // though its default is missing and R would reject the definition.
+    let default = parameter
+        .default()
+        .and_then(|default| default.value().ok())
+        .map(|value| value.syntax().text_trimmed().to_string());
+
+    Some(Formal { name, default })
 }
 
 /// The syntax node of the bound name for `kind`.

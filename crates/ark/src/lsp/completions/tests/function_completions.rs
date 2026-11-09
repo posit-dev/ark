@@ -232,10 +232,10 @@ mod namespace_post_hoc_tests {
     #[test]
     fn test_post_hoc_namespace_before_sources_are_fetched() {
         let library = tempfile::TempDir::new().unwrap();
-        let state = write_library_package(library.path(), "pkg", "export(adist)\n", None);
+        let mut state = write_library_package(library.path(), "pkg", "export(adist)\n", None);
 
         for cursor_text in ["pkg::@adist", "pkg::@adist()", "debug(pkg::@adist)"] {
-            let completions = static_items_with_state(cursor_text, &state);
+            let completions = static_items_with_state(cursor_text, &mut state);
             let item = find_completion_by_label(&completions, "adist").unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::STRUCT));

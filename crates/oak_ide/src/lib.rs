@@ -1,9 +1,12 @@
+mod callee_description;
 mod find_references;
 mod goto_definition;
 mod namespace_completions;
 mod rename;
 
 use biome_rowan::TextRange;
+pub use callee_description::callee_description;
+pub use callee_description::CalleeDescription;
 pub use find_references::find_references;
 pub use goto_definition::goto_definition;
 pub use namespace_completions::namespace_completions;
