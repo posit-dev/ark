@@ -5,7 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
 
+use aether_path::FilePath;
 use oak_db::DbInputs;
 use oak_db::Environment;
 use oak_db::EnvironmentStatus;
@@ -13,6 +16,8 @@ use serde_json::Value;
 use tempfile::TempDir;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::ClientCapabilities;
+use tower_lsp_server::ls_types::Diagnostic;
+use tower_lsp_server::ls_types::DiagnosticSeverity;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesClientCapabilities;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
 use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
@@ -22,6 +27,7 @@ use tower_lsp_server::ls_types::FileEvent;
 use tower_lsp_server::ls_types::GlobPattern;
 use tower_lsp_server::ls_types::InitializeParams;
 use tower_lsp_server::ls_types::OneOf;
+use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::RegistrationParams;
 use tower_lsp_server::ls_types::UnregistrationParams;
 use tower_lsp_server::ls_types::Uri;
@@ -34,6 +40,7 @@ use super::environment_resolver::TestEnvironmentResolver;
 use super::source_handler::gate;
 use super::source_handler::wait_for_entries;
 use super::utils::did_change_workspace_folders;
+use super::utils::did_open;
 use super::utils::initialize;
 use super::utils::initialized;
 use super::utils::test_client;
@@ -42,12 +49,15 @@ use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::diagnostics::generate_diagnostics;
+use crate::lsp::diagnostics::WORKSPACE_ENVIRONMENT_FIXES;
 use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::NO_R_EXECUTABLE;
 use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
@@ -640,6 +650,251 @@ async fn test_library_watchers_follow_results_after_initialized() {
         .map(|unregistration| unregistration.id.as_str())
         .collect();
     assert_eq!(ids, vec![id.as_str()]);
+}
+
+/// A first startup failure suppresses semantic diagnostics. After a success,
+/// another failure retains semantic diagnostics and adds a warning. Success
+/// clears either failure diagnostic.
+#[tokio::test]
+async fn test_open_file_diagnostics_follow_environment_failures() {
+    let _aux = init_aux_for_test();
+    let workspace = tempfile::tempdir().unwrap();
+    let rprofile = workspace.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let script = workspace.path().join("a.R");
+    let code = "foo\n1 }\n";
+    fs::write(&script, code).unwrap();
+
+    let resolver = Arc::new(TestEnvironmentResolver::new([
+        (EnvironmentRequest::Default, TestBehavior::Success(vec![])),
+        (
+            directory(workspace.path()),
+            TestBehavior::Failure("R exited with status 1"),
+        ),
+    ]));
+    let mut state = global_state(Some(resolver.clone()));
+
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_to_quiescence(event).await;
+    state
+        .handle_event_to_quiescence(did_open(&script, code))
+        .await;
+
+    let dir = workspace.path().display();
+    let rprofile_shown = rprofile.display();
+    let diagnostics = open_file_diagnostics(&state, &script);
+    let [failure, syntax] = diagnostics.as_slice() else {
+        panic!("Expected two diagnostics, got {diagnostics:?}");
+    };
+    assert_eq!(failure.severity, Some(DiagnosticSeverity::INFORMATION));
+    assert_eq!(
+        failure.message,
+        format!(
+            "R startup failed in {dir}, so only syntax is checked. See {rprofile_shown}.\n\
+             \n\
+             R exited with status 1\n\
+             \n\
+             {WORKSPACE_ENVIRONMENT_FIXES}"
+        )
+    );
+    let full = vec![
+        syntax.message.clone(),
+        String::from("No symbol named 'foo' in scope."),
+    ];
+
+    resolver.set(directory(workspace.path()), TestBehavior::Success(vec![]));
+    state
+        .handle_event_to_quiescence(sentinel_changed(&[&rprofile]))
+        .await;
+    assert_eq!(open_file_diagnostic_messages(&state, &script), full);
+
+    resolver.set(
+        directory(workspace.path()),
+        TestBehavior::Failure("R timed out"),
+    );
+    state
+        .handle_event_to_quiescence(sentinel_changed(&[&rprofile]))
+        .await;
+
+    let diagnostics = open_file_diagnostics(&state, &script);
+    let [failure, rest @ ..] = diagnostics.as_slice() else {
+        panic!("Expected diagnostics");
+    };
+    assert_eq!(failure.severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+        failure.message,
+        format!(
+            "R startup failed in {dir}, so libraries come from the last successful startup. \
+             See {rprofile_shown}.\n\
+             \n\
+             R timed out\n\
+             \n\
+             {WORKSPACE_ENVIRONMENT_FIXES}"
+        )
+    );
+    let rest: Vec<String> = rest
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    assert_eq!(rest, full);
+
+    resolver.set(directory(workspace.path()), TestBehavior::Success(vec![]));
+    state
+        .handle_event_to_quiescence(sentinel_changed(&[&rprofile]))
+        .await;
+    assert_eq!(open_file_diagnostic_messages(&state, &script), full);
+}
+
+/// What the main loop publishes for an open file follows its environment
+/// without a document edit: syntax only while the first run is in flight, the
+/// startup failure once it fails, and full diagnostics once a rerun succeeds.
+#[tokio::test]
+async fn test_published_diagnostics_follow_environment_resolution() {
+    let mut aux_rx = init_aux_for_test();
+    let workspace = tempfile::tempdir().unwrap();
+    let rprofile = workspace.path().join(".Rprofile");
+    fs::write(&rprofile, "").unwrap();
+    let script = workspace.path().join("a.R");
+    let code = "foo\n1 }\n";
+    fs::write(&script, code).unwrap();
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (workspace_gate, release) = gate(entered_tx);
+    let resolver = Arc::new(TestEnvironmentResolver::new([
+        (EnvironmentRequest::Default, TestBehavior::Success(vec![])),
+        (
+            directory(workspace.path()),
+            TestBehavior::GatedFailure(Arc::new(workspace_gate), "R exited with status 1"),
+        ),
+    ]));
+    let mut state = global_state(Some(resolver.clone()));
+
+    // Scanning places `a.R` in the workspace root, so it uses the workspace
+    // environment, whose run is then held at the gate.
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_once(event).await;
+    state.pump_scans_to_quiescence().await;
+    wait_for_entries(&entered_rx, 1);
+
+    state.handle_event_once(did_open(&script, code)).await;
+    let published = pump_publications(&mut state, &mut aux_rx, &script, |_state, published| {
+        !published.is_empty()
+    })
+    .await;
+    let [syntax] = published[0].as_slice() else {
+        panic!("Expected one diagnostic, got {published:?}");
+    };
+    // The syntax error at the unmatched `}`.
+    assert_eq!(syntax.range.start, Position::new(1, 2));
+
+    drop(release);
+    let published = pump_publications(&mut state, &mut aux_rx, &script, |state, _published| {
+        state.is_settled()
+    })
+    .await;
+    let Some(last) = published.last() else {
+        panic!("Expected a publication after the failed run");
+    };
+    let [failure, after] = last.as_slice() else {
+        panic!("Expected two diagnostics, got {last:?}");
+    };
+    assert_eq!(failure.severity, Some(DiagnosticSeverity::INFORMATION));
+    assert_eq!(
+        failure.message,
+        format!(
+            "R startup failed in {dir}, so only syntax is checked. See {rprofile}.\n\
+             \n\
+             R exited with status 1\n\
+             \n\
+             {WORKSPACE_ENVIRONMENT_FIXES}",
+            dir = workspace.path().display(),
+            rprofile = rprofile.display(),
+        )
+    );
+    assert_eq!(after, syntax);
+
+    resolver.set(directory(workspace.path()), TestBehavior::Success(vec![]));
+    state
+        .handle_event_once(sentinel_changed(&[&rprofile]))
+        .await;
+    let published = pump_publications(&mut state, &mut aux_rx, &script, |state, _published| {
+        state.is_settled()
+    })
+    .await;
+    let Some(last) = published.last() else {
+        panic!("Expected a publication after the successful run");
+    };
+    let messages: Vec<&str> = last
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(messages, vec![
+        syntax.message.as_str(),
+        "No symbol named 'foo' in scope."
+    ]);
+}
+
+/// Generate diagnostics for the open buffer directly, without waiting for
+/// background publication.
+fn open_file_diagnostics(state: &GlobalState, path: &Path) -> Vec<Diagnostic> {
+    let world = state.world();
+    let file_path = FilePath::from_path_buf(path.to_path_buf()).unwrap();
+    let open_file = world.open_file(&file_path).unwrap();
+    generate_diagnostics(
+        open_file.file(),
+        world.snapshot(),
+        false,
+        open_file.wire_uri(),
+    )
+}
+
+fn open_file_diagnostic_messages(state: &GlobalState, path: &Path) -> Vec<String> {
+    open_file_diagnostics(state, path)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+/// Pump the main loop until `done` holds, returning the diagnostics published
+/// for `path` meanwhile, oldest first. Publications come from the auxiliary
+/// channel, so they have passed refresh scheduling and generation filtering.
+///
+/// The analysis pool can go idle without sending an event, so `done` is
+/// re-checked every millisecond rather than only after events.
+async fn pump_publications(
+    state: &mut GlobalState,
+    aux_rx: &mut UnboundedReceiver<AuxiliaryEvent>,
+    path: &Path,
+    done: impl Fn(&GlobalState, &[Vec<Diagnostic>]) -> bool,
+) -> Vec<Vec<Diagnostic>> {
+    const POLL: Duration = Duration::from_millis(1);
+    const TIMEOUT: Duration = Duration::from_secs(30);
+
+    let file_path = FilePath::from_path_buf(path.to_path_buf()).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    let mut published = Vec::new();
+    loop {
+        while let Ok(event) = aux_rx.try_recv() {
+            let AuxiliaryEvent::PublishDiagnostics(publication) = event else {
+                continue;
+            };
+            if publication.path == file_path {
+                published.push(publication.diagnostics);
+            }
+        }
+        if done(state, &published) {
+            return published;
+        }
+        if Instant::now() > deadline {
+            panic!(
+                "No expected diagnostics for {path} within {TIMEOUT:?}, got {published:?}",
+                path = path.display()
+            );
+        }
+        if let Ok(event) = tokio::time::timeout(POLL, state.next_event()).await {
+            state.handle_event_once(event).await;
+        }
+    }
 }
 
 fn global_state(resolver: Option<Arc<TestEnvironmentResolver>>) -> GlobalState {

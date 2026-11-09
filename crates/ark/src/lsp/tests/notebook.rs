@@ -24,6 +24,7 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
+use super::utils::fixed_environments;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
@@ -32,6 +33,7 @@ use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_notebook;
 use crate::lsp::state_handlers::did_close_notebook;
 use crate::lsp::state_handlers::did_open_notebook;
+use crate::lsp::tests::state_handlers::set_workspace_paths;
 
 const NOTEBOOK: &str = "file:///proj/analysis.ipynb";
 
@@ -62,9 +64,14 @@ fn cell_item(handle: usize, text: &str) -> TextDocumentItem {
 /// `cells` may include handles absent from `texts` to model listed cells
 /// whose text the client does not sync.
 fn open(state: &mut WorldState, cells: &[usize], texts: &[(usize, &str)]) {
+    open_at(state, NOTEBOOK, cells, texts);
+}
+
+/// Like [`open()`], with the notebook at `notebook`. Cell URIs stay the same.
+fn open_at(state: &mut WorldState, notebook: &str, cells: &[usize], texts: &[(usize, &str)]) {
     let params = DidOpenNotebookDocumentParams {
         notebook_document: NotebookDocument {
-            uri: NOTEBOOK.parse().unwrap(),
+            uri: notebook.parse().unwrap(),
             notebook_type: "jupyter-notebook".to_string(),
             version: 0,
             metadata: None,
@@ -129,19 +136,60 @@ fn penguins_state(library: &tempfile::TempDir) -> WorldState {
     state
 }
 
-fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
+fn cell_file(state: &WorldState, handle: usize) -> oak_db::File {
     let uri = cell_uri(handle);
-    let file = state
+    state
         .open_files
         .values()
         .find(|open_file| *open_file.wire_uri() == uri)
         .expect("cell is open")
-        .file();
+        .file()
+}
 
-    generate_diagnostics(file, state.snapshot(), false, &uri)
+fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
+    let file = cell_file(state, handle);
+    generate_diagnostics(file, state.snapshot(), false, &cell_uri(handle))
         .into_iter()
         .map(|diagnostic| diagnostic.message)
         .collect()
+}
+
+/// Notebook cells use the workspace environment rather than the default.
+/// While that environment is unresolved or failed, undefined-symbol diagnostics
+/// are suppressed but syntax errors are reported. Only the first cell reports
+/// the environment failure.
+#[test]
+fn test_notebook_cells_use_workspace_environment_and_report_failure_once() {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut state = WorldState::with_db(oak_db::OakDatabase::new());
+    set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
+    state.db_mut().reconcile_environments();
+
+    let notebook = url::Url::from_file_path(workspace.path().join("analysis.ipynb")).unwrap();
+    open_at(&mut state, notebook.as_str(), &[0, 1], &[
+        (0, "foo\n"),
+        (1, "bar\n1 }\n"),
+    ]);
+
+    // An unresolved environment suppresses undefined-symbol diagnostics without
+    // reporting a startup failure.
+    assert_eq!(cell_diagnostic_messages(&state, 0), Vec::<String>::new());
+    assert_eq!(cell_diagnostic_messages(&state, 1), vec!["Syntax error"]);
+
+    let environment = cell_file(&state, 0).environment(state.db());
+    assert_ne!(environment, state.db().default_environment());
+    state
+        .db_mut()
+        .record_environment_failure(environment, String::from("R exited with status 1"));
+
+    let first = cell_diagnostic_messages(&state, 0);
+    let [failure] = first.as_slice() else {
+        panic!("Expected one diagnostic, got {first:?}");
+    };
+    let prefix = format!("R startup failed in {}, ", workspace.path().display());
+    assert!(failure.starts_with(&prefix));
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), vec!["Syntax error"]);
 }
 
 #[test]
@@ -227,6 +275,7 @@ fn test_notebook_did_open_registers_cells_as_open_files() {
 
 fn test_lsp_state() -> LspState {
     LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        .with_environment_scheduler(fixed_environments(&[]))
 }
 
 fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::Result<()> {

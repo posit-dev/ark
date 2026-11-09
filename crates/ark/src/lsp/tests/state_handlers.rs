@@ -37,6 +37,7 @@ use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
+use super::utils::fixed_environments;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
@@ -91,12 +92,13 @@ fn did_change_workspace_folders(
     })
 }
 
-/// Drive a production handler that dispatches its scans through `events_tx`,
-/// then pump the resulting `OakScanCompleted` events to quiescence on a local
-/// runtime. Production does this pumping in the main loop's event handler;
-/// the tests have to stand up the same machinery (tokio runtime to await the
-/// completions, aux channel so `send_auxiliary` doesn't panic, an events channel
-/// to receive completions).
+/// Run a production handler and apply its scan and environment resolution
+/// results until neither scheduler has pending work. This replaces the main
+/// loop's event handling with a local Tokio runtime and channels, including
+/// the auxiliary channel required by `send_auxiliary()`.
+///
+/// Applying the fixed resolver's results lets files in newly added workspace
+/// folders receive semantic diagnostics instead of remaining syntax-only.
 fn run_handler_to_quiescence<F>(
     state: &mut WorldState,
     lsp_state: &mut LspState,
@@ -113,18 +115,26 @@ where
 
     rt.block_on(async {
         handler(state, lsp_state, &events_tx)?;
-        while lsp_state.oak_scheduler.has_pending_scans() {
-            let scan = match events_rx.recv().await {
-                Some(Event::OakScanCompleted(scan)) => scan,
-                // Folder changes also request environment resolutions. These
-                // tests check scan placement only, and drop the results.
-                Some(Event::EnvironmentResolved(_)) => continue,
-                _ => panic!("Expected `OakScanCompleted`"),
-            };
-            let followups = lsp_state
-                .oak_scheduler
-                .apply_scan_completed(state.db_mut(), scan);
-            dispatch_scan_requests(&lsp_state.scan_pool, &events_tx, followups);
+        while lsp_state.oak_scheduler.has_pending_scans() ||
+            lsp_state.environment_scheduler.has_pending()
+        {
+            match events_rx.recv().await {
+                Some(Event::OakScanCompleted(scan)) => {
+                    let followups = lsp_state
+                        .oak_scheduler
+                        .apply_scan_completed(state.db_mut(), scan);
+                    dispatch_scan_requests(&lsp_state.scan_pool, &events_tx, followups);
+                },
+                Some(Event::EnvironmentResolved(completed)) => {
+                    lsp_state.environment_scheduler.finish(
+                        state.db_mut(),
+                        completed,
+                        &lsp_state.environment_pool,
+                        &events_tx,
+                    );
+                },
+                _ => panic!("Expected `OakScanCompleted` or `EnvironmentResolved`"),
+            }
         }
         Ok(())
     })
@@ -132,6 +142,7 @@ where
 
 fn test_lsp_state() -> LspState {
     LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        .with_environment_scheduler(fixed_environments(&[]))
 }
 
 /// Inline drain loop: oak_scan keeps its equivalent crate-private so

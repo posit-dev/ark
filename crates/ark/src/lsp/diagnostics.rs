@@ -13,8 +13,11 @@ use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
+use camino::Utf8Path;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
+use oak_db::Environment;
+use oak_db::EnvironmentStatus;
 use oak_db::File;
 use oak_db::RootKind;
 use oak_db::Severity as OakSeverity;
@@ -34,7 +37,9 @@ use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
+use crate::lsp::diagnostics_syntax::missing_namespace_rhs_diagnostics;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
+use crate::lsp::environments::NO_R_EXECUTABLE;
 use crate::lsp::indexer;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
@@ -184,6 +189,37 @@ pub(crate) fn generate_diagnostics(
     let encoding = state.config.position_encoding;
     let mut context = DiagnosticContext::new(db, file, encoding, uri);
 
+    // All cells share the notebook's environment, so only the first cell reports
+    // an environment failure. Non-cell files each report their environment failure.
+    let environment = file.environment(db);
+    if file.earlier_notebook_cells(db).is_empty() {
+        diagnostics.extend(environment_failure_diagnostic(db, environment));
+    }
+
+    // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
+    let root = file.tree_sitter(db).root_node();
+    match syntax_diagnostics(root, &context) {
+        Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
+        Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
+    }
+
+    // Without resolved libraries, semantic checks can falsely report missing
+    // packages and exports in `pkg::` expressions and `library()` calls.
+    // After a successful resolution, a failed rerun preserves the libraries,
+    // so semantic checks continue. Only those checks need the symbol context
+    // built below.
+    //
+    // `pkg::` without a right-hand side parses without an error node, so the
+    // syntax pass misses it and the semantic walk reports it instead. Without
+    // that walk, report it here.
+    if *environment.status(db) == EnvironmentStatus::Unresolved {
+        match missing_namespace_rhs_diagnostics(root, &context) {
+            Ok(mut namespace_diagnostics) => diagnostics.append(&mut namespace_diagnostics),
+            Err(err) => log::error!("Error while generating namespace diagnostics: {err:?}"),
+        }
+        return diagnostics;
+    }
+
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
 
@@ -250,15 +286,6 @@ pub(crate) fn generate_diagnostics(
         }
     }
 
-    // Start iterating through the nodes.
-    let root = file.tree_sitter(db).root_node();
-
-    // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
-    match syntax_diagnostics(root, &context) {
-        Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
-        Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
-    }
-
     // Collect semantic related diagnostics
     match semantic_diagnostics(root, &mut context) {
         Ok(mut semantic_diagnostics) => diagnostics.append(&mut semantic_diagnostics),
@@ -273,6 +300,89 @@ pub(crate) fn generate_diagnostics(
 
     diagnostics
 }
+
+/// Report the environment's last recorded startup failure at the start of
+/// the file. An unresolved environment gets an information diagnostic.
+/// A resolved environment gets a warning. Return `None` if no error is recorded.
+///
+/// Blank lines separate the summary, error, and retry instructions so a
+/// multiline error, such as an exit status followed by R's `stderr`, stays
+/// distinct from the instructions.
+///
+/// For workspace environments, check `.Rprofile` and `.Renviron` on disk when
+/// generating the diagnostic, so the hint reflects files created or deleted
+/// since the failed run.
+fn environment_failure_diagnostic(db: &dyn ArkDb, environment: Environment) -> Option<Diagnostic> {
+    let error = environment.last_error(db).as_deref()?;
+
+    let (severity, consequence) = match environment.status(db) {
+        EnvironmentStatus::Unresolved => {
+            (DiagnosticSeverity::INFORMATION, "only syntax is checked")
+        },
+        EnvironmentStatus::Resolved(_) => (
+            DiagnosticSeverity::WARNING,
+            "libraries come from the last successful startup",
+        ),
+    };
+
+    let (location, mut startup_files, mut fixes) = match environment.dir(db) {
+        // `FilePath` displays as a URL, so show the bare path when there is one.
+        Some(dir) => match dir.as_path() {
+            Some(path) => (
+                format!("in {path}"),
+                existing_startup_files(path),
+                WORKSPACE_ENVIRONMENT_FIXES,
+            ),
+            None => (format!("in {dir}"), Vec::new(), WORKSPACE_ENVIRONMENT_FIXES),
+        },
+        // Changes to `.Rprofile` and `.Renviron` only rerun workspace
+        // environments. Retrying the default requires restarting R, which
+        // restarts the language server.
+        None => (
+            String::from("for the default environment (files outside workspace folders)"),
+            Vec::new(),
+            DEFAULT_ENVIRONMENT_FIXES,
+        ),
+    };
+
+    // Without an R executable, no startup file ran, and installing R takes
+    // effect only after a restart.
+    if error == NO_R_EXECUTABLE {
+        startup_files.clear();
+        fixes = DEFAULT_ENVIRONMENT_FIXES;
+    }
+
+    let mut message = format!("R startup failed {location}, so {consequence}.");
+    if !startup_files.is_empty() {
+        message.push_str(&format!(" See {}.", startup_files.join(" and ")));
+    }
+    message.push_str("\n\n");
+    message.push_str(error);
+    message.push_str("\n\n");
+    message.push_str(fixes);
+
+    // The default range is empty at the start of the file.
+    Some(Diagnostic {
+        severity: Some(severity),
+        source: Some("ark".to_string()),
+        message,
+        ..Default::default()
+    })
+}
+
+fn existing_startup_files(dir: &Utf8Path) -> Vec<String> {
+    [".Rprofile", ".Renviron"]
+        .into_iter()
+        .map(|name| dir.join(name))
+        .filter(|path| path.is_file())
+        .map(|path| path.to_string())
+        .collect()
+}
+
+pub(crate) const WORKSPACE_ENVIRONMENT_FIXES: &str = "Edits to .Rprofile or .Renviron in this directory are picked up automatically. Other fixes, such as installing R or renv, or editing ~/.Rprofile, take effect after you restart R.";
+
+pub(crate) const DEFAULT_ENVIRONMENT_FIXES: &str =
+    "Fixes, such as installing R or editing ~/.Rprofile, take effect after you restart R.";
 
 /// Convert `oak_db`'s file-level diagnostics into LSP diagnostics.
 fn oak_diagnostics(
@@ -1271,6 +1381,7 @@ mod tests {
     use aether_path::FilePath;
     use harp::eval::RParseEvalOptions;
     use harp::RFunction;
+    use oak_db::DbInputs;
     use oak_db::OakDatabase;
     use oak_db::SourceDb;
     use oak_scan::DbScan;
@@ -1278,7 +1389,9 @@ mod tests {
     use tower_lsp_server::ls_types as lsp_types;
     use tower_lsp_server::ls_types::Position;
 
+    use super::DEFAULT_ENVIRONMENT_FIXES;
     use crate::console::console_scopes;
+    use crate::lsp::environments::NO_R_EXECUTABLE;
     use crate::lsp::state::WorldState;
     use crate::lsp::tests::state_handlers::set_workspace_paths;
     use crate::lsp::traits::url::UrlExt;
@@ -2009,5 +2122,218 @@ foo
 
             assert!(diagnostics.is_empty());
         })
+    }
+
+    /// The syntax error (`}`) remains when unresolved libraries suppress the
+    /// out-of-scope diagnostic for `foo`.
+    const SYNTAX_AND_SEMANTIC: &str = "foo\n1 }\n";
+
+    /// [`WorldState::default()`] starts with the default environment resolved
+    /// to an empty library list, so semantic checks run without starting R.
+    fn full_diagnostics() -> Vec<lsp_types::Diagnostic> {
+        generate_diagnostics(SYNTAX_AND_SEMANTIC, &WorldState::default())
+    }
+
+    #[test]
+    fn test_default_world_state_gives_full_diagnostics() {
+        let diagnostics = full_diagnostics();
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].range.start, Position::new(1, 2));
+        assert_eq!(diagnostics[1].message, "No symbol named 'foo' in scope.");
+    }
+
+    #[test]
+    fn test_unresolved_environment_gives_syntax_diagnostics_only() {
+        let mut db = OakDatabase::new();
+        db.mark_default_environment_unresolved();
+        let state = WorldState::with_db(db);
+
+        let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
+        assert_eq!(diagnostics, full_diagnostics()[..1].to_vec());
+    }
+
+    /// `base::` has no error node, so the syntax pass alone doesn't report it.
+    /// The unresolved environment still drops "Package 'base' is not installed".
+    #[test]
+    fn test_unresolved_environment_reports_missing_namespace_rhs() {
+        let mut db = OakDatabase::new();
+        db.mark_default_environment_unresolved();
+        let state = WorldState::with_db(db);
+
+        let messages: Vec<String> = generate_diagnostics("f(base::)\nutils::\n", &state)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(messages, vec![
+            "Invalid namespace operator '::'. Missing a right hand side.",
+            "Invalid namespace operator '::'. Missing a right hand side.",
+        ]);
+    }
+
+    /// Without R, no startup file ran, so a workspace failure points to no
+    /// startup file and gives the restart advice.
+    #[test]
+    fn test_missing_r_failure_gives_restart_advice_in_workspace() {
+        let workspace = TempDir::new().unwrap();
+        std::fs::write(workspace.path().join(".Rprofile"), "").unwrap();
+        let script = workspace.path().join("a.R");
+        std::fs::write(&script, SYNTAX_AND_SEMANTIC).unwrap();
+
+        let mut state = WorldState::with_db(OakDatabase::new());
+        set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
+        state.db_mut().reconcile_environments();
+
+        let file_path = FilePath::from_path_buf(script.clone()).unwrap();
+        let file = state.db().file_by_path(&file_path).unwrap();
+        let environment = file.environment(state.db());
+        state
+            .db_mut()
+            .record_environment_failure(environment, String::from(NO_R_EXECUTABLE));
+
+        let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
+        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
+        assert_eq!(
+            diagnostics[0].message,
+            format!(
+                "R startup failed in {dir}, so only syntax is checked.\n\
+                 \n\
+                 {NO_R_EXECUTABLE}\n\
+                 \n\
+                 {DEFAULT_ENVIRONMENT_FIXES}",
+                dir = workspace.path().display(),
+            )
+        );
+    }
+
+    #[test]
+    fn test_first_failure_gives_syntax_and_information_until_success() {
+        let mut db = OakDatabase::new();
+        db.mark_default_environment_unresolved();
+        let default = db.default_environment();
+        db.record_environment_failure(default, String::from("no R executable was found"));
+        let mut state = WorldState::with_db(db);
+
+        let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
+        let [failure, syntax] = diagnostics.as_slice() else {
+            panic!("Expected two diagnostics, got {diagnostics:?}");
+        };
+        assert_eq!(
+            failure.severity,
+            Some(lsp_types::DiagnosticSeverity::INFORMATION)
+        );
+        assert_eq!(failure.range, lsp_types::Range::default());
+        assert_eq!(
+            failure.message,
+            "R startup failed for the default environment (files outside workspace folders), \
+             so only syntax is checked.\n\
+             \n\
+             no R executable was found\n\
+             \n\
+             Fixes, such as installing R or editing ~/.Rprofile, take effect after you restart R."
+        );
+        assert_eq!(*syntax, full_diagnostics()[0]);
+
+        state.db_mut().resolve_environment(default, Vec::new());
+        let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
+        assert_eq!(diagnostics, full_diagnostics());
+    }
+
+    #[test]
+    fn test_failed_rerun_gives_full_diagnostics_and_warning_until_success() {
+        let mut db = OakDatabase::new();
+        let default = db.default_environment();
+        db.record_environment_failure(
+            default,
+            String::from("R exited with status 1:\nError: boom\nExecution halted"),
+        );
+        let mut state = WorldState::with_db(db);
+
+        let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
+        let [failure, rest @ ..] = diagnostics.as_slice() else {
+            panic!("Expected diagnostics");
+        };
+        assert_eq!(
+            failure.severity,
+            Some(lsp_types::DiagnosticSeverity::WARNING)
+        );
+        assert_eq!(failure.range, lsp_types::Range::default());
+        assert_eq!(
+            failure.message,
+            "R startup failed for the default environment (files outside workspace folders), \
+             so libraries come from the last successful startup.\n\
+             \n\
+             R exited with status 1:\n\
+             Error: boom\n\
+             Execution halted\n\
+             \n\
+             Fixes, such as installing R or editing ~/.Rprofile, take effect after you restart R."
+        );
+        assert_eq!(rest.to_vec(), full_diagnostics());
+
+        state.db_mut().resolve_environment(default, Vec::new());
+        let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
+        assert_eq!(diagnostics, full_diagnostics());
+    }
+
+    /// Creating or deleting startup files updates the hint without another
+    /// environment resolution.
+    #[test]
+    fn test_workspace_failure_points_to_existing_startup_files() {
+        let workspace = TempDir::new().unwrap();
+        let rprofile = workspace.path().join(".Rprofile");
+        let renviron = workspace.path().join(".Renviron");
+        let script = workspace.path().join("a.R");
+        std::fs::write(&rprofile, "stop('boom')\n").unwrap();
+        std::fs::write(&script, SYNTAX_AND_SEMANTIC).unwrap();
+
+        let mut state = WorldState::with_db(OakDatabase::new());
+        set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
+        state.db_mut().reconcile_environments();
+
+        let file_path = FilePath::from_path_buf(script.clone()).unwrap();
+        let file = state.db().file_by_path(&file_path).unwrap();
+        let environment = file.environment(state.db());
+        assert_ne!(environment, state.db().default_environment());
+        state.db_mut().record_environment_failure(
+            environment,
+            String::from("R exited with status 1:\nError: boom\nExecution halted"),
+        );
+
+        let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
+        let failure_message = |state: &WorldState| {
+            let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
+            assert_eq!(diagnostics.len(), 2);
+            diagnostics[0].message.clone()
+        };
+        let dir = workspace.path().display();
+        let message = |see: &str| {
+            format!(
+                "R startup failed in {dir}, so only syntax is checked.{see}\n\
+                 \n\
+                 R exited with status 1:\n\
+                 Error: boom\n\
+                 Execution halted\n\
+                 \n\
+                 Edits to .Rprofile or .Renviron in this directory are picked up automatically. \
+                 Other fixes, such as installing R or renv, or editing ~/.Rprofile, take effect after you restart R."
+            )
+        };
+
+        let rprofile_shown = rprofile.display();
+        let renviron_shown = renviron.display();
+        assert_eq!(
+            failure_message(&state),
+            message(&format!(" See {rprofile_shown}."))
+        );
+
+        std::fs::write(&renviron, "").unwrap();
+        assert_eq!(
+            failure_message(&state),
+            message(&format!(" See {rprofile_shown} and {renviron_shown}."))
+        );
+
+        std::fs::remove_file(&rprofile).unwrap();
+        std::fs::remove_file(&renviron).unwrap();
+        assert_eq!(failure_message(&state), message(""));
     }
 }

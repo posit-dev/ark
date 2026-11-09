@@ -28,6 +28,8 @@ pub(super) enum TestBehavior {
     /// Wait on a [`Gate`] before listing packages, so the test can send events
     /// while resolution is running.
     Gated(Arc<Gate>, Vec<PathBuf>),
+    /// Wait on a [`Gate`], then fail with this message.
+    GatedFailure(Arc<Gate>, &'static str),
 }
 
 impl TestEnvironmentResolver {
@@ -73,6 +75,10 @@ impl EnvironmentResolver for TestEnvironmentResolver {
             Some(TestBehavior::Gated(gate, paths)) => {
                 gate.wait();
                 Ok(list_libraries(paths))
+            },
+            Some(TestBehavior::GatedFailure(gate, message)) => {
+                gate.wait();
+                Err(anyhow!(message))
             },
             None => panic!("Unknown test environment {request:?}"),
         }

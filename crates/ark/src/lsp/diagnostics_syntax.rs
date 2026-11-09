@@ -354,7 +354,8 @@ fn diagnose_missing_binary_operator(
 // This means that `dplyr::` is actually "valid" R code according to the
 // grammar, so this issue won't ever show up in the syntactic path, even
 // though its a syntax problem. Instead we expose it from here and use it
-// in the semantic path.
+// in the semantic path, and through `missing_namespace_rhs_diagnostics()`
+// when the semantic path doesn't run.
 pub(crate) fn diagnose_missing_namespace_operator(
     node: Node,
     context: &DiagnosticContext,
@@ -377,6 +378,28 @@ pub(crate) fn diagnose_missing_namespace_operator(
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
+}
+
+/// Report every namespace operator without a right-hand side, in document
+/// order. Unlike [`syntax_diagnostics()`], this walks the whole tree because
+/// these nodes contain no error node to guide the search.
+pub(crate) fn missing_namespace_rhs_diagnostics(
+    root: Node,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+    let mut cursor = root.walk();
+    let mut pending = vec![root];
+
+    while let Some(node) = pending.pop() {
+        if matches!(node.node_type(), NodeType::NamespaceOperator(_)) {
+            diagnose_missing_namespace_operator(node, context, &mut diagnostics)?;
+        }
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        pending.extend(children.into_iter().rev());
+    }
+
+    Ok(diagnostics)
 }
 
 // `node` must have required `"open"` and `"close"` fields
