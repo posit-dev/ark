@@ -54,6 +54,7 @@ use tower_lsp_server::ls_types::SignatureHelpOptions;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentSyncCapability;
 use tower_lsp_server::ls_types::TextDocumentSyncKind;
+use tower_lsp_server::ls_types::Unregistration;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
@@ -84,6 +85,8 @@ use crate::lsp::state::open_file_wire_uris;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::traits::url::UrlExt;
+
+const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 
 // Handlers that mutate the world state
 
@@ -119,6 +122,13 @@ pub(crate) fn initialize(
 
     state.workspace.folders = workspace_paths;
 
+    // Files outside every workspace root depend on the default. Resolve it
+    // first so it does not queue behind workspace R startups.
+    lsp_state.environment_scheduler.request_default(
+        state.db(),
+        &lsp_state.environment_pool,
+        events_tx,
+    );
     dispatch_workspace_scan(state, lsp_state, events_tx);
 
     let result = InitializeResult {
@@ -254,22 +264,14 @@ pub(crate) async fn handle_initialized(
     ];
     regs.push(Registration {
         id: uuid::Uuid::new_v4().to_string(),
-        method: String::from("workspace/didChangeWatchedFiles"),
+        method: String::from(DID_CHANGE_WATCHED_FILES),
         register_options: Some(
             serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
         ),
     });
 
     if lsp_state.capabilities.relative_pattern_support() {
-        let watchers = library_watchers(state.db());
-        let options = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers });
-        if let Some(options) = options.log_err() {
-            regs.push(Registration {
-                id: uuid::Uuid::new_v4().to_string(),
-                method: String::from("workspace/didChangeWatchedFiles"),
-                register_options: Some(options),
-            });
-        }
+        regs.extend(lsp_state.library_watchers.register(state.db()));
     } else {
         lsp::log_info!(
             "Installed packages are not watched: the client doesn't support relative watcher patterns"
@@ -311,6 +313,7 @@ pub(crate) async fn handle_initialized(
     }
 
     client.register_capability(regs).await.log_err();
+    lsp_state.library_watchers.activate();
 
     update_config(
         open_file_wire_uris(state),
@@ -344,6 +347,106 @@ pub(crate) async fn handle_initialized(
         &lsp_state.source_pool,
         events_tx,
     );
+}
+
+/// Tracks registration requests for [`library_watchers()`] as
+/// [`LibraryRoots`](oak_db::LibraryRoots) changes. Replacement unregisters the
+/// stored id before requesting a new registration. Client failures are logged,
+/// not retried until the library paths change again.
+#[derive(Debug, Default)]
+pub(crate) struct LibraryWatcherRegistration {
+    /// Whether [`handle_initialized()`] has attempted initial registration.
+    /// Earlier library changes are included in that initial request rather
+    /// than sent before the client's `initialized` notification.
+    active: bool,
+
+    /// Id of the last registration built, even if the client rejected it.
+    /// `None` until one is built, after it is taken for unregistration, or when
+    /// there are no watchers or serialization fails.
+    id: Option<String>,
+
+    /// Paths used to build the last registration, in `LibraryRoots` order.
+    /// Updated even when no request is sent or the client rejects it.
+    paths: Vec<FilePath>,
+}
+
+impl LibraryWatcherRegistration {
+    /// Record the current library paths before building a registration, so
+    /// failures do not cause a retry on every event. Return `None` when there
+    /// are no watchers or serialization fails.
+    fn register(&mut self, db: &dyn Db) -> Option<Registration> {
+        let roots = db.library_roots().roots(db);
+        self.paths = roots.iter().map(|root| root.path(db).clone()).collect();
+        self.id = None;
+
+        let watchers = library_watchers(db);
+        if watchers.is_empty() {
+            return None;
+        }
+        let options = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers })
+            .log_err()?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        self.id = Some(id.clone());
+        Some(Registration {
+            id,
+            method: String::from(DID_CHANGE_WATCHED_FILES),
+            register_options: Some(options),
+        })
+    }
+
+    fn unregister(&mut self) -> Option<Unregistration> {
+        let id = self.id.take()?;
+        Some(Unregistration {
+            id,
+            method: String::from(DID_CHANGE_WATCHED_FILES),
+        })
+    }
+
+    fn activate(&mut self) {
+        self.active = true;
+    }
+
+    fn is_current(&self, db: &dyn Db) -> bool {
+        let roots = db.library_roots().roots(db);
+        self.paths.iter().eq(roots.iter().map(|root| root.path(db)))
+    }
+}
+
+/// Replace library watchers when the ordered library paths change. Wait for
+/// [`handle_initialized()`] to attempt initial registration, and require
+/// relative pattern support to watch libraries outside the workspace.
+///
+/// Failed client requests are logged, but the new paths remain recorded. Only
+/// another path change triggers a replacement attempt.
+pub(crate) async fn update_library_watchers(
+    client: &tower_lsp_server::Client,
+    lsp_state: &mut LspState,
+    state: &WorldState,
+) {
+    if !lsp_state.capabilities.relative_pattern_support() {
+        return;
+    }
+    let registration = &mut lsp_state.library_watchers;
+    if !registration.active || registration.is_current(state.db()) {
+        return;
+    }
+
+    // Register before unregistering, so libraries in both lists stay watched
+    // throughout. Events in the overlap arrive twice, and rescans coalesce them.
+    let old_registration = registration.unregister();
+    if let Some(new_registration) = registration.register(state.db()) {
+        client
+            .register_capability(vec![new_registration])
+            .await
+            .log_err();
+    }
+    if let Some(unregistration) = old_registration {
+        client
+            .unregister_capability(vec![unregistration])
+            .await
+            .log_err();
+    }
 }
 
 /// Watch direct library entries, which installs and removals replace, create,
@@ -625,6 +728,16 @@ pub(crate) fn did_change_watched_files(
         .filter_map(|change| change.uri.to_document_path().log_err())
         .collect();
 
+    // Request resolution from watcher paths, not scan completions.
+    // `apply_watcher_events()` can skip scans when a sentinel edit leaves
+    // environment discovery unchanged.
+    lsp_state.environment_scheduler.rerun_for_sentinels(
+        state.db(),
+        &paths,
+        &lsp_state.environment_pool,
+        events_tx,
+    );
+
     let requests = lsp_state
         .oak_scheduler
         .apply_watcher_events(state.db_mut(), paths);
@@ -669,7 +782,8 @@ pub(crate) fn did_change_workspace_folders(
 }
 
 /// Update scan roots from `state.workspace.folders`. Dispatch scans for files
-/// entering or leaving workspace scope.
+/// entering or leaving workspace scope, and resolve the environments of new
+/// roots.
 fn dispatch_workspace_scan(
     state: &mut WorldState,
     lsp_state: &mut LspState,
@@ -680,6 +794,12 @@ fn dispatch_workspace_scan(
         .oak_scheduler
         .set_workspace_paths(state.db_mut(), &folders);
     dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
+
+    lsp_state.environment_scheduler.reconcile(
+        state.db_mut(),
+        &lsp_state.environment_pool,
+        events_tx,
+    );
 }
 
 /// Convert workspace folders to the `std::path::PathBuf`s the scan scheduler

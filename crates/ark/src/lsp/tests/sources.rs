@@ -28,6 +28,7 @@ use super::utils::did_change_configuration;
 use super::utils::did_change_watched_file;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::fixed_environments;
 use super::utils::initialize;
 use super::utils::initialize_with_options;
 use super::utils::initialize_without_configuration;
@@ -116,7 +117,8 @@ async fn test_source_pipeline_ingests_package_sources() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     // A workspace package that uses `donor` via `::`.
@@ -177,7 +179,8 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -231,7 +234,8 @@ async fn test_configuration_not_pulled_without_capability() {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -292,7 +296,8 @@ async fn check_initialization_options(options: Option<Value>) -> Arc<TestSourceH
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -335,7 +340,8 @@ async fn test_initialization_options_survive_a_silent_pull() {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -467,7 +473,8 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -542,7 +549,8 @@ async fn test_disabling_stops_fetching_new_packages() {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     // Two workspace folders, each depending on a different library package, so
@@ -710,7 +718,8 @@ async fn queued_fetch_session() -> QueuedFetchSession {
         client.client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -788,7 +797,8 @@ async fn check_fetching_waits_for_initialized(
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -896,7 +906,8 @@ async fn test_failed_source_is_not_retried() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -950,7 +961,8 @@ async fn test_late_sources_for_removed_package_are_not_ingested() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -1218,7 +1230,8 @@ fn upgrade_session() -> UpgradeSession {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -1309,7 +1322,8 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler)),
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
 
     // A workspace package that uses {generics} via `::`

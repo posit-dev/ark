@@ -19,6 +19,8 @@ use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Uri;
 
+use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::environments::FixedEnvironmentResolver;
 pub(super) use crate::lsp::harness::editor::client::test_client;
 pub(super) use crate::lsp::harness::editor::client::TestClient;
 pub(super) use crate::lsp::harness::editor::notifications::did_change;
@@ -35,6 +37,13 @@ pub(super) fn write_sources(dir: &Path, files: &[(&str, &str)]) {
     for (basename, contents) in files {
         std::fs::write(dir.join(basename), contents).unwrap();
     }
+}
+
+/// Resolve every environment to `libraries` without starting R. Pass the
+/// database's existing library paths to preserve them through `initialize`.
+pub(super) fn fixed_environments(libraries: &[&Path]) -> EnvironmentScheduler {
+    let paths = libraries.iter().map(|path| path.to_path_buf()).collect();
+    EnvironmentScheduler::new(Some(Arc::new(FixedEnvironmentResolver::new(paths))))
 }
 
 /// Create a [`SourceScheduler`] with its startup configuration gate open.

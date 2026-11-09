@@ -180,13 +180,21 @@ pub(crate) fn handle_completion(
 
     let (completions, request) = static_completions(&context, file, state)?;
 
-    // If package sources or sidecar facts are still pending, the editor must
-    // request completions on the next keystroke rather than reuse a list with
-    // missing names or outdated kinds.
-    let incomplete = completions
-        .incomplete_until_packages_settle()
-        .iter()
-        .any(|package| !lsp_state.package_settled(db, &state.config.oak, *package));
+    // If the answer's R libraries, package sources or sidecar facts are still
+    // pending, the editor must request completions on the next keystroke rather
+    // than reuse a list with missing names or outdated kinds. While libraries
+    // resolve, `pkg::` can name a package the db doesn't list yet, and roxygen
+    // tags can need a `roxygen2` it doesn't list yet. Their empty answers would
+    // otherwise be final. Answers that don't depend on library packages, such
+    // as file paths, stay complete during resolution.
+    let incomplete = (completions.incomplete_while_libraries_resolve() &&
+        lsp_state
+            .environment_scheduler
+            .is_pending(file.environment(db))) ||
+        completions
+            .incomplete_until_packages_settle()
+            .iter()
+            .any(|package| !lsp_state.package_settled(db, &state.config.oak, *package));
 
     // Without session slots the static items are the whole answer. Skipping
     // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event

@@ -114,8 +114,12 @@ where
     rt.block_on(async {
         handler(state, lsp_state, &events_tx)?;
         while lsp_state.oak_scheduler.has_pending_scans() {
-            let Some(Event::OakScanCompleted(scan)) = events_rx.recv().await else {
-                panic!("Expected `OakScanCompleted`");
+            let scan = match events_rx.recv().await {
+                Some(Event::OakScanCompleted(scan)) => scan,
+                // Folder changes also request environment resolutions. These
+                // tests check scan placement only, and drop the results.
+                Some(Event::EnvironmentResolved(_)) => continue,
+                _ => panic!("Expected `OakScanCompleted`"),
             };
             let followups = lsp_state
                 .oak_scheduler

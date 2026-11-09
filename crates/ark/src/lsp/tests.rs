@@ -1,6 +1,8 @@
 mod base_sources;
 mod db;
 mod diagnostics;
+mod environment_resolver;
+mod environments;
 mod find_references;
 mod goto_definition;
 mod lazy_data;

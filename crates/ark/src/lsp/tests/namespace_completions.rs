@@ -1,5 +1,6 @@
 //! `pkg::` completions through the main loop, which mark their answer incomplete
-//! while the package's sources or sidecar facts may still arrive.
+//! while the package's sources or sidecar facts may still arrive. Also covers
+//! roxygen tags, the other answer that waits for the environment's libraries.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,6 +17,8 @@ use tower_lsp_server::ls_types::CompletionList;
 use tower_lsp_server::ls_types::CompletionResponse;
 use tower_lsp_server::ls_types::Position;
 
+use super::environment_resolver::TestBehavior as EnvironmentBehavior;
+use super::environment_resolver::TestEnvironmentResolver;
 use super::sidecar_handler::sidecar_state;
 use super::sidecar_handler::TestSidecarHandler;
 use super::source_handler::gate;
@@ -33,10 +36,19 @@ use super::utils::TestClient;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
+use crate::lsp::environments::unresolved_database;
+use crate::lsp::environments::EnvironmentRequest;
+use crate::lsp::environments::EnvironmentResolver;
+use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
+use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::LspState;
+use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::SourceScheduler;
+use crate::lsp::state::WorldState;
+use crate::lsp::state_handlers::ConsoleInputs;
 
 const FOO_SOURCES: &[(&str, &str)] = &[("foo.R", "foo <- function() 1\n")];
 
@@ -132,6 +144,170 @@ fn incomplete_items(response: CompletionResponse) -> Vec<(String, Option<Complet
 
 fn foo(kind: CompletionItemKind) -> Vec<(String, Option<CompletionItemKind>)> {
     vec![(String::from("foo"), Some(kind))]
+}
+
+/// While the file's environment resolves, the db doesn't list `donor` yet, so
+/// the empty answer is incomplete rather than final. Once the libraries land,
+/// `donor`'s export completes.
+#[tokio::test]
+async fn test_namespace_answer_is_incomplete_until_environment_resolves() {
+    let _aux = init_aux_for_test();
+    let (lib, _db) = library_with_donor("export(foo)\n");
+    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let (mut state, _workspace, release) =
+        initialized_with_held_default(lib.path(), lsp_state, None).await;
+
+    // Outside the workspace, so the file uses the default environment
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("scratch.R");
+    state.handle_event_once(did_open(&path, "donor::\n")).await;
+
+    let response = complete(&mut state, &path, Position::new(0, 7)).await;
+    assert_eq!(incomplete_items(response), vec![]);
+
+    drop(release);
+    state.pump_to_quiescence().await;
+
+    let response = complete(&mut state, &path, Position::new(0, 7)).await;
+    assert_eq!(complete_items(response), foo(CompletionItemKind::STRUCT));
+}
+
+/// Roxygen tags come from the installed `roxygen2`, which the db doesn't list
+/// until the file's environment resolves.
+#[tokio::test]
+async fn test_roxygen_tags_are_incomplete_until_environment_resolves() {
+    let _aux = init_aux_for_test();
+    let lib = tempfile::tempdir().unwrap();
+    let roxygen2 = lib.path().join("roxygen2");
+    DescriptionWriter::new()
+        .package("roxygen2")
+        .version("0.0.0")
+        .built("dummy")
+        .write_installed(&roxygen2);
+    std::fs::write(roxygen2.join("roxygen2-tags.yml"), "- name: aliases\n").unwrap();
+
+    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let (mut state, _workspace, release) =
+        initialized_with_held_default(lib.path(), lsp_state, None).await;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("scratch.R");
+    state.handle_event_once(did_open(&path, "#' @\n")).await;
+
+    let response = complete(&mut state, &path, Position::new(0, 4)).await;
+    assert_eq!(incomplete_items(response), vec![]);
+
+    drop(release);
+    state.pump_to_quiescence().await;
+
+    let response = complete(&mut state, &path, Position::new(0, 4)).await;
+    let labels: Vec<String> = complete_items(response)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect();
+    assert_eq!(labels, vec![String::from("aliases")]);
+}
+
+/// Only answers that depend on library packages wait for the environment. A
+/// plain comment's answer doesn't, so it is final during resolution.
+#[tokio::test]
+async fn test_answer_without_package_is_complete_while_environment_resolves() {
+    let _aux = init_aux_for_test();
+    let (lib, _db) = library_with_donor("export(foo)\n");
+    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let (mut state, _workspace, release) =
+        initialized_with_held_default(lib.path(), lsp_state, None).await;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("scratch.R");
+    state.handle_event_once(did_open(&path, "# x\n")).await;
+
+    // The protocol represents a complete empty answer as `null`.
+    let (event, mut response_rx) = completion(&path, Position::new(0, 3));
+    state.handle_event_once(event).await;
+    assert!(matches!(
+        response_rx.try_recv(),
+        Ok(RequestResponse::Result(Ok(LspResponse::Completion(None))))
+    ));
+
+    drop(release);
+    state.pump_to_quiescence().await;
+}
+
+/// No sidecar batch runs until the default environment's libraries arrive,
+/// then one batch covers them. The kernel pushes console inputs as soon as the
+/// LSP channel opens, which can be before `initialize`; neither tick finds
+/// library packages to request facts for.
+#[tokio::test]
+async fn test_sidecar_batch_follows_environment_resolution() {
+    let _aux = init_aux_for_test();
+    let (lib, _db) = library_with_base_donor_and_datasets();
+    let sidecar = Arc::new(TestSidecarHandler::new(vec![]));
+    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        .with_sidecar_scheduler(SidecarScheduler::new(Some(Arc::clone(&sidecar) as _)));
+    let console_inputs = Event::Kernel(KernelNotification::DidChangeConsoleInputs(ConsoleInputs {
+        console_scopes: vec![],
+    }));
+    let (mut state, _workspace, release) =
+        initialized_with_held_default(lib.path(), lsp_state, Some(console_inputs)).await;
+
+    assert!(sidecar.calls().lock().unwrap().is_empty());
+
+    drop(release);
+    state.pump_to_quiescence().await;
+
+    let calls = sidecar.calls().lock().unwrap();
+    let [request] = calls.as_slice() else {
+        panic!("Expected one sidecar request, got {}", calls.len());
+    };
+    let db = state.world().db();
+    let names: Vec<String> = request
+        .packages()
+        .iter()
+        .map(|package| package.package().name(db).to_string())
+        .collect();
+    assert_eq!(names, vec![String::from("base"), String::from("datasets")]);
+}
+
+/// Handle `before`, if any, then `initialize` for a fresh workspace, and hold
+/// the default environment's resolution at a gate until the returned sender
+/// drops. The default then resolves to `library`, and the workspace root to
+/// no libraries.
+async fn initialized_with_held_default(
+    library: &Path,
+    lsp_state: LspState,
+    before: Option<Event>,
+) -> (GlobalState, tempfile::TempDir, std::sync::mpsc::Sender<()>) {
+    let workspace = tempfile::tempdir().unwrap();
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (default_gate, release) = gate(entered_tx);
+    let resolver = Arc::new(TestEnvironmentResolver::new([
+        (
+            EnvironmentRequest::Default,
+            EnvironmentBehavior::Gated(Arc::new(default_gate), vec![library.to_path_buf()]),
+        ),
+        (
+            EnvironmentRequest::Directory(workspace.path().to_path_buf()),
+            EnvironmentBehavior::Success(vec![]),
+        ),
+    ]));
+    let resolver = resolver as Arc<dyn EnvironmentResolver>;
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        WorldState::new(unresolved_database()),
+        lsp_state.with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
+    );
+
+    if let Some(event) = before {
+        state.handle_event_once(event).await;
+    }
+
+    let (event, _response_rx) = initialize(workspace.path());
+    state.handle_event_once(event).await;
+    wait_entered(&entered_rx);
+
+    (state, workspace, release)
 }
 
 /// While the fetch is blocked, exports have unknown kinds and the answer is

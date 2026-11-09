@@ -62,6 +62,11 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::OakConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+use crate::lsp::environments::unresolved_database;
+use crate::lsp::environments::EnvironmentCompleted;
+use crate::lsp::environments::EnvironmentResolver;
+use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::environments::RProcessResolver;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sidecar::OakSidecarHandler;
@@ -78,6 +83,7 @@ use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::lsp::state_handlers::LibraryWatcherRegistration;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::watchdog::Watchdog;
 use crate::panic;
@@ -142,6 +148,7 @@ pub(crate) enum Event {
     OakScanFailed(Root),
     SourceCompleted(SourceCompleted),
     SidecarCompleted(SidecarCompleted),
+    EnvironmentResolved(EnvironmentCompleted),
     DiagnosticsReady(DiagnosticsReady),
     #[cfg(feature = "testing")]
     TestPanicMainLoop,
@@ -159,6 +166,7 @@ impl Event {
             Event::OakScanFailed(_) => "oak_scan_failed",
             Event::SourceCompleted(_) => "source_completed",
             Event::SidecarCompleted(_) => "sidecar_completed",
+            Event::EnvironmentResolved(_) => "environment_resolved",
             Event::DiagnosticsReady(_) => "diagnostics_ready",
             #[cfg(feature = "testing")]
             Event::TestPanicMainLoop => "test_panic_main_loop",
@@ -284,6 +292,14 @@ pub(crate) struct LspState {
     /// Sidecar scheduling and response handling stay on the main loop.
     pub(crate) sidecar_scheduler: SidecarScheduler,
 
+    /// Keeps resolution policy and result application on the main loop. The
+    /// background jobs hold no database handle.
+    pub(crate) environment_scheduler: EnvironmentScheduler,
+
+    /// The client's registration of the library watchers, replaced when the
+    /// merged library list changes.
+    pub(crate) library_watchers: LibraryWatcherRegistration,
+
     /// Threads running diagnostics and index warmup. The only executor a db
     /// snapshot is allowed on, see [`crate::lsp::analysis`].
     pub(crate) analysis_pool: AnalysisPool,
@@ -308,6 +324,12 @@ pub(crate) struct LspState {
     /// the job never queues behind a download.
     pub(crate) sidecar_pool: IoPool,
 
+    /// Runs R startups with [`crate::lsp::environments::RESOLUTION_TIMEOUT`],
+    /// then lists their libraries. Separate from [`Self::scan_pool`] so scans
+    /// do not queue behind R startup, and from [`Self::source_pool`] so
+    /// resolution does not queue behind downloads that depend on its results.
+    pub(crate) environment_pool: IoPool,
+
     /// Detects a tick that arms and never disarms, usually a write parked
     /// behind a background task that can't drop its db snapshot. See
     /// [`crate::lsp::watchdog`].
@@ -318,9 +340,10 @@ pub(crate) struct LspState {
 }
 
 impl LspState {
-    /// Neither scheduler has a handler, so no source fetch or sidecar job
-    /// runs until [`Self::with_source_scheduler()`] or
-    /// [`Self::with_sidecar_scheduler()`] installs one.
+    /// No scheduler has a handler or resolver, so no source fetch, sidecar
+    /// job or environment resolution runs until
+    /// [`Self::with_source_scheduler()`], [`Self::with_sidecar_scheduler()`]
+    /// or [`Self::with_environment_scheduler()`] installs one.
     pub(crate) fn new(console_notification_tx: TokioUnboundedSender<ConsoleNotification>) -> Self {
         let service_context = Arc::new(LspServiceContext::new());
 
@@ -330,6 +353,8 @@ impl LspState {
             oak_scheduler: ScanScheduler::new(),
             source_scheduler: SourceScheduler::new(None),
             sidecar_scheduler: SidecarScheduler::new(None),
+            environment_scheduler: EnvironmentScheduler::new(None),
+            library_watchers: LibraryWatcherRegistration::default(),
             analysis_pool: AnalysisPool::new(Arc::clone(&service_context)),
             diagnostics: DiagnosticsState::default(),
             diagnostics_metrics: DiagnosticsMetrics::default(),
@@ -356,6 +381,14 @@ impl LspState {
                 stdext::DEFAULT_STACK_SIZE,
                 Arc::clone(&service_context),
             ),
+            // A small stack suffices for waiting on R and listing direct library
+            // entries with the iterative `WalkDir` walker.
+            environment_pool: IoPool::new(
+                "oak-env",
+                1,
+                stdext::SMALL_STACK_SIZE,
+                Arc::clone(&service_context),
+            ),
             watchdog: Watchdog::new(),
             service_context,
         }
@@ -368,6 +401,14 @@ impl LspState {
 
     pub(crate) fn with_sidecar_scheduler(mut self, sidecar_scheduler: SidecarScheduler) -> Self {
         self.sidecar_scheduler = sidecar_scheduler;
+        self
+    }
+
+    pub(crate) fn with_environment_scheduler(
+        mut self,
+        environment_scheduler: EnvironmentScheduler,
+    ) -> Self {
+        self.environment_scheduler = environment_scheduler;
         self
     }
 
@@ -417,39 +458,33 @@ impl GlobalState {
         r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
-        // FIXME: We shouldn't call R code in the kernel to figure this out
-        let library_paths = crate::r_task(|| -> anyhow::Result<Vec<String>> {
-            Ok(harp::RFunction::new("base", ".libPaths")
-                .call()?
-                .try_into()?)
-        });
+        // The embedded session's `.libPaths()` cannot describe every workspace
+        // environment. Resolution starts fresh R processes at `initialize`.
+        let r = harp::command::r_executable(&r_home);
+        if r.is_none() {
+            log::warn!(
+                "Can't locate an R executable under '{r_home}', source fetching, the sidecar job and R library resolution are disabled",
+                r_home = r_home.display()
+            );
+        }
 
-        let library_paths = match library_paths {
-            Ok(library_paths) => library_paths,
-            Err(err) => {
-                log::error!("Can't evaluate `libPaths()`: {err:?}");
-                Vec::new()
-            },
-        };
-
-        let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
-
-        let mut db = OakDatabase::new();
-        db.set_library_paths(&library_paths);
+        let source_handler = r.as_deref().and_then(source_handler);
+        let sidecar_handler = r.as_deref().and_then(sidecar_handler);
+        let resolver =
+            r.map(|r| Arc::new(RProcessResolver::new(r)) as Arc<dyn EnvironmentResolver>);
 
         Self::from_parts(
             client,
-            WorldState::new(db),
+            WorldState::new(unresolved_database()),
             LspState::new(console_notification_tx)
-                .with_source_scheduler(SourceScheduler::new(source_handler(&r_home)))
-                .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler(&r_home))),
+                .with_source_scheduler(SourceScheduler::new(source_handler))
+                .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler))
+                .with_environment_scheduler(EnvironmentScheduler::new(resolver)),
         )
     }
 
-    /// Assemble the state around an already-built [`WorldState`] and
-    /// [`LspState`]. Splitting this out from [`GlobalState::new`] lets tests
-    /// construct a state without the R `.libPaths()` lookup that `new` does, and
-    /// with a db / provider configured up front.
+    /// Assemble preconfigured [`WorldState`] and [`LspState`] values so tests
+    /// can supply their own database, source handler, and environment resolver.
     pub(crate) fn from_parts(client: Client, world: WorldState, lsp_state: LspState) -> Self {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
@@ -933,6 +968,16 @@ impl GlobalState {
                 self.schedule_sidecar();
             },
 
+            Event::EnvironmentResolved(completed) => {
+                lsp::log_info!("Received `EnvironmentResolved`");
+                self.lsp_state.environment_scheduler.finish(
+                    self.world.db_mut(),
+                    completed,
+                    &self.lsp_state.environment_pool,
+                    &self.events_tx,
+                );
+            },
+
             Event::DiagnosticsReady(DiagnosticsReady { generation, publication }) => {
                 lsp::log_info!(
                     "Received `DiagnosticsReady` for {}",
@@ -959,6 +1004,12 @@ impl GlobalState {
             #[cfg(feature = "testing")]
             Event::TestPanicMainLoop => unreachable!(),
         }
+
+        // Several handlers can change `LibraryRoots`. Checking here keeps the
+        // watcher registration current without each writer reporting changes.
+        state_handlers::update_library_watchers(&self.client, &mut self.lsp_state, &self.world)
+            .await;
+
         lsp::log_info!("Finished handling event in {}ms", loop_tick.elapsed().as_millis());
 
         // TODO: Make this threshold configurable by the client
@@ -1028,12 +1079,21 @@ impl GlobalState {
     }
 
     /// Apply a finished or failed scan through `apply`, then dispatch the
-    /// follow-up scans it requests.
+    /// follow-up scans it requests and resolve the environments it discovers.
     fn apply_scan_outcome(
         &mut self,
         apply: impl FnOnce(&mut ScanScheduler, &mut OakDatabase) -> Vec<ScanRequest>,
     ) {
         let followups = apply(&mut self.lsp_state.oak_scheduler, self.world.db_mut());
+
+        // An applied workspace scan can add or remove environment directories.
+        // Reconciling after library scans and failed scans writes nothing.
+        self.lsp_state.environment_scheduler.reconcile(
+            self.world.db_mut(),
+            &self.lsp_state.environment_pool,
+            &self.events_tx,
+        );
+
         lsp::log_info!(
             "Dispatching {n} followup scan requests with {n_holds} outstanding Salsa db holds",
             n = followups.len(),
@@ -1145,8 +1205,10 @@ async fn report_request_panic(client: &Client) {
         .await;
 }
 
-/// Build the LSP's [`SourceHandler`], or `None` to disable source fetching
-fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
+/// Build the LSP's [`SourceHandler`] around the R executable `r`, or return
+/// `None` to disable fetching. The CI opt-out applies only to source fetching,
+/// not to environment resolution.
+fn source_handler(r: &Path) -> Option<Arc<dyn SourceHandler>> {
     // Also reported to the LSP output channel from `handle_initialized()`.
     if source_fetching_disabled_by_ci() {
         log::info!(
@@ -1155,15 +1217,7 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
         return None;
     }
 
-    let Some(r) = harp::command::r_executable(r_home) else {
-        log::warn!(
-            "Can't locate an R executable under '{}', source fetching is disabled",
-            r_home.display()
-        );
-        return None;
-    };
-
-    match OakSourceHandler::new(r) {
+    match OakSourceHandler::new(r.to_path_buf()) {
         Ok(handler) => Some(Arc::new(handler)),
         Err(err) => {
             log::error!(
@@ -1176,16 +1230,8 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
 
 /// Unlike [`source_handler()`], this also enables the sidecar job in CI,
 /// because generating primitive stubs and reading lazy data names need no network.
-fn sidecar_handler(r_home: &Path) -> Option<Arc<dyn SidecarHandler>> {
-    let Some(r) = harp::command::r_executable(r_home) else {
-        log::warn!(
-            "Can't locate an R executable under '{}', the sidecar job is disabled",
-            r_home.display()
-        );
-        return None;
-    };
-
-    match OakSidecarHandler::new(r) {
+fn sidecar_handler(r: &Path) -> Option<Arc<dyn SidecarHandler>> {
+    match OakSidecarHandler::new(r.to_path_buf()) {
         Ok(handler) => Some(Arc::new(handler)),
         Err(err) => {
             log::error!("Can't create the sidecar handler, the sidecar job is disabled: {err:?}");
@@ -1232,7 +1278,8 @@ impl GlobalState {
 
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending() ||
-            self.lsp_state.sidecar_scheduler.has_pending()
+            self.lsp_state.sidecar_scheduler.has_pending() ||
+            self.lsp_state.environment_scheduler.has_pending()
         {
             return false;
         }
@@ -1256,11 +1303,19 @@ impl GlobalState {
     /// - Pending oak scans
     /// - Pending source requests
     /// - The running sidecar job
+    /// - Pending environment resolutions
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
         self.handle_event_once(event).await;
+        self.pump_to_quiescence().await;
+    }
+
+    /// Pump events until no scan, source request, sidecar job or environment
+    /// resolution is pending.
+    pub(crate) async fn pump_to_quiescence(&mut self) {
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending() ||
             self.lsp_state.sidecar_scheduler.has_pending() ||
+            self.lsp_state.environment_scheduler.has_pending() ||
             self.refresh_owed()
         {
             let event = self.next_event_or_panic("quiescence").await;

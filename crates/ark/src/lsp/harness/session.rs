@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
+use oak_db::DbInputs;
 use oak_db::SourceDb;
 use package_sources::PackageSources;
 pub use requests::RequestAnswer;
@@ -41,6 +42,8 @@ use crate::lsp::analysis::PoolMetrics;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::environments::FixedEnvironmentResolver;
 use crate::lsp::main_loop::register_auxiliary_tx;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::DiagnosticsPublication;
@@ -105,11 +108,26 @@ impl LspHarness {
 
         let state = {
             let _boundary = panic::test_boundary();
+
+            // Preserve the harness's libraries through `initialize` without
+            // starting R. Unchanged package metadata preserves sources already
+            // ingested for the current `DESCRIPTION` revision.
+            let db = self.state.db();
+            let library_paths: Vec<PathBuf> = db
+                .library_roots()
+                .roots(db)
+                .iter()
+                .filter_map(|root| root.path(db).as_path())
+                .map(|path| path.as_std_path().to_path_buf())
+                .collect();
+            let resolver = Arc::new(FixedEnvironmentResolver::new(library_paths));
+
             GlobalState::from_parts(
                 client.client(),
                 self.state,
                 LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-                    .with_source_scheduler(SourceScheduler::new(source_handler)),
+                    .with_source_scheduler(SourceScheduler::new(source_handler))
+                    .with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
             )
         };
 
@@ -191,11 +209,11 @@ impl LspSession {
     /// Run the production startup handshake, then settle the work it
     /// schedules.
     ///
-    /// `initialize` negotiates capabilities and dispatches a workspace scan
-    /// over `folders`, and `initialized` registers capabilities, pulls the
-    /// settings, and releases the source scheduler's startup gate. Settling
-    /// here means a measured section starts from an idle loop instead of
-    /// racing the diagnostics that applying configuration schedules.
+    /// `initialize` negotiates capabilities, requests environment resolution,
+    /// and dispatches workspace scans over `folders`. `initialized` registers
+    /// capabilities, pulls settings, and releases the source scheduler's
+    /// startup gate. Settling here keeps measured sections from racing the
+    /// diagnostics scheduled by configuration changes.
     async fn handshake(&mut self, folders: Vec<Uri>) {
         let (event, mut response_rx) = notifications::initialize(folders);
         self.handle_once(event).await;

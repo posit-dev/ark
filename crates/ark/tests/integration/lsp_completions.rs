@@ -22,6 +22,7 @@ fn end_position(text: &str) -> u32 {
 
 /// Without fetched sources, an export has no known function kind but still
 /// resolves to its help topic. Disable fetching to avoid network requests.
+/// `utils` appears once library resolution settles.
 #[test]
 fn test_lsp_completions_namespace_object_resolves_to_topic() {
     let frontend = DummyArkFrontend::lock();
@@ -30,7 +31,7 @@ fn test_lsp_completions_namespace_object_resolves_to_topic() {
     let text = "utils::\n";
     let uri = lsp.open_document("namespace_object.R", text);
 
-    let items = lsp.completions(&uri, 0, end_position(text));
+    let items = lsp.settled_completions(&uri, 0, end_position(text));
     let Some(item) = items.into_iter().find(|item| item.label == "osVersion") else {
         panic!("Expected `osVersion` after `utils::`");
     };

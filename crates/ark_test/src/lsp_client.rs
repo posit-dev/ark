@@ -20,6 +20,10 @@ use tower_lsp_server::ls_types as lsp_types;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Covers an R subprocess startup for library resolution plus the startup
+/// sidecar job, which `LspClient::settled_completions()` waits on.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// A minimal LSP client for integration tests.
 ///
 /// Communicates with the LSP server over TCP using the standard
@@ -247,31 +251,38 @@ impl LspClient {
         line: u32,
         character: u32,
     ) -> Vec<lsp_types::CompletionItem> {
-        let params = lsp_types::CompletionParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
-                position: lsp_types::Position { line, character },
-            },
-            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-            partial_result_params: lsp_types::PartialResultParams::default(),
-            context: None,
-        };
-
         let response = self.send_request(
             "textDocument/completion",
-            serde_json::to_value(params).unwrap(),
+            completion_params(uri, line, character),
         );
+        completion_items(response)
+    }
 
-        if response.is_null() {
-            return Vec::new();
-        }
+    /// Request completions until the answer is no longer marked incomplete.
+    /// The server marks it incomplete while the file's R libraries resolve
+    /// and while package sources or sidecar facts are pending, all of which
+    /// start in the background when the LSP starts.
+    #[track_caller]
+    pub fn settled_completions(
+        &mut self,
+        uri: &lsp_types::Uri,
+        line: u32,
+        character: u32,
+    ) -> Vec<lsp_types::CompletionItem> {
+        let deadline = std::time::Instant::now() + SETTLE_TIMEOUT;
 
-        let completion_response: lsp_types::CompletionResponse =
-            serde_json::from_value(response).unwrap();
-
-        match completion_response {
-            lsp_types::CompletionResponse::Array(items) => items,
-            lsp_types::CompletionResponse::List(list) => list.items,
+        loop {
+            let response = self.send_request(
+                "textDocument/completion",
+                completion_params(uri, line, character),
+            );
+            if response["isIncomplete"] != Value::Bool(true) {
+                return completion_items(response);
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("Completions still incomplete after {SETTLE_TIMEOUT:?}: {response}");
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 
@@ -803,6 +814,35 @@ impl LspClient {
         let message: serde_json::Map<String, Value> = serde_json::from_str(text)?;
 
         Ok(message)
+    }
+}
+
+fn completion_params(uri: &lsp_types::Uri, line: u32, character: u32) -> Value {
+    let params = lsp_types::CompletionParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            position: lsp_types::Position { line, character },
+        },
+        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        partial_result_params: lsp_types::PartialResultParams::default(),
+        context: None,
+    };
+    serde_json::to_value(params).unwrap()
+}
+
+/// The items of a completion response. The protocol represents a complete
+/// empty answer as `null`.
+fn completion_items(response: Value) -> Vec<lsp_types::CompletionItem> {
+    if response.is_null() {
+        return Vec::new();
+    }
+
+    let completion_response: lsp_types::CompletionResponse =
+        serde_json::from_value(response).unwrap();
+
+    match completion_response {
+        lsp_types::CompletionResponse::Array(items) => items,
+        lsp_types::CompletionResponse::List(list) => list.items,
     }
 }
 

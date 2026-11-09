@@ -21,7 +21,7 @@ use crate::lsp::completions::request::RCompletionRequest;
 use crate::lsp::completions::request::UniqueRequest;
 use crate::lsp::completions::sources::collect_completions;
 use crate::lsp::completions::sources::unique::colon::SingleColonSource;
-use crate::lsp::completions::sources::unique::comment::CommentSource;
+use crate::lsp::completions::sources::unique::comment::recognize_comment;
 use crate::lsp::completions::sources::unique::custom::custom_request;
 use crate::lsp::completions::sources::unique::extractor::recognize_at;
 use crate::lsp::completions::sources::unique::extractor::recognize_dollar;
@@ -49,6 +49,10 @@ pub(crate) struct UniqueCompletions {
     /// kinds, and the sidecar can add lazy data names. The answer is
     /// incomplete until all listed packages settle.
     pub(crate) incomplete_until_packages_settle: Vec<Package>,
+    /// The answer depends on a package the db doesn't list. While the file's
+    /// environment resolves, its libraries can still add that package, so the
+    /// answer is incomplete until resolution ends.
+    pub(crate) incomplete_while_libraries_resolve: bool,
 }
 
 impl UniqueCompletions {
@@ -56,6 +60,7 @@ impl UniqueCompletions {
         Self {
             items,
             incomplete_until_packages_settle: Vec::new(),
+            incomplete_while_libraries_resolve: false,
         }
     }
 }
@@ -78,8 +83,8 @@ pub(crate) fn get_completions(
     }
 
     // really about roxygen2 tags
-    if let Some(completions) = collect_completions(CommentSource, completion_context)? {
-        return Ok(Some(UniqueCompletions::new(completions)));
+    if let Some(recognized) = recognize_comment(completion_context)? {
+        return Ok(Some(end_search("comment", recognized, request)));
     }
 
     // could be a file path

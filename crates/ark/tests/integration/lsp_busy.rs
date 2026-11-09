@@ -349,13 +349,15 @@ fn test_lsp_completions_busy_call_arguments() -> anyhow::Result<()> {
 }
 
 // The roxygen tag answer comes from static sources only, so it is complete
-// even though R is busy.
+// even though R is busy. Wait for library resolution, which can list
+// `roxygen2`, before making R busy.
 #[test]
 fn test_lsp_completions_busy_static_answer_is_complete() -> anyhow::Result<()> {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp();
 
     let uri = lsp.open_document("completions_busy_static.R", "#' @\n");
+    lsp.settled_completions(&uri, 0, 4);
 
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -374,12 +376,14 @@ fn test_lsp_completions_busy_static_answer_is_complete() -> anyhow::Result<()> {
 
 // Namespace completions need no R session. Disable source fetching to keep
 // the answer complete and avoid downloading the base R archive for `utils`.
+// Wait for library resolution, which lists `utils`, before making R busy.
 #[test]
 fn test_lsp_completions_busy_namespace_is_complete() -> anyhow::Result<()> {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp_with_settings(&[("oak.sourceFetching.enabled", json!(false))]);
 
     let uri = lsp.open_document("completions_busy_namespace.R", "utils::\n");
+    lsp.settled_completions(&uri, 0, 7);
 
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -438,28 +442,16 @@ fn test_lsp_completions_busy_file_paths_are_complete() -> anyhow::Result<()> {
 }
 
 // Lazy data names must remain available while the kernel's R session is busy.
-// Source fetching is disabled, so an incomplete answer means the startup
-// sidecar job is still pending. Wait for it before making R busy.
+// Source fetching is disabled, so an incomplete answer means library
+// resolution or the startup sidecar job is still pending. Wait for both
+// before making R busy.
 #[test]
 fn test_lsp_completions_busy_namespace_lists_lazy_data() -> anyhow::Result<()> {
     let frontend = DummyArkFrontend::lock();
     let mut lsp = frontend.start_lsp_with_settings(&[("oak.sourceFetching.enabled", json!(false))]);
 
     let uri = lsp.open_document("completions_busy_lazy_data.R", "datasets::\n");
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 10));
-        let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
-        if responses[0].is_array() {
-            break;
-        }
-        assert_eq!(responses[0]["isIncomplete"], true);
-        if std::time::Instant::now() > deadline {
-            panic!("`datasets::` is still incomplete: {}", responses[0]);
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    lsp.settled_completions(&uri, 0, 10);
 
     frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();

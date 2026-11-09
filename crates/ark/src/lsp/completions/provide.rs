@@ -27,6 +27,7 @@ use crate::treesitter::NodeTypeExt;
 pub(crate) struct StaticCompletions {
     answer: StaticAnswer,
     incomplete_until_packages_settle: Vec<Package>,
+    incomplete_while_libraries_resolve: bool,
 }
 
 impl StaticCompletions {
@@ -37,6 +38,13 @@ impl StaticCompletions {
     /// list is empty.
     pub(crate) fn incomplete_until_packages_settle(&self) -> &[Package] {
         &self.incomplete_until_packages_settle
+    }
+
+    /// Whether the answer depends on a package the db doesn't list, which the
+    /// file's environment can still add while its libraries resolve. The
+    /// handler marks such an answer incomplete while resolution is pending.
+    pub(crate) fn incomplete_while_libraries_resolve(&self) -> bool {
+        self.incomplete_while_libraries_resolve
     }
 }
 
@@ -76,6 +84,7 @@ pub(crate) fn static_completions(
         Some(unique) => StaticCompletions {
             answer: StaticAnswer::Unique(unique.items),
             incomplete_until_packages_settle: unique.incomplete_until_packages_settle,
+            incomplete_while_libraries_resolve: unique.incomplete_while_libraries_resolve,
         },
         // At this point we aren't in a "unique" completion case, so just return a
         // set of reasonable completions from composite sources
@@ -85,6 +94,7 @@ pub(crate) fn static_completions(
             StaticCompletions {
                 answer: StaticAnswer::Composite(completions),
                 incomplete_until_packages_settle: Vec::new(),
+                incomplete_while_libraries_resolve: false,
             }
         },
     };

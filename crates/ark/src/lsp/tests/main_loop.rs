@@ -14,6 +14,7 @@ use std::time::Duration;
 use aether_path::AbsPathBuf;
 use oak_db::DbInputs;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
 use tower_lsp_server::ls_types::Uri;
@@ -27,6 +28,7 @@ use super::source_handler::TestSourceHandler;
 use super::utils::did_change;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
+use super::utils::fixed_environments;
 use super::utils::test_client;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
@@ -48,7 +50,8 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     let mut state = GlobalState::from_parts(
         test_client(),
         WorldState::new(OakDatabase::new()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_environment_scheduler(fixed_environments(&[])),
     );
 
     let tmp = tempfile::tempdir().unwrap();
@@ -112,6 +115,35 @@ async fn test_start_indexes_the_prepared_workspace_and_settles() {
     let packages = roots[0].packages(db);
     assert_eq!(packages.len(), 1);
     assert_eq!(packages[0].name(db), "pkg");
+}
+
+#[tokio::test]
+async fn test_start_keeps_the_libraries_the_database_was_built_with() {
+    let workspace = tempfile::tempdir().unwrap();
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write_installed(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let folder = AbsPathBuf::from_path_buf(workspace.path().to_path_buf()).unwrap();
+    let mut harness = LspHarness::new(db);
+    harness.set_workspace_folders(vec![folder]);
+    let session = harness.start(&[]).await;
+
+    let db = session.world().db();
+    let library_paths: Vec<_> = db
+        .library_roots()
+        .roots(db)
+        .iter()
+        .map(|root| root.path(db).as_path().unwrap().as_std_path().to_path_buf())
+        .collect();
+    assert_eq!(library_paths, vec![lib.path().to_path_buf()]);
+    assert_eq!(db.workspace_environments().environments(db).len(), 1);
+    assert!(db.package_by_name("donor").is_some());
 }
 
 /// Db-holding work (diagnostics, index warmup) and unbounded I/O (package source

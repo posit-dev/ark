@@ -66,7 +66,11 @@ pub(super) fn recognize_namespace(
     // An unknown package suppresses later sources
     // (https://github.com/posit-dev/ark/issues/833)
     let Some(completions) = namespace_completions(db, package, visibility) else {
-        return Ok(Some(Recognized::Empty));
+        return Ok(Some(Recognized::Static(UniqueCompletions {
+            items: vec![],
+            incomplete_until_packages_settle: vec![],
+            incomplete_while_libraries_resolve: true,
+        })));
     };
 
     let function_context = completion_context.function_context()?;
@@ -75,6 +79,7 @@ pub(super) fn recognize_namespace(
     Ok(Some(Recognized::Static(UniqueCompletions {
         items,
         incomplete_until_packages_settle: completions.incomplete_until_packages_settle,
+        incomplete_while_libraries_resolve: false,
     })))
 }
 
@@ -175,6 +180,7 @@ mod tests {
     use crate::lsp::completions::resolve::ResolveTarget;
     use crate::lsp::completions::sources::unique::namespace::recognize_namespace;
     use crate::lsp::completions::sources::unique::Recognized;
+    use crate::lsp::completions::sources::unique::UniqueCompletions;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::state_with_r_library;
     use crate::lsp::completions::tests::utils::state_with_workspace_package;
@@ -294,12 +300,24 @@ mod tests {
         let mut state = state_with_r_library();
         assert_eq!(
             recognize_namespace_at_cursor("foo::bar@", &mut state),
-            Some(Recognized::Empty)
+            Some(Recognized::Static(UniqueCompletions {
+                items: vec![],
+                incomplete_until_packages_settle: vec![],
+                incomplete_while_libraries_resolve: true,
+            }))
         );
 
         let (completions, _) = static_completions_with_state("foo::bar@", &mut state);
         assert_eq!(completions.incomplete_until_packages_settle(), &[]);
+        assert!(completions.incomplete_while_libraries_resolve());
         assert_eq!(finish(completions, RCompletionReplies::default()), vec![]);
+    }
+
+    #[test]
+    fn test_known_package_is_final_while_libraries_resolve() {
+        let mut state = state_with_r_library();
+        let (completions, _) = static_completions_with_state("utils::@", &mut state);
+        assert!(!completions.incomplete_while_libraries_resolve());
     }
 
     #[test]

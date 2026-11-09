@@ -18,7 +18,8 @@ use tower_lsp_server::ls_types::MarkupKind;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
-use crate::lsp::completions::sources::CompletionSource;
+use crate::lsp::completions::sources::unique::Recognized;
+use crate::lsp::completions::sources::unique::UniqueCompletions;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::db::ArkDb;
 use crate::lsp::document_context::DocumentContext;
@@ -27,22 +28,14 @@ use crate::lsp::document_context::TestDocument;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) struct CommentSource;
-
-impl CompletionSource for CommentSource {
-    fn name(&self) -> &'static str {
-        "comment"
-    }
-
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_comment(
-            completion_context.document_context,
-            completion_context.state.db(),
-        )
-    }
+pub(super) fn recognize_comment(
+    completion_context: &CompletionContext,
+) -> anyhow::Result<Option<Recognized>> {
+    let completions = completions_from_comment(
+        completion_context.document_context,
+        completion_context.state.db(),
+    )?;
+    Ok(completions.map(Recognized::Static))
 }
 
 // Strip everything up to and including the last whitespace
@@ -51,7 +44,7 @@ static RE_UP_TO_LAST_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r
 fn completions_from_comment(
     context: &DocumentContext,
     db: &dyn ArkDb,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<UniqueCompletions>> {
     let node = context.node;
 
     if !node.is_comment() {
@@ -66,11 +59,15 @@ fn completions_from_comment(
     if !token.starts_with('@') {
         // We are done, there are no completions, but we are in a comment so
         // no one else should get a chance to register anything
-        return Ok(Some(completions));
+        return Ok(Some(UniqueCompletions::new(completions)));
     }
 
     let Some(roxygen2) = db.package_by_name("roxygen2") else {
-        return Ok(Some(completions));
+        return Ok(Some(UniqueCompletions {
+            items: completions,
+            incomplete_until_packages_settle: vec![],
+            incomplete_while_libraries_resolve: true,
+        }));
     };
 
     for tag in roxygen2.roxygen_tags(db) {
@@ -86,7 +83,7 @@ fn completions_from_comment(
         completions.push(item);
     }
 
-    Ok(Some(completions))
+    Ok(Some(UniqueCompletions::new(completions)))
 }
 
 fn completion_item_from_roxygen(
@@ -142,7 +139,24 @@ fn test_comment() {
     let doc = TestDocument::new("# mean");
     let context = doc.context(point);
     let completions = completions_from_comment(&context, &db).unwrap().unwrap();
-    assert!(completions.is_empty());
+    assert_eq!(completions, UniqueCompletions::new(vec![]));
+}
+
+#[test]
+fn test_roxygen_tags_without_roxygen2_wait_for_libraries() {
+    use tree_sitter::Point;
+
+    let db = OakDatabase::new();
+
+    let point = Point { row: 0, column: 4 };
+    let doc = TestDocument::new("#' @");
+    let context = doc.context(point);
+    let completions = completions_from_comment(&context, &db).unwrap().unwrap();
+    assert_eq!(completions, UniqueCompletions {
+        items: vec![],
+        incomplete_until_packages_settle: vec![],
+        incomplete_while_libraries_resolve: true,
+    });
 }
 
 #[test]
@@ -187,6 +201,8 @@ fn test_roxygen_comment() {
     let doc = TestDocument::new("#' @");
     let context = doc.context(point);
     let completions = completions_from_comment(&context, &db).unwrap().unwrap();
+    assert!(!completions.incomplete_while_libraries_resolve);
+    let completions = completions.items;
 
     // Make sure we find it
     let aliases: Vec<&CompletionItem> = completions
@@ -252,7 +268,10 @@ fn test_roxygen_comment_while_working_on_roxygen2() {
     let point = Point { row: 0, column: 4 };
     let doc = TestDocument::new("#' @");
     let context = doc.context(point);
-    let completions = completions_from_comment(&context, &db).unwrap().unwrap();
+    let completions = completions_from_comment(&context, &db)
+        .unwrap()
+        .unwrap()
+        .items;
 
     // The tags came from `inst/roxygen2-tags.yml`
     let aliases: Vec<&CompletionItem> = completions

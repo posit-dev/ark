@@ -33,10 +33,10 @@ pub(crate) fn test_client() -> Client {
 /// waiting on the client can finish.
 ///
 /// The peer returns configured values for `workspace/configuration` and
-/// acknowledges `client/registerCapability` with an empty result. It rejects
-/// and records any other request so the harness can fail on the caller's
-/// thread. Panicking in the peer would only kill its task, surfacing indirectly
-/// as a missing response.
+/// acknowledges `client/registerCapability` and `client/unregisterCapability`
+/// with an empty result. It rejects and records any other request so the
+/// harness can fail on the caller's thread. Panicking in the peer would only
+/// kill its task, surfacing indirectly as a missing response.
 ///
 /// Tests can update a value with [`Self::set_setting()`] before driving a
 /// `didChangeConfiguration` notification.
@@ -44,12 +44,20 @@ pub(crate) struct TestClient {
     client: Client,
     #[cfg(test)]
     settings: Arc<Mutex<HashMap<String, Value>>>,
-    requests: Arc<Mutex<Vec<Result<String, String>>>>,
+    requests: Arc<Mutex<Vec<AnsweredRequest>>>,
     #[cfg(test)]
     notifications: Arc<Mutex<Vec<(String, Value)>>>,
 
     /// Aborts the peer on drop.
     _peer: JoinSet<()>,
+}
+
+/// A request the peer answered. `outcome` holds the method, `Ok` when
+/// supported and `Err` when rejected.
+struct AnsweredRequest {
+    #[cfg_attr(not(test), allow(dead_code))]
+    params: Value,
+    outcome: Result<String, String>,
 }
 
 impl TestClient {
@@ -119,7 +127,26 @@ impl TestClient {
     /// Request methods in arrival order. Supported methods are `Ok`, and
     /// unsupported methods are `Err`.
     pub(crate) fn answered_requests(&self) -> Vec<Result<String, String>> {
-        self.requests.lock().unwrap().clone()
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.outcome.clone())
+            .collect()
+    }
+
+    /// Request methods and parameters in arrival order.
+    #[cfg(test)]
+    pub(crate) fn request_params(&self) -> Vec<(String, Value)> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| {
+                let (Ok(method) | Err(method)) = &request.outcome;
+                (method.clone(), request.params.clone())
+            })
+            .collect()
     }
 
     /// Methods and params of the notifications the server has sent, in order.
@@ -147,7 +174,7 @@ impl TestClient {
 async fn answer_requests(
     socket: ClientSocket,
     settings: Arc<Mutex<HashMap<String, Value>>>,
-    requests: Arc<Mutex<Vec<Result<String, String>>>>,
+    requests: Arc<Mutex<Vec<AnsweredRequest>>>,
     notifications: Arc<Mutex<Vec<(String, Value)>>>,
 ) {
     let (mut incoming, mut outgoing) = socket.split();
@@ -173,7 +200,7 @@ async fn answer_requests(
                 ),
                 Ok(method.to_string()),
             ),
-            "client/registerCapability" => (
+            "client/registerCapability" | "client/unregisterCapability" => (
                 jsonrpc::Response::from_ok(id, Value::Null),
                 Ok(method.to_string()),
             ),
@@ -182,7 +209,10 @@ async fn answer_requests(
                 Err(method.to_string()),
             ),
         };
-        requests.lock().unwrap().push(outcome);
+        requests.lock().unwrap().push(AnsweredRequest {
+            params: params.unwrap_or(Value::Null),
+            outcome,
+        });
 
         if outgoing.send(response).await.is_err() {
             break;

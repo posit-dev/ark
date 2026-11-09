@@ -1,6 +1,7 @@
 use oak_db::OakDatabase;
 use serde_json::json;
 
+use super::utils::fixed_environments;
 use super::utils::initialize;
 use super::utils::initialized;
 use super::utils::TestClient;
@@ -42,7 +43,8 @@ async fn test_legacy_diagnostics_setting_can_disable_new_default() {
     let mut state = GlobalState::from_parts(
         client.client(),
         WorldState::new(OakDatabase::new()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_environment_scheduler(fixed_environments(&[])),
     );
     let workspace = tempfile::tempdir().unwrap();
     let (event, _response_rx) = initialize(workspace.path());

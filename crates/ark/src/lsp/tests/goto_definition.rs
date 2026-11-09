@@ -18,6 +18,7 @@ use url::Url;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_workspace_folders;
+use super::utils::fixed_environments;
 use super::utils::insert_file;
 use super::utils::make_state;
 use super::utils::range;
@@ -287,7 +288,8 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler)),
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
 
     // The workspace folder is itself the package that imports `foo`.
@@ -355,7 +357,8 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler)),
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
 
     // The workspace folder is itself the package that imports `bar`.
@@ -427,7 +430,8 @@ async fn test_goto_definition_resolves_namespace_accesses() {
         test_client(),
         world_with_source_fetching(db),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler)),
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
 
     // Workspace usage pkg functions
@@ -557,7 +561,8 @@ fn state_without_source_fetching(library: &Path) -> GlobalState {
     GlobalState::from_parts(
         test_client(),
         WorldState::new(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_environment_scheduler(fixed_environments(&[library])),
     )
 }
 
@@ -706,7 +711,8 @@ async fn test_goto_definition_through_source_from_environment_dir() {
         test_client(),
         world_with_source_fetching(OakDatabase::new()),
         LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(source_scheduler_for_test(handler)),
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_environment_scheduler(fixed_environments(&[])),
     );
 
     let workspace = tempfile::tempdir().unwrap();
