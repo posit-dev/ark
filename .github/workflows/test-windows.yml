@@ -68,6 +68,55 @@ jobs:
         run: |
           cargo build
 
+      # The first ragg render on a fresh Windows runner can stall machine-wide
+      # for 20-60s+, which made the first plot tests hit `RECV_TIMEOUT`. Pay
+      # that cost here, and time each phase so we can see where it lands. The
+      # second process shows whether the cost is per-process or machine-wide.
+      - name: Warm up ragg graphics stack (timed)
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host "Now:    $(Get-Date -Format o)"
+          Write-Host "Booted: $($os.LastBootUpTime.ToString('o'))"
+          Write-Host ("Uptime: {0:N0}s" -f ((Get-Date) - $os.LastBootUpTime).TotalSeconds)
+
+          $script = Join-Path $env:RUNNER_TEMP "warm-ragg.R"
+          @'
+          timed <- function(label, expr) {
+            start <- format(Sys.time(), "%H:%M:%OS3")
+            elapsed <- system.time(expr)[["elapsed"]]
+            cat(sprintf("[%s] %-42s %7.2fs\n", start, label, elapsed))
+          }
+
+          render <- function() {
+            path <- tempfile(fileext = ".png")
+            ragg::agg_png(path, width = 504, height = 504, res = 72)
+            plot(1:10, main = "warm-up")
+            grDevices::dev.off()
+            unlink(path)
+          }
+
+          timed("loadNamespace(systemfonts)", loadNamespace("systemfonts"))
+          timed("loadNamespace(textshaping)", loadNamespace("textshaping"))
+          timed("loadNamespace(ragg)", loadNamespace("ragg"))
+          timed("systemfonts::system_fonts() (font scan)", fonts <- systemfonts::system_fonts())
+          cat("Fonts found:", nrow(fonts), "\n")
+          timed("first ragg render", render())
+          timed("second ragg render", render())
+          '@ | Set-Content -Path $script
+
+          foreach ($i in 1..2) {
+            Write-Host "--- Rscript process $i ---"
+            $elapsed = Measure-Command { Rscript $script | Out-Host }
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host ("Process {0} wall time: {1:N2}s" -f $i, $elapsed.TotalSeconds)
+          }
+
+          # Metadata only, so this doesn't warm font file contents
+          $fontFiles = Get-ChildItem "$env:WINDIR\Fonts" -File
+          $fontMB = ($fontFiles | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("$env:WINDIR\Fonts: {0} files, {1:N0} MB" -f $fontFiles.Count, $fontMB)
+
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
