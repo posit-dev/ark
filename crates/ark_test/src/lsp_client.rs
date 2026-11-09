@@ -11,6 +11,7 @@ use std::io::BufWriter;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::json;
@@ -45,6 +46,8 @@ pub struct LspClient {
     /// Global configuration overrides, keyed by section. Missing sections and
     /// requests with a `scopeUri` receive `null` to select the server default.
     settings: std::collections::HashMap<String, Value>,
+    /// Sent as `workspaceFolders` in the `initialize` request.
+    workspace_folders: Vec<url::Url>,
 }
 
 impl LspClient {
@@ -69,7 +72,19 @@ impl LspClient {
             allowed_log_messages: Vec::new(),
             killed: false,
             settings: std::collections::HashMap::new(),
+            workspace_folders: Vec::new(),
         })
+    }
+
+    /// Add `path` to the workspace folders sent by [`Self::initialize()`].
+    pub fn add_workspace_folder(&mut self, path: &Path) {
+        let Ok(url) = url::Url::from_file_path(path) else {
+            panic!(
+                "Workspace folder must be an absolute path: {}",
+                path.display()
+            );
+        };
+        self.workspace_folders.push(url);
     }
 
     /// Answer `value` for the global setting `section` in later
@@ -126,12 +141,19 @@ impl LspClient {
     ///
     /// Sends the `initialize` request followed by the `initialized` notification.
     pub fn initialize(&mut self) -> lsp_types::InitializeResult {
+        let workspace_folders: Vec<Value> = self
+            .workspace_folders
+            .iter()
+            .map(|url| json!({ "uri": url.as_str(), "name": url.path() }))
+            .collect();
+
         let response = self.send_request(
             "initialize",
             json!({
                 // `configuration` is advertised because `recv_server_request()`
                 // answers `workspace/configuration`.
-                "capabilities": { "workspace": { "configuration": true } }
+                "capabilities": { "workspace": { "configuration": true } },
+                "workspaceFolders": workspace_folders,
             }),
         );
 
@@ -172,7 +194,20 @@ impl LspClient {
     /// Returns the URI assigned to the document (based on the provided `name`).
     pub fn open_document(&mut self, name: &str, text: &str) -> lsp_types::Uri {
         let uri: lsp_types::Uri = format!("file:///test/{name}").parse().unwrap();
+        self.open_document_at(uri, text)
+    }
 
+    /// Notify the server that the document at `path`, which needn't exist on
+    /// disk, was opened with `text`.
+    pub fn open_document_at_path(&mut self, path: &Path, text: &str) -> lsp_types::Uri {
+        let Ok(url) = url::Url::from_file_path(path) else {
+            panic!("Document path must be absolute: {}", path.display());
+        };
+        let uri: lsp_types::Uri = url.as_str().parse().unwrap();
+        self.open_document_at(uri, text)
+    }
+
+    fn open_document_at(&mut self, uri: lsp_types::Uri, text: &str) -> lsp_types::Uri {
         let params = lsp_types::DidOpenTextDocumentParams {
             text_document: lsp_types::TextDocumentItem {
                 uri: uri.clone(),

@@ -2747,6 +2747,8 @@ dependencies = [
  "air_r_syntax",
  "anyhow",
  "biome_rowan",
+ "home",
+ "log",
  "oak_core",
  "oak_db",
  "oak_package_metadata",

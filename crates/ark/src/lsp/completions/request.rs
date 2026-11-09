@@ -82,10 +82,6 @@ pub(crate) enum UniqueRequest {
     /// Names of the evaluated `object` in `x["|"]` or `x[c("a", "|")]`.
     StringSubset { object: String },
 
-    /// File path completions for a string outside recognized string subsetting.
-    /// `token` includes quotes and escapes as written in the document.
-    FilePath { token: String },
-
     /// Names of the evaluated `object` after `$` or `@`.
     Extractor {
         object: String,

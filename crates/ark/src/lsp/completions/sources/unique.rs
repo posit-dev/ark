@@ -83,7 +83,7 @@ pub(crate) fn get_completions(
     }
 
     // could be a file path
-    if let Some(recognized) = recognize_string(completion_context.document_context)? {
+    if let Some(recognized) = recognize_string(completion_context)? {
         return Ok(Some(end_search("string", recognized, request)));
     }
 

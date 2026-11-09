@@ -403,6 +403,40 @@ fn test_lsp_completions_busy_namespace_is_complete() -> anyhow::Result<()> {
     Ok(())
 }
 
+// File path completions return a complete answer while R is busy. Without
+// an enclosing environment directory, relative paths use the workspace root.
+#[test]
+fn test_lsp_completions_busy_file_paths_are_complete() -> anyhow::Result<()> {
+    let workspace = tempfile::tempdir()?;
+    std::fs::create_dir_all(workspace.path().join("R/sub"))?;
+    std::fs::write(workspace.path().join("R/utils.R"), "")?;
+
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp_in_workspace(workspace.path());
+
+    let uri = lsp.open_document_at_path(&workspace.path().join("script.R"), "source(\"R/\")\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 10));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let Some(items) = responses[0].as_array() else {
+        panic!("Expected a complete answer, got: {}", responses[0]);
+    };
+    let labels: Vec<&str> = items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(labels, vec!["sub/", "utils.R"]);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
 // Lazy data names must remain available while the kernel's R session is busy.
 // Source fetching is disabled, so an incomplete answer means the startup
 // sidecar job is still pending. Wait for it before making R busy.

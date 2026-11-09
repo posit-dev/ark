@@ -21,7 +21,6 @@ use crate::Db;
 use crate::File;
 use crate::Name;
 use crate::Package;
-use crate::RootKind;
 use crate::SourceDb;
 
 /// Salsa-backed [`ImportsResolver`] consumed by the per-file semantic
@@ -105,7 +104,7 @@ pub(crate) fn source_dir_scripts(
     path: String,
     walk: DirWalk,
 ) -> Vec<File> {
-    let Some(anchor) = anchor_dir(db, file) else {
+    let Some(anchor) = file.anchor_dir(db) else {
         return Vec::new();
     };
     let Some(target_path) = resolve_relative_to(&anchor, &path) else {
@@ -144,7 +143,7 @@ impl EffectsCache {
 
 impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
-        let anchor = anchor_dir(self.db.as_source_db(), self.file)?;
+        let anchor = self.file.anchor_dir(self.db.as_source_db())?;
         let target_path = resolve_relative_to(&anchor, path)?;
         // TODO: a `source()` target outside every workspace root never becomes
         // a `File`, so `file_by_path()` misses it and the names it injects stay
@@ -453,46 +452,6 @@ fn package_exports(db: &dyn SourceDb, package: Package, name: &str) -> bool {
         return false;
     }
     package.namespace(db).exports.contains_str(name)
-}
-
-/// Anchor directory for relative `source("path")` arguments.
-///
-/// Use the nearest enclosing environment directory within the workspace root,
-/// or the workspace root if there is none. R resolves relative paths against
-/// `getwd()`, so this assumes a session started in that directory to load its
-/// `.Rprofile` or `.Renviron`. See [`Root::environment_dirs()`](crate::Root::environment_dirs).
-///
-/// Do not retry missing paths against the workspace root. That would resolve
-/// code intended for a different working directory and environment.
-/// Outside a workspace root, use the file's parent directory.
-///
-/// Per-file anchoring approximates R's working directory. When a `source()`
-/// chain crosses environment directories, each file uses its own anchor here.
-/// R's `source()` calls leave `getwd()` unchanged by default, so nested calls
-/// instead use the session's working directory and can resolve different files.
-fn anchor_dir(db: &dyn SourceDb, file: File) -> Option<Utf8PathBuf> {
-    let file_path = file.path(db).as_path()?;
-
-    let Some(root) = file
-        .root(db)
-        .filter(|root| root.kind(db) == RootKind::Workspace)
-    else {
-        return Some(file_path.parent()?.to_path_buf());
-    };
-
-    // `environment_dirs` is sorted, so the last enclosing directory is the
-    // nearest one.
-    let environment_dir = root
-        .environment_dirs(db)
-        .iter()
-        .filter_map(FilePath::as_path)
-        .rfind(|dir| file_path.starts_with(dir));
-    if let Some(dir) = environment_dir {
-        return Some(dir.to_path_buf());
-    }
-
-    // Workspace roots are file URLs by construction.
-    root.path(db).as_path().map(Utf8Path::to_path_buf)
 }
 
 /// Resolve `path` (the literal `source("path")` argument) against the anchor

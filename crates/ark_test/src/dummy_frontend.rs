@@ -5,6 +5,7 @@ use std::io::Seek;
 use std::io::Write;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -925,6 +926,17 @@ impl DummyArkFrontend {
         for (section, value) in settings {
             client.set_setting(section, value.clone());
         }
+        client.initialize();
+        client
+    }
+
+    /// Start the LSP server like [`Self::start_lsp()`], with `root` as the
+    /// client's only workspace folder.
+    #[track_caller]
+    pub fn start_lsp_in_workspace(&self, root: &Path) -> LspClient {
+        let port = self.start_server("lsp");
+        let mut client = LspClient::connect("127.0.0.1", port).unwrap();
+        client.add_workspace_folder(root);
         client.initialize();
         client
     }

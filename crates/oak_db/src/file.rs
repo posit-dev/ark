@@ -1,4 +1,6 @@
 use aether_path::FilePath;
+use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 
@@ -18,6 +20,7 @@ use crate::FileRevision;
 use crate::Name;
 use crate::Package;
 use crate::Root;
+use crate::RootKind;
 use crate::SourceDb;
 
 /// A source file tracked by Salsa.
@@ -327,6 +330,54 @@ impl File {
             return db.root_by_package(pkg);
         }
         root_by_file(db, self).or_else(|| root_by_path(db, self.path(db)))
+    }
+
+    /// Anchor directory for relative paths written in this file, such as
+    /// `source("path")` arguments. `None` for a file with no filesystem path,
+    /// such as an untitled document.
+    ///
+    /// Use the nearest enclosing environment directory within the workspace
+    /// root, or the workspace root if there is none. R resolves relative paths
+    /// against `getwd()`, so this assumes a session started in that directory
+    /// to load its `.Rprofile` or `.Renviron`. See
+    /// [`Root::environment_dirs()`](crate::Root::environment_dirs).
+    ///
+    /// Do not retry missing paths against the workspace root. That would
+    /// resolve code intended for a different working directory and
+    /// environment. Outside a workspace root, use the file's parent directory.
+    ///
+    /// Per-file anchoring approximates R's working directory. When a `source()`
+    /// chain crosses environment directories, each file uses its own anchor
+    /// here. R's `source()` calls leave `getwd()` unchanged by default, so
+    /// nested calls instead use the session's working directory and can
+    /// resolve different files.
+    ///
+    /// Reads only source inputs and [`File::root()`]. Neither depends on
+    /// [`File::semantic_index()`], so resolving an anchor while building that
+    /// index does not re-enter the semantic-index query.
+    pub fn anchor_dir(self, db: &dyn SourceDb) -> Option<Utf8PathBuf> {
+        let file_path = self.path(db).as_path()?;
+
+        let Some(root) = self
+            .root(db)
+            .filter(|root| root.kind(db) == RootKind::Workspace)
+        else {
+            return Some(file_path.parent()?.to_path_buf());
+        };
+
+        // `environment_dirs()` is sorted by path. Reverse lookup finds the
+        // nearest enclosing directory first.
+        let environment_dir = root
+            .environment_dirs(db)
+            .iter()
+            .filter_map(FilePath::as_path)
+            .rfind(|dir| file_path.starts_with(dir));
+        if let Some(dir) = environment_dir {
+            return Some(dir.to_path_buf());
+        }
+
+        // Workspace roots are file URLs by construction.
+        root.path(db).as_path().map(Utf8Path::to_path_buf)
     }
 
     /// The cells before this one in its open notebook, in document order.

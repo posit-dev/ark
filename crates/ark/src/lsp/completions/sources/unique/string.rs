@@ -5,16 +5,32 @@
 //
 //
 
+use std::path::PathBuf;
+
+use aether_path::FilePath;
+use anyhow::Context;
+use oak_db::Db;
+use oak_db::File;
+use oak_ide::file_path_completions;
+use stdext::result::ResultExt;
+use tower_lsp_server::ls_types::CompletionItem;
+
+use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::completion_item::completion_item_from_file_path;
 use crate::lsp::completions::request::UniqueRequest;
 use crate::lsp::completions::sources::unique::subset::node_find_object_for_string_subset;
 use crate::lsp::completions::sources::unique::Recognized;
-use crate::lsp::document_context::DocumentContext;
+use crate::lsp::completions::sources::unique::UniqueCompletions;
+use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_string;
 
 /// Recognizes a cursor inside a string, suppressing later sources even when
-/// there are no session items.
-pub(super) fn recognize_string(context: &DocumentContext) -> anyhow::Result<Option<Recognized>> {
+/// there are no items.
+pub(super) fn recognize_string(
+    completion_context: &CompletionContext,
+) -> anyhow::Result<Option<Recognized>> {
+    let context = completion_context.document_context;
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.
@@ -44,22 +60,115 @@ pub(super) fn recognize_string(context: &DocumentContext) -> anyhow::Result<Opti
     }
 
     // If no special string cases are hit, we show file path completions
-    let token = node.node_as_str(context.contents)?.to_string();
-    Ok(Some(Recognized::Session(UniqueRequest::FilePath { token })))
+    let token = node.node_as_str(context.contents)?;
+    Ok(Some(Recognized::Static(UniqueCompletions::new(
+        file_path_items(completion_context, token)?,
+    ))))
+}
+
+/// Log directory-listing failures and return no items rather than failing
+/// the completion request.
+fn file_path_items(
+    completion_context: &CompletionContext,
+    token: &str,
+) -> anyhow::Result<Vec<CompletionItem>> {
+    let db = completion_context.state.db();
+    let file = completion_context.file;
+    let fallback_dir = fallback_dir(db, file);
+
+    let Some(entries) = file_path_completions(db, file, token, fallback_dir.as_deref())
+        .with_context(|| format!("Can't list file path completions for {token}"))
+        .log_err()
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut items = entries
+        .into_iter()
+        .map(completion_item_from_file_path)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Rank names starting with punctuation or `_` after word-leading names.
+    set_sort_text_by_words_first(&mut items);
+
+    Ok(items)
+}
+
+/// The directory a relative path resolves against in a file without an anchor
+/// directory. Console input uses the process working directory, which follows
+/// `setwd()` because R runs in this process. Other such files, like untitled
+/// documents, use the first workspace root.
+fn fallback_dir(db: &dyn Db, file: File) -> Option<PathBuf> {
+    if is_console_input(file.path(db)) {
+        return std::env::current_dir().log_err();
+    }
+
+    let roots = db.workspace_roots().roots(db);
+    let root = roots.first()?;
+    Some(root.path(db).as_path()?.as_std_path().to_path_buf())
+}
+
+/// Positron's console sends its input as `inmemory:` documents.
+fn is_console_input(path: &FilePath) -> bool {
+    matches!(path, FilePath::Virtual(uri) if uri.as_url().scheme() == "inmemory")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use aether_path::FilePath;
+    use harp::exec::RFunction;
+    use harp::exec::RFunctionExt;
+    use harp::utils::r_is_string;
+    use oak_core::string::decode_string;
+    use oak_db::DbInputs;
+    use oak_db::File;
+    use oak_db::Root;
+    use oak_db::RootKind;
+    use oak_scan::DbScan;
+    use salsa::Setter;
+    use tower_lsp_server::ls_types::CompletionItemKind;
+    use tree_sitter::Point;
+
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::finish;
+    use crate::lsp::completions::request::RCompletionReplies;
     use crate::lsp::completions::request::RCompletionRequest;
-    use crate::lsp::completions::request::UniqueRequest;
     use crate::lsp::completions::sources::unique;
     use crate::lsp::completions::sources::unique::string::recognize_string;
     use crate::lsp::completions::sources::unique::Recognized;
+    use crate::lsp::completions::sources::unique::UniqueCompletions;
+    use crate::lsp::completions::static_completions;
+    use crate::lsp::document_context::test_document_context;
     use crate::lsp::document_context::TestDocument;
+    use crate::lsp::state::WorldState;
+    use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
+
+    fn recognize_in(
+        doc: &TestDocument,
+        point: Point,
+        trigger: Option<String>,
+    ) -> Option<Recognized> {
+        let context = doc.context_with_trigger(point, trigger);
+        let completion_context = CompletionContext::new(&context, doc.file(), doc.state());
+        recognize_string(&completion_context).unwrap()
+    }
+
+    /// Opens `text` as `script.R` in `dir`, outside any workspace root, so
+    /// relative paths resolve against `dir`.
+    fn open_in_dir(state: &mut WorldState, dir: &Path, text: &str) -> File {
+        let path = FilePath::from_path_buf(dir.join("script.R")).unwrap();
+        state.db_mut().upsert_editor(path, text.to_string())
+    }
+
+    fn write_file(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
 
     #[test]
     fn test_outside_quotes() {
@@ -67,20 +176,18 @@ mod tests {
         // Still considered part of the string node.
         let (text, point) = point_from_cursor("@''");
         let doc = TestDocument::new(&text);
-        let context = doc.context(point);
 
-        assert!(node_find_string(&context.node).is_some());
-        assert_eq!(recognize_string(&context).unwrap(), None);
+        assert!(node_find_string(&doc.context(point).node).is_some());
+        assert_eq!(recognize_in(&doc, point, None), None);
     }
 
     #[test]
     fn test_not_string() {
         let (text, point) = point_from_cursor("@foo");
         let doc = TestDocument::new(&text);
-        let context = doc.context(point);
 
-        assert!(context.node.is_identifier());
-        assert_eq!(recognize_string(&context).unwrap(), None);
+        assert!(doc.context(point).node.is_identifier());
+        assert_eq!(recognize_in(&doc, point, None), None);
     }
 
     #[test]
@@ -88,19 +195,23 @@ mod tests {
         let (text, point) = point_from_cursor("'~/@'");
         let doc = TestDocument::new(&text);
 
-        let context = doc.context(point);
-        assert_eq!(
-            recognize_string(&context).unwrap(),
-            Some(Recognized::Session(UniqueRequest::FilePath {
-                token: String::from("'~/'")
+        assert!(matches!(
+            recognize_in(&doc, point, None),
+            Some(Recognized::Static(UniqueCompletions {
+                incomplete_until_package_settles: None,
+                ..
             }))
-        );
+        ));
 
         // `Some` trigger -> Should return empty completion set
-        let context = doc.context_with_trigger(point, Some(String::from("$")));
-        assert_eq!(recognize_string(&context).unwrap(), Some(Recognized::Empty));
+        let trigger = Some(String::from("$"));
+        assert_eq!(
+            recognize_in(&doc, point, trigger.clone()),
+            Some(Recognized::Empty)
+        );
 
         // Check for same result when consulting (potentially all) unique sources
+        let context = doc.context_with_trigger(point, trigger);
         let completion_context = CompletionContext::new(&context, doc.file(), doc.state());
         let mut request = RCompletionRequest::default();
         let res = unique::get_completions(&completion_context, &mut request).unwrap();
@@ -109,5 +220,230 @@ mod tests {
         assert_eq!(res.items, vec![]);
         assert_eq!(res.incomplete_until_package_settles, None);
         assert_eq!(request, RCompletionRequest::default());
+    }
+
+    #[test]
+    fn test_file_paths_need_no_session() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("R/utils.R"));
+        std::fs::create_dir_all(dir.path().join("R/sub")).unwrap();
+
+        let mut state = WorldState::default();
+        let (text, point) = point_from_cursor("source('R/@')");
+        let file = open_in_dir(&mut state, dir.path(), &text);
+        let context = test_document_context(&state, file, point, None);
+
+        let (completions, request) = static_completions(&context, file, &state).unwrap();
+        assert!(!request.has_session_slots());
+
+        let items = finish(completions, RCompletionReplies::default());
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, vec!["sub/", "utils.R"]);
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FOLDER));
+        assert_eq!(items[1].kind, Some(CompletionItemKind::FILE));
+    }
+
+    fn file_path_labels(state: &WorldState, file: File, point: Point) -> Vec<String> {
+        let context = test_document_context(state, file, point, None);
+        let (completions, _) = static_completions(&context, file, state).unwrap();
+        finish(completions, RCompletionReplies::default())
+            .into_iter()
+            .map(|item| item.label)
+            .collect()
+    }
+
+    #[test]
+    fn test_console_input_resolves_against_working_directory() {
+        // Nextest isolates the working directory change in a separate process.
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("R/utils.R"));
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let mut state = WorldState::default();
+        let (text, point) = point_from_cursor("source('R/@')");
+        let path = FilePath::parse("inmemory:/repl-r-1").unwrap();
+        let file = state.db_mut().upsert_editor(path, text);
+
+        assert_eq!(file_path_labels(&state, file, point), vec!["utils.R"]);
+    }
+
+    #[test]
+    fn test_untitled_document_resolves_against_first_workspace_root() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("R/utils.R"));
+
+        let mut state = WorldState::default();
+        let root = Root::new(
+            state.db(),
+            FilePath::from_path_buf(dir.path().to_path_buf()).unwrap(),
+            RootKind::Workspace,
+            vec![],
+            vec![],
+            vec![],
+        );
+        state
+            .db()
+            .workspace_roots()
+            .set_roots(state.db_mut())
+            .to(vec![root]);
+
+        let (text, point) = point_from_cursor("source('R/@')");
+        let path = FilePath::parse("untitled:Untitled-1").unwrap();
+        let file = state.db_mut().upsert_editor(path, text);
+        assert_eq!(file_path_labels(&state, file, point), vec!["utils.R"]);
+
+        // Without a workspace, relative paths list nothing
+        let mut state = WorldState::default();
+        let path = FilePath::parse("untitled:Untitled-1").unwrap();
+        let (text, point) = point_from_cursor("source('R/@')");
+        let file = state.db_mut().upsert_editor(path, text);
+        assert_eq!(file_path_labels(&state, file, point), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_file_paths_with_invalid_escape() {
+        // https://github.com/posit-dev/positron/issues/6584
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("R/utils.R"));
+
+        let mut state = WorldState::default();
+        let (text, point) = point_from_cursor(r#"".\R\@""#);
+        let file = open_in_dir(&mut state, dir.path(), &text);
+        let context = test_document_context(&state, file, point, None);
+
+        let (completions, request) = static_completions(&context, file, &state).unwrap();
+        assert!(!request.has_session_slots());
+        assert_eq!(finish(completions, RCompletionReplies::default()), vec![]);
+    }
+
+    /// String literals with escapes R accepts and rejects. `decode_string()`
+    /// must agree with R's parser on each. `harp::parse_expr()` converts
+    /// `\r\n` to `\n` before parsing, as `readLines()` does for R files.
+    const STRING_LITERALS: &[&str] = &[
+        r#""abc""#,
+        "'abc'",
+        r#""""#,
+        r#"'a"b'"#,
+        "\"\u{e9}t\u{e9}\"",
+        "\"a\nb\"",
+        r#""a\nb""#,
+        r#""\a\b\f\n\r\t\v""#,
+        r#""\\""#,
+        r#""\"""#,
+        r#"'\''"#,
+        r#""\'\"\`""#,
+        r#""\ ""#,
+        "\"a\\\nb\"",
+        "\"a\r\nb\"",
+        "\"a\\\r\nb\"",
+        "\"a\rb\"",
+        "\"a\\\rb\"",
+        "r\"(a\r\nb)\"",
+        r#""C:\\Users\\x""#,
+        r#"".\R\utils.R""#,
+        r#""\q""#,
+        r#""\8""#,
+        r#""\101""#,
+        r#""\12a""#,
+        r#""\1234""#,
+        r#""\378""#,
+        r#""\0""#,
+        r#""\00""#,
+        r#""\377""#,
+        r#""\400""#,
+        r#""\777""#,
+        r#""\x41""#,
+        r#""\x41g""#,
+        r#""\x4142""#,
+        r#""\xa""#,
+        r#""\xg""#,
+        r#""\x""#,
+        r#""\x0""#,
+        r#""\xff""#,
+        r#""\xc3\xa9""#,
+        "\"\u{e9}\\xe9\"",
+        r#""\u41""#,
+        r#""\u00e9""#,
+        r#""\u12345""#,
+        r#""\u{41}""#,
+        r#""\u{0041}""#,
+        r#""\u{12}3""#,
+        r#""\u{00041}""#,
+        r#""\u{1F600}""#,
+        r#""\u{41""#,
+        r#""\u{}""#,
+        r#""\u""#,
+        r#""\u{0}""#,
+        r#""\u000""#,
+        r#""\U1F600""#,
+        r#""\U{1F600}""#,
+        r#""\U{0001F600}""#,
+        r#""\U0010FFFF""#,
+        r#""\U{41}""#,
+        r#""\U{00001F600}""#,
+        r#""\U110000""#,
+        r#""\U{110000}""#,
+        r#""\UFFFFFFFF""#,
+        r#""\U0""#,
+        r#""\uD83D\uDE00""#,
+        r#""\uD83D\U0000DE00""#,
+        r#""\U{D83D}\U{DE00}""#,
+        r#""\uD800""#,
+        r#""\uDC00x""#,
+        r#""\uD83Dx\uDE00""#,
+        r#""\uDE00\uD83D""#,
+        r#""\x41\u0041""#,
+        r#""\u00e9\x41""#,
+        r#""\101\u0041""#,
+        "\"\u{e9}\\u00e9\"",
+        "\"\u{e9}\\x41\"",
+        r#"r"(a\b)""#,
+        r#"R"[x]""#,
+        r#"r"{x}""#,
+        "r'(x)'",
+        r#"r"()""#,
+        r#"r"(a)b)""#,
+        r#"r"---(a)"--)---""#,
+        r#"r"-(a)-)-""#,
+        "r\"(a\nb)\"",
+        r#"r"(\R\utils.R)""#,
+        r#"r"(x]""#,
+        r#"r"-(x)""#,
+        r#"r"-(a)--"-""#,
+        r#"r"""#,
+        r#"r"x""#,
+        r#""abc"#,
+        r#""a\""#,
+    ];
+
+    /// The value R's parser gives `literal`, or `None` if it rejects the
+    /// literal or the value isn't valid UTF-8.
+    fn r_string_value(literal: &str) -> Option<String> {
+        let value = harp::parse_expr(literal).ok()?;
+        if !r_is_string(value.sexp) {
+            return None;
+        }
+
+        let valid = RFunction::new("base", "validUTF8")
+            .add(value.clone())
+            .call()
+            .unwrap();
+        if !bool::try_from(valid).unwrap() {
+            return None;
+        }
+
+        Some(String::try_from(value).unwrap())
+    }
+
+    #[test]
+    fn test_decode_string_agrees_with_r() {
+        r_task(|| {
+            for literal in STRING_LITERALS {
+                assert_eq!(
+                    (literal, decode_string(literal)),
+                    (literal, r_string_value(literal))
+                );
+            }
+        })
     }
 }

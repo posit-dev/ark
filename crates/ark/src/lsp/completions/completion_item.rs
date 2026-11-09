@@ -5,11 +5,10 @@
 //
 //
 
-use std::fs::DirEntry;
-
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote;
 use harp::syntax::sym_quote_invalid;
+use oak_ide::FilePathItem;
 use stdext::*;
 use tower_lsp_server::ls_types::Command;
 use tower_lsp_server::ls_types::CompletionItem;
@@ -45,19 +44,28 @@ pub(super) fn completion_item(
     })
 }
 
-pub(super) fn completion_item_from_file(entry: DirEntry) -> anyhow::Result<CompletionItem> {
-    let name = entry.file_name().to_string_lossy().to_string();
-    let mut item = completion_item(name, CompletionData::File { path: entry.path() })?;
+pub(super) fn completion_item_from_file_path(
+    entry: FilePathItem,
+) -> anyhow::Result<CompletionItem> {
+    if entry.is_dir {
+        completion_item_from_directory(entry)
+    } else {
+        completion_item_from_file(entry)
+    }
+}
+
+fn completion_item_from_file(entry: FilePathItem) -> anyhow::Result<CompletionItem> {
+    let mut item = completion_item(entry.name, CompletionData::File { path: entry.path })?;
 
     item.kind = Some(CompletionItemKind::FILE);
     Ok(item)
 }
 
-pub(super) fn completion_item_from_directory(entry: DirEntry) -> anyhow::Result<CompletionItem> {
-    let mut name = entry.file_name().to_string_lossy().to_string();
+fn completion_item_from_directory(entry: FilePathItem) -> anyhow::Result<CompletionItem> {
+    let mut name = entry.name;
     name.push('/');
 
-    let mut item = completion_item(&name, CompletionData::Directory { path: entry.path() })?;
+    let mut item = completion_item(&name, CompletionData::Directory { path: entry.path })?;
 
     item.kind = Some(CompletionItemKind::FOLDER);
     item.command = Some(Command {
@@ -67,18 +75,6 @@ pub(super) fn completion_item_from_directory(entry: DirEntry) -> anyhow::Result<
     });
 
     Ok(item)
-}
-
-pub(super) fn completion_item_from_direntry(entry: DirEntry) -> anyhow::Result<CompletionItem> {
-    let is_dir = entry
-        .file_type()
-        .map(|value| value.is_dir())
-        .unwrap_or(false);
-    if is_dir {
-        completion_item_from_directory(entry)
-    } else {
-        completion_item_from_file(entry)
-    }
 }
 
 pub(super) fn completion_item_from_assignment(
