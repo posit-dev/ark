@@ -31,6 +31,9 @@ pub(super) enum TestBehavior {
     /// Park on a [`Gate`] until the test releases it, then fail. Lets a test hold a
     /// source worker for as long as it wants.
     Gated(Gate),
+    /// Park on a [`Gate`] like [`TestBehavior::Gated`], then succeed like
+    /// [`TestBehavior::Success`] with these files.
+    GatedSuccess(Gate, Vec<(&'static str, &'static str)>),
 }
 
 /// The handler side of a rendezvous with the test. `handle()` announces that it has
@@ -57,7 +60,7 @@ pub(super) fn gate(entered_tx: Sender<()>) -> (Gate, Sender<()>) {
 }
 
 impl Gate {
-    fn wait(&self) {
+    pub(super) fn wait(&self) {
         if self.entered_tx.send(()).is_err() {
             return;
         }
@@ -98,6 +101,12 @@ impl SourceHandler for TestSourceHandler {
             Some(TestBehavior::Gated(gate)) => {
                 gate.wait();
                 SourceResponse::Failure
+            },
+            Some(TestBehavior::GatedSuccess(gate, files)) => {
+                gate.wait();
+                let dir = self.sources.path().join(request.name());
+                write_sources(&dir, files);
+                SourceResponse::fetched(dir)
             },
             None => panic!("Unknown test package {}", request.name()),
         }

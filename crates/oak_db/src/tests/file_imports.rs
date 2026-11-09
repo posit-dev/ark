@@ -15,6 +15,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
+use crate::PackageFiles;
 
 /// Create a library root containing one installed package named `name`.
 /// Returns the package and the root, both already wired up: the root's
@@ -30,7 +31,7 @@ fn make_installed(db: &mut TestDb, name: &str) -> (crate::Root, Package) {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
@@ -151,7 +152,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let first = File::new(
@@ -168,7 +169,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         Some("second <- 2\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![first, second]);
+    pkg.set_source_files(&mut db, vec![first, second]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -231,7 +232,7 @@ fn test_package_script_resolves_as_standalone_script() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -248,7 +249,7 @@ fn test_package_script_resolves_as_standalone_script() {
         Some("library(dplyr)\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![data_raw]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -279,7 +280,7 @@ fn test_package_file_includes_predecessor_attaches() {
         FileRevision::zero(),
         None,
         Some(Namespace::default()),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let a = File::new(
@@ -296,7 +297,7 @@ fn test_package_file_includes_predecessor_attaches() {
         Some("x <- 1\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -563,7 +564,7 @@ fn test_package_owned_r_file_excluded_from_collate_stays_standalone() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -580,7 +581,7 @@ fn test_package_owned_r_file_excluded_from_collate_stays_standalone() {
         Some("x <- 1\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![extra]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -1327,7 +1328,7 @@ fn test_package_backward_source_into_collation_successor_cycles() {
         FileRevision::zero(),
         None,
         Some(Namespace::default()),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let a = File::new(
@@ -1344,7 +1345,7 @@ fn test_package_backward_source_into_collation_successor_cycles() {
         Some("library(pkgb)\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -1381,7 +1382,7 @@ fn test_package_r_file_ignores_source_sites() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let a = File::new(
@@ -1405,7 +1406,7 @@ fn test_package_r_file_ignores_source_sites() {
         Some("source(\"pkg/R/b.R\")\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     pkg.set_scripts(&mut db).to(vec![dev]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -1436,7 +1437,7 @@ fn test_non_collated_package_file_still_inherits() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -1460,7 +1461,7 @@ fn test_non_collated_package_file_still_inherits() {
         Some("source(\"pkg/data-raw/helpers.R\")\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![helpers, dev]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);

@@ -17,6 +17,7 @@ use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::Package;
+use crate::PackageFiles;
 
 fn new_file(db: &TestDb, name: &str, contents: &str) -> File {
     File::new(
@@ -544,7 +545,7 @@ fn test_diagnostic_inherited_namespace_import_shadows_a_callee() {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let main = File::new(
@@ -554,7 +555,7 @@ fn test_diagnostic_inherited_namespace_import_shadows_a_callee() {
         Some("source(\"helpers.R\")\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![main]);
+    pkg.set_source_files(&mut db, vec![main]);
     root.set_packages(&mut db).to(vec![pkg]);
 
     let helpers_source = "library(dplyr)\n";
@@ -625,7 +626,7 @@ fn test_diagnostic_inherited_shadow_not_masked_by_an_agreeing_context() {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let main = File::new(
@@ -635,7 +636,7 @@ fn test_diagnostic_inherited_shadow_not_masked_by_an_agreeing_context() {
         Some("source(\"helpers.R\")\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![main]);
+    pkg.set_source_files(&mut db, vec![main]);
     root.set_packages(&mut db).to(vec![pkg]);
 
     let helpers_source = "library(dplyr)\n";
@@ -888,7 +889,7 @@ fn install_package_binding(db: &mut TestDb, name: &str, symbols: &[&str]) {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let contents: String = symbols
@@ -902,7 +903,7 @@ fn install_package_binding(db: &mut TestDb, name: &str, symbols: &[&str]) {
         Some(contents),
         Some(pkg),
     );
-    pkg.set_files(db).to(vec![file]);
+    pkg.set_source_files(db, vec![file]);
     root.set_packages(db).to(vec![pkg]);
 
     let mut roots = db.library_roots().roots(db).clone();
@@ -1216,7 +1217,7 @@ fn package_back_edge(db: &mut TestDb) -> (File, File) {
     let pkg = back_edge_package(&*db);
     let a = package_file(&*db, "w/pkg/R/a.R", PKG_BACK_EDGE_SOURCING, pkg);
     let b = package_file(&*db, "w/pkg/R/b.R", BACK_EDGE_SUCCESSOR, pkg);
-    pkg.set_files(db).to(vec![a, b]);
+    pkg.set_source_files(db, vec![a, b]);
     workspace.set_packages(db).to(vec![pkg]);
     db.workspace_roots().set_roots(db).to(vec![workspace]);
     (a, b)
@@ -1255,7 +1256,7 @@ fn back_edge_package(db: &TestDb) -> Package {
         FileRevision::zero(),
         None,
         Some(Namespace::default()),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     )
 }

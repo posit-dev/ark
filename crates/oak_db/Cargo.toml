@@ -32,6 +32,7 @@ oak_core.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
 rand = { workspace = true, optional = true }
+regex.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
 salsa-macros.workspace = true

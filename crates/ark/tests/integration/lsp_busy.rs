@@ -293,6 +293,37 @@ fn test_lsp_completions_busy_static_answer_is_complete() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Namespace completions need no R session. Disable source fetching to keep
+// the answer complete and avoid downloading the base R archive for `utils`.
+#[test]
+fn test_lsp_completions_busy_namespace_is_complete() -> anyhow::Result<()> {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp_with_settings(&[("oak.sourceFetching.enabled", json!(false))]);
+
+    let uri = lsp.open_document("completions_busy_namespace.R", "utils::\n");
+
+    frontend.send_execute_request(BUSY_CODE, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let id = lsp.send_request_raw("textDocument/completion", position_params(&uri, 0, 7));
+    let responses = lsp.recv_responses(&[id], BUSY_TIMEOUT)?;
+    let Some(items) = responses[0].as_array() else {
+        panic!("Expected a complete answer, got: {}", responses[0]);
+    };
+    let labels: Vec<&str> = items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap_or_default())
+        .collect();
+    assert!(labels.contains(&"adist"));
+    assert!(!labels.contains(&"as.bibentry.bibentry"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    Ok(())
+}
+
 // A document-symbol request queued behind a completion must not wait for R.
 #[test]
 fn test_lsp_completions_busy_does_not_stall_main_loop() -> anyhow::Result<()> {

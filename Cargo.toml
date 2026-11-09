@@ -90,6 +90,7 @@ oak_package_metadata = { path = "crates/oak_package_metadata" }
 oak_r_process = { path = "crates/oak_r_process" }
 oak_scan = { path = "crates/oak_scan" }
 oak_semantic = { path = "crates/oak_semantic" }
+oak_sidecar = { path = "crates/oak_sidecar" }
 oak_source = { path = "crates/oak_source" }
 oak_srcref = { path = "crates/oak_srcref" }
 oak_tidy = { path = "crates/oak_tidy" }

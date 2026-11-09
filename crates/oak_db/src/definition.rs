@@ -1,3 +1,4 @@
+use aether_syntax::AnyRExpression;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
@@ -88,6 +89,25 @@ fn name_node(kind: &DefinitionKind, root: &RSyntaxNode) -> Option<RSyntaxNode> {
         DefinitionKind::Import { .. } => return None,
     };
     Some(node)
+}
+
+/// The assigned value, accounting for assignment direction and `assign()`.
+/// Return `None` for parameters, loop variables, imports, or a missing value.
+pub(crate) fn value_node(kind: &DefinitionKind, root: &RSyntaxNode) -> Option<AnyRExpression> {
+    match kind {
+        DefinitionKind::Assignment(ptr) | DefinitionKind::SuperAssignment(ptr) => {
+            let node = ptr.to_node(root);
+            if is_right_assignment(&node) {
+                node.left().ok()
+            } else {
+                node.right().ok()
+            }
+        },
+        DefinitionKind::Assign { value, .. } => Some(value.as_ref()?.to_node(root)),
+        DefinitionKind::Parameter(_) |
+        DefinitionKind::ForVariable(_) |
+        DefinitionKind::Import { .. } => None,
+    }
 }
 
 fn is_right_assignment(node: &RBinaryExpression) -> bool {

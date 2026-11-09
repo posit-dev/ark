@@ -9,6 +9,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::OakDatabase;
 use crate::Package;
+use crate::PackageFiles;
 
 #[test]
 fn test_root_returns_none_for_orphan_file_outside_workspace() {
@@ -74,7 +75,7 @@ fn test_root_dispatches_through_library_package_when_set() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     pkg_root.set_packages(&mut db).to(vec![pkg]);
@@ -108,7 +109,7 @@ fn test_root_dispatches_through_workspace_package_when_set() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     pkg_root.set_packages(&mut db).to(vec![pkg]);

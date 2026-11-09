@@ -1,11 +1,14 @@
+mod base_sources;
 mod db;
 mod diagnostics;
 mod find_references;
 mod goto_definition;
 mod main_loop;
+mod namespace_completions;
 mod notebook;
 mod rename;
 mod settings;
+mod sidecar_handler;
 mod source_handler;
 mod sources;
 mod state;

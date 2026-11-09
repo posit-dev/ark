@@ -10,6 +10,7 @@ use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::Package;
+use oak_db::PackageFiles;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_db::SourceDb;
@@ -102,7 +103,7 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let file = File::new(
@@ -112,7 +113,7 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
         Some("x".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![file]);
+    pkg.set_source_files(&mut db, vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -146,7 +147,7 @@ fn test_set_stale_routes_pkg_scripts_to_stale() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let test_file = File::new(
@@ -189,7 +190,7 @@ fn test_set_stale_routes_editor_owned_pkg_scripts_to_orphan() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let test_file = File::new(

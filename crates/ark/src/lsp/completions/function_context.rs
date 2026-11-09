@@ -132,6 +132,13 @@ impl FunctionContext {
             cursor_is_at_end: is_cursor_at_end,
         })
     }
+
+    /// Whether completing `name` should consume the name already in the
+    /// document rather than insert it, as in `dplyr::@across` where the
+    /// namespace is added after the fact.
+    pub(crate) fn completes_existing_name(&self, name: &str) -> bool {
+        name == self.name && !self.cursor_is_at_end
+    }
 }
 
 /// The practical definition of the effective function node is "Which node

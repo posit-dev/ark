@@ -21,6 +21,7 @@ aether_parser.workspace = true
 aether_syntax.workspace = true
 biome_rowan.workspace = true
 anyhow.workspace = true
+log.workspace = true
 oak_core.workspace = true
 regex.workspace = true
 stdext.workspace = true

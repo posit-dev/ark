@@ -13,6 +13,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::Name;
 use crate::Package;
+use crate::PackageFiles;
 
 #[test]
 fn test_testthat_environment_chain_separates_tests_support_and_namespace() {
@@ -26,7 +27,7 @@ fn test_testthat_environment_chain_separates_tests_support_and_namespace() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let sources = [
@@ -57,7 +58,7 @@ fn test_testthat_environment_chain_separates_tests_support_and_namespace() {
             )
         })
         .collect();
-    pkg.set_files(&mut db).to(vec![files[0]]);
+    pkg.set_source_files(&mut db, vec![files[0]]);
     pkg.set_scripts(&mut db).to(files[1..].to_vec());
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
@@ -105,7 +106,7 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
 
@@ -147,7 +148,7 @@ fn test_testthat_file_sees_helpers_package_and_testthat() {
         Some(pkg),
     );
 
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db)
         .to(vec![helper, setup, test_foo, test_bar]);
     workspace.set_packages(&mut db).to(vec![pkg]);
@@ -183,7 +184,7 @@ fn test_package_r_file_does_not_take_testthat_path() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -200,7 +201,7 @@ fn test_package_r_file_does_not_take_testthat_path() {
         Some("h <- 1\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![helper]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -230,7 +231,7 @@ fn test_testthat_file_includes_top_level_library_calls() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -247,7 +248,7 @@ fn test_testthat_file_includes_top_level_library_calls() {
         Some("library(cli)\ntest_that('x', expect_true(TRUE))\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![test_foo]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -288,7 +289,7 @@ fn test_testthat_file_includes_package_namespace_imports() {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let test_foo = File::new(
@@ -323,7 +324,7 @@ fn test_testthat_file_ignores_source_sites() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let r_file = File::new(
@@ -347,7 +348,7 @@ fn test_testthat_file_ignores_source_sites() {
         Some("source(\"pkg/tests/testthat/helper-b.R\")\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![helper, test_foo]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -384,7 +385,7 @@ fn test_helper_backward_source_into_setup_cycles() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let helper = File::new(

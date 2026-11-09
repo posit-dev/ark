@@ -26,9 +26,7 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_active_binding;
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::item_details;
-use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
-use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 
@@ -92,10 +90,9 @@ pub(super) unsafe fn completion_item_from_promise(
     }
 
     if promise_strategy == PromiseStrategy::Force && r_promise_is_lazy_load_binding(object) {
-        // Namespace and package search-path completions force lazy-load
-        // bindings to identify functions, whose items insert `()` and trigger
-        // signature help. Rollback avoids interrupted-promise warnings if
-        // evaluation fails.
+        // Search-path completions force lazy-load bindings to identify
+        // functions, whose items insert `()` and trigger signature help.
+        // Rollback avoids interrupted-promise warnings if evaluation fails.
         // TODO: Determine lazy-load binding types without evaluation.
         let object = r_promise_force_with_rollback(object)?;
         return completion_item_from_object(
@@ -123,79 +120,6 @@ pub(super) unsafe fn completion_item_from_promise(
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_namespace(
-    name: &str,
-    namespace: SEXP,
-    package: &str,
-    function_context: &FunctionContext,
-) -> anyhow::Result<CompletionItem> {
-    // Re-exported bindings can live in the imports environment rather than
-    // the namespace itself, as with dplyr's re-exports of `rlang::.data` and
-    // `tidyselect::all_of()`. Try the namespace before its imports environment.
-    let error_namespace = match completion_item_from_symbol(
-        name,
-        namespace,
-        Some(package),
-        PromiseStrategy::Force,
-        function_context,
-    ) {
-        Ok(item) => return Ok(item),
-        Err(error) => error,
-    };
-
-    let imports = harp::env_parent(namespace);
-    let error_imports = match completion_item_from_symbol(
-        name,
-        imports,
-        Some(package),
-        PromiseStrategy::Force,
-        function_context,
-    ) {
-        Ok(item) => return Ok(item),
-        Err(error) => error,
-    };
-
-    Err(anyhow::anyhow!(
-        "Failed to form completion item for '{name}' in namespace '{package}':
-        Namespace environment error: {error_namespace}
-        Imports environment error: {error_imports}"
-    ))
-}
-
-pub(super) unsafe fn completion_item_from_lazydata(
-    name: &str,
-    env: SEXP,
-    package: &str,
-) -> anyhow::Result<CompletionItem> {
-    // Lazydata bindings call `lazyLoadDBfetch()`. Use `PromiseStrategy::Simple`
-    // to avoid loading potentially large datasets during completion generation.
-    let promise_strategy = PromiseStrategy::Simple;
-
-    // Lazydata is expected to contain datasets, so use a placeholder function context.
-    let dummy_function_context = FunctionContext {
-        name: String::new(),
-        range: Default::default(),
-        usage: FunctionRefUsage::Call,
-        arguments_status: ArgumentsStatus::Absent,
-        cursor_is_at_end: true,
-    };
-
-    match completion_item_from_symbol(
-        name,
-        env,
-        Some(package),
-        promise_strategy,
-        &dummy_function_context,
-    ) {
-        Ok(item) => Ok(item),
-        Err(err) => {
-            // Names are listed from this lazydata environment, so a missing
-            // binding is unexpected.
-            Err(anyhow::anyhow!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}"))
-        },
-    }
-}
-
 pub(super) unsafe fn completion_item_from_symbol(
     name: &str,
     envir: SEXP,
@@ -213,8 +137,6 @@ pub(super) unsafe fn completion_item_from_symbol(
             return completion_item_from_active_binding(name);
         },
         Err(err) => {
-            // A missing binding can occur during namespace lookup when `name`
-            // is re-exported from the imports environment.
             return Err(anyhow::anyhow!(
                 "Failed to check if binding is active: {err}"
             ));

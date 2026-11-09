@@ -585,7 +585,7 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        crate::PackageFiles::default(),
         Vec::new(),
     );
 
@@ -603,7 +603,7 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
         Some("y <- 2\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -628,7 +628,7 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        crate::PackageFiles::default(),
         Vec::new(),
     );
 
@@ -646,7 +646,7 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
         Some("use_shared <- function() shared\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -673,7 +673,7 @@ fn test_resolve_if_else_in_collated_file_offers_both() {
         FileRevision::zero(),
         None,
         Some(oak_package_metadata::namespace::Namespace::default()),
-        Vec::new(),
+        crate::PackageFiles::default(),
         Vec::new(),
     );
 
@@ -691,7 +691,7 @@ fn test_resolve_if_else_in_collated_file_offers_both() {
         Some("use_fn <- function() fn\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
@@ -726,7 +726,7 @@ fn test_resolve_collated_sequential_redef_resolves_to_last() {
         FileRevision::zero(),
         None,
         Some(oak_package_metadata::namespace::Namespace::default()),
-        Vec::new(),
+        crate::PackageFiles::default(),
         Vec::new(),
     );
 
@@ -744,7 +744,7 @@ fn test_resolve_collated_sequential_redef_resolves_to_last() {
         Some("use_shared <- function() shared\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 

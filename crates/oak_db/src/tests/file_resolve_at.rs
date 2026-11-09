@@ -12,6 +12,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::Name;
 use crate::Package;
+use crate::PackageFiles;
 use crate::Root;
 use crate::RootKind;
 
@@ -71,7 +72,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
@@ -174,7 +175,7 @@ fn test_resolves_package_sibling_predecessor() {
     let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
     let b_source = "use_shared <- function() shared\n";
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
 
     // Cursor on `shared` inside `b`'s function body. Lexical walk finds
     // no binding in `b`, falls through to `b.resolve` which finds nothing
@@ -247,7 +248,7 @@ fn test_package_function_body_sees_later_sibling_over_own_file() {
     let a_source = "x <- 1\nf <- function() x\n";
     let a = make_package_file(&mut db, "workspace/pkg/R/a.R", a_source, pkg);
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", "x <- 2\n", pkg);
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
 
     let offset = TextSize::from(a_source.rfind("x").unwrap() as u32);
     let def = resolve_one(&db, a, offset);
@@ -269,7 +270,7 @@ fn test_package_function_body_sees_later_sibling_over_own_source_forward() {
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", "x <- 2\n", pkg);
     // Keep `defs.R` outside the collation so it contributes only through
     // `a.R`'s `source()` call.
-    pkg.set_files(&mut db).to(vec![a]);
+    pkg.set_source_files(&mut db, vec![a]);
     pkg.set_scripts(&mut db).to(vec![defs_r]);
 
     let offset = TextSize::from(a_source.rfind("x").unwrap() as u32);
@@ -277,7 +278,7 @@ fn test_package_function_body_sees_later_sibling_over_own_source_forward() {
     let def = resolve_one(&db, a, offset);
     assert_eq!(def.file(&db), defs_r);
 
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
     let def = resolve_one(&db, a, offset);
     assert_eq!(def.file(&db), b);
 }
@@ -295,7 +296,7 @@ fn test_conditional_successor_source_keeps_own_package_binding() {
         pkg,
     );
     let target = make_package_file(&mut db, "workspace/pkg/R/defs.R", "x <- 2\n", pkg);
-    pkg.set_files(&mut db).to(vec![own, later]);
+    pkg.set_source_files(&mut db, vec![own, later]);
     pkg.set_scripts(&mut db).to(vec![target]);
 
     let offset = TextSize::from(own_source.rfind("x").unwrap() as u32);
@@ -417,7 +418,7 @@ fn test_conditional_local_does_not_shadow_package_sibling() {
     let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
     let b_source = "f <- function() {\n  if (cond) shared <- 2\n  shared\n}\n";
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
 
     let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
     let defs = b.resolve_at(&db, offset);
@@ -445,7 +446,7 @@ middle <- function() {
 }
 ";
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
 
     let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
     let defs = b.resolve_at(&db, offset);
@@ -465,7 +466,7 @@ fn test_deferred_exit_write_does_not_shadow_package_sibling() {
     let a = make_package_file(&mut db, "workspace/pkg/R/a.R", "shared <- 1\n", pkg);
     let b_source = "f <- function() {\n  on.exit(shared <- 2)\n  shared\n}\n";
     let b = make_package_file(&mut db, "workspace/pkg/R/b.R", b_source, pkg);
-    pkg.set_files(&mut db).to(vec![a, b]);
+    pkg.set_source_files(&mut db, vec![a, b]);
 
     let offset = TextSize::from(b_source.rfind("shared").unwrap() as u32);
     let defs = b.resolve_at(&db, offset);
@@ -526,7 +527,7 @@ fn install_package(
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let pkg_files: Vec<File> = files
@@ -541,7 +542,7 @@ fn install_package(
             )
         })
         .collect();
-    pkg.set_files(db).to(pkg_files);
+    pkg.set_source_files(db, pkg_files);
     root.set_packages(db).to(vec![pkg]);
     match kind {
         RootKind::Library => db.library_roots().set_roots(db).to(vec![root]),
@@ -629,7 +630,7 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
         FileRevision::zero(),
         None,
         Some(ns),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let source = "bar\n";
@@ -640,7 +641,7 @@ fn test_namespace_import_pkg_makes_export_resolve_in_package_file() {
         Some(source.to_string()),
         Some(ws_pkg),
     );
-    ws_pkg.set_files(&mut db).to(vec![ws_file]);
+    ws_pkg.set_source_files(&mut db, vec![ws_file]);
     ws_root.set_packages(&mut db).to(vec![ws_pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![ws_root]);
 
@@ -682,7 +683,7 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
         FileRevision::zero(),
         None,
         Some(ns),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let ws_file = File::new(
@@ -692,7 +693,7 @@ fn test_namespace_importfrom_makes_export_resolve_in_package_file() {
         Some("baz\n".to_string()),
         Some(ws_pkg),
     );
-    ws_pkg.set_files(&mut db).to(vec![ws_file]);
+    ws_pkg.set_source_files(&mut db, vec![ws_file]);
     ws_root.set_packages(&mut db).to(vec![ws_pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![ws_root]);
 

@@ -36,6 +36,7 @@ mod io_pool;
 pub mod main_loop;
 pub mod markdown;
 pub(crate) mod open_file;
+pub(crate) mod sidecar;
 pub mod sources;
 
 pub mod find_references;

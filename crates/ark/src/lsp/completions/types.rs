@@ -32,6 +32,12 @@ pub(super) enum CompletionData {
     Keyword {
         name: String,
     },
+    /// A name after `package::` or `package:::` not known to be a function,
+    /// documented by the help topic `name` of `package`.
+    NamespaceObject {
+        name: String,
+        package: String,
+    },
     Package {
         name: String,
     },

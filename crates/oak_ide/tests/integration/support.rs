@@ -8,6 +8,7 @@ use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::Package;
+use oak_db::PackageFiles;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_ide::FileRange;
@@ -190,7 +191,7 @@ fn install_pkg(
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let files: Vec<File> = sources
@@ -205,7 +206,7 @@ fn install_pkg(
             )
         })
         .collect();
-    pkg.set_files(db).to(files.clone());
+    pkg.set_source_files(db, files.clone());
     let root = Root::new(
         db,
         FilePath::from_url(&root_url),

@@ -35,6 +35,7 @@ use crate::Name;
 use crate::NamespaceVisibility;
 use crate::OakDatabase;
 use crate::Package;
+use crate::PackageFiles;
 use crate::PackagePlacement;
 use crate::Root;
 use crate::RootKind;
@@ -79,7 +80,7 @@ impl World {
                     FileRevision::zero(),
                     None,
                     None,
-                    Vec::new(),
+                    PackageFiles::default(),
                     Vec::new(),
                 )
             })
@@ -107,7 +108,7 @@ impl World {
                     FileRevision::zero(),
                     None,
                     Some(namespace),
-                    Vec::new(),
+                    PackageFiles::default(),
                     Vec::new(),
                 )
             })
@@ -197,7 +198,7 @@ impl World {
             // determines which omitted files become scripts.
             let (collation, leftover) = split_by_collate(&db, candidates, package);
             scripts.extend(leftover);
-            package.set_files(&mut db).to(collation);
+            package.set_source_files(&mut db, collation);
             package.set_scripts(&mut db).to(scripts);
             roots.push(Root::new(
                 &db,

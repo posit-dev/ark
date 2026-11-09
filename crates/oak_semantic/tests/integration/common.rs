@@ -25,6 +25,13 @@ pub(crate) fn index(source: &str) -> SemanticIndex {
     build_with(source, NoopImportsResolver)
 }
 
+/// Require syntax errors and index the source, as for an incomplete editor buffer.
+pub(crate) fn index_with_errors(source: &str) -> SemanticIndex {
+    let parsed = parse(source, RParserOptions::default());
+    assert!(parsed.has_errors());
+    build_index(&parsed.tree(), NoopImportsResolver)
+}
+
 /// Build with base attached. Attach recognition (`library()`/`require()`) runs
 /// on the resolve path now, so it needs a resolver that resolves base, unlike
 /// the resolver-independent `source()` recognition the `index()` helper covers.

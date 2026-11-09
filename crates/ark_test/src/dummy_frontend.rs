@@ -912,8 +912,19 @@ impl DummyArkFrontend {
     /// the `server_started` response with the port, and connects an `LspClient`.
     #[track_caller]
     pub fn start_lsp(&self) -> LspClient {
+        self.start_lsp_with_settings(&[])
+    }
+
+    /// Start the LSP server like [`Self::start_lsp()`], with a client that
+    /// answers `workspace/configuration` with `settings`, as `(section, value)`
+    /// pairs.
+    #[track_caller]
+    pub fn start_lsp_with_settings(&self, settings: &[(&str, serde_json::Value)]) -> LspClient {
         let port = self.start_server("lsp");
         let mut client = LspClient::connect("127.0.0.1", port).unwrap();
+        for (section, value) in settings {
+            client.set_setting(section, value.clone());
+        }
         client.initialize();
         client
     }

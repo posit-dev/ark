@@ -57,6 +57,7 @@ oak_ide.workspace = true
 oak_package_metadata.workspace = true
 oak_scan.workspace = true
 oak_semantic.workspace = true
+oak_sidecar.workspace = true
 oak_source.workspace = true
 oak_srcref.workspace = true
 once_cell.workspace = true

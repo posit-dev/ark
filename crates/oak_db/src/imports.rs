@@ -295,7 +295,8 @@ fn own_attach_layers(db: &dyn SourceDb, attached: &[String]) -> Vec<ImportLayer>
 }
 
 /// Base has no `NAMESPACE`, so top-level file bindings stand in for exports.
-/// This misses primitives such as `sum()`, which have no R-level definition.
+/// Primitives such as `sum()` have no R-level definition, so they count only
+/// once the generated stub file that binds them joins base's files.
 ///
 /// Salsa caches the scan per package and name, invalidating it when the file
 /// list or an export set read by the query changes.
@@ -435,7 +436,13 @@ fn package_handlers(
 }
 
 /// Imported names are invisible to callers unless re-exported, matching
-/// the export gate in [`Package::resolve()`].
+/// the explicit-export gate in [`Package::resolve()`].
+///
+/// Unlike `resolve()`, this ignores `exportPattern()`. A pattern never
+/// re-exports an import, so `package_handlers()` loses nothing. For
+/// `layer_binding()`, honoring patterns would mean reading another package's
+/// file bindings while building the semantic index, a new dependency edge for
+/// a package that pattern-exports a name with registered effects.
 ///
 /// Base has no `NAMESPACE` or full builtin list here, so this check excludes it.
 /// `layer_binding()` recognizes its registry entries separately. Other base

@@ -30,6 +30,11 @@ pub(crate) enum ResolveTarget {
         name: String,
         function: String,
     },
+    /// A package help topic, without requiring function usage information.
+    Topic {
+        name: String,
+        package: String,
+    },
 }
 
 /// Decodes what resolving `item` needs, or `None` when its kind has no
@@ -50,6 +55,7 @@ pub(crate) fn resolve_target(item: &CompletionItem) -> anyhow::Result<Option<Res
         CompletionData::Function { name, package } => ResolveTarget::Function { name, package },
         CompletionData::Package { name } => ResolveTarget::Package { name },
         CompletionData::Parameter { name, function } => ResolveTarget::Parameter { name, function },
+        CompletionData::NamespaceObject { name, package } => ResolveTarget::Topic { name, package },
         CompletionData::DataVariable { .. } |
         CompletionData::Directory { .. } |
         CompletionData::File { .. } |
@@ -77,6 +83,9 @@ pub(crate) fn resolve_completion(
         ResolveTarget::Package { name } => resolve_package_completion_item(item, name),
         ResolveTarget::Parameter { name, function } => {
             resolve_parameter_completion_item(item, name, function)
+        },
+        ResolveTarget::Topic { name, package } => {
+            resolve_topic_completion_item(item, name, package)
         },
     }
 }
@@ -116,6 +125,27 @@ fn resolve_function_completion_item(
     let markup = MarkupContent {
         kind: MarkupKind::Markdown,
         value: markup,
+    };
+
+    item.documentation = Some(Documentation::MarkupContent(markup));
+
+    Ok(true)
+}
+
+fn resolve_topic_completion_item(
+    item: &mut CompletionItem,
+    topic: &str,
+    package: &str,
+) -> anyhow::Result<bool> {
+    // Non-function help pages may lack a Usage section, which
+    // `RHtmlHelp::from_function()` requires.
+    let help = unwrap!(RHtmlHelp::from_topic(topic, Some(package))?, None => {
+        return Ok(false);
+    });
+
+    let markup = MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: help.markdown()?,
     };
 
     item.documentation = Some(Documentation::MarkupContent(markup));
@@ -194,6 +224,17 @@ mod tests {
             Some(ResolveTarget::Parameter {
                 name: String::from("sep"),
                 function: String::from("paste"),
+            })
+        );
+
+        let namespace_object = item_with_data(Some(
+            json!({ "NamespaceObject": { "name": "osVersion", "package": "utils" } }),
+        ));
+        assert_eq!(
+            resolve_target(&namespace_object).unwrap(),
+            Some(ResolveTarget::Topic {
+                name: String::from("osVersion"),
+                package: String::from("utils"),
             })
         );
 

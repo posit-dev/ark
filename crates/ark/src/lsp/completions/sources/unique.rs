@@ -13,6 +13,7 @@ mod namespace;
 mod string;
 mod subset;
 
+use oak_db::Package;
 use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -27,7 +28,7 @@ use crate::lsp::completions::sources::unique::extractor::recognize_dollar;
 use crate::lsp::completions::sources::unique::namespace::recognize_namespace;
 use crate::lsp::completions::sources::unique::string::recognize_string;
 
-/// A context recognized by a session-dependent unique source. Recognition
+/// The outcome of a unique source that recognized its context. Recognition
 /// ends the static search even if the session pass does not run.
 #[derive(Debug, PartialEq)]
 pub(super) enum Recognized {
@@ -35,6 +36,26 @@ pub(super) enum Recognized {
     Empty,
     /// Requests session items, with an empty static fallback.
     Session(UniqueRequest),
+    /// Answers without the session.
+    Static(UniqueCompletions),
+}
+
+/// The answer of the unique source that ended the search.
+#[derive(Debug, PartialEq)]
+pub(crate) struct UniqueCompletions {
+    pub(crate) items: Vec<CompletionItem>,
+    /// The library package whose fetched sources can change item kinds or add
+    /// namespace names. The answer is incomplete until this package settles.
+    pub(crate) incomplete_until_package_settles: Option<Package>,
+}
+
+impl UniqueCompletions {
+    fn new(items: Vec<CompletionItem>) -> Self {
+        Self {
+            items,
+            incomplete_until_package_settles: None,
+        }
+    }
 }
 
 /// Tries unique sources in priority order until one recognizes the context.
@@ -45,18 +66,18 @@ pub(super) enum Recognized {
 pub(crate) fn get_completions(
     completion_context: &CompletionContext,
     request: &mut RCompletionRequest,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<UniqueCompletions>> {
     log::info!("Getting completions from unique sources");
 
     // Try to detect a single colon first, which is a special case where we
     // don't provide any completions
     if let Some(completions) = collect_completions(SingleColonSource, completion_context)? {
-        return Ok(Some(completions));
+        return Ok(Some(UniqueCompletions::new(completions)));
     }
 
     // really about roxygen2 tags
     if let Some(completions) = collect_completions(CommentSource, completion_context)? {
-        return Ok(Some(completions));
+        return Ok(Some(UniqueCompletions::new(completions)));
     }
 
     // could be a file path
@@ -91,12 +112,15 @@ fn end_search(
     source_name: &str,
     recognized: Recognized,
     request: &mut RCompletionRequest,
-) -> Vec<CompletionItem> {
+) -> UniqueCompletions {
     log::info!("Unique source `{source_name}` ends the search");
 
-    if let Recognized::Session(slot) = recognized {
-        request.unique = Some(slot);
+    match recognized {
+        Recognized::Empty => UniqueCompletions::new(vec![]),
+        Recognized::Session(slot) => {
+            request.unique = Some(slot);
+            UniqueCompletions::new(vec![])
+        },
+        Recognized::Static(completions) => completions,
     }
-
-    vec![]
 }

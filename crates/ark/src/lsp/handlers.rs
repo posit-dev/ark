@@ -150,6 +150,7 @@ pub(crate) async fn handle_execute_command(client: &Client) -> LspResult<Option<
 pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
+    lsp_state: &LspState,
 ) -> LspResult<Option<CompletionResponse>> {
     let path = params
         .text_document_position
@@ -177,14 +178,19 @@ pub(crate) fn handle_completion(
 
     let (completions, request) = static_completions(&context, state)?;
 
+    // While the package's sources or sidecar facts may arrive, the editor must
+    // request completions on the next keystroke rather than filter a list with
+    // missing names or kinds.
+    let incomplete = completions
+        .incomplete_until_package_settles()
+        .is_some_and(|package| !lsp_state.package_settled(&state.config.oak, package));
+
     // Without session slots the static items are the whole answer. Skipping
     // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event
     // loop occupied by another task.
     if !request.has_session_slots() {
-        return Ok(completion_array(finish(
-            completions,
-            RCompletionReplies::default(),
-        )));
+        let items = finish(completions, RCompletionReplies::default());
+        return Ok(completion_response(items, incomplete));
     }
 
     // Keep database handles out of the closure. An escaping R error skips
@@ -197,13 +203,28 @@ pub(crate) fn handle_completion(
         // Every session slot keeps its static fallback. Marked incomplete so
         // the editor requests again on the next keystroke instead of filtering
         // this list, and gets the session items once R is idle.
-        return Ok(Some(CompletionResponse::List(CompletionList {
-            is_incomplete: true,
-            items: finish(completions, RCompletionReplies::default()),
-        })));
+        let items = finish(completions, RCompletionReplies::default());
+        return Ok(completion_response(items, true));
     };
 
-    Ok(completion_array(finish(completions, replies)))
+    let items = finish(completions, replies);
+    Ok(completion_response(items, incomplete))
+}
+
+/// An incomplete answer is a list even when empty, since `null` would end
+/// the editor's requests for the current word.
+fn completion_response(
+    completions: Vec<CompletionItem>,
+    is_incomplete: bool,
+) -> Option<CompletionResponse> {
+    if is_incomplete {
+        return Some(CompletionResponse::List(CompletionList {
+            is_incomplete,
+            items: completions,
+        }));
+    }
+
+    completion_array(completions)
 }
 
 fn completion_array(completions: Vec<CompletionItem>) -> Option<CompletionResponse> {

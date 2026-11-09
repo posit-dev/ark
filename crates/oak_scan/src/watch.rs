@@ -71,7 +71,7 @@ pub(crate) fn add_watched_file<DB: Db + DbInputs>(db: &mut DB, path: FilePath) {
 
 /// Append `file` to whichever container `placement` points at, if it
 /// isn't already listed. The watcher's single-file equivalent of the
-/// scanner's bulk `pkg.set_files()` / `root.set_scripts()` atomic replace.
+/// scanner's bulk `pkg.set_source_files()` / `root.set_scripts()` atomic replace.
 fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Placement) {
     match placement {
         Placement::Script(root) => {
@@ -80,9 +80,7 @@ fn append_to_container<DB: Db + DbInputs>(db: &mut DB, file: File, placement: Pl
             }
         },
         Placement::PackageFile(pkg) => {
-            if let Some(files) = with_cow_push(pkg.files(db), file) {
-                pkg.set_files(db).to(files);
-            }
+            pkg.add_source_file(db, file);
         },
         Placement::PackageScript(pkg) => {
             if let Some(scripts) = with_cow_push(pkg.scripts(db), file) {

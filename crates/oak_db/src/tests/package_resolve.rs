@@ -12,6 +12,7 @@ use crate::FileRevision;
 use crate::Name;
 use crate::NamespaceVisibility;
 use crate::Package;
+use crate::PackageFiles;
 
 /// Build a workspace package in its own root and return its files in input order.
 fn setup_package(
@@ -55,7 +56,7 @@ fn new_package(
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
 
@@ -71,7 +72,7 @@ fn new_package(
             )
         })
         .collect();
-    pkg.set_files(db).to(file_entities.clone());
+    pkg.set_source_files(db, file_entities.clone());
 
     (pkg, file_entities)
 }
@@ -317,4 +318,84 @@ fn test_base_exports_every_top_level_binding() {
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file(&db), files[0]);
     assert_eq!(defs[0].name(&db).text(&db).as_str(), "foo");
+}
+
+/// Add `exportPattern()` regexes to `pkg`'s in-memory NAMESPACE.
+fn set_export_patterns(db: &mut TestDb, pkg: Package, patterns: &[&str]) {
+    let mut namespace = pkg.namespace(db).clone();
+    namespace.export_patterns = patterns.iter().map(|pattern| pattern.to_string()).collect();
+    pkg.set_namespace_override(db).to(Some(namespace));
+}
+
+#[test]
+fn test_export_pattern_exports_matching_binding() {
+    let mut db = TestDb::new();
+    let (pkg, files) = setup_package(&mut db, "pkg", &[], &[(
+        "workspace/pkg/R/a.R",
+        "foo <- function() 1\n.hidden <- function() 2\n",
+    )]);
+    set_export_patterns(&mut db, pkg, &[r"^[^\.]"]);
+
+    let defs = pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported);
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file(&db), files[0]);
+
+    assert!(pkg
+        .resolve(&db, name(&db, ".hidden"), NamespaceVisibility::Exported)
+        .is_empty());
+    assert_eq!(
+        pkg.resolve(&db, name(&db, ".hidden"), NamespaceVisibility::Internal)
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn test_export_pattern_does_not_follow_imports() {
+    // R applies export patterns to the namespace environment, which doesn't
+    // hold imports, so a pattern can't re-export `foo` from `src`
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "workspace");
+
+    let (src, _src_files) = new_package(&mut db, "src", &["foo"], &[], &[(
+        "workspace/src/R/foo.R",
+        "foo <- function() 1\n",
+    )]);
+    let (pkg, _pkg_files) = new_package(&mut db, "pkg", &[], &[("foo", "src")], &[(
+        "workspace/pkg/R/a.R",
+        "bar <- function() 1\n",
+    )]);
+    set_export_patterns(&mut db, pkg, &["."]);
+
+    root.set_packages(&mut db).to(vec![src, pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    assert!(pkg
+        .resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported)
+        .is_empty());
+    assert_eq!(
+        pkg.resolve(&db, name(&db, "bar"), NamespaceVisibility::Exported)
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn test_export_pattern_that_fails_to_compile_is_skipped() {
+    // Back-references are valid POSIX but not supported by Rust's `regex`
+    let mut db = TestDb::new();
+    let (pkg, _files) = setup_package(&mut db, "pkg", &[], &[(
+        "workspace/pkg/R/a.R",
+        "foo <- function() 1\naa <- 1\n",
+    )]);
+    set_export_patterns(&mut db, pkg, &[r"(a)\1", "^f"]);
+
+    assert_eq!(
+        pkg.resolve(&db, name(&db, "foo"), NamespaceVisibility::Exported)
+            .len(),
+        1
+    );
+    assert!(pkg
+        .resolve(&db, name(&db, "aa"), NamespaceVisibility::Exported)
+        .is_empty());
 }

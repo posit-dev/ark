@@ -11,9 +11,10 @@ use oak_semantic::semantic_index::UseId;
 
 use crate::common::index;
 use crate::common::index_with_base_exporting_local;
+use crate::common::index_with_errors;
 
 /// Project each access into a comparable tuple via the public accessors.
-fn accesses(index: &SemanticIndex) -> Vec<(&str, &str, NamespaceAccessKind, u32)> {
+fn accesses(index: &SemanticIndex) -> Vec<(&str, Option<&str>, NamespaceAccessKind, u32)> {
     index
         .namespace_accesses()
         .iter()
@@ -1416,7 +1417,7 @@ fn test_namespace_access_export() {
     let index = index("dplyr::filter");
     assert_eq!(accesses(&index), [(
         "dplyr",
-        "filter",
+        Some("filter"),
         NamespaceAccessKind::Export,
         0
     )]);
@@ -1427,7 +1428,7 @@ fn test_namespace_access_internal() {
     let index = index("rlang:::abort");
     assert_eq!(accesses(&index), [(
         "rlang",
-        "abort",
+        Some("abort"),
         NamespaceAccessKind::Internal,
         0
     )]);
@@ -1438,7 +1439,7 @@ fn test_namespace_access_backtick_quoted() {
     let index = index("`my pkg`::`my fn`");
     assert_eq!(accesses(&index), [(
         "my pkg",
-        "my fn",
+        Some("my fn"),
         NamespaceAccessKind::Export,
         0
     )]);
@@ -1449,7 +1450,7 @@ fn test_namespace_access_string_selectors() {
     let index = index("dplyr::\"filter\"");
     assert_eq!(accesses(&index), [(
         "dplyr",
-        "filter",
+        Some("filter"),
         NamespaceAccessKind::Export,
         0
     )]);
@@ -1459,9 +1460,14 @@ fn test_namespace_access_string_selectors() {
 fn test_namespace_accesses_in_order() {
     let index = index("dplyr::filter\nrlang:::abort\ntidyr::pivot_longer");
     assert_eq!(accesses(&index), [
-        ("dplyr", "filter", NamespaceAccessKind::Export, 0),
-        ("rlang", "abort", NamespaceAccessKind::Internal, 14),
-        ("tidyr", "pivot_longer", NamespaceAccessKind::Export, 28),
+        ("dplyr", Some("filter"), NamespaceAccessKind::Export, 0),
+        ("rlang", Some("abort"), NamespaceAccessKind::Internal, 14),
+        (
+            "tidyr",
+            Some("pivot_longer"),
+            NamespaceAccessKind::Export,
+            28
+        ),
     ]);
 }
 
@@ -1470,7 +1476,40 @@ fn test_namespace_access_inside_call() {
     let index = index("dplyr::filter(x, y > 1)");
     assert_eq!(accesses(&index), [(
         "dplyr",
-        "filter",
+        Some("filter"),
+        NamespaceAccessKind::Export,
+        0
+    )]);
+}
+
+#[test]
+fn test_namespace_access_bare_export() {
+    let index = index_with_errors("utils::");
+    assert_eq!(accesses(&index), [(
+        "utils",
+        None,
+        NamespaceAccessKind::Export,
+        0
+    )]);
+}
+
+#[test]
+fn test_namespace_access_bare_internal() {
+    let index = index_with_errors("utils:::");
+    assert_eq!(accesses(&index), [(
+        "utils",
+        None,
+        NamespaceAccessKind::Internal,
+        0
+    )]);
+}
+
+#[test]
+fn test_namespace_access_bare_before_line_break() {
+    let index = index_with_errors("utils::\nx <- 1");
+    assert_eq!(accesses(&index), [(
+        "utils",
+        None,
         NamespaceAccessKind::Export,
         0
     )]);

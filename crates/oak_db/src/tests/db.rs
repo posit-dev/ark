@@ -16,6 +16,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::Notebook;
 use crate::Package;
+use crate::PackageFiles;
 use crate::SourceDb;
 
 #[test]
@@ -35,7 +36,7 @@ fn test_file_by_path_finds_workspace_package_file() {
     let root = workspace_root(&db, "proj");
     // Construct the back-pointer + forward-edge pair: create the
     // `Package` with an empty `files` list, then the `File` with the
-    // `package` set, then attach the file via `set_files`. Matches the
+    // `package` set, then attach the file via `set_source_files()`. Matches the
     // shape `oak_scan`'s placement-preserving helpers will produce.
     let pkg = Package::new(
         &db,
@@ -45,7 +46,7 @@ fn test_file_by_path_finds_workspace_package_file() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let file = File::new(
@@ -55,7 +56,7 @@ fn test_file_by_path_finds_workspace_package_file() {
         None,
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![file]);
+    pkg.set_source_files(&mut db, vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -74,7 +75,7 @@ fn test_file_by_path_finds_library_package_file() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let file = File::new(
@@ -84,7 +85,7 @@ fn test_file_by_path_finds_library_package_file() {
         None,
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![file]);
+    pkg.set_source_files(&mut db, vec![file]);
     lib.set_packages(&mut db).to(vec![pkg]);
     db.library_roots().set_roots(&mut db).to(vec![lib]);
 
@@ -169,7 +170,7 @@ fn test_all_used_files_excludes_unrelated_library_files() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let used_file = File::new(
@@ -179,7 +180,7 @@ fn test_all_used_files_excludes_unrelated_library_files() {
         None,
         Some(used_pkg),
     );
-    used_pkg.set_files(&mut db).to(vec![used_file]);
+    used_pkg.set_source_files(&mut db, vec![used_file]);
 
     let unused_pkg = Package::new(
         &db,
@@ -189,7 +190,7 @@ fn test_all_used_files_excludes_unrelated_library_files() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let unused_file = File::new(
@@ -199,7 +200,7 @@ fn test_all_used_files_excludes_unrelated_library_files() {
         None,
         Some(unused_pkg),
     );
-    unused_pkg.set_files(&mut db).to(vec![unused_file]);
+    unused_pkg.set_source_files(&mut db, vec![unused_file]);
 
     lib.set_packages(&mut db).to(vec![used_pkg, unused_pkg]);
     db.library_roots().set_roots(&mut db).to(vec![lib]);

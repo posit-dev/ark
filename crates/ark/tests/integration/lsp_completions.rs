@@ -20,21 +20,29 @@ fn end_position(text: &str) -> u32 {
     text.trim_end_matches('\n').len() as u32
 }
 
+/// Without fetched sources, an export has no known function kind but still
+/// resolves to its help topic. Disable fetching to avoid network requests.
 #[test]
-fn test_lsp_completions_basic() {
+fn test_lsp_completions_namespace_object_resolves_to_topic() {
     let frontend = DummyArkFrontend::lock();
-    let mut lsp = frontend.start_lsp();
+    let mut lsp = frontend.start_lsp_with_settings(&[("oak.sourceFetching.enabled", json!(false))]);
 
-    let text = "base::\n";
-    let uri = lsp.open_document("test.R", text);
+    let text = "utils::\n";
+    let uri = lsp.open_document("namespace_object.R", text);
 
     let items = lsp.completions(&uri, 0, end_position(text));
-    assert!(!items.is_empty());
+    let Some(item) = items.into_iter().find(|item| item.label == "osVersion") else {
+        panic!("Expected `osVersion` after `utils::`");
+    };
 
-    // Sanity check that well-known functions appear (can't be exact since base has hundreds)
-    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-    assert!(labels.contains(&"paste"));
-    assert!(labels.contains(&"print"));
+    let resolved = lsp.send_request(
+        "completionItem/resolve",
+        serde_json::to_value(item).unwrap(),
+    );
+    let documentation = resolved["documentation"]["value"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(documentation.contains("Collect Information About the Current R Session"));
 }
 
 /// `$` completions should find objects defined in the global env.

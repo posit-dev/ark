@@ -11,6 +11,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::ImportLayer;
 use crate::Package;
+use crate::PackageFiles;
 
 fn make_file(db: &mut TestDb, path: &str, contents: &str) -> File {
     File::new(
@@ -47,7 +48,7 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
             FileRevision::zero(),
             None,
             None,
-            Vec::new(),
+            PackageFiles::default(),
             Vec::new(),
         );
         root.set_packages(db).to(vec![pkg]);
@@ -70,7 +71,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
@@ -204,7 +205,7 @@ fn test_package_top_level_sees_predecessor_files_only() {
     let b_source = "x <- 1\n";
     let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
     let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
-    pkg.set_files(&mut db).to(vec![a, b, c]);
+    pkg.set_source_files(&mut db, vec![a, b, c]);
 
     // Cursor at top-level in b. Only a (the predecessor in `Package.files`)
     // is visible.
@@ -223,7 +224,7 @@ fn test_package_function_body_sees_other_package_files_in_lifo_order() {
     let b_source = "f <- function() {\n  x\n}\n";
     let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
     let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
-    pkg.set_files(&mut db).to(vec![a, b, c]);
+    pkg.set_source_files(&mut db, vec![a, b, c]);
 
     // Cursor inside f's body. Full lazy view (same as `imports()`).
     // Other package files appear in LIFO order. Self (b) is excluded
@@ -246,7 +247,7 @@ fn test_package_top_level_predecessors_appear_in_lifo_order() {
     let b = make_package_file(&mut db, "/w/pkg/R/b.R", "second <- 2\n", pkg);
     let c_source = "x <- 1\n";
     let c = make_package_file(&mut db, "/w/pkg/R/c.R", c_source, pkg);
-    pkg.set_files(&mut db).to(vec![a, b, c]);
+    pkg.set_source_files(&mut db, vec![a, b, c]);
 
     let offset = TextSize::from(c_source.find('x').unwrap() as u32);
     let layers = c.imports_at(&db, offset);
@@ -261,7 +262,7 @@ fn test_package_namespace_and_base_layers_always_visible() {
     let pkg = install_workspace_package(&mut db, "pkg");
 
     let file = make_package_file(&mut db, "/w/pkg/R/a.R", "x <- 1\n", pkg);
-    pkg.set_files(&mut db).to(vec![file]);
+    pkg.set_source_files(&mut db, vec![file]);
 
     let layers = file.imports_at(&db, TextSize::from(0));
     assert!(attach_names(&db, &layers).contains(&"base".to_string()));
@@ -280,7 +281,7 @@ fn test_package_script_top_level_resolves_as_standalone_script() {
     let r_file = make_package_file(&mut db, "/workspace/pkg/R/a.R", "internal <- 1\n", pkg);
     let source = "library(dplyr)\nx <- 1\n";
     let data_raw = make_package_file(&mut db, "/workspace/pkg/data-raw/prep.R", source, pkg);
-    pkg.set_files(&mut db).to(vec![r_file]);
+    pkg.set_source_files(&mut db, vec![r_file]);
     pkg.set_scripts(&mut db).to(vec![data_raw]);
 
     // Before the `library()` call: nothing attached, and no `R/` `File`

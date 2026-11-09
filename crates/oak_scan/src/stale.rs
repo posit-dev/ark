@@ -102,12 +102,12 @@ pub(crate) fn set_root_stale<DB: Db + DbInputs>(
     }
 
     // Clear the dropped root's containers and each package's files / scripts
-    // vec. The packages themselves now live in `stale_root.packages`. Keeping
-    // their `files` populated would leave stale references that
-    // `package_by_path` can resurrect with inconsistent contents.
+    // vectors, including generated files. Their files have lost their package
+    // backpointers, so retaining membership would break the placement invariant
+    // when `package_by_path()` reuses a stale package.
     root.set_scripts(db).to(Vec::new());
     for &pkg in &packages {
-        pkg.set_files(db).to(Vec::new());
+        pkg.clear_files(db);
         pkg.set_scripts(db).to(Vec::new());
     }
     root.set_packages(db).to(Vec::new());

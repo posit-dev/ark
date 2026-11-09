@@ -2,11 +2,16 @@ use std::path::Path;
 
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
 use tower_lsp_server::ls_types::Uri;
 
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
+use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::harness::editor::notifications::initialize_with;
 use crate::lsp::main_loop::Event;
@@ -50,4 +55,26 @@ pub(crate) fn did_change_configuration() -> Event {
             settings: serde_json::Value::Null,
         }),
     ))
+}
+
+/// A `textDocument/completion` request at `position` in the open document at
+/// `path`, invoked without a trigger character.
+pub(crate) fn completion(
+    path: &Path,
+    position: Position,
+) -> (Event, UnboundedReceiver<RequestResponse>) {
+    let params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: Uri::from_file_path(path).unwrap(),
+            },
+            position,
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let event = Event::Lsp(LspMessage::Request(LspRequest::Completion(params), tx));
+    (event, rx)
 }

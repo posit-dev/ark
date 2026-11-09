@@ -31,7 +31,7 @@ pub(crate) trait SourceHandler: Send + Sync {
 /// The production [`SourceHandler`]
 ///
 /// Recovers a package's R sources in the following order:
-/// - Base packages come from a downloaded base R source archive
+/// - Base packages come from a downloaded base R source archive.
 /// - CRAN packages come from:
 ///   - A local `srcref`, if available
 ///   - A downloaded CRAN package tarball
@@ -178,9 +178,7 @@ enum SourceState {
     /// The [SourceRequest] is in flight
     Pending,
 
-    /// We have received a [SourceResponse]. Regardless of [SourceResponse::Success] or
-    /// [SourceResponse::Failure], we mark the package as `Finished` so we never request
-    /// it again.
+    /// A success or failure response has arrived. Neither outcome is retried.
     Finished,
 }
 
@@ -220,7 +218,8 @@ impl SourceScheduler {
 
     /// Run a fetch for each package we haven't seen before on `pool`, shipping
     /// each [`SourceResponse`] back to the main loop as
-    /// [`Event::SourceCompleted`], where [`Self::finish`] then applies it.
+    /// [`Event::SourceCompleted`]. [`Self::finish()`] records the outcome and
+    /// returns the source directory for the main loop to ingest.
     ///
     /// The job owns no db handle. A download can't be interrupted by a Salsa
     /// cancellation, so a handle in `pool`'s queue would hold up the next
@@ -293,6 +292,21 @@ impl SourceScheduler {
                 .log_err();
             });
         }
+    }
+
+    /// Whether `package`'s sources may still arrive, so that an answer computed
+    /// without them can change. True unless fetching is off, there is no
+    /// handler, or the package's request settled, whether it succeeded or
+    /// failed.
+    ///
+    /// A package not seen yet counts as pending: if a file uses it, the next
+    /// tick-end scheduling queues it. A job that panicked stays `Pending`, which
+    /// costs only extra requests from an editor that re-asks while the user
+    /// types in an open completion popup.
+    pub(crate) fn sources_may_arrive(&self, config: &OakConfig, package: Package) -> bool {
+        config.source_fetching_enabled &&
+            self.handler.is_some() &&
+            !matches!(self.state.get(&package), Some(SourceState::Finished))
     }
 
     #[must_use]

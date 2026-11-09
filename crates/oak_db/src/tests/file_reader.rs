@@ -14,6 +14,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::OakDatabase;
 use crate::Package;
+use crate::PackageFiles;
 
 #[test]
 fn fixture_readers_ignore_existing_host_files() -> anyhow::Result<()> {
@@ -84,7 +85,7 @@ fn assert_query_contents(db: &mut impl Db, dir: &Utf8Path, present: bool) -> any
         FileRevision::from(1u128),
         Some(FileRevision::from(1u128)),
         Some(overridden_namespace.clone()),
-        vec![],
+        PackageFiles::default(),
         vec![],
     );
     assert_eq!(package.namespace(db), &overridden_namespace);

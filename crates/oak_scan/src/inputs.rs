@@ -28,6 +28,7 @@ use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::Notebook;
 use oak_db::Package;
+use oak_db::PackageFiles;
 use oak_db::Root;
 use salsa::Setter;
 
@@ -128,13 +129,22 @@ pub trait DbScan: Db + DbInputs {
     /// buffers. Close those separately with [`Self::close_editor()`].
     fn close_notebook(&mut self, path: &FilePath);
 
-    /// Set `package`'s `files` / `scripts` to the `.R` files found directly
-    /// under `directory`, respecting the package's `Collate` rules.
+    /// Replace source files and scripts with the `.R` files directly under
+    /// `directory`, applying `package`'s `Collate:` rules. Preserve generated
+    /// files after the source files.
     ///
     /// Used to ingest sources produced by an external tool into an already-registered
     /// library `Package` whose `files` start empty (the scanner registers installed
     /// packages without sources).
     fn set_package_sources(&mut self, package: Package, directory: &Path);
+
+    /// Replace generated files with the `.R` files directly under `directory`,
+    /// such as `base`'s primitive stubs. In [`Package::files()`], they follow all
+    /// source files and are ordered by basename.
+    ///
+    /// `Collate:` does not apply to generated files. Source files and
+    /// [`Package::scripts`] are preserved, so either ingestion job can finish first.
+    fn set_package_generated_files(&mut self, package: Package, directory: &Path);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -226,23 +236,42 @@ impl<DB: Db + DbInputs> DbScan for DB {
 
     fn set_package_sources(&mut self, package: Package, directory: &Path) {
         let (files, scripts) = read_package_sources(directory, package.collation(self).as_deref());
+        set_package_source_entries(self, package, files, scripts);
+    }
 
-        let files: Vec<File> = files
+    fn set_package_generated_files(&mut self, package: Package, directory: &Path) {
+        // Generated bindings must be indexed even though `Collate:` omits them.
+        let (generated, _) = read_package_sources(directory, None);
+
+        let generated: Vec<File> = generated
             .into_iter()
             .map(|entry| upsert_root_file(self, Some(package), entry))
             .collect();
 
-        let scripts: Vec<File> = scripts
-            .into_iter()
-            .map(|entry| upsert_root_file(self, Some(package), entry))
-            .collect();
+        package.set_generated_files(self, generated);
+    }
+}
 
-        if package.files(self) != &files {
-            package.set_files(self).to(files);
-        }
-        if package.scripts(self) != &scripts {
-            package.set_scripts(self).to(scripts);
-        }
+// Avoid invalidating dependent queries when file membership is unchanged.
+fn set_package_source_entries<DB: Db + DbInputs>(
+    db: &mut DB,
+    package: Package,
+    files: Vec<FileEntry>,
+    scripts: Vec<FileEntry>,
+) {
+    let files: Vec<File> = files
+        .into_iter()
+        .map(|entry| upsert_root_file(db, Some(package), entry))
+        .collect();
+
+    let scripts: Vec<File> = scripts
+        .into_iter()
+        .map(|entry| upsert_root_file(db, Some(package), entry))
+        .collect();
+
+    package.set_source_files(db, files);
+    if package.scripts(db) != &scripts {
+        package.set_scripts(db).to(scripts);
     }
 }
 
@@ -255,7 +284,8 @@ impl<DB: Db + DbInputs> DbScan for DB {
 /// salsa setters can't express on their own.
 pub trait RootExt {
     /// Create or update a package under this root. Atomic full-replacement of
-    /// the package's file set.
+    /// the package's source files and scripts. Generated files stay after the
+    /// source files.
     ///
     /// The package identity is keyed on `description_path`: if `self.packages`
     /// already contains a `Package` with this URL, that entity is reused and
@@ -335,26 +365,12 @@ impl RootExt for Root {
                 namespace_revision,
                 index_revision,
                 None,
-                Vec::new(),
+                PackageFiles::default(),
                 Vec::new(),
             ),
         };
 
-        let file_entities: Vec<File> = files
-            .into_iter()
-            .map(|entry| upsert_root_file(db, Some(pkg), entry))
-            .collect();
-        let script_entities: Vec<File> = scripts
-            .into_iter()
-            .map(|entry| upsert_root_file(db, Some(pkg), entry))
-            .collect();
-
-        if pkg.files(db) != &file_entities {
-            pkg.set_files(db).to(file_entities);
-        }
-        if pkg.scripts(db) != &script_entities {
-            pkg.set_scripts(db).to(script_entities);
-        }
+        set_package_source_entries(db, pkg, files, scripts);
         pkg
     }
 
@@ -378,10 +394,12 @@ impl RootExt for Root {
 ///
 /// **Caller invariant.** The caller must atomically place the returned `File`
 /// in some `Root` container (`pkg.files` or `root.scripts`) before returning.
-/// Three callers:
+/// Used by the following helpers.
 ///
 /// - [`RootExt::set_package`] (both library and workspace scanners)
 /// - [`RootExt::set_workspace_scripts`] (workspace scanner)
+/// - [`DbScan::set_package_sources()`] and [`DbScan::set_package_generated_files()`]
+///   (ingestion of fetched sources and generated files)
 /// - [`watch::add_watched_file`] (watcher dispatch)
 ///
 /// The orphan cleanup below relies on this contract. A future caller that
@@ -450,8 +468,7 @@ pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
 /// entry. Also used by [`watch::remove_watched_file`] when a file
 /// disappears from disk.
 pub(crate) fn remove_from_pkg_files<DB: Db + DbInputs>(db: &mut DB, pkg: Package, file: File) {
-    if let Some(files) = with_cow_filter(pkg.files(db), file) {
-        pkg.set_files(db).to(files);
+    if pkg.remove_file(db, file) {
         return;
     }
     if let Some(scripts) = with_cow_filter(pkg.scripts(db), file) {

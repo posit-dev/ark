@@ -5,7 +5,10 @@ use oak_package_metadata::description::Description;
 use oak_package_metadata::description::Priority;
 use oak_package_metadata::index::Index;
 use oak_package_metadata::namespace::Namespace;
+use regex::Regex;
+use regex::RegexSet;
 use rustc_hash::FxHashMap;
+use salsa::Setter;
 use stdext::result::ResultExt;
 
 use crate::file_revision::report_untracked_if_zero;
@@ -55,25 +58,15 @@ pub struct Package {
     /// editing a package's `NAMESPACE` live.
     #[returns(ref)]
     pub namespace_override: Option<Namespace>,
-    /// R source files belonging to this package (the `R/*.R` files), in R's
-    /// load order. When DESCRIPTION's `Collate:` directive is present, this is
-    /// exactly the files it lists, in that order; files in `R/` not listed are
-    /// excluded (matching R's loader, Writing R Extensions §1.1.1). When
-    /// `Collate:` is absent, files are in raw basename byte order, matching R's
-    /// `LC_COLLATE=C` installation collation.
-    /// TODO(diagnostics): Lint files missing from collation.
+    /// Private so Salsa's generated setter cannot bypass the operations that
+    /// preserve source and generated files in [`Package::files()`]. Salsa's
+    /// generated getter and setter inherit the field's visibility.
     ///
     /// Per-package granularity: adding or removing a file in one
     /// package doesn't invalidate tracked queries reading another
     /// package's files.
-    ///
-    /// **Placement invariant.** A file present here must have
-    /// `package(db) == Some(self)`, and a file with
-    /// `package == Some(self)` must live here or in [`Self::scripts`].
-    /// Call this setter only through `oak_scan`'s helpers, which keep
-    /// the back-pointer and the container in sync.
     #[returns(ref)]
-    pub files: Vec<File>,
+    membership: PackageFiles,
     /// Other R files inside the package directory that aren't part of the
     /// loadable namespace: `tests/`, `inst/`, `data-raw/`, etc. These get LSP
     /// analysis (parse, semantic index) but aren't loaded with the package, so
@@ -84,6 +77,74 @@ pub struct Package {
     /// stays `Some(self)`, file lives in one of the two containers.
     #[returns(ref)]
     pub scripts: Vec<File>,
+}
+
+/// File membership operations skip unchanged values because Salsa advances
+/// the revision on every input write, even when the value is equal.
+///
+/// **Placement invariant.** A file in [`Package::files()`] must point back to
+/// this package through `File::package()`. Every file with that backpointer
+/// must be in this list or [`Package::scripts`]. Call these operations only through
+/// `oak_scan`'s helpers, which keep the back-pointer and the container in
+/// sync.
+impl Package {
+    /// Files used to analyze the package's namespace. Source files follow R's
+    /// load order, and generated files come after all source files.
+    ///
+    /// The source files are the package's `R/*.R` files. When `DESCRIPTION`'s
+    /// `Collate:` directive is present, they are exactly the files it lists, in
+    /// that order. Files in `R/` not listed are excluded, matching R's loader
+    /// (Writing R Extensions, section 1.1.1). When `Collate:` is absent, they
+    /// are in raw basename byte order, matching R's `LC_COLLATE=C` installation collation.
+    /// TODO(diagnostics): Lint files missing from collation.
+    ///
+    /// Generated files, such as `base`'s primitive stubs, supply bindings with
+    /// no package source definition and are not subject to `Collate:`.
+    pub fn files<Db: ?Sized + salsa::Database>(self, db: &Db) -> &[File] {
+        self.membership(db).files()
+    }
+
+    /// Replace the source files, keeping the generated files after them.
+    pub fn set_source_files<Db: ?Sized + salsa::Database>(self, db: &mut Db, sources: Vec<File>) {
+        if let Some(membership) = self.membership(db).with_sources(sources) {
+            self.set_membership(db).to(membership);
+        }
+    }
+
+    /// Replace the generated files, keeping the source files before them.
+    pub fn set_generated_files<Db: ?Sized + salsa::Database>(
+        self,
+        db: &mut Db,
+        generated: Vec<File>,
+    ) {
+        if let Some(membership) = self.membership(db).with_generated(generated) {
+            self.set_membership(db).to(membership);
+        }
+    }
+
+    /// Append `file` to the source files, unless the package already lists it.
+    pub fn add_source_file<Db: ?Sized + salsa::Database>(self, db: &mut Db, file: File) {
+        if let Some(membership) = self.membership(db).with_source_added(file) {
+            self.set_membership(db).to(membership);
+        }
+    }
+
+    /// Remove `file` from the source or generated files. Returns whether the
+    /// package listed it.
+    pub fn remove_file<Db: ?Sized + salsa::Database>(self, db: &mut Db, file: File) -> bool {
+        let Some(membership) = self.membership(db).without(file) else {
+            return false;
+        };
+        self.set_membership(db).to(membership);
+        true
+    }
+
+    /// Remove every source and generated file.
+    pub fn clear_files<Db: ?Sized + salsa::Database>(self, db: &mut Db) {
+        if !self.membership(db).files().is_empty() {
+            self.set_membership(db).to(PackageFiles::default());
+        }
+    }
 }
 
 #[salsa::tracked]
@@ -138,12 +199,20 @@ impl Package {
     /// live, and baking that in here would invalidate this index on every
     /// root change. Call sites resolve the name themselves.
     #[salsa::tracked(returns(ref))]
-    pub(crate) fn imported_from(self, db: &dyn SourceDb) -> FxHashMap<String, String> {
+    pub fn imported_from(self, db: &dyn SourceDb) -> FxHashMap<String, String> {
         self.namespace(db)
             .imports
             .iter()
             .map(|import| (import.name.clone(), import.package.clone()))
             .collect()
+    }
+
+    /// Cache compiled `exportPattern()` regexes until `NAMESPACE` changes.
+    /// Log and skip patterns unsupported by Rust's `regex` crate, including
+    /// back-references accepted by R.
+    #[salsa::tracked(returns(ref))]
+    pub fn export_patterns(self, db: &dyn SourceDb) -> ExportPatterns {
+        ExportPatterns::new(&self.namespace(db).export_patterns)
     }
 
     /// The package's `Version:`, parsed lazily from `DESCRIPTION`. `None`
@@ -269,3 +338,116 @@ impl Package {
         }
     }
 }
+
+/// Source files followed by generated files, with a private boundary between
+/// them. Public construction accepts only source files, so callers cannot
+/// supply an invalid boundary.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageFiles {
+    files: Vec<File>,
+
+    /// `files[..sources_len]` are the source files, the rest generated.
+    sources_len: usize,
+}
+
+impl PackageFiles {
+    pub fn new(sources: Vec<File>) -> Self {
+        Self {
+            sources_len: sources.len(),
+            files: sources,
+        }
+    }
+
+    fn files(&self) -> &[File] {
+        &self.files
+    }
+
+    fn sources(&self) -> &[File] {
+        &self.files[..self.sources_len]
+    }
+
+    fn generated(&self) -> &[File] {
+        &self.files[self.sources_len..]
+    }
+
+    /// Returns `None` for an unchanged source list, avoiding a Salsa input write.
+    fn with_sources(&self, sources: Vec<File>) -> Option<Self> {
+        if self.sources() == sources.as_slice() {
+            return None;
+        }
+        let mut updated = Self::new(sources);
+        updated.files.extend_from_slice(self.generated());
+        Some(updated)
+    }
+
+    fn with_generated(&self, generated: Vec<File>) -> Option<Self> {
+        if self.generated() == generated.as_slice() {
+            return None;
+        }
+        let mut updated = Self::new(self.sources().to_vec());
+        updated.files.extend(generated);
+        Some(updated)
+    }
+
+    fn with_source_added(&self, file: File) -> Option<Self> {
+        if self.files.contains(&file) {
+            return None;
+        }
+        let mut updated = self.clone();
+        updated.files.insert(self.sources_len, file);
+        updated.sources_len += 1;
+        Some(updated)
+    }
+
+    fn without(&self, file: File) -> Option<Self> {
+        let index = self.files.iter().position(|candidate| *candidate == file)?;
+        let mut updated = self.clone();
+        updated.files.remove(index);
+        if index < self.sources_len {
+            updated.sources_len -= 1;
+        }
+        Some(updated)
+    }
+}
+
+/// Compiled `exportPattern()` regexes of a package. See
+/// [`Package::export_patterns()`].
+#[derive(Debug, Clone)]
+pub struct ExportPatterns {
+    set: RegexSet,
+}
+
+impl ExportPatterns {
+    fn new(patterns: &[String]) -> Self {
+        let valid = patterns.iter().filter(|pattern| match Regex::new(pattern) {
+            Ok(_) => true,
+            Err(err) => {
+                log::warn!("Skipping `exportPattern(\"{pattern}\")`: {err}");
+                false
+            },
+        });
+        let set = match RegexSet::new(valid) {
+            Ok(set) => set,
+            Err(err) => {
+                log::error!("Failed to compile `exportPattern()` regexes: {err:?}");
+                RegexSet::empty()
+            },
+        };
+        Self { set }
+    }
+
+    /// Whether any pattern matches `name`. Like R, a pattern matches anywhere
+    /// in the name unless it is anchored.
+    pub fn is_match(&self, name: &str) -> bool {
+        self.set.is_match(name)
+    }
+}
+
+// Compare pattern text because it determines the compiled set.
+impl PartialEq for ExportPatterns {
+    fn eq(&self, other: &Self) -> bool {
+        self.set.patterns() == other.set.patterns()
+    }
+}
+
+impl Eq for ExportPatterns {}

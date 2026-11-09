@@ -15,7 +15,6 @@ use camino::Utf8PathBuf;
 use oak_package_metadata::namespace::Namespace;
 use rustc_hash::FxHashMap;
 use salsa::plumbing::AsId;
-use salsa::Setter;
 
 use crate::test_path::file_path;
 use crate::Db;
@@ -26,6 +25,7 @@ use crate::LibraryRoots;
 use crate::OpenNotebooks;
 use crate::OrphanRoot;
 use crate::Package;
+use crate::PackageFiles;
 use crate::Root;
 use crate::RootKind;
 use crate::SourceDb;
@@ -209,7 +209,7 @@ pub(super) fn make_package(
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let entities: Vec<File> = files
@@ -224,7 +224,7 @@ pub(super) fn make_package(
             )
         })
         .collect();
-    pkg.set_files(db).to(entities.clone());
+    pkg.set_source_files(db, entities.clone());
     (pkg, entities)
 }
 

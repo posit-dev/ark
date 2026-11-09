@@ -11,6 +11,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::Name;
 use crate::Package;
+use crate::PackageFiles;
 
 fn script_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (crate::Root, Vec<File>) {
     let root = workspace_root(db, "ws");
@@ -432,7 +433,7 @@ fn test_package_contained_shiny_app_is_governed_by_shiny() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let app = File::new(
@@ -477,7 +478,7 @@ fn test_package_r_directory_is_not_a_shiny_support_directory() {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let source = File::new(
@@ -494,7 +495,7 @@ fn test_package_r_directory_is_not_a_shiny_support_directory() {
         Some("shinyApp(ui, server)\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![source]);
+    pkg.set_source_files(&mut db, vec![source]);
     pkg.set_scripts(&mut db).to(vec![app]);
     workspace.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);

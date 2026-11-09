@@ -142,7 +142,7 @@ async fn test_source_pipeline_ingests_package_sources() {
     // `donor` now carries the ingested source file, readable from disk.
     let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
-    let files = donor.files(db).clone();
+    let files = donor.files(db);
     assert_eq!(files.len(), 1);
     assert!(files[0].source_text(db).contains("foo <- function()"));
 }
@@ -502,7 +502,7 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     assert_eq!(dispatched_names(handler.calls()), vec!["donor"]);
     let db = state.world().db();
     let donor = db.package_by_name("donor").unwrap();
-    let files = donor.files(db).clone();
+    let files = donor.files(db);
     assert_eq!(files.len(), 1);
     assert!(files[0].source_text(db).contains("foo <- function()"));
 
@@ -1011,7 +1011,7 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
     // package of S3 generics, so every recovered file is full of `UseMethod()` calls.
     let db = state.world().db();
     let generics = db.package_by_name("generics").unwrap();
-    let files = generics.files(db).clone();
+    let files = generics.files(db);
     assert!(!files.is_empty());
     assert!(files
         .iter()

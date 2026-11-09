@@ -2,6 +2,7 @@ use aether_parser::RParserOptions;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRValue;
 use aether_syntax::RArgument;
+use aether_syntax::RSyntaxKind::R_RAW_STRING_LITERAL;
 use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
@@ -12,8 +13,14 @@ use stdext::SortedVec;
 /// Parsed NAMESPACE file
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Namespace {
-    /// Names of objects exported with `export()`
+    /// Names of objects exported with `export()`, and generics exported with
+    /// `exportMethods()`. Class names from `exportClasses()` aren't bindings
+    /// reachable through `pkg::`, so they're left out.
     pub exports: SortedVec<String>,
+    /// Regular expressions from `exportPattern()`, in file order. Expanding
+    /// them requires the package's own bindings, which are unavailable until
+    /// its sources are indexed. Consumers compile the patterns.
+    pub export_patterns: Vec<String>,
     /// Symbols imported with `importFrom()`, with their source package.
     pub imports: Vec<Import>,
     /// Names of packages bulk-imported with `import()`
@@ -42,6 +49,7 @@ impl Namespace {
         let root = parsed.tree();
 
         let mut exports = Vec::new();
+        let mut export_patterns = Vec::new();
         let mut imports = Vec::new();
         let mut package_imports = Vec::new();
 
@@ -62,8 +70,11 @@ impl Namespace {
             // Regarding `exportMethods`, see WRE: "Note that exporting methods on a
             // generic in the namespace will also export the generic"
             match fn_name.as_str() {
-                "export" | "exportClasses" | "exportMethods" => {
+                "export" | "exportMethods" => {
                     collect_arg_identifiers(args.items().iter(), &mut exports);
+                },
+                "exportPattern" => {
+                    collect_patterns(args.items().iter(), &mut export_patterns);
                 },
                 "importFrom" => {
                     collect_imports(args.items().iter(), &mut imports);
@@ -86,6 +97,7 @@ impl Namespace {
         Ok(Namespace {
             imports,
             exports,
+            export_patterns,
             package_imports,
         })
     }
@@ -131,6 +143,52 @@ fn collect_arg_identifiers(
         };
         out.push(name);
     }
+}
+
+/// Collect `exportPattern()` arguments, decoding the string escapes a regex
+/// needs (`"^[^\\.]"` is the regex `^[^\.]`). Raw strings have no escapes, so
+/// `r"(^[^\.])"` is taken verbatim.
+fn collect_patterns(args: impl Iterator<Item = SyntaxResult<RArgument>>, out: &mut Vec<String>) {
+    for item in args {
+        let Ok(arg) = item else { continue };
+        let Some(value) = arg.value() else { continue };
+        let pattern = match &value {
+            AnyRExpression::RIdentifier(ident) => ident.name_text(),
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => {
+                let (Ok(token), Ok(text)) = (string.value(), string.inner_string_text()) else {
+                    continue;
+                };
+                if token.kind() == R_RAW_STRING_LITERAL {
+                    out.push(text.to_string());
+                    continue;
+                }
+                let Some(pattern) = decode_pattern(text.text()) else {
+                    log::warn!("Skipping `exportPattern()` with unsupported escape: {text}");
+                    continue;
+                };
+                pattern
+            },
+            _ => continue,
+        };
+        out.push(pattern);
+    }
+}
+
+/// Decode `\\` and escaped quotes. Return `None` for any other escape.
+fn decode_pattern(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            escaped @ ('\\' | '"' | '\'') => out.push(escaped),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 fn directive_name(value: &AnyRExpression) -> Option<String> {
@@ -255,7 +313,7 @@ mod tests {
                 exportMethods(qux)
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports.to_vec(), vec!["bar", "baz", "foo", "qux"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["qux"]);
     }
 
     #[test]
@@ -266,7 +324,42 @@ mod tests {
                 exportMethods("qux")
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports.to_vec(), vec!["bar", "baz", "foo", "qux"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["bar", "foo", "qux"]);
+    }
+
+    #[test]
+    fn parses_export_patterns() {
+        let ns = r#"
+                exportPattern("^[^\\.]")
+                export(foo)
+                exportPattern("^as_", 'quote\'d', "\"x\"")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.export_patterns, vec![
+            r"^[^\.]", "^as_", "quote'd", r#""x""#
+        ]);
+        assert_eq!(parsed.exports.to_vec(), vec!["foo"]);
+    }
+
+    #[test]
+    fn parses_raw_string_export_patterns_verbatim() {
+        let ns = r#"
+                exportPattern(r"(^[^\.])", r"-[\\x]-")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.export_patterns, vec![r"^[^\.]", r"\\x"]);
+
+        let quoted = Namespace::parse(r#"exportPattern("^[^\\.]")"#).unwrap();
+        assert_eq!(quoted.export_patterns[0], parsed.export_patterns[0]);
+    }
+
+    #[test]
+    fn skips_export_pattern_with_unsupported_escape() {
+        let ns = r#"
+                exportPattern("^\\.x", "\t", "^y")
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.export_patterns, vec![r"^\.x", "^y"]);
     }
 
     #[test]

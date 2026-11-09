@@ -10,6 +10,7 @@ use crate::File;
 use crate::FileRevision;
 use crate::OakDatabase;
 use crate::Package;
+use crate::PackageFiles;
 use crate::Root;
 use crate::SourceDb;
 
@@ -23,7 +24,7 @@ fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
@@ -40,7 +41,7 @@ fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
         FileRevision::zero(),
         None,
         None,
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(db).to(vec![pkg]);
@@ -114,4 +115,42 @@ fn test_root_scripts_round_trips_through_a_tracked_query() {
 
     root.set_scripts(&mut db).to(vec![]);
     assert_eq!(first(&db), None);
+}
+
+#[test]
+fn test_package_membership_keeps_sources_before_generated_files() {
+    let mut db = OakDatabase::with_file_reader(EmptyFileReader);
+    let (_root, pkg) = make_installed_package(&mut db, "base");
+    let a = make_script(&mut db, "a.R");
+    let b = make_script(&mut db, "b.R");
+    let c = make_script(&mut db, "c.R");
+    let stub = make_script(&mut db, "stubs.R");
+
+    pkg.set_generated_files(&mut db, vec![stub]);
+    pkg.set_source_files(&mut db, vec![a]);
+    assert_eq!(pkg.files(&db), [a, stub]);
+
+    pkg.add_source_file(&mut db, b);
+    assert_eq!(pkg.files(&db), [a, b, stub]);
+
+    let before = salsa::plumbing::current_revision(&db);
+    pkg.add_source_file(&mut db, b);
+    pkg.set_source_files(&mut db, vec![a, b]);
+    pkg.set_generated_files(&mut db, vec![stub]);
+    assert!(!pkg.remove_file(&mut db, c));
+    assert_eq!(salsa::plumbing::current_revision(&db), before);
+
+    // Removing a source must update the boundary, or replacing sources drops the stub.
+    assert!(pkg.remove_file(&mut db, a));
+    pkg.set_source_files(&mut db, vec![a]);
+    assert_eq!(pkg.files(&db), [a, stub]);
+
+    assert!(pkg.remove_file(&mut db, stub));
+    pkg.set_generated_files(&mut db, vec![stub]);
+    assert_eq!(pkg.files(&db), [a, stub]);
+
+    pkg.clear_files(&mut db);
+    assert!(pkg.files(&db).is_empty());
+    pkg.set_generated_files(&mut db, vec![stub]);
+    assert_eq!(pkg.files(&db), [stub]);
 }

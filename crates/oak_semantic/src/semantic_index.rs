@@ -1139,12 +1139,12 @@ impl CalleeDependency {
     }
 }
 
-/// Namespace access recorded during indexing, i.e. `package::symbol` or
-/// `package:::symbol`
+/// An indexed `package::symbol` or `package:::symbol` access. Bare `package::`
+/// and `package:::` accesses also identify a package dependency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceAccess {
     pub(crate) package: String,
-    pub(crate) symbol: String,
+    pub(crate) symbol: Option<String>,
     pub(crate) kind: NamespaceAccessKind,
     pub(crate) offset: TextSize,
 }
@@ -1152,7 +1152,7 @@ pub struct NamespaceAccess {
 impl NamespaceAccess {
     pub(crate) fn new(
         package: String,
-        symbol: String,
+        symbol: Option<String>,
         kind: NamespaceAccessKind,
         offset: TextSize,
     ) -> Self {
@@ -1168,8 +1168,8 @@ impl NamespaceAccess {
         &self.package
     }
 
-    pub fn symbol(&self) -> &str {
-        &self.symbol
+    pub fn symbol(&self) -> Option<&str> {
+        self.symbol.as_deref()
     }
 
     pub fn kind(&self) -> NamespaceAccessKind {

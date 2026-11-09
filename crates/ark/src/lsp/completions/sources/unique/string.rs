@@ -107,7 +107,9 @@ mod tests {
         let mut request = RCompletionRequest::default();
         let res = unique::get_completions(&completion_context, &mut request).unwrap();
 
-        assert_eq!(res, Some(vec![]));
+        let res = res.unwrap();
+        assert_eq!(res.items, vec![]);
+        assert_eq!(res.incomplete_until_package_settles, None);
         assert_eq!(request, RCompletionRequest::default());
     }
 }

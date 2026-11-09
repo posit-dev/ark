@@ -10,7 +10,6 @@ mod completion_item;
 mod custom;
 mod extractor;
 mod file_path;
-mod namespace;
 mod object_names;
 mod pipe;
 mod search_path;
@@ -24,7 +23,6 @@ use crate::lsp::completions::r_completions::call::r_call_completions;
 use crate::lsp::completions::r_completions::custom::r_custom_completions;
 use crate::lsp::completions::r_completions::extractor::r_extractor_completions;
 use crate::lsp::completions::r_completions::file_path::r_file_path_completions;
-use crate::lsp::completions::r_completions::namespace::r_namespace_completions;
 use crate::lsp::completions::r_completions::pipe::eval_pipe_root;
 use crate::lsp::completions::r_completions::pipe::r_pipe_completions;
 use crate::lsp::completions::r_completions::search_path::r_search_path_completions;
@@ -88,13 +86,6 @@ fn r_unique_completions(request: UniqueRequest) -> SlotReply {
         UniqueRequest::FilePath { token } => {
             run_fill_slot("file_path", || r_file_path_completions(&token))
         },
-        UniqueRequest::Namespace {
-            package,
-            exports_only,
-            function_context,
-        } => run_fill_slot("namespace", || {
-            r_namespace_completions(&package, exports_only, &function_context)
-        }),
         UniqueRequest::Extractor { object, operator } => {
             run_fill_slot("extractor", || r_extractor_completions(&object, operator))
         },

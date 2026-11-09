@@ -171,7 +171,7 @@ pub(super) fn completion_item_from_function(
     // Are we forming a completion item that's an exact match for an existing
     // function name that is already in the document?
     // This identifies scenarios where we need to edit text, not just insert it.
-    let item_is_an_edit = name == function_context.name && !function_context.cursor_is_at_end;
+    let item_is_an_edit = function_context.completes_existing_name(name);
 
     // These settings are part of the trick we use to make it easy to accept
     // this matching completion item, which will feel like we're just moving
@@ -271,6 +271,45 @@ pub(super) fn completion_item_from_function(
 
     item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
     item.insert_text = Some(insert_text);
+
+    Ok(item)
+}
+
+/// Complete a namespace name whose function kind is unknown. Resolve its
+/// documentation by help topic, which also covers non-function objects and
+/// help pages without a Usage section, such as concept pages.
+pub(super) fn completion_item_from_namespace_object(
+    name: &str,
+    package: &str,
+    function_context: &FunctionContext,
+) -> anyhow::Result<CompletionItem> {
+    let mut item = completion_item(name, CompletionData::NamespaceObject {
+        name: name.to_string(),
+        package: package.to_string(),
+    })?;
+
+    item.label_details = Some(item_details(Some(package)));
+    item.kind = Some(CompletionItemKind::STRUCT);
+
+    let insert_text = sym_quote_invalid(name);
+
+    // In `dplyr::@across`, the name is already in the document. Consume it as
+    // `completion_item_from_function()` does, or accepting the item would
+    // insert a second copy. That edit adds no parentheses, so it applies
+    // whether or not the name is known to be a function.
+    if function_context.completes_existing_name(name) {
+        item.sort_text = Some(format!("0-{name}"));
+        item.preselect = Some(true);
+        item.text_edit = Some(CompletionTextEdit::Edit(TextEdit {
+            range: function_context.range,
+            new_text: insert_text,
+        }));
+        return Ok(item);
+    }
+
+    if !is_valid_symbol(name) {
+        item.insert_text = Some(insert_text);
+    }
 
     Ok(item)
 }

@@ -42,6 +42,9 @@ pub struct LspClient {
     allowed_log_messages: Vec<String>,
     /// Set by `disconnect_abruptly()` so `Drop` skips the graceful `shutdown`/`exit` sequence
     killed: bool,
+    /// Global configuration overrides, keyed by section. Missing sections and
+    /// requests with a `scopeUri` receive `null` to select the server default.
+    settings: std::collections::HashMap<String, Value>,
 }
 
 impl LspClient {
@@ -65,7 +68,15 @@ impl LspClient {
             show_messages: Vec::new(),
             allowed_log_messages: Vec::new(),
             killed: false,
+            settings: std::collections::HashMap::new(),
         })
+    }
+
+    /// Answer `value` for the global setting `section` in later
+    /// `workspace/configuration` requests, including the one after
+    /// `initialized` if set before [`Self::initialize()`].
+    pub fn set_setting(&mut self, section: &str, value: Value) {
+        self.settings.insert(section.to_string(), value);
     }
 
     /// Allow an expected server error or warning without hiding unexpected logs.
@@ -564,7 +575,8 @@ impl LspClient {
     #[track_caller]
     pub fn recv_server_request(&mut self, expected_method: &str) {
         let (id, params) = self.recv_server_request_without_reply(expected_method);
-        self.send_server_response(id, Self::reply_to_server_request(expected_method, &params));
+        let reply = self.reply_to_server_request(expected_method, &params);
+        self.send_server_response(id, reply);
     }
 
     /// Receive the next server-to-client request, assert its method, and leave
@@ -597,14 +609,25 @@ impl LspClient {
     /// Reply to a server request without blocking the test client.
     /// `workspace/configuration` requires one response per requested item,
     /// while `null` selects each setting's default.
-    fn reply_to_server_request(method: &str, params: &Value) -> Value {
+    fn reply_to_server_request(&self, method: &str, params: &Value) -> Value {
         match method {
             "workspace/configuration" => {
-                let n_items = params["items"].as_array().map_or(0, Vec::len);
-                Value::Array(vec![Value::Null; n_items])
+                let items = params["items"].as_array().map_or(&[][..], Vec::as_slice);
+                let values = items.iter().map(|item| self.configuration_value(item));
+                Value::Array(values.collect())
             },
             _ => Value::Null,
         }
+    }
+
+    fn configuration_value(&self, item: &Value) -> Value {
+        if !item["scopeUri"].is_null() {
+            return Value::Null;
+        }
+        let Some(section) = item["section"].as_str() else {
+            return Value::Null;
+        };
+        self.settings.get(section).cloned().unwrap_or(Value::Null)
     }
 }
 

@@ -427,7 +427,7 @@ fn test_scan_workspace_drops_duplicate_package_names() {
     let pkg = packages[0];
     assert_eq!(pkg.name(&db), "pkg");
 
-    let files = pkg.files(&db).clone();
+    let files = pkg.files(&db).to_vec();
     assert_eq!(files.len(), 1);
     assert!(files[0]
         .path(&db)
@@ -581,7 +581,7 @@ fn test_scan_workspace_package_files_sorted_by_basename() {
     );
 
     let pkg = db.workspace_roots().roots(&db)[0].packages(&db)[0];
-    let files = pkg.files(&db).clone();
+    let files = pkg.files(&db).to_vec();
     assert_eq!(files.len(), 2);
     assert!(files[0].path(&db).to_url().path().ends_with("mutate.R"));
     assert!(files[1].path(&db).to_url().path().ends_with("select.R"));

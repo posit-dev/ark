@@ -22,6 +22,7 @@ use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::Package;
+use crate::PackageFiles;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
@@ -59,7 +60,7 @@ fn setup_package(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {
         FileRevision::zero(),
         None,
         Some(Namespace::default()),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let entities: Vec<File> = files
@@ -74,7 +75,7 @@ fn setup_package(db: &mut TestDb, files: &[(&str, &str)]) -> Vec<File> {
             )
         })
         .collect();
-    pkg.set_files(db).to(entities.clone());
+    pkg.set_source_files(db, entities.clone());
     root.set_packages(db).to(vec![pkg]);
     db.workspace_roots().set_roots(db).to(vec![root]);
     entities
@@ -93,7 +94,7 @@ fn setup_testthat(db: &mut TestDb, scripts: &[(&str, &str)]) -> Vec<File> {
         FileRevision::zero(),
         None,
         Some(Namespace::default()),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let entities: Vec<File> = scripts
@@ -130,7 +131,7 @@ pub(super) fn install_packages(db: &mut TestDb, names: &[&str]) {
                 FileRevision::zero(),
                 None,
                 None,
-                Vec::new(),
+                PackageFiles::default(),
                 Vec::new(),
             );
             root.set_packages(db).to(vec![pkg]);
@@ -367,7 +368,7 @@ fn test_testthat_namespace_import_enables_nse() {
         FileRevision::zero(),
         None,
         Some(namespace),
-        Vec::new(),
+        PackageFiles::default(),
         Vec::new(),
     );
     let test = File::new(

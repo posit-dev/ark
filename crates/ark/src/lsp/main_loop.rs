@@ -57,9 +57,14 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
+use crate::lsp::config::OakConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
+use crate::lsp::sidecar::OakSidecarHandler;
+use crate::lsp::sidecar::SidecarHandler;
+use crate::lsp::sidecar::SidecarResponse;
+use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
 use crate::lsp::sources::SourceCompleted;
@@ -132,6 +137,7 @@ pub(crate) enum Event {
     Kernel(KernelNotification),
     OakScanCompleted(ScanCompleted),
     SourceCompleted(SourceCompleted),
+    SidecarCompleted(SidecarResponse),
     DiagnosticsReady(DiagnosticsReady),
     #[cfg(feature = "testing")]
     TestPanicMainLoop,
@@ -147,6 +153,7 @@ impl Event {
             Event::Kernel(_) => "kernel",
             Event::OakScanCompleted(_) => "oak_scan_completed",
             Event::SourceCompleted(_) => "source_completed",
+            Event::SidecarCompleted(_) => "sidecar_completed",
             Event::DiagnosticsReady(_) => "diagnostics_ready",
             #[cfg(feature = "testing")]
             Event::TestPanicMainLoop => "test_panic_main_loop",
@@ -269,6 +276,11 @@ pub(crate) struct LspState {
     /// consumption all happen from the main loop.
     pub(crate) source_scheduler: SourceScheduler,
 
+    /// Sidecar scheduling and response handling stay on the main loop.
+    /// No job runs unless [`Self::with_sidecar_scheduler()`] installs a
+    /// scheduler with a handler.
+    pub(crate) sidecar_scheduler: SidecarScheduler,
+
     /// Threads running diagnostics and index warmup. The only executor a db
     /// snapshot is allowed on, see [`crate::lsp::analysis`].
     pub(crate) analysis_pool: AnalysisPool,
@@ -288,6 +300,10 @@ pub(crate) struct LspState {
     /// Threads running package source fetches. Separate from [`Self::scan_pool`]
     /// so a startup scan never queues behind a download.
     pub(crate) source_pool: IoPool,
+
+    /// Thread running the sidecar job. Separate from [`Self::source_pool`] so
+    /// the job never queues behind a download.
+    pub(crate) sidecar_pool: IoPool,
 
     /// Detects a tick that arms and never disarms, usually a write parked
     /// behind a background task that can't drop its db snapshot. See
@@ -310,6 +326,7 @@ impl LspState {
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
             source_scheduler,
+            sidecar_scheduler: SidecarScheduler::new(None),
             analysis_pool: AnalysisPool::new(Arc::clone(&service_context)),
             diagnostics: DiagnosticsState::default(),
             diagnostics_metrics: DiagnosticsMetrics::default(),
@@ -330,9 +347,28 @@ impl LspState {
                 stdext::DEFAULT_STACK_SIZE,
                 Arc::clone(&service_context),
             ),
+            sidecar_pool: IoPool::new(
+                "oak-sidecar",
+                1,
+                stdext::DEFAULT_STACK_SIZE,
+                Arc::clone(&service_context),
+            ),
             watchdog: Watchdog::new(),
             service_context,
         }
+    }
+
+    pub(crate) fn with_sidecar_scheduler(mut self, sidecar_scheduler: SidecarScheduler) -> Self {
+        self.sidecar_scheduler = sidecar_scheduler;
+        self
+    }
+
+    /// Whether neither the source fetch nor the sidecar job can still change
+    /// `package`. A `pkg::` completion list stays incomplete until its package
+    /// settles, since either job can add names or determine item kinds.
+    pub(crate) fn package_settled(&self, config: &OakConfig, package: Package) -> bool {
+        !self.source_scheduler.sources_may_arrive(config, package) &&
+            !self.sidecar_scheduler.may_change(package)
     }
 }
 
@@ -392,7 +428,8 @@ impl GlobalState {
             LspState::new(
                 console_notification_tx,
                 SourceScheduler::new(source_handler(&r_home)),
-            ),
+            )
+            .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler(&r_home))),
         )
     }
 
@@ -599,6 +636,14 @@ impl GlobalState {
         // diagnostics could wait indefinitely for another event.
         self.refresh_if_due();
 
+        // The first event is `initialize`, so the job is running before any
+        // completion request can ask whether it can change a package.
+        self.lsp_state.sidecar_scheduler.start(
+            self.world.db(),
+            &self.lsp_state.sidecar_pool,
+            &self.events_tx,
+        );
+
         (result, timing)
     }
 
@@ -707,7 +752,7 @@ impl GlobalState {
                             respond(tx, || response, LspResponse::ExecuteCommand)?
                         },
                         LspRequest::Completion(params) => {
-                            respond(tx, || handlers::handle_completion(params, &self.world), LspResponse::Completion)?
+                            respond(tx, || handlers::handle_completion(params, &self.world, &self.lsp_state), LspResponse::Completion)?
                         },
                         LspRequest::CompletionResolve(params) => {
                             respond(tx, || handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?
@@ -848,6 +893,21 @@ impl GlobalState {
                 // retry it after fetching is re-enabled.
                 if skipped {
                     self.schedule_sources();
+                }
+            },
+
+            Event::SidecarCompleted(response) => {
+                self.lsp_state.sidecar_scheduler.finish();
+
+                for facts in response.packages {
+                    let Some(directory) = facts.primitive_stubs else {
+                        continue;
+                    };
+                    let name = facts.package.name(self.world.db());
+                    lsp::log_info!("Ingesting primitive stubs for package {name}");
+                    self.world
+                        .db_mut()
+                        .set_package_generated_files(facts.package, &directory);
                 }
             },
 
@@ -1047,6 +1107,26 @@ fn source_handler(r_home: &Path) -> Option<Arc<dyn SourceHandler>> {
     }
 }
 
+/// Unlike [`source_handler()`], this also enables the sidecar job in CI,
+/// because generating primitive stubs needs no network.
+fn sidecar_handler(r_home: &Path) -> Option<Arc<dyn SidecarHandler>> {
+    let Some(r) = harp::command::r_executable(r_home) else {
+        log::warn!(
+            "Can't locate an R executable under '{}', the sidecar job is disabled",
+            r_home.display()
+        );
+        return None;
+    };
+
+    match OakSidecarHandler::new(r) {
+        Ok(handler) => Some(Arc::new(handler)),
+        Err(err) => {
+            log::error!("Can't create the sidecar handler, the sidecar job is disabled: {err:?}");
+            None
+        },
+    }
+}
+
 /// Harness access to the main loop without R or a live LSP connection.
 ///
 /// These methods require private channels and dispatch through the real
@@ -1084,7 +1164,8 @@ impl GlobalState {
         let _boundary = panic::test_boundary();
 
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
-            self.lsp_state.source_scheduler.has_pending()
+            self.lsp_state.source_scheduler.has_pending() ||
+            self.lsp_state.sidecar_scheduler.has_pending()
         {
             return false;
         }
@@ -1107,10 +1188,12 @@ impl GlobalState {
     /// events until we reach quiescence. This includes:
     /// - Pending oak scans
     /// - Pending source requests
+    /// - The running sidecar job
     pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
         self.handle_event_once(event).await;
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
-            self.lsp_state.source_scheduler.has_pending()
+            self.lsp_state.source_scheduler.has_pending() ||
+            self.lsp_state.sidecar_scheduler.has_pending()
         {
             let event = self.next_event().await;
             self.handle_event_once(event).await;
@@ -1129,6 +1212,15 @@ impl GlobalState {
     /// Pump events until no source request is pending, ignoring pending scans.
     pub(crate) async fn pump_sources_to_quiescence(&mut self) {
         while self.lsp_state.source_scheduler.has_pending() {
+            let event = self.next_event().await;
+            self.handle_event_once(event).await;
+        }
+    }
+
+    /// If the sidecar job is running, handle events until its response arrives.
+    /// Do not wait for pending scans or source requests to finish.
+    pub(crate) async fn pump_sidecar_to_quiescence(&mut self) {
+        while self.lsp_state.sidecar_scheduler.has_pending() {
             let event = self.next_event().await;
             self.handle_event_once(event).await;
         }

@@ -472,6 +472,7 @@ dependencies = [
  "oak_r_process",
  "oak_scan",
  "oak_semantic",
+ "oak_sidecar",
  "oak_source",
  "oak_srcref",
  "once_cell",
@@ -2725,6 +2726,7 @@ dependencies = [
  "oak_semantic",
  "oak_tidy",
  "rand 0.10.3",
+ "regex",
  "rustc-hash",
  "salsa",
  "salsa-macros",
@@ -2773,6 +2775,7 @@ dependencies = [
  "air_r_syntax",
  "anyhow",
  "biome_rowan",
+ "log",
  "oak_core",
  "regex",
  "stdext",
@@ -2833,6 +2836,18 @@ dependencies = [
  "stdext",
  "tempfile",
  "url",
+]
+
+[[package]]
+name = "oak_sidecar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "log",
+ "oak_cache",
+ "oak_r_process",
+ "sha2",
 ]
 
 [[package]]

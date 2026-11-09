@@ -86,13 +86,6 @@ pub(crate) enum UniqueRequest {
     /// `token` includes quotes and escapes as written in the document.
     FilePath { token: String },
 
-    /// `pkg::|` or `pkg:::|`. `exports_only` is true for `::`.
-    Namespace {
-        package: String,
-        exports_only: bool,
-        function_context: FunctionContext,
-    },
-
     /// Names of the evaluated `object` after `$` or `@`.
     Extractor {
         object: String,

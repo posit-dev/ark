@@ -11,7 +11,8 @@ impl<'db> Package {
     /// Resolve `name` against this package's top-level bindings.
     ///
     /// - `Exported` (R's `pkg::name`) gates on the package's NAMESPACE `export()`
-    ///   directives: an internal binding is invisible even if it exists.
+    ///   and `exportPattern()` directives: an internal binding is invisible even
+    ///   if it exists.
     /// - `Internal` (R's `pkg:::name`) returns any top-level binding regardless
     ///   of NAMESPACE.
     ///
@@ -37,8 +38,8 @@ impl<'db> Package {
     /// `if cond x <- 1 else x <- 2`) surfaces here the same way.
     ///
     /// Returns an empty Vec when the name isn't bound anywhere in the package,
-    /// or when `Exported` is requested for a name absent from
-    /// `namespace.exports`.
+    /// or when `Exported` is requested for a name that is neither in
+    /// `namespace.exports` nor matched by an export pattern.
     #[salsa::tracked(returns(clone), cycle_result = resolve_cycle_result)]
     pub fn resolve(
         self,
@@ -46,16 +47,17 @@ impl<'db> Package {
         name: Name<'db>,
         visibility: NamespaceVisibility,
     ) -> Vec<Definition<'db>> {
+        let name_str = name.text(db).as_str();
+
         // When resolving an export, the `name` must be present in the `NAMESPACE`
-        // exports. If the package is `base`, there is no `NAMESPACE`, but all top-level
-        // bindings in `base` are visible by construction, so we skip this check entirely.
-        if visibility == NamespaceVisibility::Exported &&
+        // exports or match `exportPattern()`. `base` has no `NAMESPACE`, so all
+        // its top-level bindings are visible.
+        // Patterns apply only to the namespace's own bindings, so a match
+        // without an explicit export must not follow `importFrom()`.
+        let needs_pattern = visibility == NamespaceVisibility::Exported &&
             self.name(db) != "base" &&
-            !self
-                .namespace(db)
-                .exports
-                .contains_str(name.text(db).as_str())
-        {
+            !self.namespace(db).exports.contains_str(name_str);
+        if needs_pattern && !self.export_patterns(db).is_match(name_str) {
             return Vec::new();
         }
 
@@ -68,8 +70,7 @@ impl<'db> Package {
         // `export()` has no binding in this package's own files, so the loop
         // above returns empty. Follow the import to the source package and
         // resolve the name among its exports instead.
-        if results.is_empty() {
-            let name_str = name.text(db).as_str();
+        if results.is_empty() && !needs_pattern {
             if let Some(source_name) = self.imported_from(db).get(name_str) {
                 if let Some(source) = db.package_by_name(source_name) {
                     results = source.resolve(db, name, NamespaceVisibility::Exported);

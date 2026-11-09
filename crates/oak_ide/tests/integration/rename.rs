@@ -9,6 +9,7 @@ use oak_db::File;
 use oak_db::FileRevision;
 use oak_db::OakDatabase;
 use oak_db::Package;
+use oak_db::PackageFiles;
 use oak_db::Root;
 use oak_db::RootKind;
 use oak_ide::prepare_rename;
@@ -499,7 +500,7 @@ fn build_workspace_package(db: &mut OakDatabase, files: &[(&str, &str)]) -> Vec<
             )
         })
         .collect();
-    pkg.set_files(db).to(created.clone());
+    pkg.set_source_files(db, created.clone());
 
     let root_url = FilePath::from_url(&Url::parse("file:///project/pkg/").unwrap());
     let root = Root::new(db, root_url, RootKind::Workspace, vec![], vec![pkg], vec![]);
@@ -518,7 +519,7 @@ fn build_library_package_file(db: &mut OakDatabase, contents: &str) -> File {
         Some(contents.to_string()),
         Some(pkg),
     );
-    pkg.set_files(db).to(vec![file]);
+    pkg.set_source_files(db, vec![file]);
 
     let root_url = FilePath::from_url(&Url::parse("file:///lib/").unwrap());
     let root = Root::new(db, root_url, RootKind::Library, vec![], vec![pkg], vec![]);
@@ -535,7 +536,7 @@ fn empty_package(db: &OakDatabase, description_url: &str) -> Package {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         vec![],
     )
 }

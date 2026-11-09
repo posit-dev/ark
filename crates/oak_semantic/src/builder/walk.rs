@@ -470,13 +470,11 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         else {
             return;
         };
-        let Some(symbol) = expr
+        // A bare `pkg::` still identifies a dependency despite its missing selector.
+        let symbol = expr
             .right()
             .ok()
-            .and_then(|selector| selector.identifier_text())
-        else {
-            return;
-        };
+            .and_then(|selector| selector.identifier_text());
         let offset = expr.syntax().text_trimmed_range().start();
         self.walk
             .namespace_accesses

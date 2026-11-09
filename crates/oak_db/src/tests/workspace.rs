@@ -9,6 +9,7 @@ use crate::DbInputs;
 use crate::File;
 use crate::FileRevision;
 use crate::Package;
+use crate::PackageFiles;
 
 /// Register `names` as installed packages (empty sources) under a single
 /// library root.
@@ -25,7 +26,7 @@ fn register_library(db: &mut TestDb, names: &[&str]) {
                 FileRevision::zero(),
                 None,
                 None,
-                vec![],
+                PackageFiles::default(),
                 Vec::new(),
             )
         })
@@ -98,6 +99,16 @@ fn test_collects_internal_namespace_access() {
 }
 
 #[test]
+fn test_collects_bare_namespace_access() {
+    // A `pkg::` still being typed names the package before any symbol follows
+    let mut db = TestDb::new();
+    register_library(&mut db, &["foo", "bar"]);
+    workspace_with_script(&mut db, "foo::\nbar:::\n");
+
+    assert_eq!(all_package_dependencies_names(&db), vec!["bar", "foo"]);
+}
+
+#[test]
 fn test_collects_imports_and_depends_from_workspace_package() {
     let description = file_path("proj/DESCRIPTION");
     let mut db = TestDb::with_files([(
@@ -115,7 +126,7 @@ fn test_collects_imports_and_depends_from_workspace_package() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     root.set_packages(&mut db).to(vec![pkg]);
@@ -148,7 +159,7 @@ fn test_workspace_package_self_reference_is_dropped() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let file = File::new(
@@ -158,7 +169,7 @@ fn test_workspace_package_self_reference_is_dropped() {
         Some("mypkg::helper()\n".to_string()),
         Some(pkg),
     );
-    pkg.set_files(&mut db).to(vec![file]);
+    pkg.set_source_files(&mut db, vec![file]);
     root.set_packages(&mut db).to(vec![pkg]);
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -220,7 +231,7 @@ fn test_default_search_path_packages_are_always_available_to_workspace_packages(
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
 
@@ -297,7 +308,7 @@ fn test_testthat_file_depends_on_testthat() {
         FileRevision::zero(),
         None,
         None,
-        vec![],
+        PackageFiles::default(),
         Vec::new(),
     );
     let test = File::new(

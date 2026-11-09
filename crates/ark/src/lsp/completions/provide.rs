@@ -5,6 +5,7 @@
 //
 //
 
+use oak_db::Package;
 use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -24,6 +25,16 @@ use crate::treesitter::NodeTypeExt;
 #[derive(Debug)]
 pub(crate) struct StaticCompletions {
     answer: StaticAnswer,
+    incomplete_until_package_settles: Option<Package>,
+}
+
+impl StaticCompletions {
+    /// The library package whose fetched sources can change item kinds or add
+    /// namespace names. The handler marks the answer incomplete until this
+    /// package settles, even when the item list is empty.
+    pub(crate) fn incomplete_until_package_settles(&self) -> Option<Package> {
+        self.incomplete_until_package_settles
+    }
 }
 
 #[derive(Debug)]
@@ -57,18 +68,24 @@ pub(crate) fn static_completions(
     let mut request = RCompletionRequest::default();
 
     // Try unique sources first
-    let answer = match unique::get_completions(&completion_context, &mut request)? {
-        Some(items) => StaticAnswer::Unique(items),
+    let completions = match unique::get_completions(&completion_context, &mut request)? {
+        Some(unique) => StaticCompletions {
+            answer: StaticAnswer::Unique(unique.items),
+            incomplete_until_package_settles: unique.incomplete_until_package_settles,
+        },
         // At this point we aren't in a "unique" completion case, so just return a
         // set of reasonable completions from composite sources
         None => {
             let (completions, composite) = composite::get_completions(&completion_context)?;
             request.composite = composite;
-            StaticAnswer::Composite(completions)
+            StaticCompletions {
+                answer: StaticAnswer::Composite(completions),
+                incomplete_until_package_settles: None,
+            }
         },
     };
 
-    Ok((StaticCompletions { answer }, request))
+    Ok((completions, request))
 }
 
 /// Merges the session's replies into the static completions.
@@ -190,6 +207,9 @@ mod tests {
 
         let (_, request) = static_completions_at_cursor("foo$@").unwrap();
         assert!(request.has_session_slots());
+
+        let (_, request) = static_completions_at_cursor("foo::@").unwrap();
+        assert!(!request.has_session_slots());
     }
 
     /// See `test_custom_overrides_dollar()` for the session's answer.
