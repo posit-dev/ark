@@ -422,6 +422,55 @@ mod tests {
         assert_eq!(items[1].label, "outer");
     }
 
+    #[test]
+    fn test_merge_keeps_source_order() {
+        let completions = CompositeCompletions {
+            call: vec![item("call", CompletionItemKind::FIELD)],
+            keyword: vec![item("keyword", CompletionItemKind::KEYWORD)],
+            document: vec![item("document", CompletionItemKind::VARIABLE)],
+            workspace: vec![item("workspace", CompletionItemKind::VALUE)],
+        };
+        let replies = CompositeReplies {
+            call: SlotReply::Decline,
+            pipe: SlotReply::Fill(vec![item("pipe", CompletionItemKind::VARIABLE)]),
+            subset: SlotReply::Fill(vec![item("subset", CompletionItemKind::VARIABLE)]),
+            search_path: SlotReply::Fill(vec![item("search_path", CompletionItemKind::FUNCTION)]),
+        };
+
+        let items = completions.merge(replies);
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, vec![
+            "call",
+            "pipe",
+            "subset",
+            "keyword",
+            "search_path",
+            "document",
+            "workspace"
+        ]);
+    }
+
+    #[test]
+    fn test_search_path_function_wins_over_workspace_function() {
+        let mut search_path_item = item("ark_fn", CompletionItemKind::FUNCTION);
+        search_path_item.detail = Some("search path".to_string());
+        let mut workspace_item = item("ark_fn", CompletionItemKind::FUNCTION);
+        workspace_item.detail = Some("workspace".to_string());
+
+        let completions = CompositeCompletions {
+            workspace: vec![workspace_item],
+            ..Default::default()
+        };
+        let replies = CompositeReplies {
+            search_path: SlotReply::Fill(vec![search_path_item]),
+            ..Default::default()
+        };
+
+        let items = completions.merge(replies);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].detail, Some("search path".to_string()));
+    }
+
     fn static_composite_completions(document_context: &DocumentContext) -> Vec<CompletionItem> {
         let state = WorldState::default();
         let context = CompletionContext::new(document_context, &state);

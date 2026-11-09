@@ -178,6 +178,25 @@ mod tests {
             })
         );
 
+        let package = item_with_data(Some(json!({ "Package": { "name": "utils" } })));
+        assert_eq!(
+            resolve_target(&package).unwrap(),
+            Some(ResolveTarget::Package {
+                name: String::from("utils"),
+            })
+        );
+
+        let parameter = item_with_data(Some(
+            json!({ "Parameter": { "name": "sep", "function": "paste" } }),
+        ));
+        assert_eq!(
+            resolve_target(&parameter).unwrap(),
+            Some(ResolveTarget::Parameter {
+                name: String::from("sep"),
+                function: String::from("paste"),
+            })
+        );
+
         assert!(resolve_target(&item_with_data(None)).is_err());
         assert!(resolve_target(&item_with_data(Some(json!({ "Bogus": {} })))).is_err());
     }

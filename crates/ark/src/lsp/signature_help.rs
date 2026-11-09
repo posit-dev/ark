@@ -448,6 +448,38 @@ fn <- function(
     }
 
     #[test]
+    fn test_signature_help_active_parameter() {
+        crate::r_task(|| {
+            harp::parse_eval_global("ark_sig <- function(a, b, c, d) NULL").unwrap();
+
+            // 5 is the no-match sentinel, `formals.len() + 1`
+            let cases = [
+                ("ark_sig(@)", 0),
+                ("ark_sig(1, @)", 1),
+                ("ark_sig(c = 1, @)", 0),
+                ("ark_sig(b = 1, 2, @)", 2),
+                ("ark_sig(1, c = @)", 2),
+                ("ark_sig(1, 2, 3, 4, @)", 5),
+            ];
+
+            for (code, expected) in cases {
+                let (text, point) = point_from_cursor(code);
+                let doc = TestDocument::new(&text);
+                let context = doc.context(point);
+                let help = r_signature_help(&context).unwrap().unwrap();
+
+                assert_eq!((code, help.active_parameter), (code, Some(expected)));
+                assert_eq!(
+                    (code, help.signatures[0].active_parameter),
+                    (code, Some(expected))
+                );
+            }
+
+            harp::parse_eval_global("rm(ark_sig)").unwrap();
+        })
+    }
+
+    #[test]
     fn test_argument_label_null() {
         crate::r_task(|| {
             let x = r_null();

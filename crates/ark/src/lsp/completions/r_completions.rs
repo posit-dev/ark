@@ -239,7 +239,10 @@ mod tests {
     use crate::lsp::completions::finish;
     use crate::lsp::completions::r_completions;
     use crate::lsp::completions::r_completions::expected_errors::expect_session_errors;
+    use crate::lsp::completions::request::ExtractOperator;
+    use crate::lsp::completions::request::RCompletionReplies;
     use crate::lsp::completions::request::SlotReply;
+    use crate::lsp::completions::request::UniqueRequest;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
     use crate::lsp::completions::tests::utils::request_at_cursor;
@@ -340,12 +343,15 @@ mod tests {
     fn test_composite_error_declines_its_slot() {
         r_task(|| {
             define_failing_pipe_root();
+            harp::parse_eval_global("ark_fn <- function(ark_arg) NULL").unwrap();
 
             let (completions, n_errors) = expect_session_errors(|| {
-                get_completions_at_cursor("fo_doc <- 1\nark_root |> ark_no_fn(fo@)").unwrap()
+                get_completions_at_cursor("fo_doc <- 1\nark_root |> ark_fn(fo@)").unwrap()
             });
             assert_eq!(n_errors, 1);
 
+            // The call slot's reply survives the failing pipe slot
+            assert!(find_completion_by_label(&completions, "ark_arg = ").is_some());
             assert!(find_completion_by_label(&completions, "format").is_some());
             assert!(find_completion_by_label(&completions, "fo_doc").is_some());
         })
@@ -388,6 +394,87 @@ mod tests {
 
             let evaluated = harp::parse_eval_global("exists('ark_root_evaluated')").unwrap();
             assert!(!bool::try_from(evaluated).unwrap());
+        })
+    }
+
+    #[test]
+    fn test_empty_custom_fill_replaces_list() {
+        r_task(|| {
+            harp::parse_eval_global(
+                "makeActiveBinding('ark_root', function() { ark_root_evaluated <<- TRUE; list(a = 1) }, globalenv())",
+            )
+            .unwrap();
+            register_callback(
+                "function(position) .ps.completions.createCustomCompletions(character())",
+            );
+
+            let code = "ark_root |> f(arg@)";
+
+            // Without the session, the static fallback has items
+            let (completions, _) = static_completions_at_cursor(code).unwrap();
+            assert!(!finish(completions, RCompletionReplies::default()).is_empty());
+
+            let (completions, request) = static_completions_at_cursor(code).unwrap();
+            let replies = r_completions(request);
+            assert_eq!(replies.custom, SlotReply::Fill(vec![]));
+            assert_eq!(replies.composite.pipe, SlotReply::Decline);
+            assert_eq!(finish(completions, replies), vec![]);
+
+            let evaluated = harp::parse_eval_global("exists('ark_root_evaluated')").unwrap();
+            assert!(!bool::try_from(evaluated).unwrap());
+        })
+    }
+
+    #[test]
+    fn test_custom_fill_skips_extractor() {
+        r_task(|| {
+            harp::parse_eval_global(
+                "makeActiveBinding('ark_obj', function() { ark_obj_evaluated <<- TRUE; list(a = 1) }, globalenv())",
+            )
+            .unwrap();
+            register_callback("function(position) .ps.completions.createCustomCompletions('one')");
+
+            let request = request_at_cursor("f(ark_obj$@)");
+            assert!(request.custom.is_some());
+            assert_eq!(
+                request.unique,
+                Some(UniqueRequest::Extractor {
+                    object: String::from("ark_obj"),
+                    operator: ExtractOperator::Dollar,
+                })
+            );
+
+            let replies = r_completions(request);
+            assert!(matches!(replies.custom, SlotReply::Fill(_)));
+            assert_eq!(replies.unique, SlotReply::Decline);
+
+            let evaluated = harp::parse_eval_global("exists('ark_obj_evaluated')").unwrap();
+            assert!(!bool::try_from(evaluated).unwrap());
+        })
+    }
+
+    #[test]
+    fn test_call_error_keeps_workspace_formals() {
+        r_task(|| {
+            // S3 dispatch on `ark_obj` looks up `ark_gen.ark_class`, whose
+            // active binding makes `.ps.completions.formalNames()` raise
+            harp::parse_eval_global("ark_gen <- function(x, ...) UseMethod('ark_gen')").unwrap();
+            harp::parse_eval_global("ark_obj <- structure(1, class = 'ark_class')").unwrap();
+            harp::parse_eval_global(
+                "makeActiveBinding('ark_gen.ark_class', function() stop('boom'), globalenv())",
+            )
+            .unwrap();
+
+            let (completions, request) = static_completions_with_workspace(
+                "ark_gen(ark_obj, @)",
+                "ark_gen <- function(ws_arg) NULL",
+            );
+            let (replies, n_errors) = expect_session_errors(|| r_completions(request));
+            assert_eq!(n_errors, 1);
+            assert_eq!(replies.composite.call, SlotReply::Decline);
+
+            let completions = finish(completions, replies);
+            assert!(find_completion_by_label(&completions, "ws_arg = ").is_some());
         })
     }
 
