@@ -129,7 +129,7 @@ fn render_from_sources(files: &[(String, String)]) -> String {
 }
 
 /// Test code defines its own tracked queries, which are not part of the production query surface.
-fn is_test_path(rel_path: &Path) -> bool {
+pub(crate) fn is_test_path(rel_path: &Path) -> bool {
     if rel_path.file_stem().and_then(|stem| stem.to_str()) == Some("tests") {
         return true;
     }
@@ -372,7 +372,7 @@ fn count_salsa_attributes_in_items(items: &[Item]) -> usize {
     items.iter().map(count_salsa_attributes_in_item).sum()
 }
 
-fn has_cfg_test(attrs: &[Attribute]) -> bool {
+pub(crate) fn has_cfg_test(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("cfg") &&
             matches!(&attr.meta, Meta::List(list) if normalize_tokens(&list.tokens) == "test")
@@ -710,7 +710,7 @@ fn render_options_suffix(options: &[String]) -> String {
 }
 
 /// Remove punctuation spacing from `ToTokens::to_token_stream()` so snapshots render `Vec<File>`, not `Vec < File >`.
-fn normalize_tokens(tokens: impl ToTokens) -> String {
+pub(crate) fn normalize_tokens(tokens: impl ToTokens) -> String {
     let collapsed = tokens
         .to_token_stream()
         .to_string()

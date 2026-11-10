@@ -195,6 +195,10 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 Changes to Salsa queries may require cycle handling and an updated `salsa_inventory` snapshot. Follow `doc/oak/salsa.md` when changing a tracked query or code reachable from one.
 
+## Broad `oak_db` accessors
+
+`File::syntax_tree()` exposes the whole parse tree. The `accessor_callers` snapshot in `oak_db` records its non-test callers outside `oak_db`. For each new caller, check whether a narrow `oak_db` query answers its question instead. If none does, ask the human before accepting the snapshot. Keep syntax nodes request-local, as the accessor's documentation requires.
+
 ## Markdown
 
 Do not hard-wrap Markdown source. Keep each paragraph and list item on one line, and let the editor wrap it visually.

@@ -1,0 +1,6 @@
+---
+source: crates/oak_db/src/tests/tidy.rs
+description: "Updating this snapshot means code outside `oak_db` gained or lost a call to a broad accessor such as `File::syntax_tree()`. For each new caller, check whether a narrow `oak_db` query answers its question instead. If none does, ask the human before accepting the snapshot."
+expression: "oak_tidy::accessor_callers(&crates_dir)"
+---
+== broad accessor callers ==

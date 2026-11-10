@@ -1,4 +1,5 @@
 use aether_path::FilePath;
+use aether_syntax::RSyntaxNode;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use oak_semantic::semantic_index::SemanticDiagnostic;
@@ -117,9 +118,9 @@ impl File {
 
     /// Parse this file's contents into an R syntax tree.
     ///
-    /// Crate-internal: kept `pub(crate)` so downstream crates can't take a
-    /// dependency on a full parse tree. They reach the tree only through
-    /// narrower public queries.
+    /// `OakParse` and this query are crate-internal. Downstream crates use
+    /// [`Self::syntax_tree()`], whose callers are inventoried by
+    /// `oak_tidy::accessor_callers()`.
     ///
     /// `lru = 128` caps the number of live parse trees to 128. Matches
     /// rust-analyzer's default for its analogous `parse(file_id)` query.
@@ -132,6 +133,22 @@ impl File {
             self.source_text(db).as_str(),
             aether_parser::RParserOptions::default(),
         ))
+    }
+
+    /// Root node of this file's syntax tree, from the LRU-cached `parse()`.
+    ///
+    /// Nodes are request-local. A result that outlives the request holds
+    /// text, ranges or `AstPtr`s, never nodes: a retained node keeps its
+    /// whole tree alive after `parse()`'s LRU evicts it, and a tracked query
+    /// returning nodes would pin a tree for as long as its memo lives.
+    ///
+    /// Prefer a narrow query such as `Identifier::classify()` or
+    /// [`Self::resolve_at()`] when it answers the question. Its unchanged
+    /// result can stop invalidation from propagating to callers. Non-test
+    /// callers outside `oak_db` are listed in an
+    /// `oak_tidy::accessor_callers()` snapshot.
+    pub fn syntax_tree(self, db: &dyn SourceDb) -> RSyntaxNode {
+        self.parse(db).syntax()
     }
 
     /// Line index for this file, mapping byte offsets to `(line, column)`.
