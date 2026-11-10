@@ -8,7 +8,10 @@
 use std::path::PathBuf;
 
 use aether_path::FilePath;
+use anyhow::anyhow;
 use anyhow::Context;
+use biome_line_index::LineCol;
+use oak_core::string::decode_string_prefix;
 use oak_db::Db;
 use oak_db::File;
 use oak_ide::file_path_completions;
@@ -39,8 +42,13 @@ pub(super) fn recognize_string(
     };
 
     // Must actually be "inside" the string, so these places don't count, even
-    // though they are detected as part of the string nodes `|""|`
-    if node.start_position() == context.point || node.end_position() == context.point {
+    // though they are detected as part of the string nodes `|""|`. A string
+    // left unclosed at the end of the file, `"dat|`, ends at the cursor
+    // because its missing closing quote has no width, so its end counts.
+    let closed = node
+        .child_by_field_name("close")
+        .is_some_and(|close| !close.is_missing());
+    if node.start_position() == context.point || (closed && node.end_position() == context.point) {
         return Ok(None);
     }
 
@@ -60,24 +68,42 @@ pub(super) fn recognize_string(
     }
 
     // If no special string cases are hit, we show file path completions
-    let token = node.node_as_str(context.contents)?;
+    let cursor = context
+        .line_index
+        .offset(LineCol {
+            line: context.point.row as u32,
+            col: context.point.column as u32,
+        })
+        .ok_or_else(|| anyhow!("Can't find the offset of {}", context.point))?;
+    let prefix = context
+        .contents
+        .get(node.start_byte()..usize::from(cursor))
+        .ok_or_else(|| anyhow!("Can't slice the string before {}", context.point))?;
     Ok(Some(Recognized::Static(UniqueCompletions::new(
-        file_path_items(completion_context, token)?,
+        file_path_items(completion_context, prefix)?,
     ))))
 }
 
 /// Log directory-listing failures and return no items rather than failing
 /// the completion request.
+///
+/// `prefix` is the string literal's text from its opening quote up to the
+/// cursor, so text after the cursor doesn't choose the directory.
 fn file_path_items(
     completion_context: &CompletionContext,
-    token: &str,
+    prefix: &str,
 ) -> anyhow::Result<Vec<CompletionItem>> {
+    // A malformed literal, such as `".\R"`, lists nothing
+    let Some(value) = decode_string_prefix(prefix) else {
+        return Ok(Vec::new());
+    };
+
     let db = completion_context.state.db();
     let file = completion_context.file;
     let fallback_dir = fallback_dir(db, file);
 
-    let Some(entries) = file_path_completions(db, file, token, fallback_dir.as_deref())
-        .with_context(|| format!("Can't list file path completions for {token}"))
+    let Some(entries) = file_path_completions(db, file, &value, fallback_dir.as_deref())
+        .with_context(|| format!("Can't list file path completions for {prefix}"))
         .log_err()
     else {
         return Ok(Vec::new());
@@ -250,6 +276,34 @@ mod tests {
             .into_iter()
             .map(|item| item.label)
             .collect()
+    }
+
+    #[test]
+    fn test_file_paths_in_unclosed_string_at_end_of_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("data.csv"));
+        write_file(&dir.path().join("R/utils.R"));
+
+        let mut state = WorldState::default();
+        let (text, point) = point_from_cursor("x <- 1\n\"dat@");
+        let file = open_in_dir(&mut state, dir.path(), &text);
+        assert_eq!(file_path_labels(&state, file, point), vec![
+            "R/", "data.csv"
+        ]);
+    }
+
+    #[test]
+    fn test_file_paths_ignore_text_after_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("R/utils.R"));
+        write_file(&dir.path().join("R/sub/inner.R"));
+
+        let mut state = WorldState::default();
+        let (text, point) = point_from_cursor("source('R/@sub/')");
+        let file = open_in_dir(&mut state, dir.path(), &text);
+        assert_eq!(file_path_labels(&state, file, point), vec![
+            "sub/", "utils.R"
+        ]);
     }
 
     #[test]

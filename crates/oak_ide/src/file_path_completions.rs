@@ -2,7 +2,6 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 
-use oak_core::string::decode_string;
 use oak_db::Db;
 use oak_db::File;
 
@@ -16,17 +15,18 @@ pub struct FilePathItem {
     pub is_dir: bool,
 }
 
-/// List directory entries for the R string literal `token` in `file`.
-/// `token` includes its quotes and escapes. If the decoded path is not an
-/// existing directory, list its parent instead. Results are sorted by name.
+/// List directory entries for a path typed in an R string in `file`.
+/// `typed_path` is the string's decoded value up to the cursor, from
+/// [`decode_string_prefix()`](oak_core::string::decode_string_prefix), not
+/// its source text. This excludes text after the cursor and accepts a missing
+/// closing quote. List `typed_path` if it is an existing directory, or its
+/// parent otherwise. Results are sorted by name.
 ///
-/// [`decode_string()`] rejects malformed literals such as `".\R"` and
-/// values that are not valid UTF-8. These produce no items. `~` and `~/...`
-/// expand to the home directory, but `~user` is left unchanged. A relative path
-/// resolves against [`File::anchor_dir()`], or, for a file without one such
-/// as an untitled document or console input, against `fallback_dir`. The host
-/// picks that directory because only it knows what such a document is
-/// relative to. With neither, a relative path lists nothing.
+/// `~` and `~/...` expand to the home directory, but `~user` is left
+/// unchanged. A relative path resolves against [`File::anchor_dir()`], or,
+/// for a file without an anchor, against `fallback_dir`. The host supplies
+/// this base directory for untitled documents and console input. Without
+/// either base, a relative path lists nothing.
 ///
 /// A directory that doesn't exist lists nothing, since strings that aren't
 /// paths, such as URLs, are ordinary input. Other directory-listing errors
@@ -35,14 +35,10 @@ pub struct FilePathItem {
 pub fn file_path_completions(
     db: &dyn Db,
     file: File,
-    token: &str,
+    typed_path: &str,
     fallback_dir: Option<&Path>,
 ) -> std::io::Result<Vec<FilePathItem>> {
-    let Some(value) = decode_string(token) else {
-        return Ok(Vec::new());
-    };
-
-    let mut path = expand_tilde(&value);
+    let mut path = expand_tilde(typed_path);
     if !path.has_root() {
         let base = match file.anchor_dir(db) {
             Some(anchor) => anchor.into_std_path_buf(),
@@ -96,9 +92,9 @@ pub fn file_path_completions(
     Ok(items)
 }
 
-/// Without a file anchor, use the first workspace root rather than the
-/// process working directory, so relative paths do not depend on the host
-/// process or on `setwd()` in an R session.
+/// Expand a leading `~` or `~/` to the home directory. `~user` and any other
+/// path are returned unchanged, so a relative path stays relative for the
+/// caller to resolve against the anchor or fallback directory.
 fn expand_tilde(path: &str) -> PathBuf {
     let is_separator = |c: char| c == '/' || (cfg!(windows) && c == '\\');
 

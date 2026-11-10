@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use aether_path::FilePath;
+use oak_core::string::decode_string_prefix;
 use oak_db::DbInputs;
 use oak_db::File;
 use oak_db::OakDatabase;
@@ -10,6 +11,8 @@ use oak_ide::file_path_completions;
 use oak_scan::DbScan;
 use salsa::Setter;
 
+/// Decode `token` up to its `@` cursor marker, or in full if there is no
+/// marker. A malformed prefix gives no labels, matching the completion host.
 fn labels(db: &OakDatabase, file: File, token: &str) -> Vec<String> {
     labels_with_fallback(db, file, token, None)
 }
@@ -20,7 +23,15 @@ fn labels_with_fallback(
     token: &str,
     fallback_dir: Option<&Path>,
 ) -> Vec<String> {
-    file_path_completions(db, file, token, fallback_dir)
+    let prefix = match token.split_once('@') {
+        Some((prefix, _)) => prefix,
+        None => token,
+    };
+    let Some(typed_path) = decode_string_prefix(prefix) else {
+        return Vec::new();
+    };
+
+    file_path_completions(db, file, &typed_path, fallback_dir)
         .unwrap()
         .into_iter()
         .map(|item| {
@@ -106,6 +117,49 @@ fn test_escapes_are_decoded() {
     assert_eq!(labels(&db, script, r#""\x52/""#), vec!["top.R"]);
     assert_eq!(labels(&db, script, r#"'sub\u002fR/'"#), vec!["sub.R"]);
     assert_eq!(labels(&db, script, r#"r"(R/)""#), vec!["top.R"]);
+}
+
+#[test]
+fn test_unclosed_string() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let (_, script) = subproject(&mut db, dir.path());
+
+    assert_eq!(labels(&db, script, r#""R/"#), vec!["top.R"]);
+    assert_eq!(labels(&db, script, r#""su"#), vec!["R/", "sub/"]);
+    assert_eq!(labels(&db, script, r#"""#), vec!["R/", "sub/"]);
+}
+
+#[test]
+fn test_text_after_cursor_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let (_, script) = subproject(&mut db, dir.path());
+
+    // Decoding text after the cursor would select `sub/R/` instead of the root.
+    assert_eq!(labels(&db, script, r#""@sub/R/""#), vec!["R/", "sub/"]);
+    assert_eq!(labels(&db, script, r#""R/@sub/R/""#), vec!["top.R"]);
+}
+
+#[test]
+fn test_trailing_backslash() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let (_, script) = subproject(&mut db, dir.path());
+
+    // Omitting the unfinished escape preserves the directory prefix `R/`.
+    assert_eq!(labels(&db, script, r#""R/\@""#), vec!["top.R"]);
+}
+
+#[test]
+fn test_unclosed_raw_string() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = OakDatabase::new();
+    let (_, script) = subproject(&mut db, dir.path());
+
+    assert_eq!(labels(&db, script, r#"r"(R/"#), vec!["top.R"]);
+    assert_eq!(labels(&db, script, r#"r"(sub/@R)""#), vec!["R/", "data/"]);
+    assert_eq!(labels(&db, script, r#"r"-[@"#), vec!["R/", "sub/"]);
 }
 
 #[test]

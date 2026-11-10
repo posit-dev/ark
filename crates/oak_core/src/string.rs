@@ -33,6 +33,36 @@ use std::str::Chars;
 /// followed by a low surrogate escape gives one character
 /// (`"\uD83D\uDE00"`).
 pub fn decode_string(token: &str) -> Option<String> {
+    decode(token, Extent::Token)
+}
+
+/// Decode an R string literal's text up to the cursor into its value.
+/// Include the opening quote, or the `r` or `R` prefix of a raw string.
+///
+/// Uses the rules of [`decode_string()`], but accepts a missing closing
+/// quote, an unfinished raw-string opening such as `r"--`, or an escape
+/// ending at the cursor. An unfinished raw-string opening gives an empty
+/// value. A trailing escape such as `\` or `\u{4` is omitted, even if it
+/// cannot become valid as typing continues. A trailing high surrogate
+/// (`\uD83D`) or incomplete UTF-8 byte sequence (`\xc3`) is also omitted.
+///
+/// A closing quote must be the prefix's last character. Text after it gives
+/// `None`. With a closing quote, decoding is as strict as [`decode_string()`],
+/// so an incomplete character before the quote gives `None`.
+///
+/// Malformed text before the end of the prefix gives `None`.
+pub fn decode_string_prefix(prefix: &str) -> Option<String> {
+    decode(prefix, Extent::Prefix)
+}
+
+/// Whether the decoded text is a whole literal or may stop before its end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Extent {
+    Token,
+    Prefix,
+}
+
+fn decode(token: &str, extent: Extent) -> Option<String> {
     let token = if token.contains("\r\n") {
         Cow::Owned(token.replace("\r\n", "\n"))
     } else {
@@ -41,13 +71,13 @@ pub fn decode_string(token: &str) -> Option<String> {
     let token = token.as_ref();
 
     match token.chars().next()? {
-        'r' | 'R' => decode_raw_string(&token[1..]),
-        '"' | '\'' => decode_quoted_string(token),
+        'r' | 'R' => decode_raw_string(&token[1..], extent),
+        '"' | '\'' => decode_quoted_string(token, extent),
         _ => None,
     }
 }
 
-fn decode_raw_string(token: &str) -> Option<String> {
+fn decode_raw_string(token: &str, extent: Extent) -> Option<String> {
     let quote = token
         .chars()
         .next()
@@ -57,10 +87,11 @@ fn decode_raw_string(token: &str) -> Option<String> {
     let dashes = rest.bytes().take_while(|byte| *byte == b'-').count();
     let rest = &rest[dashes..];
 
-    let close = match rest.chars().next()? {
-        '(' => ')',
-        '[' => ']',
-        '{' => '}',
+    let close = match rest.chars().next() {
+        Some('(') => ')',
+        Some('[') => ']',
+        Some('{') => '}',
+        None if extent == Extent::Prefix => return Some(String::new()),
         _ => return None,
     };
     let body = &rest[1..];
@@ -68,7 +99,12 @@ fn decode_raw_string(token: &str) -> Option<String> {
     // R ends the string at the first closing bracket followed by the same
     // dashes and quote. Any text after that sequence is outside the literal.
     let terminator = format!("{close}{}{quote}", "-".repeat(dashes));
-    let end = body.find(&terminator)?;
+    let Some(end) = body.find(&terminator) else {
+        return match extent {
+            Extent::Token => None,
+            Extent::Prefix => Some(body.to_string()),
+        };
+    };
     if end + terminator.len() != body.len() {
         return None;
     }
@@ -76,7 +112,7 @@ fn decode_raw_string(token: &str) -> Option<String> {
     Some(body[..end].to_string())
 }
 
-fn decode_quoted_string(token: &str) -> Option<String> {
+fn decode_quoted_string(token: &str, extent: Extent) -> Option<String> {
     let mut chars = token.chars().peekable();
     let quote = chars.next()?;
 
@@ -88,49 +124,46 @@ fn decode_quoted_string(token: &str) -> Option<String> {
     let mut code_points: Vec<u32> = Vec::new();
     let mut has_byte_escape = false;
     let mut has_unicode_escape = false;
+    // An open prefix may end in a character that later escapes complete.
+    let mut open = false;
 
     loop {
-        let c = chars.next()?;
+        let Some(c) = chars.next() else {
+            match extent {
+                Extent::Token => return None,
+                Extent::Prefix => {
+                    open = true;
+                    break;
+                },
+            }
+        };
 
         if c == quote {
             break;
         }
 
         let c = if c == '\\' {
-            match chars.next()? {
-                digit @ '0'..='7' => {
-                    bytes.push(octal_escape(digit, &mut chars)?);
+            // A failed escape has not appended any output, so omitting it
+            // preserves the value decoded before the backslash.
+            let Some(escape) = escape(&mut chars) else {
+                if extent == Extent::Prefix && chars.peek().is_none() {
+                    open = true;
+                    break;
+                }
+                return None;
+            };
+            match escape {
+                Escape::Byte(byte) => {
+                    bytes.push(byte);
                     has_byte_escape = true;
                     continue;
                 },
-                'x' => {
-                    bytes.push(hex_escape(&mut chars)?);
-                    has_byte_escape = true;
-                    continue;
-                },
-                'u' => {
-                    code_points.push(unicode_escape(&mut chars, 4)?);
-                    has_unicode_escape = true;
-                    continue;
-                },
-                'U' => {
-                    let code_point = unicode_escape(&mut chars, 8)?;
-                    if code_point > 0x10FFFF {
-                        return None;
-                    }
+                Escape::CodePoint(code_point) => {
                     code_points.push(code_point);
                     has_unicode_escape = true;
                     continue;
                 },
-                'a' => '\x07',
-                'b' => '\x08',
-                'f' => '\x0C',
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                'v' => '\x0B',
-                c @ ('\\' | '"' | '\'' | '`' | ' ' | '\n') => c,
-                _ => return None,
+                Escape::Char(c) => c,
             }
         } else {
             c
@@ -149,10 +182,59 @@ fn decode_quoted_string(token: &str) -> Option<String> {
         if has_byte_escape {
             return None;
         }
+        // A trailing high surrogate may be completed by a low-surrogate escape.
+        if open && matches!(code_points.last(), Some(0xD800..=0xDBFF)) {
+            code_points.pop();
+        }
         return string_from_code_points(&code_points);
     }
 
-    String::from_utf8(bytes).ok()
+    match String::from_utf8(bytes) {
+        Ok(value) => Some(value),
+        // A byte sequence cut off at the end of a prefix, as in `"\xc3`, may
+        // still be completed by the next escape. `error_len()` is `None` only
+        // for such a sequence.
+        Err(err) if open && err.utf8_error().error_len().is_none() => {
+            let valid = err.utf8_error().valid_up_to();
+            let mut bytes = err.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).ok()
+        },
+        Err(_) => None,
+    }
+}
+
+enum Escape {
+    Byte(u8),
+    CodePoint(u32),
+    Char(char),
+}
+
+/// Decode the escape after a backslash. Return `None` if it is malformed
+/// or incomplete.
+fn escape(chars: &mut Peekable<Chars>) -> Option<Escape> {
+    let escape = match chars.next()? {
+        digit @ '0'..='7' => Escape::Byte(octal_escape(digit, chars)?),
+        'x' => Escape::Byte(hex_escape(chars)?),
+        'u' => Escape::CodePoint(unicode_escape(chars, 4)?),
+        'U' => {
+            let code_point = unicode_escape(chars, 8)?;
+            if code_point > 0x10FFFF {
+                return None;
+            }
+            Escape::CodePoint(code_point)
+        },
+        'a' => Escape::Char('\x07'),
+        'b' => Escape::Char('\x08'),
+        'f' => Escape::Char('\x0C'),
+        'n' => Escape::Char('\n'),
+        'r' => Escape::Char('\r'),
+        't' => Escape::Char('\t'),
+        'v' => Escape::Char('\x0B'),
+        c @ ('\\' | '"' | '\'' | '`' | ' ' | '\n') => Escape::Char(c),
+        _ => return None,
+    };
+    Some(escape)
 }
 
 fn octal_escape(first: char, chars: &mut Peekable<Chars>) -> Option<u8> {
@@ -225,6 +307,7 @@ fn string_from_code_points(code_points: &[u32]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::string::decode_string;
+    use crate::string::decode_string_prefix;
 
     fn some(value: &str) -> Option<String> {
         Some(value.to_string())
@@ -382,5 +465,93 @@ mod tests {
         assert_eq!(decode_string(r#"r"""#), None);
         assert_eq!(decode_string(r#"r"x""#), None);
         assert_eq!(decode_string("r"), None);
+    }
+
+    #[test]
+    fn test_prefix_without_closing_quote() {
+        assert_eq!(decode_string_prefix(r#""dat"#), some("dat"));
+        assert_eq!(decode_string_prefix("'R/"), some("R/"));
+        assert_eq!(decode_string_prefix(r#"""#), some(""));
+        assert_eq!(decode_string_prefix(r#"'a"b"#), some("a\"b"));
+        assert_eq!(decode_string_prefix(r#""a\"b"#), some("a\"b"));
+        assert_eq!(decode_string_prefix("\"a\r\nb"), some("a\nb"));
+    }
+
+    #[test]
+    fn test_prefix_with_closing_quote() {
+        assert_eq!(decode_string_prefix(r#""dat""#), some("dat"));
+        assert_eq!(decode_string_prefix(r#""""#), some(""));
+        assert_eq!(decode_string_prefix(r#""a"b"#), None);
+    }
+
+    #[test]
+    fn test_prefix_decodes_escapes() {
+        assert_eq!(decode_string_prefix(r#""a\nb"#), some("a\nb"));
+        assert_eq!(decode_string_prefix(r#""\x52/"#), some("R/"));
+        assert_eq!(decode_string_prefix(r#""sub\u002fR"#), some("sub/R"));
+        assert_eq!(decode_string_prefix(r#""C:\\Users\\"#), some(r"C:\Users\"));
+    }
+
+    #[test]
+    fn test_prefix_ending_inside_escape() {
+        assert_eq!(decode_string_prefix(r#""dat\"#), some("dat"));
+        assert_eq!(decode_string_prefix(r#""C:\\Users\"#), some(r"C:\Users"));
+        assert_eq!(decode_string_prefix(r#""a\x"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\u{4"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\u{"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\U"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\0"#), some("a"));
+        // An escape that is complete at the end of the prefix is kept, even
+        // if more digits could follow.
+        assert_eq!(decode_string_prefix(r#""a\x4"#), some("a\x04"));
+        assert_eq!(decode_string_prefix(r#""a\u41"#), some("aA"));
+        // An incomplete byte sequence or surrogate pair is omitted.
+        assert_eq!(decode_string_prefix(r#""a\xc3"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\xc3\xa9"#), some("a\u{e9}"));
+        assert_eq!(decode_string_prefix(r#""a\uD83D"#), some("a"));
+        assert_eq!(
+            decode_string_prefix(r#""a\uD83D\uDE00"#),
+            some("a\u{1F600}")
+        );
+    }
+
+    #[test]
+    fn test_prefix_closed_after_half_character() {
+        // A closing quote prevents later escapes from completing the character.
+        assert_eq!(decode_string_prefix(r#""a\xc3"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\xc3""#), None);
+        assert_eq!(decode_string_prefix(r#""a\uD800"#), some("a"));
+        assert_eq!(decode_string_prefix(r#""a\uD800""#), None);
+    }
+
+    #[test]
+    fn test_prefix_with_malformed_escape_before_end() {
+        // https://github.com/posit-dev/positron/issues/6584
+        assert_eq!(decode_string_prefix(r#"".\R\ut"#), None);
+        assert_eq!(decode_string_prefix(r#""\qa"#), None);
+        assert_eq!(decode_string_prefix(r#""\x41\u0041"#), None);
+        assert_eq!(decode_string_prefix(r#""\uD800a"#), None);
+    }
+
+    #[test]
+    fn test_prefix_raw_strings() {
+        assert_eq!(decode_string_prefix(r#"r"(foo"#), some("foo"));
+        assert_eq!(decode_string_prefix(r#"R'[a\b"#), some(r"a\b"));
+        assert_eq!(decode_string_prefix(r#"r"--{a)"-"#), some("a)\"-"));
+        // A raw-string terminator needs both the closing bracket and the quote.
+        assert_eq!(decode_string_prefix(r#"r"(foo)"#), some("foo)"));
+        assert_eq!(decode_string_prefix(r#"r"(foo)""#), some("foo"));
+        assert_eq!(decode_string_prefix(r#"r"(foo)"x"#), None);
+        assert_eq!(decode_string_prefix(r#"r"("#), some(""));
+        assert_eq!(decode_string_prefix(r#"r"--"#), some(""));
+        assert_eq!(decode_string_prefix(r#"r""#), some(""));
+        assert_eq!(decode_string_prefix(r#"r"x"#), None);
+        assert_eq!(decode_string_prefix("r"), None);
+    }
+
+    #[test]
+    fn test_prefix_malformed_starts() {
+        assert_eq!(decode_string_prefix(""), None);
+        assert_eq!(decode_string_prefix("abc"), None);
     }
 }
