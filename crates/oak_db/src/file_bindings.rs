@@ -44,6 +44,10 @@ pub struct Bindings {
 }
 
 impl Bindings {
+    pub(crate) fn from_entries(entries: BTreeMap<String, BindingKind>) -> Self {
+        Self { entries }
+    }
+
     pub fn get(&self, name: &str) -> Option<BindingKind> {
         self.entries.get(name).copied()
     }

@@ -41,10 +41,9 @@ pub(super) fn recognize_string(
         return Ok(None);
     };
 
-    // Must actually be "inside" the string, so these places don't count, even
-    // though they are detected as part of the string nodes `|""|`. A string
-    // left unclosed at the end of the file, `"dat|`, ends at the cursor
-    // because its missing closing quote has no width, so its end counts.
+    // At `|""|`, the cursor is outside the string. At the end of an
+    // unclosed string, as in `"dat|`, it is inside because the missing closing
+    // quote has no width.
     let closed = node
         .child_by_field_name("close")
         .is_some_and(|close| !close.is_missing());
@@ -88,12 +87,11 @@ pub(super) fn recognize_string(
 /// the completion request.
 ///
 /// `prefix` is the string literal's text from its opening quote up to the
-/// cursor, so text after the cursor doesn't choose the directory.
+/// cursor. Text after the cursor must not affect which directory is listed.
 fn file_path_items(
     completion_context: &CompletionContext,
     prefix: &str,
 ) -> anyhow::Result<Vec<CompletionItem>> {
-    // A malformed literal, such as `".\R"`, lists nothing
     let Some(value) = decode_string_prefix(prefix) else {
         return Ok(Vec::new());
     };
@@ -224,9 +222,9 @@ mod tests {
         assert!(matches!(
             recognize_in(&doc, point, None),
             Some(Recognized::Static(UniqueCompletions {
-                incomplete_until_package_settles: None,
+                incomplete_until_packages_settle,
                 ..
-            }))
+            })) if incomplete_until_packages_settle.is_empty()
         ));
 
         // `Some` trigger -> Should return empty completion set
@@ -244,7 +242,7 @@ mod tests {
 
         let res = res.unwrap();
         assert_eq!(res.items, vec![]);
-        assert_eq!(res.incomplete_until_package_settles, None);
+        assert_eq!(res.incomplete_until_packages_settle, vec![]);
         assert_eq!(request, RCompletionRequest::default());
     }
 

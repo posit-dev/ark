@@ -14,6 +14,7 @@ use stdext::result::ResultExt;
 use crate::file_revision::report_untracked_if_zero;
 use crate::File;
 use crate::FileRevision;
+use crate::RootKind;
 use crate::SourceDb;
 
 #[salsa::input(debug)]
@@ -103,6 +104,18 @@ impl Package {
         if self.lazy_data_names(db) != names.as_slice() {
             self.set_lazy_data_names(db).to(names);
         }
+    }
+
+    /// Whether the package is installed in a library root, so that its
+    /// fetched sources or host-supplied lazy data can still arrive and change
+    /// an answer that read it. Answers report only these packages as
+    /// dependencies. A workspace package's files are scanned, and an edit to
+    /// them invalidates the answer directly; it also shadows an installed
+    /// package of the same name ([`SourceDb::package_by_name()`]), so the
+    /// installed copy isn't read.
+    pub fn is_installed(self, db: &dyn SourceDb) -> bool {
+        db.root_by_package(self)
+            .is_some_and(|root| root.kind(db) == RootKind::Library)
     }
 }
 

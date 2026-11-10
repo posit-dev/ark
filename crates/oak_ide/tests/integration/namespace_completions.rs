@@ -3,6 +3,7 @@ use oak_db::File;
 use oak_db::Name;
 use oak_db::NamespaceVisibility;
 use oak_db::OakDatabase;
+use oak_db::SourceDb;
 use oak_ide::namespace_completions;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
@@ -10,6 +11,7 @@ use salsa::Setter;
 use crate::support::install_library_package;
 use crate::support::install_library_package_files;
 use crate::support::install_workspace_package;
+use crate::support::install_workspace_package_files;
 
 fn set_namespace(db: &mut OakDatabase, file: File, text: &str) {
     let package = file.package(db).unwrap();
@@ -64,11 +66,9 @@ fn test_library_completions_depend_on_their_sources() {
     let file = install_library_package(&mut db, "pkg", &["exported"], "a.R", SOURCE);
 
     let completions = namespace_completions(&db, "pkg", NamespaceVisibility::Exported).unwrap();
-    assert_eq!(
-        completions.incomplete_until_package_settles,
-        file.package(&db)
-    );
-    assert!(completions.incomplete_until_package_settles.is_some());
+    assert_eq!(completions.incomplete_until_packages_settle, vec![file
+        .package(&db)
+        .unwrap()]);
 }
 
 #[test]
@@ -77,7 +77,77 @@ fn test_workspace_completions_depend_on_no_sources() {
     install_workspace_package(&mut db, "pkg", &["exported"], "a.R", SOURCE);
 
     let completions = namespace_completions(&db, "pkg", NamespaceVisibility::Exported).unwrap();
-    assert_eq!(completions.incomplete_until_package_settles, None);
+    assert_eq!(completions.incomplete_until_packages_settle, vec![]);
+}
+
+fn set_package_namespace(db: &mut OakDatabase, package: &str, text: &str) {
+    let package = db.package_by_name(package).unwrap();
+    let namespace = Namespace::parse(text).unwrap();
+    package.set_namespace_override(db).to(Some(namespace));
+}
+
+#[test]
+fn test_reexport_depends_on_its_pending_source() {
+    // `source` exports `foo` but its sources haven't been fetched, so the
+    // re-export's kind is unknown until they are.
+    let mut db = OakDatabase::new();
+    install_library_package_files(&mut db, "source", &["foo"], &[]);
+    install_library_package_files(&mut db, "reexport", &[], &[]);
+    set_package_namespace(
+        &mut db,
+        "reexport",
+        "importFrom(source, foo)\nexport(foo)\n",
+    );
+
+    let reexport = db.package_by_name("reexport").unwrap();
+    let source = db.package_by_name("source").unwrap();
+    let names = reexport.names(&db, NamespaceVisibility::Exported);
+    assert_eq!(names.bindings.get("foo"), Some(BindingKind::Unknown));
+    assert_eq!(names.reexport_sources, vec![source]);
+
+    let completions =
+        namespace_completions(&db, "reexport", NamespaceVisibility::Exported).unwrap();
+    assert_eq!(completions.incomplete_until_packages_settle, vec![
+        reexport, source
+    ]);
+}
+
+#[test]
+fn test_reexport_chain_reports_every_hop() {
+    let mut db = OakDatabase::new();
+    install_library_package(&mut db, "deep", &["foo"], "a.R", "foo <- function() 1\n");
+    install_library_package_files(&mut db, "mid", &[], &[]);
+    set_package_namespace(&mut db, "mid", "importFrom(deep, foo)\nexport(foo)\n");
+    install_workspace_package_files(&mut db, "top", &[], &[]);
+    set_package_namespace(&mut db, "top", "importFrom(mid, foo)\nexport(foo)\n");
+
+    let top = db.package_by_name("top").unwrap();
+    let mid = db.package_by_name("mid").unwrap();
+    let deep = db.package_by_name("deep").unwrap();
+    let names = top.names(&db, NamespaceVisibility::Exported);
+    assert_eq!(names.bindings.get("foo"), Some(BindingKind::Function));
+    assert_eq!(names.reexport_sources, vec![mid, deep]);
+
+    // Only library dependencies need to be reported as potentially incomplete.
+    let completions = namespace_completions(&db, "top", NamespaceVisibility::Exported).unwrap();
+    assert_eq!(completions.incomplete_until_packages_settle, vec![
+        mid, deep
+    ]);
+}
+
+#[test]
+fn test_reexport_cycle_reports_the_other_package() {
+    let mut db = OakDatabase::new();
+    install_library_package_files(&mut db, "a", &[], &[]);
+    set_package_namespace(&mut db, "a", "importFrom(b, foo)\nexport(foo)\n");
+    install_library_package_files(&mut db, "b", &[], &[]);
+    set_package_namespace(&mut db, "b", "importFrom(a, foo)\nexport(foo)\n");
+
+    let a = db.package_by_name("a").unwrap();
+    let b = db.package_by_name("b").unwrap();
+    let names = a.names(&db, NamespaceVisibility::Exported);
+    assert_eq!(names.bindings.get("foo"), Some(BindingKind::Unknown));
+    assert_eq!(names.reexport_sources, vec![b]);
 }
 
 #[test]
@@ -230,6 +300,12 @@ fn test_lazy_data_under_exports_only() {
         item("internal", BindingKind::Function),
         item("value", BindingKind::Unknown),
     ]);
+
+    // An explicit export takes precedence over lazy data with the same name.
+    let names = package.names(&db, NamespaceVisibility::Exported);
+    assert_eq!(names.lazy_data_only, vec!["BJsales", "BJsales.lead"]);
+    let names = package.names(&db, NamespaceVisibility::Internal);
+    assert_eq!(names.lazy_data_only, Vec::<String>::new());
 }
 
 #[test]

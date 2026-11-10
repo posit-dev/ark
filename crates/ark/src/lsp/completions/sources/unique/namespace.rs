@@ -74,7 +74,7 @@ pub(super) fn recognize_namespace(
 
     Ok(Some(Recognized::Static(UniqueCompletions {
         items,
-        incomplete_until_package_settles: completions.incomplete_until_package_settles,
+        incomplete_until_packages_settle: completions.incomplete_until_packages_settle,
     })))
 }
 
@@ -207,11 +207,10 @@ mod tests {
         else {
             panic!("Expected a static namespace answer at `{cursor_text}`");
         };
-        assert_eq!(
-            completions.incomplete_until_package_settles,
-            state.db().package_by_name(package)
-        );
-        assert!(completions.incomplete_until_package_settles.is_some());
+        assert_eq!(completions.incomplete_until_packages_settle, vec![state
+            .db()
+            .package_by_name(package)
+            .unwrap()]);
         completions.items
     }
 
@@ -241,10 +240,10 @@ mod tests {
 
         let (completions, request) = static_completions_with_state("utils::@", &mut state);
         assert!(!request.has_session_slots());
-        assert_eq!(
-            completions.incomplete_until_package_settles(),
-            state.db().package_by_name("utils")
-        );
+        assert_eq!(completions.incomplete_until_packages_settle(), &[state
+            .db()
+            .package_by_name("utils")
+            .unwrap()]);
 
         let items = finish(completions, RCompletionReplies::default());
         assert!(find_completion_by_label(&items, "adist").is_some());
@@ -299,7 +298,7 @@ mod tests {
         );
 
         let (completions, _) = static_completions_with_state("foo::bar@", &mut state);
-        assert_eq!(completions.incomplete_until_package_settles(), None);
+        assert_eq!(completions.incomplete_until_packages_settle(), &[]);
         assert_eq!(finish(completions, RCompletionReplies::default()), vec![]);
     }
 
@@ -317,7 +316,7 @@ mod tests {
         else {
             panic!("Expected a static namespace answer");
         };
-        assert_eq!(completions.incomplete_until_package_settles, None);
+        assert_eq!(completions.incomplete_until_packages_settle, vec![]);
         let items = completions.items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "f");

@@ -26,17 +26,17 @@ use crate::treesitter::NodeTypeExt;
 #[derive(Debug)]
 pub(crate) struct StaticCompletions {
     answer: StaticAnswer,
-    incomplete_until_package_settles: Option<Package>,
+    incomplete_until_packages_settle: Vec<Package>,
 }
 
 impl StaticCompletions {
-    /// The library package whose pending sources or sidecar facts can change
+    /// Library packages whose pending sources or sidecar facts can change
     /// the completion list. Sources can add namespace names or change item
     /// kinds, and the sidecar can add lazy data names. The handler marks the
-    /// answer incomplete until this package settles, even when the item list
-    /// is empty.
-    pub(crate) fn incomplete_until_package_settles(&self) -> Option<Package> {
-        self.incomplete_until_package_settles
+    /// answer incomplete until all listed packages settle, even when the item
+    /// list is empty.
+    pub(crate) fn incomplete_until_packages_settle(&self) -> &[Package] {
+        &self.incomplete_until_packages_settle
     }
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn static_completions(
     let completions = match unique::get_completions(&completion_context, &mut request)? {
         Some(unique) => StaticCompletions {
             answer: StaticAnswer::Unique(unique.items),
-            incomplete_until_package_settles: unique.incomplete_until_package_settles,
+            incomplete_until_packages_settle: unique.incomplete_until_packages_settle,
         },
         // At this point we aren't in a "unique" completion case, so just return a
         // set of reasonable completions from composite sources
@@ -84,7 +84,7 @@ pub(crate) fn static_completions(
             request.composite = composite;
             StaticCompletions {
                 answer: StaticAnswer::Composite(completions),
-                incomplete_until_package_settles: None,
+                incomplete_until_packages_settle: Vec::new(),
             }
         },
     };

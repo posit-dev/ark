@@ -180,12 +180,13 @@ pub(crate) fn handle_completion(
 
     let (completions, request) = static_completions(&context, file, state)?;
 
-    // While the package's sources or sidecar facts may arrive, the editor must
-    // request completions on the next keystroke rather than filter a list with
-    // missing names or kinds.
+    // If package sources or sidecar facts are still pending, the editor must
+    // request completions on the next keystroke rather than reuse a list with
+    // missing names or outdated kinds.
     let incomplete = completions
-        .incomplete_until_package_settles()
-        .is_some_and(|package| !lsp_state.package_settled(&state.config.oak, package));
+        .incomplete_until_packages_settle()
+        .iter()
+        .any(|package| !lsp_state.package_settled(&state.config.oak, *package));
 
     // Without session slots the static items are the whole answer. Skipping
     // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event
