@@ -174,14 +174,14 @@ pub(crate) fn call_at<'tree>(
 /// Adapts a tree-sitter callee to Oak's static lookup. `callee` must come
 /// from `file`'s current source text so its byte range also identifies the
 /// expression in Oak's syntax tree.
-pub(crate) fn describe_callee(
-    db: &dyn Db,
+pub(crate) fn describe_callee<'db>(
+    db: &'db dyn Db,
     file: File,
     callee: &Node,
-) -> anyhow::Result<Option<CalleeDescription>> {
+) -> anyhow::Result<Option<CalleeDescription<'db>>> {
     let start = TextSize::from(u32::try_from(callee.start_byte())?);
     let end = TextSize::from(u32::try_from(callee.end_byte())?);
-    Ok(callee_description(db, file, TextRange::new(start, end)))
+    Ok(callee_description(db, file, TextRange::new(start, end)).description)
 }
 
 /// Approximates the index of the active formal parameter.

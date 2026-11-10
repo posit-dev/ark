@@ -15,6 +15,18 @@ use crate::File;
 use crate::ImportLayer;
 use crate::Name;
 use crate::NamespaceVisibility;
+use crate::Package;
+
+/// The definitions from [`File::resolution_at()`], with the packages lookup
+/// consulted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolution<'db> {
+    /// The definitions [`File::resolve_at()`] returns.
+    pub definitions: Vec<Definition<'db>>,
+    /// The installed packages lookup consulted ([`Package::is_installed()`]),
+    /// in lookup order, whether or not they bind the name.
+    pub packages: Vec<Package>,
+}
 
 #[salsa::tracked]
 impl<'db> File {
@@ -61,7 +73,9 @@ impl<'db> File {
         // Depend on `cross_file_layers()` and sibling `exports()` projections,
         // not the `no_eq` semantic index, so position-only edits can backdate
         // this query.
-        let mut definitions = Vec::new();
+        // Recording packages would read each walked package's `importFrom()`
+        // chain and root, dependencies this query's result doesn't need.
+        let mut lookup = Lookup::definitions_only();
         let own_bound = self.export_is_bound(db, name);
         let own = self.resolve_export(db, name);
         let environment_bound = resolve_environments(
@@ -71,23 +85,18 @@ impl<'db> File {
             name,
             &own,
             own_bound,
-            &mut definitions,
+            &mut lookup,
         );
         if environment_bound && own_bound {
-            return definitions;
+            return lookup.definitions;
         }
         if !environment_bound {
-            resolve_import_layers(db, self.loader_fallback(db), name, &mut definitions);
+            resolve_import_layers(db, self.loader_fallback(db), name, &mut lookup);
         }
         if !own_bound {
-            resolve_per_sourcing_file(
-                db,
-                self.imports_by_sourcing_file(db),
-                name,
-                &mut definitions,
-            );
+            resolve_per_sourcing_file(db, self.imports_by_sourcing_file(db), name, &mut lookup);
         }
-        definitions
+        lookup.definitions
     }
 
     /// Resolve the name at `offset` to its definition(s).
@@ -97,22 +106,49 @@ impl<'db> File {
     /// resolves to that binding. Empty means nothing reachable binds the name
     /// here.
     ///
+    /// Definitions come in lookup order, inner scopes and earlier layers
+    /// first. Within one scope they come as the use-def map holds them, in
+    /// source order, without singling out the one R would pick at runtime.
+    /// [`File::visible_names_at()`] instead puts a scope's latest binding
+    /// first.
+    ///
     /// Not `#[salsa::tracked]` because keying on `(self, offset)` would
     /// balloon the cache. The `Definition` entities it returns are minted by
     /// the tracked [`File::definitions()`] and looked up via
     /// [`File::definition()`], so they stay cached and identity-stable even
     /// though this lookup isn't.
     pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Vec<Definition<'db>> {
+        let mut lookup = Lookup::definitions_only();
+        self.lookup_at(db, offset, &mut lookup);
+        lookup.definitions
+    }
+
+    /// Like [`File::resolve_at()`], also reporting the installed packages
+    /// lookup consulted: the package each NAMESPACE import, attach or
+    /// search-path layer reduces the name to, with its re-export chain
+    /// ([`Package::reexport_chain()`]), up to the layer where lookup stopped
+    /// ([`Package::is_installed()`]). Pending sources of these packages can
+    /// still change the definitions, including when there are none yet.
+    ///
+    /// Not tracked, like [`File::resolve_at()`].
+    pub fn resolution_at(self, db: &'db dyn Db, offset: TextSize) -> Resolution<'db> {
+        let mut lookup = Lookup::with_packages();
+        self.lookup_at(db, offset, &mut lookup);
+        Resolution {
+            definitions: lookup.definitions,
+            packages: lookup.packages.unwrap_or_default(),
+        }
+    }
+
+    fn lookup_at(self, db: &'db dyn Db, offset: TextSize, lookup: &mut Lookup<'db>) {
         let index = self.semantic_index(db);
         let Some((use_scope, use_id, use_site)) = index.use_at(offset) else {
             // Cursor on a binding's own name (a def site, not a use): jump to
             // it, like rust-analyzer / ty.
-            return match index.definition_at(offset) {
-                Some((scope, def_id, _)) => {
-                    self.definition(db, scope, def_id).into_iter().collect()
-                },
-                None => Vec::new(),
-            };
+            if let Some((scope, def_id, _)) = index.definition_at(offset) {
+                lookup.extend(self.definition(db, scope, def_id));
+            }
+            return;
         };
         let name = index
             .symbols(use_scope)
@@ -128,14 +164,15 @@ impl<'db> File {
             .reaching_definitions(use_scope, use_id)
             .partition(|(scope, _)| *scope == file_scope);
 
-        let mut definitions: Vec<Definition<'db>> = lexical
-            .into_iter()
-            .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
-            .collect();
+        lookup.definitions.extend(
+            lexical
+                .into_iter()
+                .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id)),
+        );
 
         let own_bound = index.use_is_bound(use_scope, use_id);
         if own_bound && globals.is_empty() {
-            return definitions;
+            return;
         }
         let view = if index.scope_is_eager(use_scope) {
             CollationView::Eager
@@ -146,28 +183,21 @@ impl<'db> File {
             .into_iter()
             .flat_map(|(scope, def_id)| self.resolve_definition(db, scope, def_id))
             .collect();
-        let environment_bound =
-            resolve_environments(db, self, view, name, &own, own_bound, &mut definitions);
+        let environment_bound = resolve_environments(db, self, view, name, &own, own_bound, lookup);
         if environment_bound && own_bound {
-            return definitions;
+            return;
         }
         if !environment_bound {
-            resolve_import_layers(
-                db,
-                &self.loader_fallback_at(db, offset),
-                name,
-                &mut definitions,
-            );
+            resolve_import_layers(db, &self.loader_fallback_at(db, offset), name, lookup);
         }
         if !own_bound {
             resolve_per_sourcing_file(
                 db,
                 &self.imports_by_sourcing_file_at(db, offset),
                 name,
-                &mut definitions,
+                lookup,
             );
         }
-        definitions
     }
 
     /// Return the definition at `(scope_id, def_id)`, or, for a `source()`
@@ -200,11 +230,13 @@ impl<'db> File {
     /// yields all of them.
     ///
     /// Order follows `exports()`: entries are visited in definition order and
-    /// imports are chased in place, so the last element is the binding R picks
-    /// at runtime (statements run in order, last write wins). Several top-level
-    /// locals collapse to one `Local` marker, so they come out grouped at that
-    /// marker's position rather than each at its own offset, but the runtime
-    /// winner is still last.
+    /// imports are chased in place, so the last element is normally the
+    /// binding R picks at runtime (statements run in order, last write wins).
+    /// Several top-level locals collapse to one `Local` marker at the first
+    /// one's position, so they come out grouped there rather than each at its
+    /// own offset. When conditional locals sit on both sides of a conditional
+    /// `source()`, the forwarded definitions then come after a local that
+    /// runs later, and the last element isn't the latest write.
     ///
     /// Cycles resolve to empty via `exports`'s `cycle_result`.
     #[salsa::tracked(returns(clone))]
@@ -289,16 +321,16 @@ fn resolve_environments<'db>(
     name: Name<'db>,
     own: &[Definition<'db>],
     own_bound: bool,
-    definitions: &mut Vec<Definition<'db>>,
+    lookup: &mut Lookup<'db>,
 ) -> bool {
     let layers = file.cross_file_layers(db, view);
     for member in layers.environments.lookup_files() {
         if member == layers.current_file {
-            extend_definitions(definitions, own.iter().copied());
+            lookup.extend(own.iter().copied());
             if own_bound {
                 return true;
             }
-        } else if resolve_import_layers(db, &[ImportLayer::File(member)], name, definitions) {
+        } else if resolve_import_layers(db, &[ImportLayer::File(member)], name, lookup) {
             return true;
         }
     }
@@ -323,8 +355,8 @@ pub(crate) fn resolve_import_layer<'db>(
     // Reduce the layer to the package it binds `name` to, then resolve against
     // that package's exports. A `File` sibling is the exception, resolved
     // through its own exports chain.
-    let package = match layer {
-        ImportLayer::File(file) => return file.resolve_export(db, name),
+    match layer {
+        ImportLayer::File(file) => file.resolve_export(db, name),
         ImportLayer::SourcingFile {
             file,
             exports_so_far,
@@ -335,22 +367,31 @@ pub(crate) fn resolve_import_layer<'db>(
             if !exports_so_far.contains(name.text(db).as_str()) {
                 return Vec::new();
             }
-            return file.resolve_export(db, name);
+            file.resolve_export(db, name)
         },
-        // Lazy data has no definition to resolve to, so both layers resolve
-        // exports only.
-        ImportLayer::Import(package) | ImportLayer::Package(package) => *package,
-        ImportLayer::From(importer) => {
-            match importer.imported_from(db).get(name.text(db).as_str()) {
-                Some(source) => match db.package_by_name(source) {
-                    Some(package) => package,
-                    None => return Vec::new(),
-                },
-                None => return Vec::new(),
+        // Lazy data has no definition to resolve to, so import and attach
+        // layers both resolve exports only.
+        ImportLayer::Import(_) | ImportLayer::Package(_) | ImportLayer::From(_) => {
+            match layer_package(db, layer, name) {
+                Some(package) => package.resolve(db, name, NamespaceVisibility::Exported),
+                None => Vec::new(),
             }
         },
-    };
-    package.resolve(db, name, NamespaceVisibility::Exported)
+    }
+}
+
+/// The package a NAMESPACE import, attach or search-path layer binds `name`
+/// to. `None` for file layers, and for an `importFrom()` layer that doesn't
+/// import `name` or imports it from a package absent from every root.
+fn layer_package(db: &dyn Db, layer: &ImportLayer, name: Name) -> Option<Package> {
+    match layer {
+        ImportLayer::File(_) | ImportLayer::SourcingFile { .. } => None,
+        ImportLayer::Import(package) | ImportLayer::Package(package) => Some(*package),
+        ImportLayer::From(importer) => {
+            let source = importer.imported_from(db).get(name.text(db).as_str())?;
+            db.package_by_name(source)
+        },
+    }
 }
 
 /// Resolve `name` in every context of [`File::imports_by_sourcing_file`] and
@@ -363,10 +404,10 @@ fn resolve_per_sourcing_file<'db>(
     db: &'db dyn Db,
     contexts: &[Vec<ImportLayer>],
     name: Name<'db>,
-    definitions: &mut Vec<Definition<'db>>,
+    lookup: &mut Lookup<'db>,
 ) {
     for context in contexts {
-        resolve_import_layers(db, context, name, definitions);
+        resolve_import_layers(db, context, name, lookup);
     }
 }
 
@@ -377,14 +418,15 @@ fn resolve_import_layers<'db>(
     db: &'db dyn Db,
     layers: &[ImportLayer],
     name: Name<'db>,
-    definitions: &mut Vec<Definition<'db>>,
+    lookup: &mut Lookup<'db>,
 ) -> bool {
     for layer in layers {
+        lookup.consult(db, layer, name);
         let defs = resolve_import_layer(db, layer, name);
         if defs.is_empty() {
             continue;
         }
-        extend_definitions(definitions, defs);
+        lookup.extend(defs);
         let bound = match layer {
             ImportLayer::File(file) => file.export_is_bound(db, name),
             _ => true,
@@ -396,14 +438,48 @@ fn resolve_import_layers<'db>(
     false
 }
 
-fn extend_definitions<'db>(
-    definitions: &mut Vec<Definition<'db>>,
-    candidates: impl IntoIterator<Item = Definition<'db>>,
-) {
-    // `Vec::contains()` preserves lookup order; each layer yields few definitions.
-    for def in candidates {
-        if !definitions.contains(&def) {
-            definitions.push(def);
+/// What a lookup collects across layers.
+struct Lookup<'db> {
+    definitions: Vec<Definition<'db>>,
+    /// `None` unless the caller reports packages.
+    packages: Option<Vec<Package>>,
+}
+
+impl<'db> Lookup<'db> {
+    fn definitions_only() -> Self {
+        Self {
+            definitions: Vec::new(),
+            packages: None,
+        }
+    }
+
+    fn with_packages() -> Self {
+        Self {
+            definitions: Vec::new(),
+            packages: Some(Vec::new()),
+        }
+    }
+
+    fn extend(&mut self, candidates: impl IntoIterator<Item = Definition<'db>>) {
+        // `Vec::contains()` preserves lookup order; each layer yields few definitions.
+        for def in candidates {
+            if !self.definitions.contains(&def) {
+                self.definitions.push(def);
+            }
+        }
+    }
+
+    fn consult(&mut self, db: &'db dyn Db, layer: &ImportLayer, name: Name<'db>) {
+        let Some(packages) = &mut self.packages else {
+            return;
+        };
+        let Some(package) = layer_package(db, layer, name) else {
+            return;
+        };
+        for package in package.reexport_chain(db, name.text(db)) {
+            if package.is_installed(db) && !packages.contains(&package) {
+                packages.push(package);
+            }
         }
     }
 }

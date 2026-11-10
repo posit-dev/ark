@@ -8,6 +8,7 @@ mod rename;
 use biome_rowan::TextRange;
 pub use callee_description::callee_description;
 pub use callee_description::CalleeDescription;
+pub use callee_description::CalleeLookup;
 pub use file_path_completions::file_path_completions;
 pub use file_path_completions::FilePathItem;
 pub use find_references::find_references;

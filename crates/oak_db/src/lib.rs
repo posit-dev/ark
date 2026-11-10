@@ -59,6 +59,7 @@ pub use file_bindings::Bindings;
 pub use file_exports::ExportEntry;
 pub use file_exports::FileExports;
 pub use file_imports::ImportLayer;
+pub use file_resolve::Resolution;
 pub use file_revision::FileRevision;
 pub use file_source_site::SourceSite;
 pub use file_visible_names::VisibleBinding;

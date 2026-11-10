@@ -123,7 +123,11 @@ fn reexport_kind(
     else {
         return BindingKind::Unknown;
     };
-    record_reexport_chain(db, source, name, sources);
+    for package in source.reexport_chain(db, name) {
+        if !sources.contains(&package) {
+            sources.push(package);
+        }
+    }
 
     source
         .resolve(db, Name::new(db, name), NamespaceVisibility::Exported)
@@ -139,31 +143,35 @@ fn reexport_kind(
         .unwrap_or(BindingKind::Unknown)
 }
 
-// Include each `importFrom()` hop while `name` has no local binding. Pending
-// sources can determine whether resolution stops at a package or follows its
-// imports. Over-reporting a dependency only delays the caller's settled answer,
-// but omitting one could let the caller reuse a kind that later changes.
-fn record_reexport_chain(db: &dyn Db, source: Package, name: &str, sources: &mut Vec<Package>) {
-    let mut chain = vec![source];
-    let mut current = source;
-    while current.bindings(db).get(name).is_none() {
-        let Some(next) = current
+impl Package {
+    /// The packages [`Package::resolve()`] can read for `name`: this package,
+    /// then each package `name` is imported from with `importFrom()`,
+    /// transitively, in lookup order.
+    ///
+    /// Pending sources can determine whether resolution stops at a package or
+    /// follows its imports, so a caller reporting when its answer can still
+    /// change lists every hop. Over-reporting a dependency only delays the
+    /// caller's settled answer, but omitting one could let the caller reuse an
+    /// answer that later changes.
+    ///
+    /// A hop is listed even when the importing package also binds `name`, so
+    /// resolution would stop there. Checking that would read
+    /// [`Package::bindings()`], which parses every file of each package on
+    /// the chain, and a lookup that misses walks every attached package.
+    pub fn reexport_chain(self, db: &dyn Db, name: &str) -> Vec<Package> {
+        let mut chain = vec![self];
+        let mut current = self;
+        while let Some(next) = current
             .imported_from(db)
             .get(name)
             .and_then(|next| db.package_by_name(next))
-        else {
-            break;
-        };
-        if chain.contains(&next) {
-            break;
+        {
+            if chain.contains(&next) {
+                break;
+            }
+            chain.push(next);
+            current = next;
         }
-        chain.push(next);
-        current = next;
-    }
-
-    for package in chain {
-        if !sources.contains(&package) {
-            sources.push(package);
-        }
+        chain
     }
 }
