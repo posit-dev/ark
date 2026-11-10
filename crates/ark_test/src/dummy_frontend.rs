@@ -1986,7 +1986,10 @@ impl DummyArkFrontend {
         // Start the kernel and REPL in a background thread, does not return and is never joined.
         // Must run `start_kernel()` in a background thread because it blocks until it receives
         // a `HandshakeReply`, which we send from `from_connection()` below.
-        stdext::spawn!("dummy_kernel", move || {
+        //
+        // R runs on this thread, so give it the 8 MiB stack that the main
+        // thread gets in production, rather than Rust's 2 MiB default.
+        stdext::spawn_with_stack_size!("dummy_kernel", 8 * 1024 * 1024, move || {
             ark::start::start_kernel(
                 connection_file,
                 Some(registration_file),
